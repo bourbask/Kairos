@@ -1,0 +1,32 @@
+# Kairos — Profil utilisateur
+# Copier ce fichier en profile.toml et remplir les valeurs
+# Ne jamais commiter profile.toml (gitignored)
+
+[name]
+first = "Prénom"
+last = "Nom"
+
+[contact]
+email = "email@example.com"
+location = "Ville / full remote"
+
+[preferences]
+salary_min = 40000
+salary_target = 45000
+salary_max = 55000
+currency = "EUR"
+remote = "full"          # "full" | "hybrid" | "on-site"
+countries = ["FR", "BE", "CH"]
+languages = ["français", "anglais"]
+
+[skills]
+backend = ["Node.js", "Python"]        # adapter à ton stack
+frontend = ["React", "Vue.js"]
+database = ["PostgreSQL", "SQLite"]
+devops = ["Docker"]
+learning = []
+
+[experience]
+years = 5
+current_role = "Développeur"
+current_company = "Entreprise"

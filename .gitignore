@@ -3,6 +3,10 @@
 # Secrets — jamais commités
 .env
 
+# Données personnelles — rester privé (utiliser les fichiers .example)
+config/profile.toml
+OBJECTIVES.md
+
 # Base de données locale (recréée par Kairos)
 data/kairos.db
 data/*.db

@@ -60,7 +60,7 @@ Développeur tech-savvy dans une legal tech, capable de concevoir, configurer et
 | Créneaux disponibles (agenda) | Informations santé sensibles |
 | Objectifs déclarés (court et long terme) | Communications confidentielles (emails, messages) |
 | Contraintes récurrentes (horaires, engagements) | Données tierces (famille, collègues) sans consentement |
-| Résumés de décisions passées | Données professionnelles legal2digital sous NDA |
+| Résumés de décisions passées | Données professionnelles employeur sous NDA |
 | Centres d'intérêt et lectures en cours | |
 
 ### Types de décisions : assistées vs. autonomes
@@ -210,7 +210,7 @@ L'over-reliance sur un assistant IA pour les décisions personnelles est un risq
 Le risque fondamental n'est pas technique mais psychologique : l'utilisateur va progressivement confier plus d'informations à Jarvis parce que c'est pratique. Sans intention claire, la base de données personnelle s'élargit au-delà de ce qui était prévu.
 
 - **Principe de minimisation** : ne donner à Jarvis que ce dont il a besoin pour répondre à la question du moment.
-- **Séparation des espaces** : données perso ≠ données pro. legal2digital reste entièrement hors scope. Une configuration sépare les deux contextes physiquement.
+- **Séparation des espaces** : données perso ≠ données pro. L'employeur reste entièrement hors scope. Une configuration sépare les deux contextes physiquement.
 - **Droit à l'oubli opérationnel** : mécanisme de purge des journaux passé un certain délai (journaux quotidiens bruts → archivés après 90 jours, supprimés après 365 jours sauf si explicitement conservés).
 
 ### Gouvernance : contrôle et auditabilité

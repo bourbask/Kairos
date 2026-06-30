@@ -162,7 +162,7 @@ kairos/
 │   ├── llm.rs               # LlmClient : generate, summarize, analyze_day [testé]
 │   └── briefing.rs          # Markdown output → ~/briefings/ [testé]
 ├── config/
-│   └── profile.toml         # CV : Kevin Bourbasquet, Symfony/React, 45-55k€, remote
+│   └── profile.toml         # CV : skills, salaire cible, pays, contact (gitignored)
 ├── data/
 │   └── kairos.db            # SQLite (gitignored)
 └── docs/                    # Documentation PM

@@ -126,7 +126,7 @@ Stockage futur (quand la mémoire sera nécessaire) :
 Offres tech full remote correspondant au profil, priorité marchés :
 🇨🇭 Suisse · 🇧🇪 Belgique · 🇱🇺 Luxembourg · 🇳🇱 Pays-Bas · 🇩🇪 Allemagne
 
-Critères : Full-Stack (Symfony/React), 45-55k€, full remote.
+Critères : stack et salaire cible définis dans `config/profile.toml`, full remote.
 
 ### Sources de données
 
@@ -184,9 +184,9 @@ kairos/
 
 ### Profil CV (config/profile.toml)
 
-CV de Kévin Bourbasquet : Symfony/React full-stack, 7 ans, 45-55k€, full remote CH/BE/LU/NL/DE.
+Profil CV configuré dans `config/profile.toml` (gitignored — voir `config/profile.example.toml`).
 
-Fichier TOML déjà créé avec skills, préférences, contact.
+Fichier TOML avec skills, préférences salariales, pays cibles, contact.
 
 ### Output briefing
 
