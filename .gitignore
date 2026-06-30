@@ -1,0 +1,15 @@
+/target
+
+# Secrets — jamais commités
+.env
+
+# Base de données locale (recréée par Kairos)
+data/kairos.db
+data/*.db
+
+# Briefings générés (output, pas source)
+briefings/
+
+# Logs
+*.log
+logs/
