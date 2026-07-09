@@ -17,3 +17,6 @@ briefings/
 # Logs
 *.log
 logs/
+
+# Notes personnelles (non publiées)
+private/
