@@ -87,9 +87,9 @@ mod tests {
 
     #[test]
     fn test_load_profile() {
-        let profile = Profile::from_file("config/profile.toml").unwrap();
-        assert_eq!(profile.name.first, "Kévin");
-        assert_eq!(profile.preferences.salary_min, 45000);
-        assert!(profile.skills.all().contains(&"Rust".to_string()));
+        let profile = Profile::from_file("config/profile.example.toml").unwrap();
+        assert_eq!(profile.name.first, "Prénom");
+        assert_eq!(profile.preferences.salary_min, 40000);
+        assert!(profile.skills.all().contains(&"Node.js".to_string()));
     }
 }
