@@ -11,7 +11,7 @@ Runs on a VPS 24/7. Produces `~/briefings/YYYY-MM-DD.md` via cron.
 | Module | Status |
 |--------|--------|
 | Job monitoring (Brique 1) | 🟢 MVP |
-| Planning/agenda (Brique 2) | 🔲 Not started |
+| Planning/agenda (Brique 2) | 🟡 In progress |
 | Long-term memory (Brique 3) | 🔲 v1.0 |
 
 ---
@@ -59,10 +59,14 @@ Your CV profile goes in `config/profile.toml` (gitignored — copy from `.exampl
 ## Commands
 
 ```bash
-cargo run -- scrape       # fetch offers from all sources
-cargo run -- briefing     # generate today's briefing
-cargo run -- status       # stats (offers in DB, scores, last fetch)
-cargo run -- prompt "..." # send a prompt to the local LLM
+cargo run -- scrape              # fetch offers from all sources
+cargo run -- briefing            # generate today's briefing
+cargo run -- status              # stats (offers in DB, scores, last fetch)
+cargo run -- prompt "..."        # send a prompt to the local LLM
+cargo run -- plan add "title"    # add a task
+cargo run -- plan list           # list pending tasks
+cargo run -- plan done <id>      # mark task as done
+cargo run -- plan routine show   # show morning routine
 ```
 
 Or via `make`:
@@ -81,12 +85,13 @@ make build       # release build
 ```
 kairos/
 ├── src/
-│   ├── main.rs          # CLI: scrape | briefing | status | prompt
+│   ├── main.rs          # CLI: scrape | briefing | status | prompt | plan
 │   ├── collectors/      # Adzuna, Jooble, Remotive (Collector trait)
+│   ├── planning/        # Task CRUD + morning routine
 │   ├── matching.rs      # Weighted scoring
 │   ├── ranker.rs        # Top N unseen offers
 │   ├── enrichment.rs    # Company enrichment
-│   ├── storage.rs       # SQLite
+│   ├── storage.rs       # SQLite (jobs + planning)
 │   ├── llm.rs           # Ollama client
 │   └── briefing.rs      # Markdown generation
 ├── config/
