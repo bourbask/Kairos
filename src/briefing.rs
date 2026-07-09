@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 use chrono::NaiveDate;
-use crate::models::{ScoredJob, EnrichedCompany};
+use crate::models::{ScoredJob, EnrichedCompany, Task, Routine, RoutineLogEntry};
 
 pub struct BriefingGenerator {
     output_dir: PathBuf,
@@ -17,18 +17,76 @@ impl BriefingGenerator {
         jobs: &[ScoredJob],
         enrichment: &[(String, EnrichedCompany)],
     ) -> anyhow::Result<String> {
+        self.generate_with_planning(date, jobs, enrichment, None, None, None)
+    }
+
+    pub fn generate_with_planning(
+        &self,
+        date: NaiveDate,
+        jobs: &[ScoredJob],
+        enrichment: &[(String, EnrichedCompany)],
+        today_tasks: Option<&[Task]>,
+        pending_tasks: Option<&[Task]>,
+        today_routine: Option<&[(Routine, RoutineLogEntry)]>,
+    ) -> anyhow::Result<String> {
         let mut content = String::new();
-        content.push_str(&format!("# Briefing emploi — {}\n\n", date.format("%Y-%m-%d")));
+        content.push_str(&format!("# Briefing — {}\n\n", date.format("%Y-%m-%d")));
+
+        // --- Planning section ---
+        if let Some(routine) = today_routine {
+            if !routine.is_empty() {
+                content.push_str("## Routine matinale\n\n");
+                for (step, log) in routine {
+                    let status = if log.completed { "✓" } else { " " };
+                    content.push_str(&format!("- [{}] {} ", status, step.step_name));
+                    if let Some(mins) = step.estimated_minutes {
+                        content.push_str(&format!("({} min)", mins));
+                    }
+                    content.push('\n');
+                }
+                content.push('\n');
+            }
+        }
+
+        if let Some(tasks) = today_tasks {
+            if !tasks.is_empty() {
+                content.push_str("## Tâches du jour\n\n");
+                for t in tasks {
+                    let prio = match t.priority.as_str() {
+                        "high" => "🔴",
+                        _ => "",
+                    };
+                    content.push_str(&format!("- [ ] {} {}\n", prio, t.title));
+                }
+                content.push('\n');
+            }
+        }
+
+        if let Some(tasks) = pending_tasks {
+            let upcoming: Vec<_> = tasks.iter().filter(|t| !t.completed).collect();
+            if !upcoming.is_empty() {
+                content.push_str("## Tâches en attente\n\n");
+                for t in &upcoming {
+                    let due = t.due_date.map(|d| d.to_string()).unwrap_or_else(|| "pas de date".into());
+                    content.push_str(&format!("- {} (priorité {}, échéance {})\n", t.title, t.priority, due));
+                }
+                content.push('\n');
+            }
+        }
+
+        // --- Job offers section ---
+        content.push_str(&format!("## Offres d'emploi\n\n"));
 
         if jobs.is_empty() {
             content.push_str("_Aucune nouvelle offre pertinente aujourd'hui._\n");
+            content.push_str(&format!("\n---\n_Généré par Kairos — {date}_\n", date = date.format("%Y-%m-%d")));
             return Ok(content);
         }
 
         for (i, job) in jobs.iter().enumerate() {
             let o = &job.offer;
 
-            content.push_str(&format!("## {}. {} — {}\n\n", i + 1, o.title, o.company));
+            content.push_str(&format!("### {}. {} — {}\n\n", i + 1, o.title, o.company));
 
             if let Some(ref enr) = enrichment.iter().find(|(id, _)| id == &o.id).map(|(_, e)| e) {
                 if let Some(ref site) = enr.website {
@@ -137,5 +195,53 @@ mod tests {
         assert!(content.contains("Tech Corp"));
         assert!(content.contains("95%"));
         assert!(content.contains("Zurich"));
+    }
+
+    #[test]
+    fn test_generate_with_planning_section() {
+        let generator = BriefingGenerator::new(PathBuf::from("/tmp"));
+
+        let task = Task {
+            id: 1,
+            title: "Buy groceries".into(),
+            description: None,
+            due_date: Some(NaiveDate::from_ymd_opt(2026, 7, 9).unwrap()),
+            priority: "high".into(),
+            completed: false,
+            created_at: NaiveDate::from_ymd_opt(2026, 7, 8).unwrap(),
+            completed_at: None,
+        };
+
+        let routine_step = Routine {
+            id: 1,
+            step_name: "Lecture briefing".into(),
+            step_order: 1,
+            estimated_minutes: Some(5),
+            enabled: true,
+        };
+
+        let routine_log = RoutineLogEntry {
+            id: 1,
+            date: NaiveDate::from_ymd_opt(2026, 7, 9).unwrap(),
+            routine_step_id: 1,
+            completed: false,
+            completed_at: None,
+        };
+
+        let scored = make_scored_job(0.85);
+        let content = generator.generate_with_planning(
+            NaiveDate::from_ymd_opt(2026, 7, 9).unwrap(),
+            &[scored],
+            &[],
+            Some(&[task]),
+            Some(&[]),
+            Some(&[(routine_step, routine_log)]),
+        ).unwrap();
+
+        assert!(content.contains("Routine matinale"));
+        assert!(content.contains("Lecture briefing"));
+        assert!(content.contains("Tâches du jour"));
+        assert!(content.contains("Buy groceries"));
+        assert!(content.contains("Offres d'emploi"));
     }
 }

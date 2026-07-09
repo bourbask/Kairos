@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,4 +49,36 @@ pub struct DailyBriefing {
     pub date: chrono::NaiveDate,
     pub jobs: Vec<ScoredJob>,
     pub enrichment: Vec<(String, EnrichedCompany)>,
+}
+
+// --- Planning / Agenda ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Task {
+    pub id: i64,
+    pub title: String,
+    pub description: Option<String>,
+    pub due_date: Option<NaiveDate>,
+    pub priority: String,
+    pub completed: bool,
+    pub created_at: NaiveDate,
+    pub completed_at: Option<NaiveDate>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Routine {
+    pub id: i64,
+    pub step_name: String,
+    pub step_order: i32,
+    pub estimated_minutes: Option<i32>,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoutineLogEntry {
+    pub id: i64,
+    pub date: NaiveDate,
+    pub routine_step_id: i64,
+    pub completed: bool,
+    pub completed_at: Option<NaiveDate>,
 }

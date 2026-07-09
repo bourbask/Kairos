@@ -1,6 +1,6 @@
 use rusqlite::{params, Connection, Result as SqlResult};
 use chrono::{NaiveDate, Utc};
-use crate::models::JobOffer;
+use crate::models::{JobOffer, Task, Routine, RoutineLogEntry};
 
 pub struct Storage {
     conn: Connection,
@@ -44,6 +44,37 @@ impl Storage {
 
             CREATE INDEX IF NOT EXISTS idx_offers_presented ON job_offers(presented);
             CREATE INDEX IF NOT EXISTS idx_offers_score ON job_offers(score DESC);
+
+            CREATE TABLE IF NOT EXISTS tasks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                description TEXT,
+                due_date TEXT,
+                priority TEXT NOT NULL DEFAULT 'medium',
+                completed INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                completed_at TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS routines (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                step_name TEXT NOT NULL,
+                step_order INTEGER NOT NULL,
+                estimated_minutes INTEGER,
+                enabled INTEGER NOT NULL DEFAULT 1
+            );
+
+            CREATE TABLE IF NOT EXISTS routine_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date TEXT NOT NULL,
+                routine_step_id INTEGER NOT NULL,
+                completed INTEGER NOT NULL DEFAULT 0,
+                completed_at TEXT,
+                FOREIGN KEY (routine_step_id) REFERENCES routines(id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_tasks_due ON tasks(due_date);
+            CREATE INDEX IF NOT EXISTS idx_routine_log_date ON routine_log(date);
             "
         )?;
         Ok(())
@@ -159,6 +190,184 @@ impl Storage {
         )?;
 
         Ok(StorageStats { total, presented, unscored })
+    }
+
+    // --- Planning: Tasks ---
+
+    pub fn insert_task(&self, title: &str, description: Option<&str>, due_date: Option<NaiveDate>, priority: &str) -> SqlResult<i64> {
+        self.conn.execute(
+            "INSERT INTO tasks (title, description, due_date, priority, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                title,
+                description,
+                due_date.map(|d| d.to_string()),
+                priority,
+                Utc::now().date_naive().to_string(),
+            ],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    pub fn get_tasks(&self, due_today: bool, all: bool) -> SqlResult<Vec<Task>> {
+        let sql = if due_today {
+            "SELECT id, title, description, due_date, priority, completed, created_at, completed_at
+             FROM tasks
+             WHERE due_date = ?1 AND completed = 0
+             ORDER BY
+               CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END,
+               due_date ASC"
+        } else if all {
+            "SELECT id, title, description, due_date, priority, completed, created_at, completed_at
+             FROM tasks
+             ORDER BY completed ASC,
+               CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END,
+               due_date ASC"
+        } else {
+            "SELECT id, title, description, due_date, priority, completed, created_at, completed_at
+             FROM tasks
+             WHERE completed = 0
+             ORDER BY
+               CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END,
+               due_date ASC"
+        };
+
+        let today = Utc::now().date_naive().to_string();
+        let mut stmt = self.conn.prepare(sql)?;
+        let rows = if due_today {
+            stmt.query_map(params![today], Self::map_task_row)?
+        } else {
+            stmt.query_map([], Self::map_task_row)?
+        };
+        rows.collect()
+    }
+
+    fn map_task_row(row: &rusqlite::Row) -> SqlResult<Task> {
+        let created_str: String = row.get(6)?;
+        Ok(Task {
+            id: row.get(0)?,
+            title: row.get(1)?,
+            description: row.get(2)?,
+            due_date: row.get::<_, Option<String>>(3)?.and_then(|s| NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok()),
+            priority: row.get(4)?,
+            completed: row.get::<_, i32>(5)? != 0,
+            created_at: NaiveDate::parse_from_str(&created_str, "%Y-%m-%d")
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?,
+            completed_at: row.get::<_, Option<String>>(7)?.and_then(|s| NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok()),
+        })
+    }
+
+    pub fn complete_task(&self, id: i64) -> SqlResult<bool> {
+        let updated = self.conn.execute(
+            "UPDATE tasks SET completed = 1, completed_at = ?1 WHERE id = ?2",
+            params![Utc::now().date_naive().to_string(), id],
+        )?;
+        Ok(updated > 0)
+    }
+
+    pub fn delete_task(&self, id: i64) -> SqlResult<bool> {
+        let deleted = self.conn.execute("DELETE FROM tasks WHERE id = ?1", params![id])?;
+        Ok(deleted > 0)
+    }
+
+    // --- Planning: Routines ---
+
+    pub fn insert_routine_step(&self, name: &str, order: i32, minutes: Option<i32>) -> SqlResult<i64> {
+        self.conn.execute(
+            "INSERT INTO routines (step_name, step_order, estimated_minutes) VALUES (?1, ?2, ?3)",
+            params![name, order, minutes],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    pub fn get_routine_steps(&self) -> SqlResult<Vec<Routine>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, step_name, step_order, estimated_minutes, enabled FROM routines WHERE enabled = 1 ORDER BY step_order"
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(Routine {
+                id: row.get(0)?,
+                step_name: row.get(1)?,
+                step_order: row.get(2)?,
+                estimated_minutes: row.get(3)?,
+                enabled: row.get::<_, i32>(4)? != 0,
+            })
+        })?;
+        rows.collect()
+    }
+
+    pub fn seed_default_routines(&self) -> SqlResult<usize> {
+        let count: i64 = self.conn.query_row("SELECT COUNT(*) FROM routines", [], |row| row.get(0))?;
+        if count > 0 {
+            return Ok(0);
+        }
+        let defaults = [
+            (1, "Réveil + verre d'eau", 5),
+            (2, "Lecture briefing Kairos", 5),
+            (3, "Méditation / Pleine conscience", 10),
+            (4, "Douche", 10),
+            (5, "Petit-déjeuner", 20),
+            (6, "Revue des objectifs du jour", 5),
+            (7, "Première tâche prioritaire", 30),
+        ];
+        let mut seeded = 0;
+        for (order, name, minutes) in &defaults {
+            self.conn.execute(
+                "INSERT INTO routines (step_name, step_order, estimated_minutes) VALUES (?1, ?2, ?3)",
+                params![name, order, minutes],
+            )?;
+            seeded += 1;
+        }
+        Ok(seeded)
+    }
+
+    // --- Planning: Routine Log ---
+
+    pub fn get_routine_log_for_today(&self) -> SqlResult<Vec<RoutineLogEntry>> {
+        let today = Utc::now().date_naive().to_string();
+        let mut stmt = self.conn.prepare(
+            "SELECT id, date, routine_step_id, completed, completed_at
+             FROM routine_log
+             WHERE date = ?1
+             ORDER BY routine_step_id"
+        )?;
+        let rows = stmt.query_map(params![today], |row| {
+            Ok(RoutineLogEntry {
+                id: row.get(0)?,
+                date: row.get::<_, String>(1).and_then(|s| NaiveDate::parse_from_str(&s, "%Y-%m-%d").map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e))))?,
+                routine_step_id: row.get(2)?,
+                completed: row.get::<_, i32>(3)? != 0,
+                completed_at: row.get::<_, Option<String>>(4)?.and_then(|s| NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok()),
+            })
+        })?;
+        rows.collect()
+    }
+
+    pub fn ensure_routine_log_for_today(&self, routine_step_id: i64) -> SqlResult<RoutineLogEntry> {
+        let today = Utc::now().date_naive();
+        let existing = self.get_routine_log_for_today()?;
+        if let Some(entry) = existing.into_iter().find(|e| e.routine_step_id == routine_step_id) {
+            return Ok(entry);
+        }
+        self.conn.execute(
+            "INSERT INTO routine_log (date, routine_step_id) VALUES (?1, ?2)",
+            params![today.to_string(), routine_step_id],
+        )?;
+        Ok(RoutineLogEntry {
+            id: self.conn.last_insert_rowid(),
+            date: today,
+            routine_step_id,
+            completed: false,
+            completed_at: None,
+        })
+    }
+
+    pub fn check_routine_step(&self, id: i64) -> SqlResult<bool> {
+        let updated = self.conn.execute(
+            "UPDATE routine_log SET completed = 1, completed_at = ?1 WHERE id = ?2 AND completed = 0",
+            params![Utc::now().date_naive().to_string(), id],
+        )?;
+        Ok(updated > 0)
     }
 }
 
