@@ -126,7 +126,7 @@ mod tests {
     use chrono::Utc;
 
     fn test_profile() -> Profile {
-        Profile::from_file("config/profile.toml").unwrap()
+        Profile::from_file("config/profile.example.toml").unwrap()
     }
 
     fn make_offer(title: &str, desc: &str, remote: Option<bool>, country: Option<&str>,
