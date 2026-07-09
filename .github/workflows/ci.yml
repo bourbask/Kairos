@@ -8,7 +8,6 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  RUSTFLAGS: ""
 
 jobs:
   build-and-test:
@@ -16,6 +15,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          rustflags: ''
       - name: Build
         run: cargo build --verbose
       - name: Run tests
