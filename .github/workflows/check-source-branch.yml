@@ -1,0 +1,20 @@
+name: Check source branch
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+    branches: [main]
+
+jobs:
+  check-branch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate source branch
+        run: |
+          PATTERN='^(develop|hotfix/.*)$'
+          if [[ "${{ github.head_ref }}" =~ $PATTERN ]]; then
+            echo "Source branch '${{ github.head_ref }}' is allowed to merge into main."
+          else
+            echo "::error::PRs to main must come from 'develop' or 'hotfix/*'. Found: '${{ github.head_ref }}'"
+            exit 1
+          fi

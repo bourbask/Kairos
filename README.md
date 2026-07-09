@@ -1,0 +1,129 @@
+# Kairos
+
+Personal batch assistant — monitors job offers, scores them against your profile, generates a daily Markdown briefing.
+
+Runs on a VPS 24/7. Produces `~/briefings/YYYY-MM-DD.md` via cron.
+
+---
+
+## Status
+
+| Module | Status |
+|--------|--------|
+| Job monitoring (Brique 1) | 🟢 MVP |
+| Planning/agenda (Brique 2) | 🔲 Not started |
+| Long-term memory (Brique 3) | 🔲 v1.0 |
+
+---
+
+## Prerequisites
+
+- Rust 2024 (`rustup update stable`)
+- A VPS or always-on server (2 vCPU, 8 GB RAM recommended)
+- [Ollama](https://ollama.ai) + a local model (e.g. `phi3:mini` or `mistral-nemo:12b`)
+- API keys: Adzuna, Jooble (optional)
+
+---
+
+## Installation
+
+```bash
+git clone <repo>
+cd kairos
+
+cp .env.example .env
+# → edit .env with your API keys
+
+cp config/profile.example.toml config/profile.toml
+# → edit with your skills, salary targets, location preferences
+
+cargo build --release
+cargo test
+```
+
+---
+
+## Configuration
+
+`.env` file:
+```bash
+ADZUNA_APP_ID=xxx
+ADZUNA_API_KEY=xxx
+JOOBLE_API_KEY=xxx
+```
+
+Your CV profile goes in `config/profile.toml` (gitignored — copy from `.example`).
+
+---
+
+## Commands
+
+```bash
+cargo run -- scrape       # fetch offers from all sources
+cargo run -- briefing     # generate today's briefing
+cargo run -- status       # stats (offers in DB, scores, last fetch)
+cargo run -- prompt "..." # send a prompt to the local LLM
+```
+
+Or via `make`:
+```bash
+make scrape      # collect
+make briefing    # generate briefing
+make status      # stats
+make test        # all tests
+make build       # release build
+```
+
+---
+
+## Architecture
+
+```
+kairos/
+├── src/
+│   ├── main.rs          # CLI: scrape | briefing | status | prompt
+│   ├── collectors/      # Adzuna, Jooble, Remotive (Collector trait)
+│   ├── matching.rs      # Weighted scoring
+│   ├── ranker.rs        # Top N unseen offers
+│   ├── enrichment.rs    # Company enrichment
+│   ├── storage.rs       # SQLite
+│   ├── llm.rs           # Ollama client
+│   └── briefing.rs      # Markdown generation
+├── config/
+│   ├── profile.toml     # Your CV (gitignored)
+│   └── profile.example.toml
+├── data/
+│   └── kairos.db        # SQLite (gitignored)
+└── docs/
+    └── ARCHITECTURE.md  # Detailed architecture
+```
+
+### Privacy
+
+Personal data never leaves your server. Public data (job offers, company info) can optionally use cloud APIs. Private data (health, agenda) stays local via Ollama.
+
+---
+
+## Deploy
+
+```bash
+cargo build --release
+scp target/release/kairos user@your-server:~/bin/
+
+# cron (crontab -e)
+0 5 * * * /home/user/bin/kairos briefing
+0 */6 * * * /home/user/bin/kairos scrape
+```
+
+---
+
+## Documentation
+
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — technical architecture
+- [`docs/delivery-procedure.md`](docs/delivery-procedure.md) — delivery workflow
+
+---
+
+## License
+
+MIT
