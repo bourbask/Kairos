@@ -32,7 +32,11 @@ pub struct Preferences {
     pub remote: String,
     pub countries: Vec<String>,
     pub languages: Vec<String>,
+    #[serde(default = "default_min_score")]
+    pub min_score: f64,
 }
+
+fn default_min_score() -> f64 { 0.60 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Skills {

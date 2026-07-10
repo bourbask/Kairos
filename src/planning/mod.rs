@@ -1,4 +1,4 @@
-use chrono::NaiveDate;
+use chrono::{NaiveDate, Datelike, Utc};
 use crate::models::{Task, Routine, RoutineLogEntry};
 use crate::storage::Storage;
 
@@ -36,6 +36,36 @@ impl Planner {
     pub fn delete_task(&self, id: i64) -> anyhow::Result<()> {
         if !self.storage.delete_task(id)? {
             anyhow::bail!("Task {} not found", id);
+        }
+        Ok(())
+    }
+
+    pub fn edit_task(&self, id: i64, title: Option<&str>, desc: Option<Option<&str>>, due: Option<Option<NaiveDate>>, priority: Option<&str>) -> anyhow::Result<()> {
+        let priority = priority.map(|p| match p {
+            "high" | "h" => "high",
+            "low" | "l" => "low",
+            _ => "medium",
+        });
+        if !self.storage.update_task(id, title, desc, due, priority)? {
+            anyhow::bail!("Task {} not found", id);
+        }
+        Ok(())
+    }
+
+    pub fn week_tasks(&self) -> anyhow::Result<Vec<Task>> {
+        let today = Utc::now().date_naive();
+        let week_start = today - chrono::Duration::days(today.weekday().num_days_from_monday() as i64);
+        let week_end = week_start + chrono::Duration::days(6);
+        self.storage.get_tasks_for_week(week_start, week_end).map_err(Into::into)
+    }
+
+    pub fn add_routine_step(&self, name: &str, order: i32, minutes: Option<i32>) -> anyhow::Result<i64> {
+        Ok(self.storage.insert_routine_step(name, order, minutes)?)
+    }
+
+    pub fn remove_routine_step(&self, id: i64) -> anyhow::Result<()> {
+        if !self.storage.delete_routine_step(id)? {
+            anyhow::bail!("Routine step {} not found", id);
         }
         Ok(())
     }

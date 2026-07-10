@@ -11,6 +11,11 @@ impl Matcher {
         Self { profile }
     }
 
+    /// Seuil de pertinence minimal (préférence profil, défaut 0.60), tunable sans rebuild.
+    pub fn min_score(&self) -> f64 {
+        self.profile.preferences.min_score
+    }
+
     /// Score a single offer against the profile.
     /// Weights: skills 40%, remote 25%, salary 20%, location 15%.
     pub fn score(&self, offer: &JobOffer) -> f64 {

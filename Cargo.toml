@@ -13,6 +13,12 @@ cron = "0.13"
 scraper = "0.21"
 toml = "0.8"
 chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = "0.10"
+dotenvy = "0.15"
+imap = "2"
+native-tls = "0.2"
+mailparse = "0.15"
+quick-xml = { version = "0.36", features = ["serialize"] }
 anyhow = "1"
 thiserror = "2"
 tracing = "0.1"

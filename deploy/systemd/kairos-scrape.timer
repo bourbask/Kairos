@@ -1,0 +1,10 @@
+[Unit]
+Description=Kairos — collecte quotidienne (avant le briefing)
+
+[Timer]
+# Une seule collecte/nuit suffit pour un batch de réveil (pas de sur-scraping).
+OnCalendar=*-*-* 04:30:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

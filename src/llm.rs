@@ -48,40 +48,6 @@ impl LlmClient {
         Ok(body.response)
     }
 
-    pub async fn summarize(&self, text: &str, max_words: usize) -> anyhow::Result<String> {
-        let prompt = format!(
-            "Résume le texte suivant en moins de {max_words} mots, en français, sans commentaire introductif :\n\n{text}",
-            max_words = max_words,
-            text = text,
-        );
-        self.generate(&prompt).await
-    }
-
-    pub async fn analyze_day(
-        &self,
-        calendar_entries: &str,
-        health_data: &str,
-        meals: &str,
-    ) -> anyhow::Result<String> {
-        let prompt = format!(
-            "Tu es Kairos, assistant personnel. Analyse ces données et produis un résumé concis en français :
-
-AGENDA :
-{calendar}
-
-SANTÉ :
-{health}
-
-REPAS :
-{meals}
-
-Produis un paragraphe de 3-4 phrases maximum, sans formule de politesse.",
-            calendar = calendar_entries,
-            health = health_data,
-            meals = meals,
-        );
-        self.generate(&prompt).await
-    }
 }
 
 #[cfg(test)]

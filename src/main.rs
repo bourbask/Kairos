@@ -8,6 +8,8 @@ mod enrichment;
 mod llm;
 mod briefing;
 mod planning;
+mod calendar;
+mod notify;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -51,6 +53,24 @@ enum Command {
         #[command(subcommand)]
         action: PlanAction,
     },
+    /// Calendar sync commands
+    Calendar {
+        #[command(subcommand)]
+        action: CalendarAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum CalendarAction {
+    /// Sync events from CalDAV server
+    Sync,
+    /// List today's events
+    Today,
+    /// List upcoming events
+    Upcoming {
+        #[arg(short, long, default_value = "10")]
+        count: u32,
+    },
 }
 
 #[derive(Subcommand)]
@@ -76,10 +96,24 @@ enum PlanAction {
     Done {
         id: i64,
     },
+    /// Edit a task
+    Edit {
+        id: i64,
+        #[arg(short, long)]
+        title: Option<String>,
+        #[arg(short, long)]
+        desc: Option<String>,
+        #[arg(short, long)]
+        due: Option<String>,
+        #[arg(short, long)]
+        priority: Option<String>,
+    },
     /// Delete a task
     Delete {
         id: i64,
     },
+    /// Show weekly task overview
+    Week,
     /// Manage morning routine
     Routine {
         #[command(subcommand)]
@@ -95,28 +129,47 @@ enum RoutineAction {
     Check {
         id: i64,
     },
+    /// Add a routine step
+    Add {
+        name: Vec<String>,
+        #[arg(short, long)]
+        minutes: Option<i32>,
+    },
+    /// Remove a routine step
+    Remove {
+        id: i64,
+    },
     /// Seed default routine steps
     Seed,
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    dotenvy::dotenv().ok(); // charge .env si présent (no-op sinon ; prod = systemd EnvironmentFile)
     tracing_subscriber::fmt::init();
 
     let cli = Cli::parse();
+    let db_path = std::env::var("DATABASE_PATH").unwrap_or_else(|_| "data/kairos.db".into());
     let profile = Profile::from_file("config/profile.toml")?;
-    let storage = Arc::new(Storage::open("data/kairos.db")?);
+    let storage = Arc::new(Storage::open(&db_path)?);
 
     match cli.command {
         Command::Scrape => {
-            let collectors: Vec<Box<dyn Collector>> = vec![
+            let mut collectors: Vec<Box<dyn Collector>> = vec![
                 Box::new(collectors::arbeitnow::ArbeitnowCollector::new()),
-                Box::new(collectors::jooble::JoobleCollector::new(
-                    std::env::var("JOOBLE_API_KEY").unwrap_or_default(),
-                    profile.preferences.countries.clone(),
-                )),
                 Box::new(collectors::remotive::RemotiveCollector::new()),
+                Box::new(collectors::remoteok::RemoteOkCollector::new()),
+                Box::new(collectors::jobicy::JobicyCollector::new()),
+                Box::new(collectors::weworkremotely::WeWorkRemotelyCollector::new()),
+                Box::new(collectors::linkedin_email::LinkedInEmailCollector::new()),
             ];
+            // Adzuna (UE, contrats permanents + salaire) — activé si les clés API sont présentes.
+            if let (Ok(id), Ok(key)) = (std::env::var("ADZUNA_APP_ID"), std::env::var("ADZUNA_API_KEY")) {
+                if !id.is_empty() && !key.is_empty() {
+                    let countries = profile.preferences.countries.iter().map(|c| c.to_lowercase()).collect();
+                    collectors.push(Box::new(collectors::adzuna::AdzunaCollector::new(id, key, countries)));
+                }
+            }
 
             for collector in &collectors {
                 tracing::info!("Fetching from {}", collector.name());
@@ -145,19 +198,21 @@ async fn main() -> anyhow::Result<()> {
             let offers: Vec<_> = top_jobs.iter().map(|j| j.offer.clone()).collect();
             let enrichment = enricher.enrich_many(&offers).await;
 
-            let briefings_dir = PathBuf::from(std::env::var("HOME").unwrap_or_default()).join("briefings");
+            let briefings_dir = std::env::var("BRIEFINGS_DIR").map(PathBuf::from)
+                .unwrap_or_else(|_| PathBuf::from(std::env::var("HOME").unwrap_or_default()).join("briefings"));
             let generator = BriefingGenerator::new(briefings_dir);
 
-            let planner = Planner::new(Storage::open("data/kairos.db")?);
+            let planner = Planner::new(Storage::open(&db_path)?);
             let today_tasks = planner.today_tasks().ok();
             let pending_tasks = planner.pending_tasks().ok();
             let today_routine = planner.today_routine().ok();
+            let today_events = storage.get_today_events().ok();
 
             let today = Utc::now().date_naive();
             let content = generator.generate_with_planning(
                 today, &top_jobs, &enrichment,
                 today_tasks.as_deref(), pending_tasks.as_deref(),
-                today_routine.as_deref(),
+                today_routine.as_deref(), today_events.as_deref(),
             )?;
             let path = generator.write(today, &content)?;
 
@@ -166,10 +221,17 @@ async fn main() -> anyhow::Result<()> {
             }
 
             println!("Briefing generated: {}", path.display());
+
+            match notify::discord(&content).await {
+                Ok(true) => println!("→ posté sur Discord."),
+                Ok(false) => {} // non configuré (NOTIFY_* absents)
+                Err(e) => eprintln!("→ Discord non envoyé : {e}"),
+            }
         }
         Command::Prompt { text, model } => {
             let prompt = text.join(" ");
-            let client = llm::LlmClient::new("http://localhost:11434".into(), model);
+            let url = std::env::var("OLLAMA_URL").unwrap_or_else(|_| "http://localhost:11434".into());
+            let client = llm::LlmClient::new(url, model);
             println!("→ Envoi à Ollama...");
             match client.generate(&prompt).await {
                 Ok(response) => println!("{}", response),
@@ -184,7 +246,7 @@ async fn main() -> anyhow::Result<()> {
             println!("  Unscored: {}", stats.unscored);
         }
         Command::Plan { action } => {
-            let planner = Planner::new(Storage::open("data/kairos.db")?);
+            let planner = Planner::new(Storage::open(&db_path)?);
             match action {
                 PlanAction::Add { title, desc, due, priority } => {
                     let title = title.join(" ");
@@ -208,9 +270,32 @@ async fn main() -> anyhow::Result<()> {
                     planner.complete_task(id)?;
                     println!("Task {} marked as done.", id);
                 }
+                PlanAction::Edit { id, title, desc, due, priority } => {
+                    let due_parsed = due.as_deref().map(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok());
+                    let desc_opt: Option<Option<&str>> = match desc.as_deref() {
+                        Some(d) => Some(Some(d)),
+                        None => None,
+                    };
+                    planner.edit_task(id, title.as_deref(), desc_opt, due_parsed, priority.as_deref())?;
+                    println!("Task {} updated.", id);
+                }
                 PlanAction::Delete { id } => {
                     planner.delete_task(id)?;
                     println!("Task {} deleted.", id);
+                }
+                PlanAction::Week => {
+                    let tasks = planner.week_tasks()?;
+                    if tasks.is_empty() {
+                        println!("No tasks scheduled for this week.");
+                        return Ok(());
+                    }
+                    let today = Utc::now().date_naive();
+                    for t in &tasks {
+                        let due_str = t.due_date.map(|d| d.to_string()).unwrap_or_else(|| "?".into());
+                        let is_today = t.due_date.map(|d| d == today).unwrap_or(false);
+                        let mark = if is_today { " ← today" } else { "" };
+                        println!("  {} [{}] {}{}", due_str, t.priority, t.title, mark);
+                    }
                 }
                 PlanAction::Routine { action } => {
                     match action {
@@ -236,6 +321,78 @@ async fn main() -> anyhow::Result<()> {
                         RoutineAction::Seed => {
                             let n = planner.seed_routines()?;
                             println!("Seeded {} default routine steps.", n);
+                        }
+                        RoutineAction::Add { name, minutes } => {
+                            let name = name.join(" ");
+                            let steps = planner.get_routine_steps()?;
+                            let next_order = steps.iter().map(|s| s.step_order).max().unwrap_or(0) + 1;
+                            let id = planner.add_routine_step(&name, next_order, minutes)?;
+                            println!("Routine step added (id={}, order={})", id, next_order);
+                        }
+                        RoutineAction::Remove { id } => {
+                            planner.remove_routine_step(id)?;
+                            println!("Routine step {} removed.", id);
+                        }
+                    }
+                }
+            }
+        }
+        Command::Calendar { action } => {
+            let storage = Storage::open(&db_path)?;
+            match action {
+                CalendarAction::Sync => {
+                    let caldav_url = std::env::var("CALDAV_URL")
+                        .map_err(|_| anyhow::anyhow!("CALDAV_URL not set in .env"))?;
+                    let username = std::env::var("CALDAV_USERNAME")
+                        .map_err(|_| anyhow::anyhow!("CALDAV_USERNAME not set in .env"))?;
+                    let password = std::env::var("CALDAV_PASSWORD")
+                        .map_err(|_| anyhow::anyhow!("CALDAV_PASSWORD not set in .env"))?;
+
+                    println!("Syncing from {}...", caldav_url);
+                    let client = calendar::CalDavClient::new(caldav_url, username, password);
+                    let events = client.sync().await?;
+
+                    storage.delete_calendar_events_by_source("caldav")?;
+                    for event in &events {
+                        storage.upsert_calendar_event(event)?;
+                    }
+
+                    println!("Synced {} events.", events.len());
+                }
+                CalendarAction::Today => {
+                    let events = storage.get_today_events()?;
+                    if events.is_empty() {
+                        println!("No events today.");
+                    } else {
+                        println!("Today's events:");
+                        for e in &events {
+                            let time = if e.all_day {
+                                "🌞 Journée".into()
+                            } else {
+                                format!("{}–{}",
+                                    e.start_time.format("%H:%M"),
+                                    e.end_time.format("%H:%M"))
+                            };
+                            let title = e.summary.as_deref().unwrap_or("(sans titre)");
+                            println!("  {}  {}", time, title);
+                        }
+                    }
+                }
+                CalendarAction::Upcoming { count } => {
+                    let events = storage.get_upcoming_events(count)?;
+                    if events.is_empty() {
+                        println!("No upcoming events.");
+                    } else {
+                        println!("Upcoming events:");
+                        for e in &events {
+                            let day = e.start_time.format("%a %d/%m").to_string();
+                            let time = if e.all_day {
+                                "Journée".into()
+                            } else {
+                                e.start_time.format("%H:%M").to_string()
+                            };
+                            let title = e.summary.as_deref().unwrap_or("(sans titre)");
+                            println!("  {} {}  {}", day, time, title);
                         }
                     }
                 }

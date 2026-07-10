@@ -52,8 +52,10 @@ impl AdzunaCollector {
     }
 
     fn build_url(&self, country: &str, page: u32) -> String {
+        // permanent=1 → CDI only (pas de freelance/contract) ; category=it-jobs → tech only.
+        // Pas de content-type ni full_description : Adzuna renvoie 400 sur ces params.
         format!(
-            "https://api.adzuna.com/v1/api/jobs/{country}/search/{page}?app_id={}&app_key={}&results_per_page=50&content-type=application/json&full_description=1",
+            "https://api.adzuna.com/v1/api/jobs/{country}/search/{page}?app_id={}&app_key={}&results_per_page=50&permanent=1&category=it-jobs",
             self.app_id, self.app_key, country = country, page = page
         )
     }
@@ -62,19 +64,6 @@ impl AdzunaCollector {
         DateTime::parse_from_rfc3339(s).ok().map(|dt| dt.with_timezone(&Utc))
     }
 
-    fn map_country_code(code: &str) -> &str {
-        match code {
-            "ch" => "CH",
-            "de" => "DE",
-            "at" => "AT",
-            "nl" => "NL",
-            "be" => "BE",
-            "fr" => "FR",
-            "lu" => "LU",
-            "gb" => "GB",
-            _ => code,
-        }
-    }
 }
 
 #[async_trait]
@@ -87,7 +76,8 @@ impl Collector for AdzunaCollector {
         let mut all = Vec::new();
 
         for country in &self.countries {
-            for page in 1..=3 {
+            // 2 pages/pays (limite volontaire).
+            for page in 1..=2 {
                 let url = self.build_url(country, page);
                 let resp = self.client.get(&url).send().await;
 
@@ -107,7 +97,7 @@ impl Collector for AdzunaCollector {
                                 url: job.redirect_url,
                                 location: job.location
                                     .and_then(|l| l.area.first().cloned()),
-                                country: Some(Self::map_country_code(country).to_string()),
+                                country: Some(country.to_uppercase()),
                                 salary_min: job.salary_min.map(|s| s as u32),
                                 salary_max: job.salary_max.map(|s| s as u32),
                                 currency: job.salary_currency,
@@ -150,13 +140,6 @@ mod tests {
     #[test]
     fn test_parse_datetime_invalid() {
         assert!(AdzunaCollector::parse_datetime("not-a-date").is_none());
-    }
-
-    #[test]
-    fn test_map_country_code() {
-        assert_eq!(AdzunaCollector::map_country_code("ch"), "CH");
-        assert_eq!(AdzunaCollector::map_country_code("fr"), "FR");
-        assert_eq!(AdzunaCollector::map_country_code("gb"), "GB");
     }
 
     #[test]
