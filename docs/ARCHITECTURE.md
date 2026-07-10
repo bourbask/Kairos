@@ -1,5 +1,7 @@
 # Architecture — Kairos
 
+> ⚠️ **Recalibré le 2026-07-09.** Décisions techniques à jour dans [`docs/recalibration/`](recalibration/). Certaines lignes ci-dessous peuvent refléter des hypothèses obsolètes (chemin cloud, routeur LLM, rétention) — pour l'archi cible, la source de vérité est le dossier recalibration.
+
 **Stack** : Rust 2024, VPS, SQLite, Ollama
 
 ---
@@ -113,6 +115,8 @@ kairos/
 │   │   └── remotive.rs      # Remotive API — unlimited, remote-only
 │   ├── planning/
 │   │   ├── mod.rs           # Planner : task CRUD, routine management
+│   ├── calendar/
+│   │   ├── mod.rs           # CalDAV sync + ICS parsing
 │   ├── matching.rs          # Weighted scoring, inter-batch deduplication [3 tests]
 │   ├── ranker.rs            # Top N unseen (orchestrates score + storage)
 │   ├── enrichment.rs        # Company enrichment [tested]
@@ -235,7 +239,7 @@ CREATE TABLE routine_log (
 - `presente = 1` after briefing inclusion → never shown again
 - Tasks support priority sorting (high → medium → low)
 - Routine log per date tracks morning routine completion
-- No automatic deletion — full history kept
+- Retention — deux classes : données éphémères (notes, RDV) archivées puis supprimées ; données durables/sensibles chiffrées et déportées vers un stockage externe (stub + résumé conservés localement).
 
 ---
 

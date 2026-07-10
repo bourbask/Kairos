@@ -1,4 +1,4 @@
-use chrono::{DateTime, NaiveDate, Utc};
+use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,13 +44,6 @@ pub struct EnrichedCompany {
     pub executive: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DailyBriefing {
-    pub date: chrono::NaiveDate,
-    pub jobs: Vec<ScoredJob>,
-    pub enrichment: Vec<(String, EnrichedCompany)>,
-}
-
 // --- Planning / Agenda ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -81,4 +74,25 @@ pub struct RoutineLogEntry {
     pub routine_step_id: i64,
     pub completed: bool,
     pub completed_at: Option<NaiveDate>,
+}
+
+// --- Calendar ---
+
+#[derive(Debug, Clone)]
+pub struct CalendarEvent {
+    pub uid: String,
+    pub summary: Option<String>,
+    pub description: Option<String>,
+    pub location: Option<String>,
+    pub start_time: NaiveDateTime,
+    pub end_time: NaiveDateTime,
+    pub all_day: bool,
+    pub source: String,
+    pub etag: Option<String>,
+}
+
+impl CalendarEvent {
+    pub fn duration_minutes(&self) -> i64 {
+        (self.end_time - self.start_time).num_minutes()
+    }
 }

@@ -1,0 +1,14 @@
+[Unit]
+Description=Kairos — génération du briefing du matin (oneshot)
+After=network-online.target kairos-scrape.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=__USER__
+WorkingDirectory=__KAIROS_DIR__
+EnvironmentFile=/etc/kairos/kairos.env
+ExecStart=__KAIROS_DIR__/kairos briefing
+Nice=10
+NoNewPrivileges=true
+PrivateTmp=true

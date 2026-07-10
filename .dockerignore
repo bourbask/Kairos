@@ -1,0 +1,8 @@
+# Contexte de build minimal : on ne veut que Cargo.*, src/ (+ le reste léger).
+target/
+.git/
+data/
+briefings/
+logs/
+**/*.db
+private/

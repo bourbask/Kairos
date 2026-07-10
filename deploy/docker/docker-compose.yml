@@ -1,0 +1,55 @@
+name: kairos
+
+# Config commune aux conteneurs Kairos (scheduler + runs manuels).
+x-kairos-common: &kairos-common
+  image: kairos:local
+  user: "1001:1001"             # conteneurs non-root : fichiers créés = propriété de l'utilisateur hôte
+  environment:
+    OLLAMA_URL: http://ollama:11434
+    OLLAMA_MODEL: phi3:mini
+    DATABASE_PATH: /app/data/kairos.db
+    BRIEFINGS_DIR: /app/briefings
+    TZ: Europe/Paris          # fuseau de planification
+  env_file:
+    - path: kairos.env          # secrets optionnels (gitignoré) — cf. ../kairos.env.example
+      required: false
+  volumes:
+    - ../../config:/app/config:ro      # profile.toml (gitignoré, présent sur l'hôte)
+    - ../../data:/app/data             # SQLite (bind-mount)
+    - ../../briefings:/app/briefings   # briefings lisibles/gérables sur l'hôte
+  depends_on:
+    ollama:
+      condition: service_healthy
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    volumes:
+      - ollama-models:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    # Pas de `ports:` → Ollama joignable uniquement sur le réseau interne du compose.
+
+  # Planificateur interne (supercronic) : scrape 04:30, briefing 05:00. Toujours actif.
+  scheduler:
+    <<: *kairos-common
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    restart: unless-stopped
+    init: true                    # tini en PID 1 → supercronic n'est pas PID 1 (évite son reaper qui plante)
+    entrypoint: ["supercronic"]
+    command: ["/app/supercronic.crontab"]
+
+  # Exécutions manuelles : `docker compose run --rm kairos <scrape|briefing|status|prompt ...>`
+  kairos:
+    <<: *kairos-common
+    profiles: ["tools"]
+
+volumes:
+  ollama-models:

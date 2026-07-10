@@ -27,7 +27,7 @@ status:
 clean:
 	cargo clean
 
-# Cross-compilation pour VPS Linux x86_64 (depuis Mac/autre)
+# Cross-compilation Linux x86_64.
 build-linux:
 	cargo build --release --target x86_64-unknown-linux-gnu
 

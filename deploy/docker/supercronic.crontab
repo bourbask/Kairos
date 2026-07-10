@@ -1,0 +1,4 @@
+# supercronic — exécuté DANS le conteneur `scheduler` (env + volumes fournis par compose).
+# Planification interne (fuseau via la variable TZ).
+30 4 * * * /app/kairos scrape
+0 5 * * * /app/kairos briefing

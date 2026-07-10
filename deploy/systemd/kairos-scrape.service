@@ -1,0 +1,15 @@
+[Unit]
+Description=Kairos — collecte des offres d'emploi (oneshot)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=__USER__
+WorkingDirectory=__KAIROS_DIR__
+EnvironmentFile=/etc/kairos/kairos.env
+ExecStart=__KAIROS_DIR__/kairos scrape
+Nice=10
+# Durcissement léger
+NoNewPrivileges=true
+PrivateTmp=true

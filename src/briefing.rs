@@ -1,6 +1,22 @@
 use std::path::PathBuf;
 use chrono::NaiveDate;
-use crate::models::{ScoredJob, EnrichedCompany, Task, Routine, RoutineLogEntry};
+use crate::models::{ScoredJob, EnrichedCompany, Task, Routine, RoutineLogEntry, CalendarEvent};
+
+/// Neutralise un champ externe non fiable avant rendu Markdown : retire les
+/// caractères de contrôle, remplace les métacaractères (liens, mentions, code,
+/// emphase) par des espaces, borne la longueur. Anti-injection de liens/mentions.
+fn sanitize(s: &str) -> String {
+    s.chars()
+        .filter(|c| !c.is_control())
+        .map(|c| match c {
+            '[' | ']' | '(' | ')' | '`' | '*' | '_' | '@' | '<' | '>' | '\\' | '#' | '|' | '~' => ' ',
+            other => other,
+        })
+        .take(500)
+        .collect::<String>()
+        .trim()
+        .to_string()
+}
 
 pub struct BriefingGenerator {
     output_dir: PathBuf,
@@ -17,7 +33,7 @@ impl BriefingGenerator {
         jobs: &[ScoredJob],
         enrichment: &[(String, EnrichedCompany)],
     ) -> anyhow::Result<String> {
-        self.generate_with_planning(date, jobs, enrichment, None, None, None)
+        self.generate_with_planning(date, jobs, enrichment, None, None, None, None)
     }
 
     pub fn generate_with_planning(
@@ -28,9 +44,32 @@ impl BriefingGenerator {
         today_tasks: Option<&[Task]>,
         pending_tasks: Option<&[Task]>,
         today_routine: Option<&[(Routine, RoutineLogEntry)]>,
+        today_events: Option<&[CalendarEvent]>,
     ) -> anyhow::Result<String> {
         let mut content = String::new();
         content.push_str(&format!("# Briefing — {}\n\n", date.format("%Y-%m-%d")));
+
+        // --- Calendar events section ---
+        if let Some(events) = today_events {
+            if !events.is_empty() {
+                content.push_str("## Agenda\n\n");
+                for e in events {
+                    let time = if e.all_day {
+                        "🌞".into()
+                    } else {
+                        format!("{}–{}",
+                            e.start_time.format("%H:%M"),
+                            e.end_time.format("%H:%M"))
+                    };
+                    let title = e.summary.as_deref().unwrap_or("(sans titre)");
+                    content.push_str(&format!("- **{}** {}\n", time, title));
+                    if let Some(ref loc) = e.location {
+                        content.push_str(&format!("  _{}_\n", loc));
+                    }
+                }
+                content.push('\n');
+            }
+        }
 
         // --- Planning section ---
         if let Some(routine) = today_routine {
@@ -86,14 +125,14 @@ impl BriefingGenerator {
         for (i, job) in jobs.iter().enumerate() {
             let o = &job.offer;
 
-            content.push_str(&format!("### {}. {} — {}\n\n", i + 1, o.title, o.company));
+            content.push_str(&format!("### {}. {} — {}\n\n", i + 1, sanitize(&o.title), sanitize(&o.company)));
 
             if let Some(ref enr) = enrichment.iter().find(|(id, _)| id == &o.id).map(|(_, e)| e) {
                 if let Some(ref site) = enr.website {
                     content.push_str(&format!("**Site :** {}\n", site));
                 }
                 if let Some(ref desc) = enr.description {
-                    content.push_str(&format!("**À propos :** {}\n", desc));
+                    content.push_str(&format!("**À propos :** {}\n", sanitize(desc)));
                 }
                 if let Some(ref rev) = enr.revenue {
                     content.push_str(&format!("**CA :** {}\n", rev));
@@ -102,7 +141,7 @@ impl BriefingGenerator {
                     content.push_str(&format!("**Effectifs :** {}\n", emp));
                 }
                 if let Some(ref exec) = enr.executive {
-                    content.push_str(&format!("**Dirigeant :** {}\n", exec));
+                    content.push_str(&format!("**Dirigeant :** {}\n", sanitize(exec)));
                 }
             }
 
@@ -112,7 +151,7 @@ impl BriefingGenerator {
                     .map(|s| s.to_string())
                     .unwrap_or_else(|| "? ".into()),
                 o.currency.as_deref().unwrap_or("EUR"),
-                o.location.as_deref().unwrap_or("Full remote"),
+                sanitize(o.location.as_deref().unwrap_or("Full remote")),
             ));
 
             content.push_str(&format!("**Candidature :** {}\n", o.url));
@@ -236,6 +275,7 @@ mod tests {
             Some(&[task]),
             Some(&[]),
             Some(&[(routine_step, routine_log)]),
+            None,
         ).unwrap();
 
         assert!(content.contains("Routine matinale"));
