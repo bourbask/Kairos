@@ -113,7 +113,7 @@ impl Storage {
                 start_time TEXT NOT NULL,
                 end_time TEXT NOT NULL,
                 all_day INTEGER DEFAULT 0,
-                source TEXT DEFAULT 'caldav',
+                source TEXT DEFAULT 'calendar',
                 etag TEXT,
                 last_synced TEXT NOT NULL
             );

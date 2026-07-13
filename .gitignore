@@ -1,31 +1,20 @@
 /target
 
-# Secrets — jamais commités
+# Secrets
 .env
 
-# Données personnelles — rester privé (utiliser les fichiers .example)
+# Config et fichiers locaux (voir les *.example)
 config/profile.toml
 OBJECTIVES.md
-
-# Base de données locale (recréée par Kairos)
 data/kairos.db
 data/*.db
-
-# Briefings générés (output, pas source)
 briefings/
-
-# Logs
 *.log
 logs/
-
-# Notes personnelles (non publiées)
 private/
 
-# Secrets du déploiement Docker (local, non versionné)
+# Config et secrets locaux du déploiement (garder les *.example)
 deploy/docker/kairos.env
-
-# Notes internes recalibration (gardées hors repo, dans private/)
-docs/recalibration/
-
-# Instructions agents (hors du repo public — synchronisées via un repo privé dédié)
-CLAUDE.md
+deploy/docker/.env
+deploy/docker/radicale/config/config
+deploy/docker/radicale/config/users

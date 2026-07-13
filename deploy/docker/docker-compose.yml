@@ -35,7 +35,17 @@ services:
       start_period: 20s
     # Pas de `ports:` → Ollama joignable uniquement sur le réseau interne du compose.
 
-  # Planificateur interne (supercronic) : scrape 04:30, briefing 05:00. Toujours actif.
+  radicale:
+    image: tomsquest/docker-radicale:latest
+    restart: unless-stopped
+    volumes:
+      - ./radicale/config:/config:ro   # config + auth — hôte uniquement (gitignoré ; cf. config.example)
+      - radicale-data:/data
+    ports:
+      # Adresse de bind configurable ; défaut = boucle locale.
+      - "${RADICALE_BIND_ADDR:-127.0.0.1}:5232:5232"
+
+  # Planificateur interne (supercronic) : scrape 04:30, calendar sync 04:45, briefing 05:00. Toujours actif.
   scheduler:
     <<: *kairos-common
     build:
@@ -53,3 +63,4 @@ services:
 
 volumes:
   ollama-models:
+  radicale-data:

@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use chrono::{NaiveDateTime, DateTime, Utc};
+use chrono::{NaiveDateTime, Utc};
 use serde::Deserialize;
 use crate::collectors::Collector;
 use crate::models::JobOffer;

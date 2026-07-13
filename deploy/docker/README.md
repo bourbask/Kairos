@@ -8,9 +8,10 @@
 - `Dockerfile` — build multi-stage du binaire Rust → image `debian-slim` (+ `supercronic`).
 - `docker-compose.yml` :
   - `ollama` — service persistant, non exposé (réseau interne only) ;
-  - `scheduler` — toujours actif, lance `scrape`/`briefing` via `supercronic` ;
+  - `radicale` — serveur du module calendar ;
+  - `scheduler` — toujours actif, lance `scrape`/`calendar sync`/`briefing` via `supercronic` ;
   - `kairos` — profil `tools`, pour les exécutions manuelles.
-- `supercronic.crontab` — planning interne (scrape 04:30, briefing 05:00, UTC).
+- `supercronic.crontab` — planning interne (scrape 04:30, calendar sync 04:45, briefing 05:00 ; fuseau `TZ`).
 - `kairos.env` (optionnel, gitignoré) — secrets ; copier depuis `../kairos.env.example`.
 
 ## Mise en place (sur le VPS, dans `~/kairos/deploy/docker`)
@@ -36,9 +37,25 @@ docker compose up -d scheduler
 docker compose logs scheduler        # doit lister les 2 jobs chargés
 ```
 
+## Calendar (module optionnel)
+
+Serveur du module calendar. Créer la config d'auth locale, démarrer
+le service, puis renseigner `CALENDAR_*` dans `kairos.env` (URL = collection directe,
+pas le principal) :
+
+```bash
+cd radicale/config && cp config.example config
+# créer le fichier d'auth (cf. config.example)
+docker compose up -d radicale
+docker compose run --rm kairos calendar sync   # vérifie la config
+```
+
+Adresse de bind du serveur configurable via `RADICALE_BIND_ADDR` (défaut : boucle locale).
+Les spécificités d'hôte (exposition réseau, client) restent hors du dépôt public.
+
 ## Notes
 
-- **Planification interne** : le conteneur `scheduler` (supercronic) déclenche les batchs (scrape + briefing).
+- **Planification interne** : le conteneur `scheduler` (supercronic) déclenche les batchs (scrape + calendar sync + briefing).
 - Ollama n'expose **aucun port** (réseau interne compose uniquement).
 - phi3:mini tourne sur CPU (batch nocturne) ; ajouter un `mem_limit` sur `ollama` si besoin.
 - `scrape`/`briefing` **n'utilisent pas** le LLM (matching = règles Rust, enrichissement = scraping). phi3:mini sert au futur `prompt`/analyse privée.

@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use chrono::{DateTime, Utc};
 use crate::models::{JobOffer, ScoredJob};
 use crate::matching::Matcher;
 use crate::storage::Storage;
@@ -23,21 +24,51 @@ impl Ranker {
         scored
     }
 
-    /// Top N offres non présentées, filtrées : score >= MIN_SCORE et hors freelance/contract.
+    /// Top N offres non présentées. Filtres durs : score >= min_score (SQL),
+    /// full remote, hors freelance, hors blacklist. Puis re-rank par score
+    /// pénalisé par l'ancienneté (offres récentes d'abord) — le seuil reste sur
+    /// le score brut, une offre parfaite mais vieille reste éligible, juste rétrogradée.
     pub fn top_unpresented(&self, n: u32) -> Vec<ScoredJob> {
-        // On récupère large au-dessus du seuil, on retire les offres freelance, puis on garde n.
+        // On récupère large au-dessus du seuil, on filtre, on re-classe, puis on garde n.
         let candidates = self.storage
             .get_unpresented_scored(n.saturating_mul(6), self.matcher.min_score())
             .unwrap_or_default();
-        candidates
+
+        let now = Utc::now();
+        let mut kept: Vec<(JobOffer, f64)> = candidates
             .into_iter()
-            .filter(|(offer, _)| !is_freelance(offer) && is_remote(offer))
+            .filter(|(offer, _)| {
+                !is_freelance(offer) && is_remote(offer) && !self.matcher.is_blacklisted(offer)
+            })
+            .collect();
+
+        kept.sort_by(|a, b| {
+            let ea = a.1 * recency_factor(a.0.published_at, now);
+            let eb = b.1 * recency_factor(b.0.published_at, now);
+            eb.partial_cmp(&ea).unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        kept.into_iter()
             .take(n as usize)
             .map(|(offer, score)| {
                 let (_, breakdown) = self.matcher.score_with_breakdown(&offer);
                 ScoredJob { offer, score, breakdown }
             })
             .collect()
+    }
+}
+
+/// Facteur de fraîcheur ∈ [0.7, 1.0] appliqué au score au moment du classement.
+/// Sans date de publication → 1.0 (neutre, fail-open : ne pas enterrer les offres
+/// sans date, ex. ingestion email).
+// ponytail: décroissance linéaire simple sur 30 jours ; ajuster la pente/plancher si besoin.
+fn recency_factor(published_at: Option<DateTime<Utc>>, now: DateTime<Utc>) -> f64 {
+    match published_at {
+        Some(p) => {
+            let age_days = (now - p).num_days().max(0) as f64;
+            1.0 - (age_days.min(30.0) / 30.0) * 0.3
+        }
+        None => 1.0,
     }
 }
 
@@ -100,5 +131,19 @@ mod tests {
         assert!(is_remote(&offer("Dev", "Fully remote position")));
         assert!(!is_remote(&offer("Dev", "On-site in Paris")));
         assert!(!is_remote(&offer("Dev", "Hybrid remote, 3 days office"))); // hybride exclu
+    }
+
+    #[test]
+    fn recency_penalise_les_vieilles() {
+        use super::recency_factor;
+        use chrono::Duration;
+        let now = Utc::now();
+        assert_eq!(recency_factor(None, now), 1.0);                    // pas de date = neutre
+        assert!((recency_factor(Some(now), now) - 1.0).abs() < 1e-9); // frais
+        assert!((recency_factor(Some(now - Duration::days(30)), now) - 0.7).abs() < 1e-6);
+        assert!((recency_factor(Some(now - Duration::days(100)), now) - 0.7).abs() < 1e-6); // plancher
+        // récent > vieux
+        assert!(recency_factor(Some(now - Duration::days(2)), now)
+            > recency_factor(Some(now - Duration::days(20)), now));
     }
 }

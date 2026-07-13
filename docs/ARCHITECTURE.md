@@ -116,7 +116,7 @@ kairos/
 │   ├── planning/
 │   │   ├── mod.rs           # Planner : task CRUD, routine management
 │   ├── calendar/
-│   │   ├── mod.rs           # CalDAV sync + ICS parsing
+│   │   ├── mod.rs           # calendar sync + ICS parsing
 │   ├── matching.rs          # Weighted scoring, inter-batch deduplication [3 tests]
 │   ├── ranker.rs            # Top N unseen (orchestrates score + storage)
 │   ├── enrichment.rs        # Company enrichment [tested]

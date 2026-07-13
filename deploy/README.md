@@ -20,7 +20,7 @@ deploy/
 
 ## Pré-requis
 
-- Serveur accessible en SSH (idéalement via un réseau privé / VPN).
+- Serveur accessible en SSH ; accès distant à restreindre.
 - Rust installé **en local** (le build release se fait sur la machine de dev).
 - Ollama + `phi3:mini` sur le VPS.
 
@@ -77,7 +77,7 @@ Tant que ce gate n'est pas atteint : **gel dur**, aucune nouvelle feature, aucun
 ## Notes
 
 - Timers en `OnCalendar` + `Persistent=true` → rattrapent le run si le VPS était éteint.
-- Réseau : le batch n'écoute sur aucun port ; l'accès distant éventuel se fera via un réseau privé.
+- Réseau : le batch n'écoute sur aucun port entrant ; accès distant éventuel à restreindre.
 - Le briefing rend les sections planning/calendar seulement si des données existent — ces briques
-  sont **gelées** et non alimentées en Sprint 0 (pas de cron CalDAV, pas de seed de routine).
+  sont **gelées** et non alimentées en Sprint 0 (pas de cron de synchro, pas de seed de routine).
 - Sauvegarde : `sqlite3 VACUUM INTO` prévu (procédure interne).

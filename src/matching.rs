@@ -16,6 +16,28 @@ impl Matcher {
         self.profile.preferences.min_score
     }
 
+    /// Filtre négatif : entreprise blacklistée (sous-chaîne du nom) ou mot-clé
+    /// secteur indésirable dans le titre/description. Insensible à la casse.
+    /// Les entrées vides sont ignorées (sinon `""` exclurait toutes les offres).
+    pub fn is_blacklisted(&self, offer: &JobOffer) -> bool {
+        let f = &self.profile.filters;
+        let company = offer.company.to_lowercase();
+        if f.blacklist_companies.iter()
+            .any(|c| !c.is_empty() && company.contains(&c.to_lowercase()))
+        {
+            return true;
+        }
+        if !f.blacklist_keywords.is_empty() {
+            let hay = format!("{} {}", offer.title.to_lowercase(), offer.description.to_lowercase());
+            if f.blacklist_keywords.iter()
+                .any(|k| !k.is_empty() && hay.contains(&k.to_lowercase()))
+            {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Score a single offer against the profile.
     /// Weights: skills 40%, remote 25%, salary 20%, location 15%.
     pub fn score(&self, offer: &JobOffer) -> f64 {
@@ -184,6 +206,32 @@ mod tests {
         );
         let (score, _) = matcher.score_with_breakdown(&offer);
         assert!(score < 0.5, "Score should be low for bad match, got {}", score);
+    }
+
+    #[test]
+    fn blacklist_entreprise_et_mot_cle() {
+        let mut profile = test_profile();
+        profile.filters.blacklist_companies = vec!["EvilCorp".into()];
+        profile.filters.blacklist_keywords = vec!["gambling".into()];
+        let matcher = Matcher::new(profile);
+
+        let mut o = make_offer("Dev", "great job", Some(true), Some("CH"), None, None);
+        assert!(!matcher.is_blacklisted(&o), "rien ne matche");
+        o.company = "EvilCorp GmbH".into();
+        assert!(matcher.is_blacklisted(&o), "entreprise (sous-chaîne, casse)");
+        o.company = "Nice Co".into();
+        o.description = "online GAMBLING platform".into();
+        assert!(matcher.is_blacklisted(&o), "mot-clé secteur");
+    }
+
+    #[test]
+    fn blacklist_vide_nexclut_rien() {
+        // une entrée vide ne doit pas exclure toutes les offres
+        let mut profile = test_profile();
+        profile.filters.blacklist_companies = vec!["".into()];
+        let matcher = Matcher::new(profile);
+        let o = make_offer("Dev", "x", Some(true), Some("CH"), None, None);
+        assert!(!matcher.is_blacklisted(&o));
     }
 
     #[test]

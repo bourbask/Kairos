@@ -9,6 +9,17 @@ pub struct Profile {
     pub preferences: Preferences,
     pub skills: Skills,
     pub experience: Experience,
+    #[serde(default)]
+    pub filters: Filters,
+}
+
+/// Filtrage négatif (optionnel) : sous-chaînes insensibles à la casse.
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct Filters {
+    #[serde(default)]
+    pub blacklist_companies: Vec<String>,
+    #[serde(default)]
+    pub blacklist_keywords: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

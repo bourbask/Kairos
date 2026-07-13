@@ -62,7 +62,7 @@ enum Command {
 
 #[derive(Subcommand)]
 enum CalendarAction {
-    /// Sync events from CalDAV server
+    /// Sync events from the calendar server
     Sync,
     /// List today's events
     Today,
@@ -341,18 +341,18 @@ async fn main() -> anyhow::Result<()> {
             let storage = Storage::open(&db_path)?;
             match action {
                 CalendarAction::Sync => {
-                    let caldav_url = std::env::var("CALDAV_URL")
-                        .map_err(|_| anyhow::anyhow!("CALDAV_URL not set in .env"))?;
-                    let username = std::env::var("CALDAV_USERNAME")
-                        .map_err(|_| anyhow::anyhow!("CALDAV_USERNAME not set in .env"))?;
-                    let password = std::env::var("CALDAV_PASSWORD")
-                        .map_err(|_| anyhow::anyhow!("CALDAV_PASSWORD not set in .env"))?;
+                    let calendar_url = std::env::var("CALENDAR_URL")
+                        .map_err(|_| anyhow::anyhow!("CALENDAR_URL not set in .env"))?;
+                    let username = std::env::var("CALENDAR_USERNAME")
+                        .map_err(|_| anyhow::anyhow!("CALENDAR_USERNAME not set in .env"))?;
+                    let password = std::env::var("CALENDAR_PASSWORD")
+                        .map_err(|_| anyhow::anyhow!("CALENDAR_PASSWORD not set in .env"))?;
 
-                    println!("Syncing from {}...", caldav_url);
-                    let client = calendar::CalDavClient::new(caldav_url, username, password);
+                    println!("Syncing from {}...", calendar_url);
+                    let client = calendar::CalendarClient::new(calendar_url, username, password);
                     let events = client.sync().await?;
 
-                    storage.delete_calendar_events_by_source("caldav")?;
+                    storage.delete_calendar_events_by_source("calendar")?;
                     for event in &events {
                         storage.upsert_calendar_event(event)?;
                     }
