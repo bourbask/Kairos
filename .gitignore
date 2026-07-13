@@ -34,6 +34,3 @@ docs/recalibration/
 
 # Instructions agents (hors du repo public — synchronisées via un repo privé dédié)
 CLAUDE.md
-
-# Config agent locale — hors repo public
-.claude/
