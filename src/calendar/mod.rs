@@ -166,7 +166,7 @@ fn build_event(uid: &str, summary: &str, description: &str, location: &str,
         start_time,
         end_time,
         all_day,
-        source: "caldav".into(),
+        source: "calendar".into(),
         etag: None,
     })
 }
@@ -190,16 +190,16 @@ fn parse_ics_datetime(s: &str, tzid: Option<&str>) -> Option<NaiveDateTime> {
     }
 }
 
-/// CalDAV sync: fetch events from a CalDAV server.
+/// Calendar sync: fetch events from the configured calendar server.
 /// Uses the configured URL, username, password.
-pub struct CalDavClient {
+pub struct CalendarClient {
     url: String,
     username: String,
     password: String,
     client: reqwest::Client,
 }
 
-impl CalDavClient {
+impl CalendarClient {
     pub fn new(url: String, username: String, password: String) -> Self {
         Self {
             url,
@@ -210,7 +210,7 @@ impl CalDavClient {
     }
 
     /// Fetch all events from the configured calendar collection.
-    /// `url` must point directly at the CalDAV calendar collection
+    /// `url` must point directly at the calendar collection
     /// (`http://host:port/user/calendar-id/`). Pas de découverte de principal :
     /// un serveur self-hosted mono-calendrier expose une URL de collection stable,
     /// et la découverte multi-étapes (principal → home-set → énumération) était
@@ -251,13 +251,13 @@ impl CalDavClient {
         let status = resp.status();
         let text = resp.text().await?;
         if !status.is_success() {
-            anyhow::bail!("CalDAV REPORT failed: HTTP {status}");
+            anyhow::bail!("Calendar server REPORT failed: HTTP {status}");
         }
         Ok(text)
     }
 }
 
-/// Extrait chaque bloc VCALENDAR d'une réponse multistatus CalDAV.
+/// Extrait chaque bloc VCALENDAR d'une réponse multistatus.
 /// Le payload `<calendar-data>` est souvent collé à sa balise sur la même ligne
 /// et échappé en XML ; on découpe donc directement sur les marqueurs VCALENDAR
 /// (indépendant du namespace) et on déséchappe les entités avant le parsing ICS.

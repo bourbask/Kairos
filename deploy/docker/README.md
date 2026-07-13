@@ -40,7 +40,7 @@ docker compose logs scheduler        # doit lister les 2 jobs chargés
 ## Calendar (module optionnel)
 
 Serveur du module calendar. Créer la config d'auth locale, démarrer
-le service, puis renseigner `CALDAV_*` dans `kairos.env` (URL = collection directe,
+le service, puis renseigner `CALENDAR_*` dans `kairos.env` (URL = collection directe,
 pas le principal) :
 
 ```bash

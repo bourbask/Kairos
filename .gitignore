@@ -25,7 +25,7 @@ private/
 deploy/docker/kairos.env
 deploy/docker/.env
 
-# Serveur CalDAV local — config + htpasswd sur l'hôte uniquement (garder config.example)
+# Serveur d'agenda local — config + auth sur l'hôte uniquement (garder config.example)
 deploy/docker/radicale/config/config
 deploy/docker/radicale/config/users
 

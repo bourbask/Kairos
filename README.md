@@ -12,7 +12,7 @@ Runs on a VPS 24/7. Produces `~/briefings/YYYY-MM-DD.md` via cron.
 |--------|--------|
 | Job monitoring (Brique 1) | 🟢 MVP |
 | Planning/agenda (Brique 2) | 🟡 In progress |
-| Calendar sync (CalDAV) | 🟡 In progress |
+| Calendar sync | 🟡 In progress |
 | Long-term memory (Brique 3) | 🔲 v1.0 |
 
 ---
@@ -68,7 +68,7 @@ cargo run -- plan add "title"         # add a task
 cargo run -- plan list                # list pending tasks
 cargo run -- plan done <id>           # mark task as done
 cargo run -- plan routine show        # show morning routine
-cargo run -- calendar sync            # sync from CalDAV
+cargo run -- calendar sync            # sync calendar events
 cargo run -- calendar today           # show today's events
 ```
 
