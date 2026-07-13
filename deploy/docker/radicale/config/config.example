@@ -1,7 +1,7 @@
-# Radicale — config serveur CalDAV. Copier en `config` (hôte uniquement, gitignoré).
+# Config serveur — copier en `config` (hôte uniquement, gitignoré).
 #   cp config.example config
 #   htpasswd -B -c users <utilisateur>     # crée le fichier d'auth (bcrypt)
-# Brancher ensuite un client CalDAV sur le serveur pour alimenter l'agenda.
+# Brancher ensuite un client sur le serveur pour alimenter l'agenda.
 
 [server]
 hosts = 0.0.0.0:5232

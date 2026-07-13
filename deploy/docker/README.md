@@ -8,7 +8,7 @@
 - `Dockerfile` — build multi-stage du binaire Rust → image `debian-slim` (+ `supercronic`).
 - `docker-compose.yml` :
   - `ollama` — service persistant, non exposé (réseau interne only) ;
-  - `radicale` — serveur CalDAV du module calendar ;
+  - `radicale` — serveur du module calendar ;
   - `scheduler` — toujours actif, lance `scrape`/`calendar sync`/`briefing` via `supercronic` ;
   - `kairos` — profil `tools`, pour les exécutions manuelles.
 - `supercronic.crontab` — planning interne (scrape 04:30, calendar sync 04:45, briefing 05:00 ; fuseau `TZ`).
@@ -39,7 +39,7 @@ docker compose logs scheduler        # doit lister les 2 jobs chargés
 
 ## Calendar (module optionnel)
 
-Serveur CalDAV pour le module calendar. Créer la config d'auth locale, démarrer
+Serveur du module calendar. Créer la config d'auth locale, démarrer
 le service, puis renseigner `CALDAV_*` dans `kairos.env` (URL = collection directe,
 pas le principal) :
 
