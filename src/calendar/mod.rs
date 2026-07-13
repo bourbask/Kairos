@@ -209,41 +209,23 @@ impl CalDavClient {
         }
     }
 
-    /// Discover the calendar-home-set URL, then fetch all events.
+    /// Fetch all events from the configured calendar collection.
+    /// `url` must point directly at the CalDAV calendar collection
+    /// (`http://host:port/user/calendar-id/`). Pas de découverte de principal :
+    /// un serveur self-hosted mono-calendrier expose une URL de collection stable,
+    /// et la découverte multi-étapes (principal → home-set → énumération) était
+    /// fragile et renvoyait la home (REPORT vide) au lieu de la collection.
     pub async fn sync(&self) -> anyhow::Result<Vec<CalendarEvent>> {
-        let calendar_url = self.discover_calendar().await?;
-        let ics_data = self.fetch_events(&calendar_url).await?;
-        Ok(parse_ics(&ics_data))
+        let xml = self.fetch_events().await?;
+        let mut events = Vec::new();
+        for block in extract_calendar_data(&xml) {
+            events.extend(parse_ics(&block));
+        }
+        Ok(events)
     }
 
-    /// PROPFIND to discover the calendar URL.
-    async fn discover_calendar(&self) -> anyhow::Result<String> {
-        let body = r#"<?xml version="1.0" encoding="utf-8"?>
-<D:propfind xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
-  <D:prop>
-    <C:calendar-home-set/>
-  </D:prop>
-</D:propfind>"#;
-
-        let resp = self.client
-            .request(reqwest::Method::from_bytes(b"PROPFIND").unwrap(), &self.url)
-            .header("Content-Type", "application/xml; charset=utf-8")
-            .header("Depth", "0")
-            .basic_auth(&self.username, Some(&self.password))
-            .body(body)
-            .send()
-            .await?;
-
-        let xml_text = resp.text().await?;
-        let href = extract_href(&xml_text, "calendar-home-set")
-            .or_else(|| extract_first_href(&xml_text))
-            .ok_or_else(|| anyhow::anyhow!("No calendar URL found in CalDAV response"))?;
-
-        Ok(make_absolute(&self.url, &href))
-    }
-
-    /// REPORT to fetch all events from the calendar.
-    async fn fetch_events(&self, calendar_url: &str) -> anyhow::Result<String> {
+    /// REPORT calendar-query : récupère tous les VEVENT de la collection.
+    async fn fetch_events(&self) -> anyhow::Result<String> {
         let body = r#"<?xml version="1.0" encoding="utf-8"?>
 <C:calendar-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
   <D:prop>
@@ -252,15 +234,13 @@ impl CalDavClient {
   </D:prop>
   <C:filter>
     <C:comp-filter name="VCALENDAR">
-      <C:comp-filter name="VEVENT">
-        <C:time-range start="19700101T000000Z"/>
-      </C:comp-filter>
+      <C:comp-filter name="VEVENT"/>
     </C:comp-filter>
   </C:filter>
 </C:calendar-query>"#;
 
         let resp = self.client
-            .request(reqwest::Method::from_bytes(b"REPORT").unwrap(), calendar_url)
+            .request(reqwest::Method::from_bytes(b"REPORT").unwrap(), &self.url)
             .header("Content-Type", "application/xml; charset=utf-8")
             .header("Depth", "1")
             .basic_auth(&self.username, Some(&self.password))
@@ -268,59 +248,45 @@ impl CalDavClient {
             .send()
             .await?;
 
+        let status = resp.status();
         let text = resp.text().await?;
+        if !status.is_success() {
+            anyhow::bail!("CalDAV REPORT failed: HTTP {status}");
+        }
         Ok(text)
     }
 }
 
-/// Extract the first <D:href> inside a <D:propstat> that has a status 200,
-/// but only the one nested inside the given XML tag name.
-fn extract_href(xml: &str, tag: &str) -> Option<String> {
-    // Simple approach: find the tag, then look for <D:href> or <href> after it
-    let search = format!("<C:{}", tag);
-    if let Some(pos) = xml.find(&search) {
-        let after = &xml[pos..];
-        for prefix in &["<D:href>", "<href>", "<d:href>"] {
-            if let Some(hstart) = after.find(prefix) {
-                let start = hstart + prefix.len();
-                let end = after[start..].find("</").unwrap_or(0);
-                if end > 0 {
-                    return Some(after[start..start+end].to_string());
-                }
+/// Extrait chaque bloc VCALENDAR d'une réponse multistatus CalDAV.
+/// Le payload `<calendar-data>` est souvent collé à sa balise sur la même ligne
+/// et échappé en XML ; on découpe donc directement sur les marqueurs VCALENDAR
+/// (indépendant du namespace) et on déséchappe les entités avant le parsing ICS.
+fn extract_calendar_data(xml: &str) -> Vec<String> {
+    let mut blocks = Vec::new();
+    let mut rest = xml;
+    while let Some(b) = rest.find("BEGIN:VCALENDAR") {
+        let after = &rest[b..];
+        match after.find("END:VCALENDAR") {
+            Some(e_rel) => {
+                let end = e_rel + "END:VCALENDAR".len();
+                blocks.push(xml_unescape(&after[..end]));
+                rest = &after[end..];
             }
+            None => break,
         }
     }
-    None
+    blocks
 }
 
-/// Fallback: extract the first href from the response.
-fn extract_first_href(xml: &str) -> Option<String> {
-    for prefix in &["<D:href>", "<href>", "<d:href>"] {
-        if let Some(hstart) = xml.find(prefix) {
-            let start = hstart + prefix.len();
-            let rest = &xml[start..];
-            let end = rest.find("</").unwrap_or(0);
-            if end > 0 {
-                return Some(rest[..end].to_string());
-            }
-        }
-    }
-    None
-}
-
-/// Make a relative href absolute using the base URL.
-fn make_absolute(base: &str, href: &str) -> String {
-    if href.starts_with("http://") || href.starts_with("https://") {
-        return href.to_string();
-    }
-    // Remove trailing path from base, append href
-    let base = if let Some(pos) = base.rfind('/') {
-        if pos > 8 { &base[..pos+1] } else { base }
-    } else {
-        base
-    };
-    let href = href.trim_start_matches('/');
-    format!("{}{}", base, href)
+/// Déséchappe les entités XML d'un payload calendar-data. `&amp;` en dernier
+/// pour ne pas re-déséchapper une entité déjà décodée.
+fn xml_unescape(s: &str) -> String {
+    s.replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&apos;", "'")
+        .replace("&amp;", "&")
 }
 
 #[cfg(test)]
@@ -456,5 +422,29 @@ END:VCALENDAR"#;
         let events2 = parse_ics(ics2);
         assert_eq!(events2.len(), 1);
         assert_eq!(events2[0].start_time.format("%H:%M").to_string(), "15:00");
+    }
+
+    #[test]
+    fn test_extract_and_parse_radicale_report() {
+        // Réponse REPORT calendar-query réelle capturée depuis Radicale :
+        // namespace par défaut DAV: sans préfixe, calendar-data collé à sa balise
+        // et échappé en XML. Régression contre les deux bugs (BEGIN collé + namespace).
+        let xml = "<?xml version='1.0' encoding='utf-8'?>\n<multistatus xmlns=\"DAV:\" xmlns:C=\"urn:ietf:params:xml:ns:caldav\"><response><href>/test/mycal/ev-allday.ics</href><propstat><prop><getetag>\"x\"</getetag><C:calendar-data>BEGIN:VCALENDAR\nVERSION:2.0\nBEGIN:VEVENT\nUID:ev-allday-1\nDTSTART;VALUE=DATE:20260713\nDTEND;VALUE=DATE:20260714\nSUMMARY:Cong&amp;\nEND:VEVENT\nEND:VCALENDAR\n</C:calendar-data></prop><status>HTTP/1.1 200 OK</status></propstat></response><response><href>/test/mycal/ev-timed.ics</href><propstat><prop><C:calendar-data>BEGIN:VCALENDAR\nVERSION:2.0\nBEGIN:VEVENT\nUID:ev-timed-1\nDTSTART:20260713T090000Z\nDTEND:20260713T100000Z\nLOCATION:Visio\nSUMMARY:Standup\nEND:VEVENT\nEND:VCALENDAR\n</C:calendar-data></prop><status>HTTP/1.1 200 OK</status></propstat></response></multistatus>";
+
+        let blocks = extract_calendar_data(xml);
+        assert_eq!(blocks.len(), 2, "deux blocs VCALENDAR attendus");
+
+        let events: Vec<_> = blocks.iter().flat_map(|b| parse_ics(b)).collect();
+        assert_eq!(events.len(), 2, "deux VEVENT parsés");
+
+        let allday = events.iter().find(|e| e.uid == "ev-allday-1").unwrap();
+        assert!(allday.all_day);
+        assert_eq!(allday.summary.as_deref(), Some("Cong&")); // &amp; déséchappé
+
+        let timed = events.iter().find(|e| e.uid == "ev-timed-1").unwrap();
+        assert!(!timed.all_day);
+        // 09:00 UTC en juillet = 11:00 Paris (CEST)
+        assert_eq!(timed.start_time.format("%H:%M").to_string(), "11:00");
+        assert_eq!(timed.location.as_deref(), Some("Visio"));
     }
 }

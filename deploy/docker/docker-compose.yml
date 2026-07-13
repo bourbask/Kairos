@@ -35,7 +35,21 @@ services:
       start_period: 20s
     # Pas de `ports:` → Ollama joignable uniquement sur le réseau interne du compose.
 
-  # Planificateur interne (supercronic) : scrape 04:30, briefing 05:00. Toujours actif.
+  # Serveur CalDAV self-hosted (brique calendar). Alimenté par un client CalDAV
+  # côté utilisateur ; Kairos le lit en interne (http://radicale:5232) pour la
+  # section Agenda du briefing.
+  radicale:
+    image: tomsquest/docker-radicale:latest
+    restart: unless-stopped
+    volumes:
+      - ./radicale/config:/config:ro   # config + users (htpasswd) — gitignoré, sur l'hôte (cf. radicale/config/config.example)
+      - radicale-data:/data
+    ports:
+      # Exposé au client CalDAV sur l'IP tailnet uniquement (défaut localhost si
+      # TAILNET_IP non défini). Jamais public : le tailnet chiffre et authentifie.
+      - "${TAILNET_IP:-127.0.0.1}:5232:5232"
+
+  # Planificateur interne (supercronic) : scrape 04:30, calendar sync 04:45, briefing 05:00. Toujours actif.
   scheduler:
     <<: *kairos-common
     build:
@@ -53,3 +67,4 @@ services:
 
 volumes:
   ollama-models:
+  radicale-data:

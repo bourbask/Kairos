@@ -23,6 +23,11 @@ private/
 
 # Secrets du déploiement Docker (local, non versionné)
 deploy/docker/kairos.env
+deploy/docker/.env
+
+# Serveur CalDAV local — config + htpasswd sur l'hôte uniquement (garder config.example)
+deploy/docker/radicale/config/config
+deploy/docker/radicale/config/users
 
 # Notes internes recalibration (gardées hors repo, dans private/)
 docs/recalibration/

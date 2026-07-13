@@ -8,9 +8,10 @@
 - `Dockerfile` — build multi-stage du binaire Rust → image `debian-slim` (+ `supercronic`).
 - `docker-compose.yml` :
   - `ollama` — service persistant, non exposé (réseau interne only) ;
-  - `scheduler` — toujours actif, lance `scrape`/`briefing` via `supercronic` ;
+  - `radicale` — serveur CalDAV self-hosted (brique calendar), exposé au client sur l'IP tailnet uniquement ;
+  - `scheduler` — toujours actif, lance `scrape`/`calendar sync`/`briefing` via `supercronic` ;
   - `kairos` — profil `tools`, pour les exécutions manuelles.
-- `supercronic.crontab` — planning interne (scrape 04:30, briefing 05:00, UTC).
+- `supercronic.crontab` — planning interne (scrape 04:30, calendar sync 04:45, briefing 05:00 ; fuseau `TZ`).
 - `kairos.env` (optionnel, gitignoré) — secrets ; copier depuis `../kairos.env.example`.
 
 ## Mise en place (sur le VPS, dans `~/kairos/deploy/docker`)
@@ -36,9 +37,27 @@ docker compose up -d scheduler
 docker compose logs scheduler        # doit lister les 2 jobs chargés
 ```
 
+## Calendar (Radicale) — optionnel
+
+```bash
+cd ~/kairos/deploy/docker/radicale/config
+cp config.example config
+htpasswd -B -c users <utilisateur>          # crée le compte CalDAV (bcrypt)
+
+# exposer au client sur le tailnet (sinon localhost)
+echo "TAILNET_IP=<ip-tailnet-du-vps>" >> ~/kairos/deploy/docker/.env
+
+docker compose up -d radicale
+```
+
+Puis dans `kairos.env` : `CALDAV_URL=http://radicale:5232/<utilisateur>/<calendrier>/`,
+`CALDAV_USERNAME`, `CALDAV_PASSWORD`. Brancher un client CalDAV (DAVx5, Thunderbird)
+sur `http://<ip-tailnet>:5232/` pour alimenter l'agenda. L'URL Kairos vise la **collection
+directe**, pas le principal. Vérifier : `docker compose run --rm kairos calendar sync`.
+
 ## Notes
 
-- **Planification interne** : le conteneur `scheduler` (supercronic) déclenche les batchs (scrape + briefing).
+- **Planification interne** : le conteneur `scheduler` (supercronic) déclenche les batchs (scrape + calendar sync + briefing).
 - Ollama n'expose **aucun port** (réseau interne compose uniquement).
 - phi3:mini tourne sur CPU (batch nocturne) ; ajouter un `mem_limit` sur `ollama` si besoin.
 - `scrape`/`briefing` **n'utilisent pas** le LLM (matching = règles Rust, enrichissement = scraping). phi3:mini sert au futur `prompt`/analyse privée.
