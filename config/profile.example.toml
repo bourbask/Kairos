@@ -31,3 +31,8 @@ learning = []
 years = 5
 current_role = "Développeur"
 current_company = "Entreprise"
+
+[filters]
+# Filtrage négatif (optionnel). Sous-chaînes insensibles à la casse.
+blacklist_companies = []   # ex. ["ACME", "Foo Corp"] — exclut par nom d'entreprise
+blacklist_keywords = []    # ex. ["gambling", "crypto"] — exclut par secteur/terme dans titre/description
