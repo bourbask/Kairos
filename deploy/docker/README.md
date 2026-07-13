@@ -8,7 +8,7 @@
 - `Dockerfile` — build multi-stage du binaire Rust → image `debian-slim` (+ `supercronic`).
 - `docker-compose.yml` :
   - `ollama` — service persistant, non exposé (réseau interne only) ;
-  - `radicale` — serveur CalDAV self-hosted (brique calendar), exposé au client sur l'IP tailnet uniquement ;
+  - `radicale` — serveur CalDAV du module calendar ;
   - `scheduler` — toujours actif, lance `scrape`/`calendar sync`/`briefing` via `supercronic` ;
   - `kairos` — profil `tools`, pour les exécutions manuelles.
 - `supercronic.crontab` — planning interne (scrape 04:30, calendar sync 04:45, briefing 05:00 ; fuseau `TZ`).
@@ -37,23 +37,21 @@ docker compose up -d scheduler
 docker compose logs scheduler        # doit lister les 2 jobs chargés
 ```
 
-## Calendar (Radicale) — optionnel
+## Calendar (module optionnel)
+
+Serveur CalDAV pour le module calendar. Créer la config d'auth locale, démarrer
+le service, puis renseigner `CALDAV_*` dans `kairos.env` (URL = collection directe,
+pas le principal) :
 
 ```bash
-cd ~/kairos/deploy/docker/radicale/config
-cp config.example config
-htpasswd -B -c users <utilisateur>          # crée le compte CalDAV (bcrypt)
-
-# exposer au client sur le tailnet (sinon localhost)
-echo "TAILNET_IP=<ip-tailnet-du-vps>" >> ~/kairos/deploy/docker/.env
-
+cd radicale/config && cp config.example config
+# créer le fichier d'auth (cf. config.example)
 docker compose up -d radicale
+docker compose run --rm kairos calendar sync   # vérifie la config
 ```
 
-Puis dans `kairos.env` : `CALDAV_URL=http://radicale:5232/<utilisateur>/<calendrier>/`,
-`CALDAV_USERNAME`, `CALDAV_PASSWORD`. Brancher un client CalDAV (DAVx5, Thunderbird)
-sur `http://<ip-tailnet>:5232/` pour alimenter l'agenda. L'URL Kairos vise la **collection
-directe**, pas le principal. Vérifier : `docker compose run --rm kairos calendar sync`.
+Adresse de bind du serveur configurable via `RADICALE_BIND_ADDR` (défaut : boucle locale).
+Les spécificités d'hôte (exposition réseau, client) restent hors du dépôt public.
 
 ## Notes
 
