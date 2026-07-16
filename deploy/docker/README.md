@@ -71,10 +71,11 @@ NTFY_TOPIC=<chaîne aléatoire imprononçable>   # ntfy n'a pas d'auth par défa
 `NTFY_URL` est déjà fixé en interne (`http://ntfy`) dans `docker-compose.yml` — ne pas le redéfinir dans `kairos.env`.
 
 Côté téléphone (app [ntfy](https://ntfy.sh/) — Android/iOS/web) : ajouter un serveur self-hosted
-pointant sur l'adresse tailnet du VPS (`http://<IP-tailnet>` ou nom MagicDNS), puis s'abonner au topic
-défini ci-dessus. Aucune configuration réseau supplémentaire si le téléphone est déjà un nœud du tailnet.
+pointant sur l'adresse tailnet du VPS (`http://<IP-tailnet>:8090` ou nom MagicDNS), puis s'abonner au
+topic défini ci-dessus. Aucune configuration réseau supplémentaire si le téléphone est déjà un nœud du tailnet.
 
-Adresse de bind du serveur configurable via `NTFY_BIND_ADDR` (défaut : boucle locale) — même
+Adresse/port de bind du serveur configurables via `NTFY_BIND_ADDR`/`NTFY_BIND_PORT`
+(défaut : boucle locale, port `8090` — le port 80 est déjà pris par Traefik sur cet hôte) — même
 convention que `RADICALE_BIND_ADDR`.
 
 ## Notes

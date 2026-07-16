@@ -51,8 +51,9 @@ services:
     restart: unless-stopped
     command: serve
     ports:
-      # Adresse de bind configurable (app mobile ntfy) ; défaut = boucle locale.
-      - "${NTFY_BIND_ADDR:-127.0.0.1}:80:80"
+      # Adresse/port de bind configurables (app mobile ntfy) ; défaut = boucle locale.
+      # Port hôte 8090 (pas 80) : Traefik occupe déjà le port 80 sur cet hôte.
+      - "${NTFY_BIND_ADDR:-127.0.0.1}:${NTFY_BIND_PORT:-8090}:80"
     # ponytail : pas de cache persistant (in-memory only) — ajouter un volume si des messages
     # doivent survivre à un redémarrage / être livrés à un appareil hors-ligne au-delà de la session.
 
