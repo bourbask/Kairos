@@ -62,17 +62,27 @@ Serveur ntfy self-hosted pour l'alerte "offre forte" (score > 0.9), séparée du
 docker compose up -d ntfy
 ```
 
+Auth activée (`NTFY_AUTH_DEFAULT_ACCESS=deny-all`) — un user + un token à créer une fois :
+
+```bash
+docker compose exec ntfy ntfy user add --role=user kairos     # mot de passe demandé (peu importe, non utilisé)
+docker compose exec ntfy ntfy access kairos <topic> rw        # <topic> = nom choisi, ex. kairos-alertes
+docker compose exec ntfy ntfy token add kairos                 # affiche le token à copier
+```
+
 Renseigner dans `kairos.env` :
 
 ```
-NTFY_TOPIC=<chaîne aléatoire imprononçable>   # ntfy n'a pas d'auth par défaut : le nom du topic EST le secret
+NTFY_TOPIC=<topic choisi ci-dessus>
+NTFY_TOKEN=<token généré ci-dessus>
 ```
 
 `NTFY_URL` est déjà fixé en interne (`http://ntfy`) dans `docker-compose.yml` — ne pas le redéfinir dans `kairos.env`.
 
 Côté téléphone (app [ntfy](https://ntfy.sh/) — Android/iOS/web) : ajouter un serveur self-hosted
-pointant sur l'adresse tailnet du VPS (`http://<IP-tailnet>:8090` ou nom MagicDNS), puis s'abonner au
-topic défini ci-dessus. Aucune configuration réseau supplémentaire si le téléphone est déjà un nœud du tailnet.
+pointant sur l'adresse tailnet du VPS (`http://<IP-tailnet>:8090` ou nom MagicDNS), s'authentifier avec
+le même token (champ "Access token" dans les paramètres du serveur), puis s'abonner au topic. Aucune
+configuration réseau supplémentaire si le téléphone est déjà un nœud du tailnet.
 
 Adresse/port de bind du serveur configurables via `NTFY_BIND_ADDR`/`NTFY_BIND_PORT`
 (défaut : boucle locale, port `8090` — le port 80 est déjà pris par Traefik sur cet hôte) — même

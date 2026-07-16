@@ -34,13 +34,16 @@ pub async fn ntfy(title: &str, message: &str) -> anyhow::Result<bool> {
     // Titre en query param (pas en header) : les headers HTTP rejettent l'UTF-8 non-ASCII,
     // or titre/entreprise proviennent d'offres externes non fiables (accents, etc.).
     let url = format!("{}/{topic}", base.trim_end_matches('/'));
-    let resp = reqwest::Client::new()
+    let mut req = reqwest::Client::new()
         .post(&url)
         .query(&[("title", title)])
-        .header("Priority", "high")
-        .body(message.to_string())
-        .send()
-        .await?;
+        .header("Priority", "high");
+    if let Ok(token) = std::env::var("NTFY_TOKEN") {
+        if !token.is_empty() {
+            req = req.bearer_auth(token);
+        }
+    }
+    let resp = req.body(message.to_string()).send().await?;
     if !resp.status().is_success() {
         let status = resp.status();
         anyhow::bail!("ntfy HTTP {status}: {}", resp.text().await.unwrap_or_default());

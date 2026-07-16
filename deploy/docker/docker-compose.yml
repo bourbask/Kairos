@@ -50,12 +50,17 @@ services:
     image: binwiederhier/ntfy
     restart: unless-stopped
     command: serve
+    environment:
+      NTFY_AUTH_FILE: /var/lib/ntfy/auth.db
+      NTFY_AUTH_DEFAULT_ACCESS: deny-all   # rien de public : topic + user créés une fois (cf. README)
+    volumes:
+      - ntfy-auth:/var/lib/ntfy
     ports:
       # Adresse/port de bind configurables (app mobile ntfy) ; défaut = boucle locale.
       # Port hôte 8090 (pas 80) : Traefik occupe déjà le port 80 sur cet hôte.
       - "${NTFY_BIND_ADDR:-127.0.0.1}:${NTFY_BIND_PORT:-8090}:80"
-    # ponytail : pas de cache persistant (in-memory only) — ajouter un volume si des messages
-    # doivent survivre à un redémarrage / être livrés à un appareil hors-ligne au-delà de la session.
+    # ponytail : pas de cache persistant des messages (in-memory only) — ajouter un volume si un
+    # message doit survivre à un redémarrage / être livré à un appareil resté hors-ligne trop longtemps.
 
   # Planificateur interne (supercronic) : scrape 04:30, calendar sync 04:45, briefing 05:00. Toujours actif.
   scheduler:
@@ -76,3 +81,4 @@ services:
 volumes:
   ollama-models:
   radicale-data:
+  ntfy-auth:
