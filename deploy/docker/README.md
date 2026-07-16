@@ -116,6 +116,15 @@ docker compose up -d scheduler-secondary
 Base de données et briefings entièrement séparés de ceux du profil principal
 (`data/secondary.db`, `briefings-secondary/`) — aucun risque de mélange.
 
+**Migration requise pour le profil déjà en place** (mise à jour vers cette version) :
+- `config/profile.toml` doit être migré au format `[skills] skills = [...]` (liste plate,
+  remplace les anciennes catégories `backend`/`frontend`/etc.) — sans ça le binaire refuse
+  de démarrer (erreur de parsing TOML).
+- Relancer `docker compose run --rm kairos rescore` après le déploiement : le calcul du
+  bonus salaire est maintenant relatif à `salary_min`/`salary_target` du profil (avant :
+  seuils fixes) — sans ce rerun, les scores déjà en base restent calculés à l'ancienne
+  formule tant qu'une offre n'est pas re-scrapée.
+
 ## Notes
 
 - **Planification interne** : le conteneur `scheduler` (supercronic) déclenche les batchs (scrape + calendar sync + briefing).
