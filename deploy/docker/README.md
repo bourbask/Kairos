@@ -11,7 +11,9 @@
   - `radicale` — serveur du module calendar ;
   - `ntfy` — serveur de notifications push (alerte offre forte) ;
   - `scheduler` — toujours actif, lance `scrape`/`calendar sync`/`briefing` via `supercronic` ;
-  - `kairos` — profil `tools`, pour les exécutions manuelles.
+  - `kairos` — profil `tools`, pour les exécutions manuelles ;
+  - `kairos-secondary` / `scheduler-secondary` — second profil isolé (même image, sa propre
+    config/DB/notif via `kairos-secondary.env` — cf. section dédiée ci-dessous).
 - `supercronic.crontab` — planning interne (scrape 04:30, calendar sync 04:45, briefing 05:00 ; fuseau `TZ`).
 - `kairos.env` (optionnel, gitignoré) — secrets ; copier depuis `../kairos.env.example`.
 
@@ -87,6 +89,32 @@ configuration réseau supplémentaire si le téléphone est déjà un nœud du t
 Adresse/port de bind du serveur configurables via `NTFY_BIND_ADDR`/`NTFY_BIND_PORT`
 (défaut : boucle locale, port `8090` — le port 80 est déjà pris par Traefik sur cet hôte) — même
 convention que `RADICALE_BIND_ADDR`.
+
+## Second profil (module optionnel)
+
+Fait tourner un second profil isolé (config, base de données, notification Discord distincts)
+sur la même image, sans rien dupliquer côté code.
+
+```bash
+# 1. config du second profil (jamais commitée — son nom réel ne doit apparaître nulle part
+#    dans le repo, cf. règles anti-OSINT du projet)
+cp ../../config/profile.example.toml ../../config/profile-secondary.toml
+"$EDITOR" ../../config/profile-secondary.toml
+
+# 2. secrets/config déploiement du second profil
+cp ../kairos.env.example kairos-secondary.env
+"$EDITOR" kairos-secondary.env   # au minimum NOTIFY_CHANNEL_ID (thread Discord dédié)
+
+# 3. test manuel
+docker compose run --rm kairos-secondary scrape
+docker compose run --rm kairos-secondary briefing
+
+# 4. démarrer son propre planificateur
+docker compose up -d scheduler-secondary
+```
+
+Base de données et briefings entièrement séparés de ceux du profil principal
+(`data/secondary.db`, `briefings-secondary/`) — aucun risque de mélange.
 
 ## Notes
 
