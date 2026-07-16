@@ -1,6 +1,6 @@
 use chrono::{NaiveDate, NaiveDateTime, Duration, TimeZone, Utc};
 use chrono_tz::Tz;
-use crate::models::CalendarEvent;
+use crate::models::{CalendarEvent, Task};
 
 // ponytail: fuseau par défaut codé en dur ; passer en config si multi-fuseau un jour.
 pub const USER_TZ: Tz = chrono_tz::Europe::Paris;
@@ -105,6 +105,39 @@ fn unfold_lines(input: &str) -> String {
         }
     }
     result
+}
+
+/// Génère un fichier ICS (VCALENDAR) avec un VEVENT all-day par tâche ayant une `due_date`.
+/// Tâches sans échéance ignorées (rien à placer sur un agenda). `None` si aucune tâche exportable.
+pub fn tasks_to_ics(tasks: &[Task]) -> Option<String> {
+    let exportable: Vec<&Task> = tasks.iter().filter(|t| t.due_date.is_some()).collect();
+    if exportable.is_empty() {
+        return None;
+    }
+    let mut out = String::from("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Kairos//Tasks//FR\r\n");
+    for task in exportable {
+        let due = task.due_date.unwrap();
+        let dtend = due.succ_opt().unwrap_or(due);
+        out.push_str("BEGIN:VEVENT\r\n");
+        out.push_str(&format!("UID:kairos-task-{}@kairos\r\n", task.id));
+        out.push_str(&format!("DTSTART;VALUE=DATE:{}\r\n", due.format("%Y%m%d")));
+        out.push_str(&format!("DTEND;VALUE=DATE:{}\r\n", dtend.format("%Y%m%d")));
+        out.push_str(&format!("SUMMARY:{}\r\n", escape_ics(&task.title)));
+        if let Some(desc) = &task.description {
+            out.push_str(&format!("DESCRIPTION:{}\r\n", escape_ics(desc)));
+        }
+        out.push_str("END:VEVENT\r\n");
+    }
+    out.push_str("END:VCALENDAR\r\n");
+    Some(out)
+}
+
+/// Escape ICS text: inverse de `unescape_ics` (\\, puis ; , et \n, dans cet ordre).
+fn escape_ics(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace(';', "\\;")
+        .replace(',', "\\,")
+        .replace('\n', "\\n")
 }
 
 /// Unescape ICS text: replace \\n with \n, \\; with ;, \\, with ,, \\\\ with \\
@@ -292,6 +325,33 @@ fn xml_unescape(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::Task;
+
+    fn make_task(id: i64, title: &str, due: Option<NaiveDate>) -> Task {
+        Task {
+            id, title: title.to_string(), description: None, due_date: due,
+            priority: "normal".to_string(), completed: false,
+            created_at: NaiveDate::from_ymd_opt(2026, 7, 1).unwrap(), completed_at: None,
+        }
+    }
+
+    #[test]
+    fn tasks_sans_echeance_ignorees() {
+        let tasks = vec![make_task(1, "sans date", None)];
+        assert!(tasks_to_ics(&tasks).is_none());
+    }
+
+    #[test]
+    fn tasks_avec_echeance_genere_vevent() {
+        let due = NaiveDate::from_ymd_opt(2026, 7, 20).unwrap();
+        let tasks = vec![make_task(1, "Relancer ; entreprise, X\ny", Some(due))];
+        let ics = tasks_to_ics(&tasks).unwrap();
+        assert!(ics.contains("BEGIN:VEVENT"));
+        assert!(ics.contains("DTSTART;VALUE=DATE:20260720"));
+        assert!(ics.contains("DTEND;VALUE=DATE:20260721"));
+        assert!(ics.contains("UID:kairos-task-1@kairos"));
+        assert!(ics.contains(r"SUMMARY:Relancer \; entreprise\, X\ny"));
+    }
 
     #[test]
     fn test_parse_ics_basic() {

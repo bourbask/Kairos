@@ -216,6 +216,12 @@ async fn main() -> anyhow::Result<()> {
             )?;
             let path = generator.write(today, &content)?;
 
+            if let Some(ics) = pending_tasks.as_deref().and_then(calendar::tasks_to_ics) {
+                let ics_path = path.with_extension("ics");
+                std::fs::write(&ics_path, ics)?;
+                println!("Export ICS : {}", ics_path.display());
+            }
+
             for job in &top_jobs {
                 let _ = storage.mark_presented(&job.offer.id);
             }
@@ -229,15 +235,15 @@ async fn main() -> anyhow::Result<()> {
             }
 
             const NTFY_SCORE_THRESHOLD: f64 = 0.9;
-            if let Some(best) = top_jobs.iter().max_by(|a, b| a.score.total_cmp(&b.score)) {
-                if best.score > NTFY_SCORE_THRESHOLD {
-                    let title = format!("Offre forte : {}", best.offer.title);
-                    let message = format!("{} — score {:.2}\n{}", best.offer.company, best.score, best.offer.url);
-                    match notify::ntfy(&title, &message).await {
-                        Ok(true) => println!("→ alerte ntfy envoyée."),
-                        Ok(false) => {} // non configuré (NTFY_* absents)
-                        Err(e) => eprintln!("→ ntfy non envoyé : {e}"),
-                    }
+            if let Some(best) = top_jobs.iter().max_by(|a, b| a.score.total_cmp(&b.score))
+                && best.score > NTFY_SCORE_THRESHOLD
+            {
+                let title = format!("Offre forte : {}", best.offer.title);
+                let message = format!("{} — score {:.2}\n{}", best.offer.company, best.score, best.offer.url);
+                match notify::ntfy(&title, &message).await {
+                    Ok(true) => println!("→ alerte ntfy envoyée."),
+                    Ok(false) => {} // non configuré (NTFY_* absents)
+                    Err(e) => eprintln!("→ ntfy non envoyé : {e}"),
                 }
             }
         }
