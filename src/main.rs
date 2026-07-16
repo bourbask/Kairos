@@ -227,6 +227,19 @@ async fn main() -> anyhow::Result<()> {
                 Ok(false) => {} // non configuré (NOTIFY_* absents)
                 Err(e) => eprintln!("→ Discord non envoyé : {e}"),
             }
+
+            const NTFY_SCORE_THRESHOLD: f64 = 0.9;
+            if let Some(best) = top_jobs.iter().max_by(|a, b| a.score.total_cmp(&b.score)) {
+                if best.score > NTFY_SCORE_THRESHOLD {
+                    let title = format!("Offre forte : {}", best.offer.title);
+                    let message = format!("{} — score {:.2}\n{}", best.offer.company, best.score, best.offer.url);
+                    match notify::ntfy(&title, &message).await {
+                        Ok(true) => println!("→ alerte ntfy envoyée."),
+                        Ok(false) => {} // non configuré (NTFY_* absents)
+                        Err(e) => eprintln!("→ ntfy non envoyé : {e}"),
+                    }
+                }
+            }
         }
         Command::Prompt { text, model } => {
             let prompt = text.join(" ");

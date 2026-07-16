@@ -24,6 +24,30 @@ pub async fn discord(content: &str) -> anyhow::Result<bool> {
     Ok(true)
 }
 
+/// Pousse une alerte ntfy (self-hosted) pour un signal fort isolé du digest complet.
+/// No-op (Ok(false)) si `NTFY_URL` ou `NTFY_TOPIC` absent/vide.
+pub async fn ntfy(title: &str, message: &str) -> anyhow::Result<bool> {
+    let (base, topic) = match (std::env::var("NTFY_URL"), std::env::var("NTFY_TOPIC")) {
+        (Ok(u), Ok(t)) if !u.is_empty() && !t.is_empty() => (u, t),
+        _ => return Ok(false),
+    };
+    // Titre en query param (pas en header) : les headers HTTP rejettent l'UTF-8 non-ASCII,
+    // or titre/entreprise proviennent d'offres externes non fiables (accents, etc.).
+    let url = format!("{}/{topic}", base.trim_end_matches('/'));
+    let resp = reqwest::Client::new()
+        .post(&url)
+        .query(&[("title", title)])
+        .header("Priority", "high")
+        .body(message.to_string())
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        anyhow::bail!("ntfy HTTP {status}: {}", resp.text().await.unwrap_or_default());
+    }
+    Ok(true)
+}
+
 /// Discord limite un message à 2000 caractères. Tronque proprement (sur les caractères, pas les octets).
 fn truncate_discord(s: &str) -> String {
     const MAX: usize = 2000;
