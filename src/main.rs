@@ -35,6 +35,8 @@ struct Cli {
 enum Command {
     /// Fetch job offers from all sources
     Scrape,
+    /// Recompute the score of every offer already in the database with the current formula
+    Rescore,
     /// Generate today's briefing
     Briefing {
         #[arg(short, long, default_value = "3")]
@@ -188,6 +190,19 @@ async fn main() -> anyhow::Result<()> {
                     }
                 }
             }
+        }
+        Command::Rescore => {
+            let matcher = Matcher::new(profile);
+            let offers = storage.get_all_offers()?;
+            let total = offers.len();
+            let mut updated = 0;
+            for offer in &offers {
+                let (score, _) = matcher.score_with_breakdown(offer);
+                if storage.update_score(&offer.id, score).is_ok() {
+                    updated += 1;
+                }
+            }
+            println!("Rescored {updated}/{total} offers.");
         }
         Command::Briefing { top_n } => {
             let matcher = Matcher::new(profile);

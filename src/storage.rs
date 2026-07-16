@@ -214,6 +214,37 @@ impl Storage {
         rows.collect()
     }
 
+    pub fn get_all_offers(&self) -> SqlResult<Vec<JobOffer>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, source, title, company, description, url, location, country,
+                    salary_min, salary_max, currency, remote, published_at, collected_at
+             FROM job_offers"
+        )?;
+
+        let rows = stmt.query_map([], |row| {
+            Ok(JobOffer {
+                id: row.get(0)?,
+                source: row.get(1)?,
+                title: row.get(2)?,
+                company: row.get(3)?,
+                description: row.get(4)?,
+                url: row.get(5)?,
+                location: row.get(6)?,
+                country: row.get(7)?,
+                salary_min: row.get(8)?,
+                salary_max: row.get(9)?,
+                currency: row.get(10)?,
+                remote: row.get::<_, Option<i32>>(11)?.map(|r| r != 0),
+                published_at: row.get::<_, Option<String>>(12)?
+                    .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
+                    .map(|dt| dt.with_timezone(&Utc)),
+                collected_at: Utc::now(),
+            })
+        })?;
+
+        rows.collect()
+    }
+
     pub fn save_briefing(&self, date: NaiveDate, content: &str) -> SqlResult<()> {
         self.conn.execute(
             "INSERT OR REPLACE INTO briefings (date, content, generated_at) VALUES (?1, ?2, ?3)",
@@ -599,5 +630,26 @@ mod tests {
         store.insert_offer(&offer).unwrap();
         let stats = store.get_stats().unwrap();
         assert_eq!(stats.total, 1);
+    }
+
+    #[test]
+    fn test_get_all_offers() {
+        let store = Storage::open(":memory:").unwrap();
+
+        let offer1 = JobOffer {
+            id: "a".into(), source: "test".into(), title: "Job A".into(), company: "Corp".into(),
+            description: "desc".into(), url: "https://example.com".into(), location: None,
+            country: None, salary_min: None, salary_max: None, currency: None,
+            remote: None, published_at: None, collected_at: Utc::now(),
+        };
+        let offer2 = JobOffer { id: "b".into(), title: "Job B".into(), ..offer1.clone() };
+
+        store.insert_offers(&[offer1, offer2]).unwrap();
+        let all = store.get_all_offers().unwrap();
+
+        assert_eq!(all.len(), 2);
+        let ids: Vec<&str> = all.iter().map(|o| o.id.as_str()).collect();
+        assert!(ids.contains(&"a"));
+        assert!(ids.contains(&"b"));
     }
 }
