@@ -7,6 +7,7 @@ x-kairos-common: &kairos-common
   environment:
     OLLAMA_URL: http://ollama:11434
     OLLAMA_MODEL: phi3:mini
+    NTFY_URL: http://ntfy      # posté en interne ; NTFY_TOPIC reste un secret (kairos.env)
     DATABASE_PATH: /app/data/kairos.db
     BRIEFINGS_DIR: /app/briefings
     TZ: Europe/Paris          # fuseau de planification
@@ -44,6 +45,16 @@ services:
     ports:
       # Adresse de bind configurable ; défaut = boucle locale.
       - "${RADICALE_BIND_ADDR:-127.0.0.1}:5232:5232"
+
+  ntfy:
+    image: binwiederhier/ntfy
+    restart: unless-stopped
+    command: serve
+    ports:
+      # Adresse de bind configurable (app mobile ntfy) ; défaut = boucle locale.
+      - "${NTFY_BIND_ADDR:-127.0.0.1}:80:80"
+    # ponytail : pas de cache persistant (in-memory only) — ajouter un volume si des messages
+    # doivent survivre à un redémarrage / être livrés à un appareil hors-ligne au-delà de la session.
 
   # Planificateur interne (supercronic) : scrape 04:30, calendar sync 04:45, briefing 05:00. Toujours actif.
   scheduler:

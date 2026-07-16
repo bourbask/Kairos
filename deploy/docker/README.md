@@ -9,6 +9,7 @@
 - `docker-compose.yml` :
   - `ollama` — service persistant, non exposé (réseau interne only) ;
   - `radicale` — serveur du module calendar ;
+  - `ntfy` — serveur de notifications push (alerte offre forte) ;
   - `scheduler` — toujours actif, lance `scrape`/`calendar sync`/`briefing` via `supercronic` ;
   - `kairos` — profil `tools`, pour les exécutions manuelles.
 - `supercronic.crontab` — planning interne (scrape 04:30, calendar sync 04:45, briefing 05:00 ; fuseau `TZ`).
@@ -52,6 +53,29 @@ docker compose run --rm kairos calendar sync   # vérifie la config
 
 Adresse de bind du serveur configurable via `RADICALE_BIND_ADDR` (défaut : boucle locale).
 Les spécificités d'hôte (exposition réseau, client) restent hors du dépôt public.
+
+## Notifications (module optionnel)
+
+Serveur ntfy self-hosted pour l'alerte "offre forte" (score > 0.9), séparée du digest Discord.
+
+```bash
+docker compose up -d ntfy
+```
+
+Renseigner dans `kairos.env` :
+
+```
+NTFY_TOPIC=<chaîne aléatoire imprononçable>   # ntfy n'a pas d'auth par défaut : le nom du topic EST le secret
+```
+
+`NTFY_URL` est déjà fixé en interne (`http://ntfy`) dans `docker-compose.yml` — ne pas le redéfinir dans `kairos.env`.
+
+Côté téléphone (app [ntfy](https://ntfy.sh/) — Android/iOS/web) : ajouter un serveur self-hosted
+pointant sur l'adresse tailnet du VPS (`http://<IP-tailnet>` ou nom MagicDNS), puis s'abonner au topic
+défini ci-dessus. Aucune configuration réseau supplémentaire si le téléphone est déjà un nœud du tailnet.
+
+Adresse de bind du serveur configurable via `NTFY_BIND_ADDR` (défaut : boucle locale) — même
+convention que `RADICALE_BIND_ADDR`.
 
 ## Notes
 
