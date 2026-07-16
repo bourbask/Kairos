@@ -96,6 +96,11 @@ services:
     env_file:
       - path: kairos-secondary.env   # secrets/config du second profil (gitignoré)
         required: false
+    volumes:
+      - ../../config:/app/config:ro
+      - ../../data:/app/data
+      - ../../briefings:/app/briefings
+      - ../../briefings-secondary:/app/briefings-secondary
 
   # Planificateur du second profil — même image/crontab que `scheduler`, environnement propre.
   scheduler-secondary:
@@ -118,6 +123,11 @@ services:
     env_file:
       - path: kairos-secondary.env
         required: false
+    volumes:
+      - ../../config:/app/config:ro
+      - ../../data:/app/data
+      - ../../briefings:/app/briefings
+      - ../../briefings-secondary:/app/briefings-secondary
 
 volumes:
   ollama-models:
