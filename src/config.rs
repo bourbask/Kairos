@@ -1,6 +1,5 @@
 use serde::Deserialize;
 use std::path::Path;
-use std::collections::HashMap;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Profile {
@@ -45,39 +44,20 @@ pub struct Preferences {
     pub languages: Vec<String>,
     #[serde(default = "default_min_score")]
     pub min_score: f64,
+    #[serde(default)]
+    pub location_keywords: Vec<String>,
 }
 
 fn default_min_score() -> f64 { 0.60 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Skills {
-    pub backend: Vec<String>,
-    pub frontend: Vec<String>,
-    pub database: Vec<String>,
-    pub devops: Vec<String>,
-    pub learning: Vec<String>,
+    pub skills: Vec<String>,
 }
 
 impl Skills {
     pub fn all(&self) -> Vec<String> {
-        let mut all = Vec::new();
-        all.extend(self.backend.clone());
-        all.extend(self.frontend.clone());
-        all.extend(self.database.clone());
-        all.extend(self.devops.clone());
-        all.extend(self.learning.clone());
-        all
-    }
-
-    /// Return skills as a flat map with category labels for matching.
-    pub fn categorized(&self) -> HashMap<&str, &[String]> {
-        let mut map = HashMap::new();
-        map.insert("backend", &self.backend[..]);
-        map.insert("frontend", &self.frontend[..]);
-        map.insert("database", &self.database[..]);
-        map.insert("devops", &self.devops[..]);
-        map.insert("learning", &self.learning[..]);
-        map
+        self.skills.clone()
     }
 }
 
