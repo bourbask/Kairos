@@ -156,14 +156,15 @@ impl BriefingGenerator {
 
             content.push_str(&format!("**Candidature :** {}\n", o.url));
 
+            // Gates (remote/CDI/blacklist) déjà validées pour apparaître ici — la base 40 + bonus
+            // affichés sont les points de la formule (matching.rs), pas des pourcentages relatifs.
             let score_pct = (job.score * 100.0) as u8;
             content.push_str(&format!(
-                "**Score :** {}% (skills {:.0}%, remote {:.0}%, salaire {:.0}%, localisation {:.0}%)\n\n",
+                "**Score :** {}% (base 40 + compétences {:+.0} + pays {:+.0} + salaire {:+.0})\n\n",
                 score_pct,
                 job.breakdown.skills * 100.0,
-                job.breakdown.remote * 100.0,
-                job.breakdown.salary * 100.0,
                 job.breakdown.location * 100.0,
+                job.breakdown.salary * 100.0,
             ));
         }
 
