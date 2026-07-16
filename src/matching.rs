@@ -125,8 +125,8 @@ impl Matcher {
         let mid = min + (target - min) / 2.0;
 
         match offered.map(|s| s as f64) {
-            Some(s) if s >= target => 0.10,
-            Some(s) if s >= mid => 0.05,
+            Some(s) if target > min && s >= target => 0.10,
+            Some(s) if target > min && s >= mid => 0.05,
             Some(s) if s >= min => 0.0,
             Some(_) => -0.20,
             None => 0.0,
@@ -241,6 +241,19 @@ mod tests {
         assert!((s_mi - 0.45).abs() < 1e-9, "0.40+0.05 (>= mi-chemin 42500), obtenu {s_mi}");
         assert!((s_neutre - 0.40).abs() < 1e-9, "0.40 neutre (>= min 35000, < mi-chemin), obtenu {s_neutre}");
         assert!((s_malus - 0.20).abs() < 1e-9, "0.40-0.20 malus (< min 35000), obtenu {s_malus}");
+    }
+
+    #[test]
+    fn salaire_target_egal_min_pas_de_faux_bonus() {
+        let mut profile = test_profile();
+        profile.preferences.salary_min = 40000;
+        profile.preferences.salary_target = 40000; // dégénéré : target == min
+        let matcher = Matcher::new(profile);
+        let offer = make_offer("Dev", "Permanent position, fully remote", Some(true), None, None, Some(41000));
+        let (score, _) = matcher.score_with_breakdown(&offer);
+        // Avant le fix : `mid` collapse à 40000, la garde `>= target` matchait tout salaire >= min,
+        // donnant +0.10 au lieu du palier neutre attendu. Après le fix : neutre (>= min, target pas > min).
+        assert!((score - 0.40).abs() < 1e-9, "attendu 0.40 (neutre, pas de faux bonus), obtenu {score}");
     }
 
     #[test]
