@@ -24,10 +24,10 @@ impl Ranker {
         scored
     }
 
-    /// Top N offres non présentées. Filtres durs : score >= min_score (SQL),
-    /// full remote, hors freelance, hors blacklist. Puis re-rank par score
-    /// pénalisé par l'ancienneté (offres récentes d'abord) — le seuil reste sur
-    /// le score brut, une offre parfaite mais vieille reste éligible, juste rétrogradée.
+    /// Top N offres non présentées. Filtres durs : score >= min_score (SQL, encode déjà
+    /// full remote/hors freelance via matching.rs), hors blacklist (dynamique, non persisté).
+    /// Puis re-rank par score pénalisé par l'ancienneté (offres récentes d'abord) — le seuil
+    /// reste sur le score brut, une offre parfaite mais vieille reste éligible, juste rétrogradée.
     pub fn top_unpresented(&self, n: u32) -> Vec<ScoredJob> {
         // On récupère large au-dessus du seuil, on filtre, on re-classe, puis on garde n.
         let candidates = self.storage
@@ -37,9 +37,7 @@ impl Ranker {
         let now = Utc::now();
         let mut kept: Vec<(JobOffer, f64)> = candidates
             .into_iter()
-            .filter(|(offer, _)| {
-                !is_freelance(offer) && is_remote(offer) && !self.matcher.is_blacklisted(offer)
-            })
+            .filter(|(offer, _)| !self.matcher.is_blacklisted(offer))
             .collect();
 
         kept.sort_by(|a, b| {
@@ -72,78 +70,47 @@ fn recency_factor(published_at: Option<DateTime<Utc>>, now: DateTime<Utc>) -> f6
     }
 }
 
-/// Détecte une offre freelance/contract (l'utilisateur veut un CDI, sans statut freelance).
-/// Heuristique par mots-clés sur titre + description.
-// ponytail: schéma-libre ; migrer vers un champ employment_type structuré si l'imprécision gêne.
-fn is_freelance(offer: &JobOffer) -> bool {
-    let h = format!("{} {}", offer.title.to_lowercase(), offer.description.to_lowercase());
-    const MARKERS: [&str; 7] = [
-        "freelance", "freelancer", "contractor", "c2c", "corp-to-corp", "corp to corp", "self-employed",
-    ];
-    MARKERS.iter().any(|m| h.contains(m))
-}
-
-/// Full remote DUR (exigence utilisateur) : on ne présente que le remote confirmé.
-/// Flag explicite s'il existe ; sinon mot-clé remote dans le texte ET pas d'« hybride ».
-/// Strict par choix : mieux vaut rater une offre non taggée que polluer avec de l'on-site.
-fn is_remote(offer: &JobOffer) -> bool {
-    match offer.remote {
-        Some(v) => v,
-        None => {
-            let h = format!("{} {}", offer.title.to_lowercase(), offer.description.to_lowercase());
-            let hybride = h.contains("hybrid") || h.contains("hybride");
-            let remote = h.contains("remote") || h.contains("télétravail")
-                || h.contains("teletravail") || h.contains("home office") || h.contains("work from home");
-            remote && !hybride
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::is_freelance;
-    use crate::models::JobOffer;
-    use chrono::Utc;
-
-    fn offer(title: &str, desc: &str) -> JobOffer {
-        JobOffer {
-            id: "t".into(), source: "t".into(), title: title.into(), company: "C".into(),
-            description: desc.into(), url: "u".into(), location: None, country: None,
-            salary_min: None, salary_max: None, currency: None, remote: None,
-            published_at: None, collected_at: Utc::now(),
-        }
-    }
-
-    #[test]
-    fn detecte_freelance() {
-        assert!(is_freelance(&offer("Freelance Rust Developer", "")));
-        assert!(is_freelance(&offer("Backend Dev", "This is a contractor / C2C role")));
-    }
-
-    #[test]
-    fn cdi_non_exclu() {
-        assert!(!is_freelance(&offer("Senior Full-Stack Engineer", "Permanent position, full time")));
-    }
-
-    #[test]
-    fn remote_dur() {
-        use super::is_remote;
-        assert!(is_remote(&offer("Dev", "Fully remote position")));
-        assert!(!is_remote(&offer("Dev", "On-site in Paris")));
-        assert!(!is_remote(&offer("Dev", "Hybrid remote, 3 days office"))); // hybride exclu
-    }
+    use super::*;
+    use crate::config::Profile;
 
     #[test]
     fn recency_penalise_les_vieilles() {
-        use super::recency_factor;
         use chrono::Duration;
         let now = Utc::now();
         assert_eq!(recency_factor(None, now), 1.0);                    // pas de date = neutre
         assert!((recency_factor(Some(now), now) - 1.0).abs() < 1e-9); // frais
         assert!((recency_factor(Some(now - Duration::days(30)), now) - 0.7).abs() < 1e-6);
         assert!((recency_factor(Some(now - Duration::days(100)), now) - 0.7).abs() < 1e-6); // plancher
-        // récent > vieux
         assert!(recency_factor(Some(now - Duration::days(2)), now)
             > recency_factor(Some(now - Duration::days(20)), now));
+    }
+
+    fn offer(id: &str, company: &str) -> JobOffer {
+        JobOffer {
+            id: id.into(), source: "t".into(), title: "Dev".into(), company: company.into(),
+            description: "Permanent position, fully remote".into(), url: "u".into(), location: None,
+            country: None, salary_min: None, salary_max: None, currency: None,
+            remote: Some(true), published_at: None, collected_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    #[allow(clippy::arc_with_non_send_sync)]
+    fn top_unpresented_filtre_la_blacklist() {
+        let mut profile = Profile::from_file("config/profile.example.toml").unwrap();
+        profile.filters.blacklist_companies = vec!["EvilCorp".into()];
+
+        let storage = Arc::new(Storage::open(":memory:").unwrap());
+        storage.insert_offers(&[offer("good", "GoodCo"), offer("bad", "EvilCorp GmbH")]).unwrap();
+        storage.update_score("good", 0.60).unwrap();
+        storage.update_score("bad", 0.60).unwrap();
+
+        let ranker = Ranker::new(Matcher::new(profile), Arc::clone(&storage));
+        let top = ranker.top_unpresented(10);
+
+        assert_eq!(top.len(), 1);
+        assert_eq!(top[0].offer.id, "good");
     }
 }
