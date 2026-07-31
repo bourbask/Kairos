@@ -11,6 +11,49 @@ pub struct Profile {
     pub experience: Experience,
     #[serde(default)]
     pub filters: Filters,
+    /// Absente : la section de synthèse est simplement omise du briefing.
+    #[serde(default)]
+    pub signals: Option<SignalsConfig>,
+}
+
+/// Source de signaux prospectifs et modèle chargé de leur synthèse. Toutes les
+/// valeurs identifiantes vivent ici, jamais dans le code.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SignalsConfig {
+    pub base_url: String,
+    pub api_key: String,
+    pub auth_header: String,
+    pub markets_path: String,
+    pub forecasts_path: String,
+    /// Sujets sur lesquels la synthèse doit se concentrer. Le reste du profil
+    /// décrit une recherche d'emploi : sans cette liste, la lecture des signaux
+    /// se fait sous le seul angle professionnel et conclut à l'absence de lien.
+    #[serde(default)]
+    pub interests: Vec<String>,
+    #[serde(default = "default_llm_endpoint")]
+    pub llm_endpoint: String,
+    #[serde(default = "default_llm_model")]
+    pub llm_model: String,
+}
+
+fn default_llm_endpoint() -> String {
+    "http://localhost:11434".into()
+}
+
+fn default_llm_model() -> String {
+    "phi3:mini".into()
+}
+
+impl SignalsConfig {
+    /// Une section partiellement remplie produit des requêtes silencieusement
+    /// inutiles : on l'écarte à la lecture plutôt qu'à l'appel.
+    pub fn is_usable(&self) -> bool {
+        !self.base_url.trim().is_empty()
+            && !self.api_key.trim().is_empty()
+            && !self.auth_header.trim().is_empty()
+            && !self.markets_path.trim().is_empty()
+            && !self.forecasts_path.trim().is_empty()
+    }
 }
 
 /// Filtrage négatif (optionnel) : sous-chaînes insensibles à la casse.
