@@ -55,6 +55,9 @@ JOOBLE_API_KEY=xxx
 
 Your CV profile goes in `config/profile.toml` (gitignored — copy from `.example`).
 
+Optional per-module settings go in `config/modules.toml` (gitignored — copy from
+`.example`). A missing file or section leaves that module inactive.
+
 ---
 
 ## Commands
@@ -99,7 +102,9 @@ kairos/
 │   └── briefing.rs      # Markdown generation
 ├── config/
 │   ├── profile.toml     # Your CV (gitignored)
-│   └── profile.example.toml
+│   ├── profile.example.toml
+│   ├── modules.toml     # Optional module config (gitignored)
+│   └── modules.example.toml
 ├── data/
 │   └── kairos.db        # SQLite (gitignored)
 └── docs/

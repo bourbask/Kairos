@@ -36,16 +36,3 @@ current_company = "Entreprise"
 # Filtrage négatif (optionnel). Sous-chaînes insensibles à la casse.
 blacklist_companies = []   # ex. ["ACME", "Foo Corp"] — exclut par nom d'entreprise
 blacklist_keywords = []    # ex. ["gambling", "crypto"] — exclut par secteur/terme dans titre/description
-
-[signals]
-# Source de signaux prospectifs (probabilités datées) synthétisés dans le briefing.
-# Section optionnelle : la retirer ou laisser un champ vide désactive la synthèse.
-base_url = ""            # racine de l'API
-api_key = ""             # jeton d'accès
-auth_header = ""         # nom de l'en-tête portant le jeton
-markets_path = ""        # chemin retournant les cotations (peut porter une query string)
-forecasts_path = ""      # chemin retournant les estimations
-interests = []           # sujets suivis, ex. ["géopolitique", "énergie", "marchés"]
-                         # sans cette liste la synthèse ne lit les signaux que sous l'angle emploi
-llm_endpoint = "http://localhost:11434"
-llm_model = "phi3:mini"
