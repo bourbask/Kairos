@@ -206,7 +206,8 @@ async fn main() -> anyhow::Result<()> {
             println!("Rescored {updated}/{total} offers.");
         }
         Command::Briefing { top_n } => {
-            let synthesis = signals::synthesize(&profile).await;
+            let modules = config::ModulesConfig::load("config/modules.toml");
+            let synthesis = signals::synthesize(modules.signals.as_ref(), &profile).await;
 
             let matcher = Matcher::new(profile);
             let ranker = Ranker::new(matcher, Arc::clone(&storage));

@@ -6,8 +6,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use serde::Deserialize;
 
-use super::{Signal, SignalKind, SignalSource};
-use crate::config::SignalsConfig;
+use super::{Signal, SignalKind, SignalSource, SignalsConfig};
 
 /// Au-delà, on considère la source indisponible plutôt que de retarder le
 /// briefing : la synthèse est un complément, pas un bloquant.
