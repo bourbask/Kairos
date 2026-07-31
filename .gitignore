@@ -6,9 +6,9 @@
 .env
 
 # Config et fichiers locaux (voir les *.example)
-config/profile.toml
-config/modules.toml
-config/llm.toml
+config/profile*.toml
+config/modules*.toml
+config/llm*.toml
 OBJECTIVES.md
 data/kairos.db
 data/*.db
