@@ -45,7 +45,7 @@ enum Command {
     },
     /// Show status and stats
     Status,
-    /// Send a prompt to the local LLM (Ollama)
+    /// Send a prompt to the configured model
     Prompt {
         text: Vec<String>,
         #[arg(short, long, default_value = "phi3:mini")]
@@ -269,12 +269,20 @@ async fn main() -> anyhow::Result<()> {
         }
         Command::Prompt { text, model } => {
             let prompt = text.join(" ");
-            let url = std::env::var("OLLAMA_URL").unwrap_or_else(|_| "http://localhost:11434".into());
-            let client = llm::LlmClient::new(url, model);
-            println!("→ Envoi à Ollama...");
+            // Le fichier de configuration, quand il existe, décide de l'endpoint et
+            // du protocole. Sans lui, l'endpoint reste pilotable par l'environnement.
+            let client = match config::LlmConfig::from_file("config/llm.toml") {
+                Ok(llm_config) => llm::LlmClient::from_config(&llm_config),
+                Err(_) => {
+                    let url = std::env::var("OLLAMA_URL")
+                        .unwrap_or_else(|_| "http://localhost:11434".into());
+                    llm::LlmClient::new(url, model)
+                }
+            };
+            println!("→ Envoi de la requête...");
             match client.generate(&prompt).await {
                 Ok(response) => println!("{}", response),
-                Err(e) => eprintln!("Erreur Ollama : {}", e),
+                Err(e) => eprintln!("Erreur d'inférence : {}", e),
             }
         }
         Command::Status => {

@@ -119,6 +119,33 @@ impl Profile {
     }
 }
 
+/// Wire protocol spoken by the configured inference endpoint.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum LlmProtocol {
+    #[default]
+    Ollama,
+    OpenaiCompatible,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct LlmConfig {
+    pub endpoint: String,
+    pub model: String,
+    #[serde(default)]
+    pub protocol: LlmProtocol,
+    /// Bearer credential, when the endpoint requires one.
+    #[serde(default)]
+    pub api_key: Option<String>,
+}
+
+impl LlmConfig {
+    pub fn from_file(path: impl AsRef<Path>) -> anyhow::Result<Self> {
+        let content = std::fs::read_to_string(path.as_ref())?;
+        Ok(toml::from_str(&content)?)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
