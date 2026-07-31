@@ -7,6 +7,8 @@
 
 # Config et fichiers locaux (voir les *.example)
 config/profile*.toml
+config/modules*.toml
+config/llm*.toml
 OBJECTIVES.md
 data/kairos.db
 data/*.db
@@ -20,3 +22,4 @@ deploy/docker/kairos.env
 deploy/docker/.env
 deploy/docker/radicale/config/config
 deploy/docker/radicale/config/users
+CLAUDE.local.md

@@ -9,6 +9,7 @@ mod llm;
 mod briefing;
 mod planning;
 mod calendar;
+mod signals;
 mod notify;
 
 use std::path::PathBuf;
@@ -44,7 +45,7 @@ enum Command {
     },
     /// Show status and stats
     Status,
-    /// Send a prompt to the local LLM (Ollama)
+    /// Send a prompt to the configured model
     Prompt {
         text: Vec<String>,
         #[arg(short, long, default_value = "phi3:mini")]
@@ -206,6 +207,9 @@ async fn main() -> anyhow::Result<()> {
             println!("Rescored {updated}/{total} offers.");
         }
         Command::Briefing { top_n } => {
+            let modules = config::ModulesConfig::load("config/modules.toml");
+            let synthesis = signals::synthesize(modules.signals.as_ref(), &profile).await;
+
             let matcher = Matcher::new(profile);
             let ranker = Ranker::new(matcher, Arc::clone(&storage));
             let top_jobs = ranker.top_unpresented(top_n);
@@ -229,6 +233,7 @@ async fn main() -> anyhow::Result<()> {
                 today, &top_jobs, &enrichment,
                 today_tasks.as_deref(), pending_tasks.as_deref(),
                 today_routine.as_deref(), today_events.as_deref(),
+                synthesis.as_deref(),
             )?;
             let path = generator.write(today, &content)?;
 
@@ -265,12 +270,20 @@ async fn main() -> anyhow::Result<()> {
         }
         Command::Prompt { text, model } => {
             let prompt = text.join(" ");
-            let url = std::env::var("OLLAMA_URL").unwrap_or_else(|_| "http://localhost:11434".into());
-            let client = llm::LlmClient::new(url, model);
-            println!("→ Envoi à Ollama...");
+            // Le fichier de configuration, quand il existe, décide de l'endpoint et
+            // du protocole. Sans lui, l'endpoint reste pilotable par l'environnement.
+            let client = match config::LlmConfig::from_file("config/llm.toml") {
+                Ok(llm_config) => llm::LlmClient::from_config(&llm_config),
+                Err(_) => {
+                    let url = std::env::var("OLLAMA_URL")
+                        .unwrap_or_else(|_| "http://localhost:11434".into());
+                    llm::LlmClient::new(url, model)
+                }
+            };
+            println!("→ Envoi de la requête...");
             match client.generate(&prompt).await {
                 Ok(response) => println!("{}", response),
-                Err(e) => eprintln!("Erreur Ollama : {}", e),
+                Err(e) => eprintln!("Erreur d'inférence : {}", e),
             }
         }
         Command::Status => {

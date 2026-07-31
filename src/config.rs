@@ -12,6 +12,29 @@ pub struct Profile {
     pub filters: Filters,
 }
 
+/// Configuration des modules branchables, une section par module. Le profil
+/// décrit l'utilisateur ; ce qu'un module a besoin de savoir vit ici.
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct ModulesConfig {
+    /// Absente : la section de synthèse est simplement omise du briefing.
+    #[serde(default)]
+    pub signals: Option<crate::signals::SignalsConfig>,
+}
+
+impl ModulesConfig {
+    /// Fichier absent ou illisible : les modules restent inactifs. Aucun module
+    /// n'est indispensable au fonctionnement du reste.
+    pub fn load(path: impl AsRef<Path>) -> Self {
+        let Ok(content) = std::fs::read_to_string(path.as_ref()) else {
+            return Self::default();
+        };
+        toml::from_str(&content).unwrap_or_else(|e| {
+            tracing::warn!("configuration des modules ignorée : {e}");
+            Self::default()
+        })
+    }
+}
+
 /// Filtrage négatif (optionnel) : sous-chaînes insensibles à la casse.
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct Filters {
@@ -76,6 +99,33 @@ impl Profile {
     }
 }
 
+/// Wire protocol spoken by the configured inference endpoint.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum LlmProtocol {
+    #[default]
+    Ollama,
+    OpenaiCompatible,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct LlmConfig {
+    pub endpoint: String,
+    pub model: String,
+    #[serde(default)]
+    pub protocol: LlmProtocol,
+    /// Bearer credential, when the endpoint requires one.
+    #[serde(default)]
+    pub api_key: Option<String>,
+}
+
+impl LlmConfig {
+    pub fn from_file(path: impl AsRef<Path>) -> anyhow::Result<Self> {
+        let content = std::fs::read_to_string(path.as_ref())?;
+        Ok(toml::from_str(&content)?)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -86,5 +136,20 @@ mod tests {
         assert_eq!(profile.name.first, "Prénom");
         assert_eq!(profile.preferences.salary_min, 35000);
         assert!(profile.skills.all().contains(&"Node.js".to_string()));
+    }
+
+    #[test]
+    fn missing_modules_file_leaves_every_module_inactive() {
+        let modules = ModulesConfig::load("config/absent.toml");
+        assert!(modules.signals.is_none());
+    }
+
+    /// L'exemple ne porte que des placeholders : la section existe mais reste
+    /// inexploitable, donc le module est inactif sans erreur.
+    #[test]
+    fn example_modules_file_parses_but_stays_unusable() {
+        let modules = ModulesConfig::load("config/modules.example.toml");
+        let signals = modules.signals.expect("section présente dans l'exemple");
+        assert!(!signals.is_usable());
     }
 }

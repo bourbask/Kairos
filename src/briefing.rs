@@ -5,7 +5,7 @@ use crate::models::{ScoredJob, EnrichedCompany, Task, Routine, RoutineLogEntry, 
 /// Neutralise un champ externe non fiable avant rendu Markdown : retire les
 /// caractères de contrôle, remplace les métacaractères (liens, mentions, code,
 /// emphase) par des espaces, borne la longueur. Anti-injection de liens/mentions.
-fn sanitize(s: &str) -> String {
+pub(crate) fn sanitize(s: &str) -> String {
     s.chars()
         .filter(|c| !c.is_control())
         .map(|c| match c {
@@ -33,7 +33,7 @@ impl BriefingGenerator {
         jobs: &[ScoredJob],
         enrichment: &[(String, EnrichedCompany)],
     ) -> anyhow::Result<String> {
-        self.generate_with_planning(date, jobs, enrichment, None, None, None, None)
+        self.generate_with_planning(date, jobs, enrichment, None, None, None, None, None)
     }
 
     pub fn generate_with_planning(
@@ -45,6 +45,7 @@ impl BriefingGenerator {
         pending_tasks: Option<&[Task]>,
         today_routine: Option<&[(Routine, RoutineLogEntry)]>,
         today_events: Option<&[CalendarEvent]>,
+        synthesis: Option<&str>,
     ) -> anyhow::Result<String> {
         let mut content = String::new();
         content.push_str(&format!("# Briefing — {}\n\n", date.format("%Y-%m-%d")));
@@ -111,6 +112,13 @@ impl BriefingGenerator {
                 }
                 content.push('\n');
             }
+        }
+
+        // --- Synthesis section ---
+        if let Some(text) = synthesis.map(str::trim).filter(|t| !t.is_empty()) {
+            content.push_str("## Veille\n\n");
+            content.push_str(text);
+            content.push_str("\n\n");
         }
 
         // --- Job offers section ---
@@ -276,6 +284,7 @@ mod tests {
             Some(&[task]),
             Some(&[]),
             Some(&[(routine_step, routine_log)]),
+            None,
             None,
         ).unwrap();
 

@@ -1,0 +1,12 @@
+# Kairos — configuration du modèle de langage
+# Copier ce fichier en llm.toml et remplir les valeurs
+# Ne jamais commiter llm.toml (gitignored)
+
+endpoint = ""
+model = ""
+
+# "ollama" (défaut) ou "openai-compatible"
+protocol = "ollama"
+
+# Requis seulement si l'endpoint exige un jeton porteur
+# api_key = ""
