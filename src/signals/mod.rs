@@ -10,6 +10,14 @@ use serde::Deserialize;
 
 use crate::briefing::sanitize;
 use crate::config::Profile;
+use crate::llm::{LlmRouter, Sensitivity, Urgency};
+
+/// Voie de génération déclarée par le module : la synthèse porte sur des sujets
+/// suivis par l'utilisateur, et sa production n'attend aucun lecteur immédiat.
+/// Le nom d'usage est celui auquel une concession de configuration se rattache.
+pub const LLM_USAGE: &str = "signals";
+pub const LLM_SENSITIVITY: Sensitivity = Sensitivity::Strategic;
+pub const LLM_URGENCY: Urgency = Urgency::Deferred;
 
 /// Source de signaux prospectifs et modèle chargé de leur synthèse. Toutes les
 /// valeurs identifiantes vivent dans la configuration, jamais dans le code.
@@ -25,18 +33,6 @@ pub struct SignalsConfig {
     /// conclut à l'absence de lien.
     #[serde(default)]
     pub interests: Vec<String>,
-    #[serde(default = "default_llm_endpoint")]
-    pub llm_endpoint: String,
-    #[serde(default = "default_llm_model")]
-    pub llm_model: String,
-}
-
-fn default_llm_endpoint() -> String {
-    "http://localhost:11434".into()
-}
-
-fn default_llm_model() -> String {
-    "phi3:mini".into()
 }
 
 impl SignalsConfig {
@@ -192,7 +188,11 @@ pub fn build_synthesis_prompt(profile: &Profile, interests: &[String], signals: 
 /// de lecture (localisation, zones). Renvoie `None` dès qu'une étape n'aboutit
 /// pas — configuration absente incluse : la section est omise, le briefing reste
 /// produit.
-pub async fn synthesize(config: Option<&SignalsConfig>, profile: &Profile) -> Option<String> {
+pub async fn synthesize(
+    config: Option<&SignalsConfig>,
+    profile: &Profile,
+    router: &LlmRouter,
+) -> Option<String> {
     let config = config.filter(|c| c.is_usable())?;
 
     let source = match http::HttpSignalSource::new(config.clone()) {
@@ -217,7 +217,13 @@ pub async fn synthesize(config: Option<&SignalsConfig>, profile: &Profile) -> Op
     };
 
     let prompt = build_synthesis_prompt(profile, &config.interests, &signals);
-    let client = crate::llm::LlmClient::new(config.llm_endpoint.clone(), config.llm_model.clone());
+    let client = match router.client(LLM_USAGE, LLM_SENSITIVITY, LLM_URGENCY) {
+        Ok(client) => client,
+        Err(e) => {
+            tracing::warn!("synthèse non routée : {e}");
+            return None;
+        }
+    };
 
     match client.generate(&prompt).await {
         Ok(text) => Some(sanitize_synthesis(&text)).filter(|t| !t.is_empty()),
@@ -334,7 +340,30 @@ mod tests {
     /// Sans configuration, le module ne tente rien et n'échoue pas.
     #[tokio::test]
     async fn absent_configuration_yields_no_synthesis() {
-        assert!(synthesize(None, &profile()).await.is_none());
+        let router = LlmRouter::from_config(crate::config::LlmRoutingConfig::default());
+        assert!(synthesize(None, &profile(), &router).await.is_none());
+    }
+
+    /// La déclaration du module est stratégique : le routeur refuse la voie
+    /// externe pour cet usage, même quand elle est la seule configurée.
+    #[test]
+    fn module_declares_a_strategic_deferred_generation() {
+        assert_eq!(LLM_SENSITIVITY, Sensitivity::Strategic);
+        assert_eq!(LLM_URGENCY, Urgency::Deferred);
+
+        let router = LlmRouter::from_config(crate::config::LlmRoutingConfig {
+            self_hosted: None,
+            external: Some(crate::config::LlmConfig {
+                endpoint: "http://externe.invalid".into(),
+                model: "m".into(),
+                protocol: Default::default(),
+                api_key: None,
+            }),
+            strategic_concessions: vec![],
+        });
+        assert!(router
+            .client(LLM_USAGE, LLM_SENSITIVITY, LLM_URGENCY)
+            .is_err());
     }
 
     #[test]

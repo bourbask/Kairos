@@ -25,6 +25,9 @@ use enrichment::Enricher;
 use briefing::BriefingGenerator;
 use planning::Planner;
 
+/// Déclaration des deux voies d'inférence et des concessions consenties.
+const LLM_ROUTING_PATH: &str = "config/llm.toml";
+
 #[derive(Parser)]
 #[command(name = "kairos", about = "Assistant personnel Kairos")]
 struct Cli {
@@ -46,11 +49,7 @@ enum Command {
     /// Show status and stats
     Status,
     /// Send a prompt to the configured model
-    Prompt {
-        text: Vec<String>,
-        #[arg(short, long, default_value = "phi3:mini")]
-        model: String,
-    },
+    Prompt { text: Vec<String> },
     /// Planning & agenda commands
     Plan {
         #[command(subcommand)]
@@ -207,7 +206,8 @@ async fn main() -> anyhow::Result<()> {
         }
         Command::Briefing { top_n } => {
             let modules = config::ModulesConfig::load("config/modules.toml");
-            let synthesis = signals::synthesize(modules.signals.as_ref(), &profile).await;
+            let router = llm::LlmRouter::load(LLM_ROUTING_PATH);
+            let synthesis = signals::synthesize(modules.signals.as_ref(), &profile, &router).await;
 
             let matcher = Matcher::new(profile);
             let ranker = Ranker::new(matcher, Arc::clone(&storage));
@@ -267,16 +267,19 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
         }
-        Command::Prompt { text, model } => {
+        Command::Prompt { text } => {
             let prompt = text.join(" ");
-            // Le fichier de configuration, quand il existe, décide de l'endpoint et
-            // du protocole. Sans lui, l'endpoint reste pilotable par l'environnement.
-            let client = match config::LlmConfig::from_file("config/llm.toml") {
-                Ok(llm_config) => llm::LlmClient::from_config(&llm_config),
-                Err(_) => {
-                    let url = std::env::var("OLLAMA_URL")
-                        .unwrap_or_else(|_| "http://localhost:11434".into());
-                    llm::LlmClient::new(url, model)
+            // Contenu saisi à la main : sa nature n'est pas connue, il est donc
+            // traité comme stratégique. Une réponse est attendue au plus tôt.
+            let client = match llm::LlmRouter::load(LLM_ROUTING_PATH).client(
+                "prompt",
+                llm::Sensitivity::Strategic,
+                llm::Urgency::Interactive,
+            ) {
+                Ok(client) => client,
+                Err(e) => {
+                    eprintln!("Erreur de routage : {e}");
+                    return Ok(());
                 }
             };
             println!("→ Envoi de la requête...");

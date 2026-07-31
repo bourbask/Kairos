@@ -58,6 +58,13 @@ Your CV profile goes in `config/profile.toml` (gitignored — copy from `.exampl
 Optional per-module settings go in `config/modules.toml` (gitignored — copy from
 `.example`). A missing file or section leaves that module inactive.
 
+Generation routing goes in `config/llm.toml` (gitignored — copy from `.example`).
+It declares two paths, self-hosted and external, and is the single source of the
+engine choice: callers declare how sensitive and how urgent a generation is,
+never which engine runs it. Strategic generations stay self-hosted with no
+fallback; the only exceptions are the usages explicitly listed in
+`strategic_concessions`.
+
 ---
 
 ## Commands
@@ -98,13 +105,15 @@ kairos/
 │   ├── ranker.rs        # Top N unseen offers
 │   ├── enrichment.rs    # Company enrichment
 │   ├── storage.rs       # SQLite (jobs + planning)
-│   ├── llm.rs           # Ollama client
+│   ├── llm.rs           # Inference client + generation router
 │   └── briefing.rs      # Markdown generation
 ├── config/
 │   ├── profile.toml     # Your CV (gitignored)
 │   ├── profile.example.toml
 │   ├── modules.toml     # Optional module config (gitignored)
-│   └── modules.example.toml
+│   ├── modules.example.toml
+│   ├── llm.toml         # Generation routing (gitignored)
+│   └── llm.example.toml
 ├── data/
 │   └── kairos.db        # SQLite (gitignored)
 └── docs/
