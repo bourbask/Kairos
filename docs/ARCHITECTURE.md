@@ -125,7 +125,9 @@ kairos/
 │   └── briefing.rs          # Markdown output → ~/briefings/ [tested]
 ├── config/
 │   ├── profile.toml         # CV : skills, salary target, countries, contact (gitignored)
-│   └── profile.example.toml # Template
+│   ├── profile.example.toml # Template
+│   ├── modules.toml         # Config par module, une section chacun (gitignored, optionnel)
+│   └── modules.example.toml # Template
 ├── data/
 │   └── kairos.db            # SQLite (gitignored)
 ├── docs/                    # Documentation

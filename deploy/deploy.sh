@@ -29,6 +29,10 @@ if [ -f "$ROOT/config/profile.toml" ]; then
 else
   echo "    ⚠️  config/profile.toml absent en local (gitignoré) — copie-le à la main."
 fi
+# Configuration des modules : absente, les modules restent simplement inactifs.
+if [ -f "$ROOT/config/modules.toml" ]; then
+  scp "$ROOT/config/modules.toml" "$VPS_HOST:$KAIROS_DIR/config/modules.toml"
+fi
 
 echo "==> [4/4] Rendu + copie des units systemd"
 tmp="$(mktemp -d)"

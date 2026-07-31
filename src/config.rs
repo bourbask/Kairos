@@ -11,48 +11,28 @@ pub struct Profile {
     pub experience: Experience,
     #[serde(default)]
     pub filters: Filters,
+}
+
+/// Configuration des modules branchables, une section par module. Le profil
+/// décrit l'utilisateur ; ce qu'un module a besoin de savoir vit ici.
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct ModulesConfig {
     /// Absente : la section de synthèse est simplement omise du briefing.
     #[serde(default)]
-    pub signals: Option<SignalsConfig>,
+    pub signals: Option<crate::signals::SignalsConfig>,
 }
 
-/// Source de signaux prospectifs et modèle chargé de leur synthèse. Toutes les
-/// valeurs identifiantes vivent ici, jamais dans le code.
-#[derive(Debug, Clone, Deserialize)]
-pub struct SignalsConfig {
-    pub base_url: String,
-    pub api_key: String,
-    pub auth_header: String,
-    pub markets_path: String,
-    pub forecasts_path: String,
-    /// Sujets sur lesquels la synthèse doit se concentrer. Le reste du profil
-    /// décrit une recherche d'emploi : sans cette liste, la lecture des signaux
-    /// se fait sous le seul angle professionnel et conclut à l'absence de lien.
-    #[serde(default)]
-    pub interests: Vec<String>,
-    #[serde(default = "default_llm_endpoint")]
-    pub llm_endpoint: String,
-    #[serde(default = "default_llm_model")]
-    pub llm_model: String,
-}
-
-fn default_llm_endpoint() -> String {
-    "http://localhost:11434".into()
-}
-
-fn default_llm_model() -> String {
-    "phi3:mini".into()
-}
-
-impl SignalsConfig {
-    /// Une section partiellement remplie produit des requêtes silencieusement
-    /// inutiles : on l'écarte à la lecture plutôt qu'à l'appel.
-    pub fn is_usable(&self) -> bool {
-        !self.base_url.trim().is_empty()
-            && !self.api_key.trim().is_empty()
-            && !self.auth_header.trim().is_empty()
-            && !self.markets_path.trim().is_empty()
-            && !self.forecasts_path.trim().is_empty()
+impl ModulesConfig {
+    /// Fichier absent ou illisible : les modules restent inactifs. Aucun module
+    /// n'est indispensable au fonctionnement du reste.
+    pub fn load(path: impl AsRef<Path>) -> Self {
+        let Ok(content) = std::fs::read_to_string(path.as_ref()) else {
+            return Self::default();
+        };
+        toml::from_str(&content).unwrap_or_else(|e| {
+            tracing::warn!("configuration des modules ignorée : {e}");
+            Self::default()
+        })
     }
 }
 
@@ -149,5 +129,20 @@ mod tests {
         assert_eq!(profile.name.first, "Prénom");
         assert_eq!(profile.preferences.salary_min, 35000);
         assert!(profile.skills.all().contains(&"Node.js".to_string()));
+    }
+
+    #[test]
+    fn missing_modules_file_leaves_every_module_inactive() {
+        let modules = ModulesConfig::load("config/absent.toml");
+        assert!(modules.signals.is_none());
+    }
+
+    /// L'exemple ne porte que des placeholders : la section existe mais reste
+    /// inexploitable, donc le module est inactif sans erreur.
+    #[test]
+    fn example_modules_file_parses_but_stays_unusable() {
+        let modules = ModulesConfig::load("config/modules.example.toml");
+        let signals = modules.signals.expect("section présente dans l'exemple");
+        assert!(!signals.is_usable());
     }
 }
