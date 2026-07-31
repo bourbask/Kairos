@@ -9,6 +9,7 @@ mod llm;
 mod briefing;
 mod planning;
 mod calendar;
+mod signals;
 mod notify;
 
 use std::path::PathBuf;
@@ -205,6 +206,8 @@ async fn main() -> anyhow::Result<()> {
             println!("Rescored {updated}/{total} offers.");
         }
         Command::Briefing { top_n } => {
+            let synthesis = signals::synthesize(&profile).await;
+
             let matcher = Matcher::new(profile);
             let ranker = Ranker::new(matcher, Arc::clone(&storage));
             let top_jobs = ranker.top_unpresented(top_n);
@@ -228,6 +231,7 @@ async fn main() -> anyhow::Result<()> {
                 today, &top_jobs, &enrichment,
                 today_tasks.as_deref(), pending_tasks.as_deref(),
                 today_routine.as_deref(), today_events.as_deref(),
+                synthesis.as_deref(),
             )?;
             let path = generator.write(today, &content)?;
 
