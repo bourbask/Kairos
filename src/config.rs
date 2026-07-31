@@ -140,6 +140,31 @@ pub struct LlmConfig {
 }
 
 impl LlmConfig {
+    /// Une voie à moitié renseignée produirait des appels voués à l'échec : elle
+    /// est écartée à la lecture, comme une voie absente.
+    pub fn is_usable(&self) -> bool {
+        !self.endpoint.trim().is_empty() && !self.model.trim().is_empty()
+    }
+}
+
+/// Les deux voies d'inférence et les concessions consenties. Source unique du
+/// choix du moteur : aucun module ne porte d'endpoint ni de modèle.
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct LlmRoutingConfig {
+    /// Moteur auto-hébergé, seul destinataire des générations stratégiques.
+    #[serde(default)]
+    pub self_hosted: Option<LlmConfig>,
+    /// Service externe, réservé aux générations banales.
+    #[serde(default)]
+    pub external: Option<LlmConfig>,
+    /// Usages stratégiques que l'opérateur concède au service externe, par nom
+    /// d'usage. Liste vide = refus. La relecture de cette seule liste montre
+    /// l'intégralité des exceptions en vigueur.
+    #[serde(default)]
+    pub strategic_concessions: Vec<String>,
+}
+
+impl LlmRoutingConfig {
     pub fn from_file(path: impl AsRef<Path>) -> anyhow::Result<Self> {
         let content = std::fs::read_to_string(path.as_ref())?;
         Ok(toml::from_str(&content)?)
