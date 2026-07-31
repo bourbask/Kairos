@@ -22,6 +22,4 @@ deploy/docker/kairos.env
 deploy/docker/.env
 deploy/docker/radicale/config/config
 deploy/docker/radicale/config/users
-
-# Instructions Claude privées (harness, plan de travail) — ne remonte jamais publiquement
 CLAUDE.local.md
