@@ -15,6 +15,12 @@
 - `supercronic.crontab` — planning interne (scrape 04:30, calendar sync 04:45, briefing 05:00 ; fuseau `TZ`).
 - `kairos.env` (optionnel, gitignoré) — secrets ; copier depuis `../kairos.env.example`.
 
+> L'envoi écarte tout fichier ignoré par le dépôt. Les configurations réelles de
+> `config/` (profil, modules, modèle) et les secrets appartiennent donc à l'hôte
+> cible et n'y sont jamais écrasés par celles du poste qui déploie : elles se
+> créent et se modifient sur place, depuis les fichiers d'exemple. Le corollaire
+> est qu'un nouveau champ de configuration se répercute à la main.
+
 ## Mise en place (sur le VPS, dans `~/kairos/deploy/docker`)
 
 ```bash
