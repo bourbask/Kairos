@@ -88,6 +88,24 @@ Adresse/port de bind du serveur configurables via `NTFY_BIND_ADDR`/`NTFY_BIND_PO
 (défaut : boucle locale, port `8090` — le port 80 est déjà pris par Traefik sur cet hôte) — même
 convention que `RADICALE_BIND_ADDR`.
 
+## Tentacules (mémoire, agenda)
+
+Services MCP (HTTP, chemin `/mcp`) : `memoire` (base dédiée, volume `memoire-data`) et `agenda`
+(lit `kairos.db`, connexion en lecture seule). Ils refusent de démarrer sans jeton.
+
+Générer un jeton par service et les renseigner dans `kairos.env` :
+
+```bash
+openssl rand -hex 32   # -> MEMOIRE_TOKEN ; relancer pour AGENDA_TOKEN
+```
+
+Publication : `${TAILNET_IP:-127.0.0.1}` (défaut : boucle locale ; définir `TAILNET_IP` sur l'adresse du
+réseau privé pour l'exposer), ports `MEMOIRE_BIND_PORT` (8091) et `AGENDA_BIND_PORT` (8092).
+
+```bash
+docker compose up -d memoire agenda
+```
+
 ## Notes
 
 - **Planification interne** : le conteneur `scheduler` (supercronic) déclenche les batchs (scrape + calendar sync + briefing).
