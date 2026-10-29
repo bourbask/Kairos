@@ -102,9 +102,14 @@ openssl rand -hex 32   # -> MEMOIRE_TOKEN ; relancer pour AGENDA_TOKEN
 Publication : `${TAILNET_IP:-127.0.0.1}` (défaut : boucle locale ; définir `TAILNET_IP` sur l'adresse du
 réseau privé pour l'exposer), ports `MEMOIRE_BIND_PORT` (8091) et `AGENDA_BIND_PORT` (8092).
 
+L'image `kairos:local` doit exister (construite par `scheduler`) ; `agenda` exige que `kairos.db` existe
+(`kairos` doit avoir tourné une fois).
+
 ```bash
-docker compose up -d memoire agenda
+docker compose up -d --build memoire agenda
 ```
+
+(`--build` ne reconstruit que les services avec `build:` ; sinon `docker compose build scheduler` d'abord.)
 
 ## Notes
 
