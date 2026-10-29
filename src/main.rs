@@ -1,16 +1,4 @@
-mod collectors;
-mod config;
-mod models;
-mod matching;
-mod ranker;
-mod storage;
-mod enrichment;
-mod llm;
-mod briefing;
-mod planning;
-mod calendar;
-mod signals;
-mod notify;
+use kairos::{briefing, calendar, collectors, config, enrichment, llm, matching, notify, planning, ranker, signals, storage};
 
 use std::path::PathBuf;
 use std::sync::Arc;

@@ -1,0 +1,13 @@
+pub mod collectors;
+pub mod config;
+pub mod models;
+pub mod matching;
+pub mod ranker;
+pub mod storage;
+pub mod enrichment;
+pub mod llm;
+pub mod briefing;
+pub mod planning;
+pub mod calendar;
+pub mod signals;
+pub mod notify;
