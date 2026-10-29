@@ -34,4 +34,21 @@ iconv -f UTF-8 -t UTF-8 "$T/tr" >/dev/null 2>&1 ; ok $? "UTF-8 valide après tro
 run "$PWD/fixtures/transcript.jsonl" >/dev/null 2>&1 ; ok $? "exit 0 si échec"
 [ "$(wc -l < "$T/state/kairos/hook.log")" -ge 1 ] ; ok $? "échec journalisé"
 grep -q jeton-secret "$T/state/kairos/hook.log" ; [ $? -ne 0 ] ; ok $? "jeton absent du journal"
+
+# faux curl : trace argv, lit stdin, écrit le jeton sur stderr (jeton avec / et &)
+mkdir "$T/bin"
+cat > "$T/bin/curl" <<'F'
+#!/usr/bin/env bash
+printf '%s\n' "$@" > "$FAKE_ARGS"
+cat >/dev/null
+echo "boom $KAIROS_MEMOIRE_TOKEN fin" >&2
+printf 000
+exit 7
+F
+chmod +x "$T/bin/curl"
+rm -rf "$T/state"; tok='a/b&c.d*e'
+FAKE_ARGS="$T/args" KAIROS_MEMOIRE_TOKEN="$tok" PATH="$T/bin:$PATH" run "$PWD/fixtures/transcript.jsonl" >/dev/null 2>&1 ; ok $? "exit 0 (faux curl)"
+grep -qF "$tok" "$T/args" ; [ $? -ne 0 ] ; ok $? "jeton absent de argv de curl"
+grep -qF "$tok" "$T/state/kairos/hook.log" ; [ $? -ne 0 ] ; ok $? "jeton (/ et &) masqué dans le journal"
+grep -qF 'boom *** fin' "$T/state/kairos/hook.log" ; ok $? "masque *** présent"
 exit $fail

@@ -27,6 +27,7 @@ jq -r 'select(.type=="user" or .type=="assistant")
   | (.message.content | if type=="string" then . else ([.[]? | select(.type=="text") | .text] | join("\n")) end) as $t
   | select($t != "") | "\(.type): \($t)\n"' "$path" >"$T/full" 2>/dev/null
 # Fin conservée ; iconv -c écarte un éventuel caractère multi-octet coupé en tête.
+command -v iconv >/dev/null || { log "iconv absent"; exit 0; }
 tail -c "$MAX" "$T/full" | iconv -f UTF-8 -t UTF-8 -c >"$T/tr"
 [ -s "$T/tr" ] || { log "transcription vide"; exit 0; }
 
@@ -45,10 +46,12 @@ if [ -n "${KAIROS_HOOK_DRY_RUN:-}" ]; then
   exit 0
 fi
 
-code=$(curl -sS --max-time 10 -o "$T/resp" -w '%{http_code}' -X POST "$url" \
-  -H "Authorization: Bearer $token" -H 'Content-Type: application/json' \
+# En-tête d'authentification passé par stdin (printf est interne) : jamais dans argv.
+code=$(printf 'header = "Authorization: Bearer %s"\n' "$token" | curl -sS --max-time 10 -o "$T/resp" -w '%{http_code}' -X POST "$url" -K - \
+  -H 'Content-Type: application/json' \
   -H 'Accept: application/json, text/event-stream' --data-binary @"$T/body" 2>"$T/err")
-if [ "$code" != 200 ] || grep -q '"isError":true' "$T/resp"; then
-  log "échec envoi (http $code) $(head -c 200 "$T/err" | tr '\n' ' ' | sed "s/$token/***/g")"
+if [ "$code" != 200 ] || grep -Eq '"isError": ?true|"error": ?\{' "$T/resp"; then
+  err=$(head -c 200 "$T/err" | tr '\n' ' ')
+  log "échec envoi (http $code) ${err//"$token"/***}"
 fi
 exit 0
