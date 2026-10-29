@@ -383,16 +383,27 @@ async fn main() -> anyhow::Result<()> {
                     let password = std::env::var("CALENDAR_PASSWORD")
                         .map_err(|_| anyhow::anyhow!("CALENDAR_PASSWORD not set in .env"))?;
 
-                    println!("Syncing from {}...", calendar_url);
-                    let client = calendar::CalendarClient::new(calendar_url, username, password);
-                    let events = client.sync().await?;
-
-                    storage.delete_calendar_events_by_source("calendar")?;
-                    for event in &events {
-                        storage.upsert_calendar_event(event)?;
+                    // ponytail: deux collections nommées ; liste configurable si une troisième arrive.
+                    let mut collections = vec![(calendar_url, calendar::SOURCE_PERSONAL)];
+                    match std::env::var("CALENDAR_WORK_URL").ok().filter(|u| !u.is_empty()) {
+                        Some(u) => collections.push((u, calendar::SOURCE_WORK)),
+                        None => tracing::info!("CALENDAR_WORK_URL absent, agenda travail ignoré"),
                     }
 
-                    println!("Synced {} events.", events.len());
+                    let mut total = 0;
+                    for (url, source) in collections {
+                        println!("Syncing from {}...", url);
+                        let client = calendar::CalendarClient::new(url, username.clone(), password.clone());
+                        let events = client.sync(source).await?;
+
+                        storage.delete_calendar_events_by_source(source)?;
+                        for event in &events {
+                            storage.upsert_calendar_event(event)?;
+                        }
+                        total += events.len();
+                    }
+
+                    println!("Synced {} events.", total);
                 }
                 CalendarAction::Today => {
                     let events = storage.get_today_events()?;

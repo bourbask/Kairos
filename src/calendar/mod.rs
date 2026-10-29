@@ -5,13 +5,17 @@ use crate::models::{CalendarEvent, Task};
 // ponytail: fuseau par défaut codé en dur ; passer en config si multi-fuseau un jour.
 pub const USER_TZ: Tz = chrono_tz::Europe::Paris;
 
+/// Sources des événements : agenda personnel et agenda travail.
+pub const SOURCE_PERSONAL: &str = "calendar";
+pub const SOURCE_WORK: &str = "work";
+
 // Convention interne : tous les horodatages sont stockés en heure murale locale (USER_TZ), naïfs.
 // L'affichage formate donc le naïf tel quel, sans reconversion.
 
 /// Parse an ICS (iCalendar) string and extract VEVENT entries.
 /// Handles line folding (long lines continued with leading space/tab).
 /// Returns a vec of (uid, summary, description, location, dtstart, dtend, allday).
-pub fn parse_ics(input: &str) -> Vec<CalendarEvent> {
+pub fn parse_ics(input: &str, source: &str) -> Vec<CalendarEvent> {
     let unfolded = unfold_lines(input);
     let mut events = Vec::new();
     let mut in_vevent = false;
@@ -43,7 +47,7 @@ pub fn parse_ics(input: &str) -> Vec<CalendarEvent> {
                 continue;
             }
             "END:VEVENT" if in_vevent => {
-                if let Some(event) = build_event(&uid, &summary, &description, &location, &dtstart, &dtend, &dtstart_tzid, &dtend_tzid, all_day) {
+                if let Some(event) = build_event(&uid, &summary, &description, &location, &dtstart, &dtend, &dtstart_tzid, &dtend_tzid, all_day, source) {
                     events.push(event);
                 }
                 in_vevent = false;
@@ -162,7 +166,7 @@ fn unescape_ics(s: &str) -> String {
 }
 
 fn build_event(uid: &str, summary: &str, description: &str, location: &str,
-    dtstart: &str, dtend: &str, dtstart_tzid: &str, dtend_tzid: &str, all_day: bool) -> Option<CalendarEvent> {
+    dtstart: &str, dtend: &str, dtstart_tzid: &str, dtend_tzid: &str, all_day: bool, source: &str) -> Option<CalendarEvent> {
 
     let uid = if uid.is_empty() {
         format!("kairos-{}", std::time::SystemTime::now()
@@ -199,7 +203,7 @@ fn build_event(uid: &str, summary: &str, description: &str, location: &str,
         start_time,
         end_time,
         all_day,
-        source: "calendar".into(),
+        source: source.into(),
         etag: None,
     })
 }
@@ -248,11 +252,11 @@ impl CalendarClient {
     /// un serveur self-hosted mono-calendrier expose une URL de collection stable,
     /// et la découverte multi-étapes (principal → home-set → énumération) était
     /// fragile et renvoyait la home (REPORT vide) au lieu de la collection.
-    pub async fn sync(&self) -> anyhow::Result<Vec<CalendarEvent>> {
+    pub async fn sync(&self, source: &str) -> anyhow::Result<Vec<CalendarEvent>> {
         let xml = self.fetch_events().await?;
         let mut events = Vec::new();
         for block in extract_calendar_data(&xml) {
-            events.extend(parse_ics(&block));
+            events.extend(parse_ics(&block, source));
         }
         Ok(events)
     }
@@ -368,7 +372,7 @@ LOCATION:Bureau
 END:VEVENT
 END:VCALENDAR"#;
 
-        let events = parse_ics(ics);
+        let events = parse_ics(ics, SOURCE_PERSONAL);
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].summary.as_deref(), Some("Réunion test"));
         assert_eq!(events[0].location.as_deref(), Some("Bureau"));
@@ -388,7 +392,7 @@ SUMMARY:Vacances
 END:VEVENT
 END:VCALENDAR"#;
 
-        let events = parse_ics(ics);
+        let events = parse_ics(ics, SOURCE_PERSONAL);
         assert_eq!(events.len(), 1);
         assert!(events[0].all_day);
         assert_eq!(events[0].summary.as_deref(), Some("Vacances"));
@@ -411,13 +415,13 @@ SUMMARY:Second
 END:VEVENT
 END:VCALENDAR"#;
 
-        let events = parse_ics(ics);
+        let events = parse_ics(ics, SOURCE_PERSONAL);
         assert_eq!(events.len(), 2);
     }
 
     #[test]
     fn test_parse_ics_empty() {
-        let events = parse_ics("BEGIN:VCALENDAR\nEND:VCALENDAR");
+        let events = parse_ics("BEGIN:VCALENDAR\nEND:VCALENDAR", SOURCE_PERSONAL);
         assert!(events.is_empty());
     }
 
@@ -448,7 +452,7 @@ SUMMARY:UTC Event
 END:VEVENT
 END:VCALENDAR"#;
 
-        let events = parse_ics(ics);
+        let events = parse_ics(ics, SOURCE_PERSONAL);
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].start_time.format("%H:%M").to_string(), "11:00");
         assert_eq!(events[0].end_time.format("%H:%M").to_string(), "12:00");
@@ -466,7 +470,7 @@ DTEND;TZID=Europe/Paris:20260709T100000
 SUMMARY:Paris Event
 END:VEVENT
 END:VCALENDAR"#;
-        let events = parse_ics(ics);
+        let events = parse_ics(ics, SOURCE_PERSONAL);
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].start_time.format("%H:%M").to_string(), "09:00");
 
@@ -479,7 +483,7 @@ DTEND;TZID=America/New_York:20260709T100000
 SUMMARY:NY Event
 END:VEVENT
 END:VCALENDAR"#;
-        let events2 = parse_ics(ics2);
+        let events2 = parse_ics(ics2, SOURCE_PERSONAL);
         assert_eq!(events2.len(), 1);
         assert_eq!(events2[0].start_time.format("%H:%M").to_string(), "15:00");
     }
@@ -494,7 +498,7 @@ END:VCALENDAR"#;
         let blocks = extract_calendar_data(xml);
         assert_eq!(blocks.len(), 2, "deux blocs VCALENDAR attendus");
 
-        let events: Vec<_> = blocks.iter().flat_map(|b| parse_ics(b)).collect();
+        let events: Vec<_> = blocks.iter().flat_map(|b| parse_ics(b, SOURCE_PERSONAL)).collect();
         assert_eq!(events.len(), 2, "deux VEVENT parsés");
 
         let allday = events.iter().find(|e| e.uid == "ev-allday-1").unwrap();
@@ -506,5 +510,13 @@ END:VCALENDAR"#;
         // 09:00 UTC en juillet = 11:00 Paris (CEST)
         assert_eq!(timed.start_time.format("%H:%M").to_string(), "11:00");
         assert_eq!(timed.location.as_deref(), Some("Visio"));
+    }
+
+    #[test]
+    fn parse_ics_keeps_given_source() {
+        let ics = "BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:w1\nDTSTART:20260709T090000\nDTEND:20260709T100000\nSUMMARY:X\nEND:VEVENT\nEND:VCALENDAR";
+        let events = parse_ics(ics, SOURCE_WORK);
+        assert_eq!(events[0].source, "work");
+        assert_eq!(parse_ics(ics, SOURCE_PERSONAL)[0].source, "calendar");
     }
 }
