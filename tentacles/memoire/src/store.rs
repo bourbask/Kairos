@@ -14,7 +14,7 @@ pub const MAX_TRANSCRIPT_BYTES: usize = 1_500_000;
 
 const TS: &str = "%Y-%m-%d %H:%M:%S";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum Sensitivity {
     Commune,
@@ -37,7 +37,7 @@ impl Sensitivity {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum IntentionState {
     Ouverte,

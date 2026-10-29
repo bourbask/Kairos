@@ -1142,9 +1142,14 @@ dependencies = [
  "anyhow",
  "chrono",
  "kairos",
+ "reqwest",
+ "rmcp",
  "rusqlite",
+ "schemars",
  "serde",
  "serde_json",
+ "tentacle-common",
+ "tokio",
 ]
 
 [[package]]

@@ -79,6 +79,19 @@ pub async fn serve<S>(env: TentacleEnv, factory: impl Fn() -> S + Send + Sync + 
 where
     S: ServerHandler + Send + 'static,
 {
+    let listener = tokio::net::TcpListener::bind(env.bind).await?;
+    serve_listener(listener, env.token, factory).await
+}
+
+/// Comme `serve`, sur un écouteur déjà lié (permet aux tests de choisir un port libre).
+pub async fn serve_listener<S>(
+    listener: tokio::net::TcpListener,
+    token: String,
+    factory: impl Fn() -> S + Send + Sync + 'static,
+) -> anyhow::Result<()>
+where
+    S: ServerHandler + Send + 'static,
+{
     // Le contrôle d'hôte par défaut (boucle locale) bloquerait l'accès en
     // conteneur ; l'authentification repose sur le jeton.
     let mut config = StreamableHttpServerConfig::default()
@@ -91,8 +104,7 @@ where
         std::sync::Arc::new(NeverSessionManager::default()),
         config,
     );
-    let app = with_bearer(Router::new().nest_service("/mcp", service), env.token);
-    let listener = tokio::net::TcpListener::bind(env.bind).await?;
+    let app = with_bearer(Router::new().nest_service("/mcp", service), token);
     axum::serve(listener, app).await?;
     Ok(())
 }
