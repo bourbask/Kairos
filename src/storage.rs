@@ -1,4 +1,4 @@
-use rusqlite::{params, Connection, Result as SqlResult};
+use rusqlite::{params, Connection, OpenFlags, Result as SqlResult};
 use chrono::{NaiveDate, NaiveDateTime, Utc};
 use crate::models::{JobOffer, Task, Routine, RoutineLogEntry, CalendarEvent};
 use crate::calendar::USER_TZ;
@@ -41,6 +41,16 @@ impl Storage {
         let store = Self { conn };
         store.initialize()?;
         Ok(store)
+    }
+
+    /// Ouverture en lecture seule, sans initialisation du schéma : toute écriture échoue.
+    pub fn open_readonly(path: &str) -> SqlResult<Self> {
+        let conn = Connection::open_with_flags(
+            path,
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX | OpenFlags::SQLITE_OPEN_URI,
+        )?;
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
+        Ok(Self { conn })
     }
 
     fn initialize(&self) -> SqlResult<()> {
@@ -606,6 +616,31 @@ pub struct StorageStats {
 mod tests {
     use super::*;
     use chrono::Utc;
+
+    #[test]
+    fn open_readonly_reads_but_refuses_writes() {
+        let path = std::env::temp_dir().join(format!("kairos-ro-{}.db", std::process::id()));
+        let p = path.to_str().unwrap();
+        let ev = CalendarEvent {
+            uid: "u1".into(),
+            summary: Some("rdv".into()),
+            description: None,
+            location: None,
+            start_time: NaiveDate::from_ymd_opt(2026, 1, 5).unwrap().and_hms_opt(9, 0, 0).unwrap(),
+            end_time: NaiveDate::from_ymd_opt(2026, 1, 5).unwrap().and_hms_opt(10, 0, 0).unwrap(),
+            all_day: false,
+            source: "test".into(),
+            etag: None,
+        };
+        Storage::open(p).unwrap().upsert_calendar_event(&ev).unwrap();
+        let ro = Storage::open_readonly(p).unwrap();
+        let from = ev.start_time - chrono::Duration::hours(1);
+        assert_eq!(ro.get_events_between(from, ev.end_time).unwrap().len(), 1);
+        assert!(ro.upsert_calendar_event(&ev).is_err());
+        for ext in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{p}{ext}"));
+        }
+    }
 
     #[test]
     fn test_insert_and_count() {

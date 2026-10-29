@@ -78,7 +78,7 @@ pub struct RoutineLogEntry {
 
 // --- Calendar ---
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct CalendarEvent {
     pub uid: String,
     pub summary: Option<String>,
