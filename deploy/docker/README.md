@@ -99,17 +99,19 @@ Générer un jeton par service et les renseigner dans `kairos.env` :
 openssl rand -hex 32   # -> MEMOIRE_TOKEN ; relancer pour AGENDA_TOKEN
 ```
 
-Publication : `${TAILNET_IP:-127.0.0.1}` (défaut : boucle locale ; définir `TAILNET_IP` sur l'adresse du
-réseau privé pour l'exposer), ports `MEMOIRE_BIND_PORT` (8091) et `AGENDA_BIND_PORT` (8092).
+Publication : `${TAILNET_IP:-127.0.0.1}` (défaut : boucle locale), ports `MEMOIRE_BIND_PORT` (8091) et
+`AGENDA_BIND_PORT` (8092). `TAILNET_IP` est une variable de substitution de compose : elle se définit dans
+`deploy/docker/.env` (gitignoré) ou dans l'environnement du shell, **pas** dans `kairos.env`
+(qui n'alimente que l'intérieur des conteneurs). Au démarrage de l'hôte, le bind échoue si l'adresse du
+réseau privé n'est pas encore montée : le réseau privé doit démarrer avant Docker (ou relancer les services).
 
 L'image `kairos:local` doit exister (construite par `scheduler`) ; `agenda` exige que `kairos.db` existe
 (`kairos` doit avoir tourné une fois).
 
 ```bash
-docker compose up -d --build memoire agenda
+docker compose build scheduler
+docker compose up -d memoire agenda
 ```
-
-(`--build` ne reconstruit que les services avec `build:` ; sinon `docker compose build scheduler` d'abord.)
 
 ## Notes
 
