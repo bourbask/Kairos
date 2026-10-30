@@ -358,8 +358,10 @@ mod tests {
                 model: "m".into(),
                 protocol: Default::default(),
                 api_key: None,
+                ..Default::default()
             }),
             strategic_concessions: vec![],
+            ..Default::default()
         });
         assert!(router
             .client(LLM_USAGE, LLM_SENSITIVITY, LLM_URGENCY)

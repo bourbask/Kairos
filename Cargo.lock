@@ -940,6 +940,7 @@ dependencies = [
  "mailparse",
  "native-tls",
  "quick-xml",
+ "regex",
  "reqwest",
  "rusqlite",
  "scraper",

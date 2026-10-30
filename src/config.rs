@@ -126,9 +126,10 @@ pub enum LlmProtocol {
     #[default]
     Ollama,
     OpenaiCompatible,
+    Messages,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Default, Deserialize)]
 pub struct LlmConfig {
     pub endpoint: String,
     pub model: String,
@@ -137,6 +138,26 @@ pub struct LlmConfig {
     /// Bearer credential, when the endpoint requires one.
     #[serde(default)]
     pub api_key: Option<String>,
+    /// Nom de l'en-tête portant le jeton ; absent : `Authorization: Bearer`.
+    #[serde(default)]
+    pub api_key_header: Option<String>,
+    /// En-têtes fixes envoyés tels quels à chaque requête.
+    #[serde(default)]
+    pub headers: HashMap<String, String>,
+}
+
+/// Les secrets (jeton, valeurs d'en-têtes) n'apparaissent jamais dans les traces.
+impl std::fmt::Debug for LlmConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LlmConfig")
+            .field("endpoint", &self.endpoint)
+            .field("model", &self.model)
+            .field("protocol", &self.protocol)
+            .field("api_key", &self.api_key.as_ref().map(|_| "***"))
+            .field("api_key_header", &self.api_key_header)
+            .field("headers", &self.headers.keys().map(|k| (k, "***")).collect::<Vec<_>>())
+            .finish()
+    }
 }
 
 impl LlmConfig {
@@ -162,6 +183,35 @@ pub struct LlmRoutingConfig {
     /// l'intégralité des exceptions en vigueur.
     #[serde(default)]
     pub strategic_concessions: Vec<String>,
+    /// Moteurs nommés, déclarés en plus des deux voies historiques.
+    #[serde(default)]
+    pub engines: HashMap<String, EngineConfig>,
+    /// Association usage → nom de moteur. Un usage absent suit le routage
+    /// historique.
+    #[serde(default)]
+    pub usages: HashMap<String, String>,
+    /// Termes littéraux (insensibles à la casse) masqués avant tout envoi
+    /// externe, en plus des identifiants détectés automatiquement.
+    #[serde(default)]
+    pub redact_terms: Vec<String>,
+}
+
+/// Où tourne un moteur : détermine s'il est soumis à la règle de sensibilité.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Placement {
+    SelfHosted,
+    External,
+}
+
+/// Moteur nommé : connexion, emplacement et plafond quotidien optionnel.
+#[derive(Debug, Clone, Deserialize)]
+pub struct EngineConfig {
+    #[serde(flatten)]
+    pub llm: LlmConfig,
+    pub placement: Placement,
+    #[serde(default)]
+    pub daily_token_cap: Option<u64>,
 }
 
 impl LlmRoutingConfig {
