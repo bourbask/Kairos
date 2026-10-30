@@ -517,7 +517,22 @@ impl Storage {
     // --- Calendar ---
 
     pub fn upsert_calendar_event(&self, event: &CalendarEvent) -> SqlResult<()> {
-        self.conn.execute(
+        Self::upsert_event_on(&self.conn, event)
+    }
+
+    /// Remplace tous les événements d'une source en une seule transaction :
+    /// les lecteurs ne voient jamais un agenda vide à mi-synchronisation.
+    pub fn replace_calendar_events(&self, source: &str, events: &[CalendarEvent]) -> SqlResult<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute("DELETE FROM calendar_events WHERE source = ?1", params![source])?;
+        for e in events {
+            Self::upsert_event_on(&tx, e)?;
+        }
+        tx.commit()
+    }
+
+    fn upsert_event_on(conn: &Connection, event: &CalendarEvent) -> SqlResult<()> {
+        conn.execute(
             "INSERT OR REPLACE INTO calendar_events (uid, summary, description, location, start_time, end_time, all_day, source, etag, last_synced)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
@@ -737,6 +752,26 @@ mod tests {
         s.delete_calendar_events_by_source("calendar").unwrap();
         assert_eq!(s.get_calendar_stats().unwrap(), 1);
         assert_eq!(s.get_events_between(at(0, 0), at(23, 0)).unwrap()[0].uid, "e2");
+    }
+
+    #[test]
+    fn replace_calendar_events_swaps_one_source_only() {
+        let s = Storage::open(":memory:").unwrap();
+        s.upsert_calendar_event(&ev("old", "calendar", false, 9, 10)).unwrap();
+        s.upsert_calendar_event(&ev("w", "work", false, 9, 10)).unwrap();
+        s.replace_calendar_events("calendar", &[ev("n1", "calendar", false, 11, 12), ev("n2", "calendar", false, 13, 14)]).unwrap();
+        let uids: Vec<_> = s.get_events_between(at(0, 0), at(23, 0)).unwrap().into_iter().map(|e| e.uid).collect();
+        assert_eq!(uids, ["w", "n1", "n2"]);
+    }
+
+    #[test]
+    fn replace_calendar_events_rolls_back_on_failure() {
+        let s = Storage::open(":memory:").unwrap();
+        s.upsert_calendar_event(&ev("old", "calendar", false, 9, 10)).unwrap();
+        s.conn.execute_batch("CREATE TRIGGER boom BEFORE INSERT ON calendar_events WHEN NEW.uid = 'bad' BEGIN SELECT RAISE(ABORT, 'x'); END;").unwrap();
+        assert!(s.replace_calendar_events("calendar", &[ev("ok", "calendar", false, 11, 12), ev("bad", "calendar", false, 13, 14)]).is_err());
+        let uids: Vec<_> = s.get_events_between(at(0, 0), at(23, 0)).unwrap().into_iter().map(|e| e.uid).collect();
+        assert_eq!(uids, ["old"]);
     }
 
     #[test]

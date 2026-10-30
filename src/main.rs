@@ -396,10 +396,7 @@ async fn main() -> anyhow::Result<()> {
                         let client = calendar::CalendarClient::new(url, username.clone(), password.clone());
                         let events = client.sync(source).await?;
 
-                        storage.delete_calendar_events_by_source(source)?;
-                        for event in &events {
-                            storage.upsert_calendar_event(event)?;
-                        }
+                        storage.replace_calendar_events(source, &events)?;
                         total += events.len();
                     }
 
