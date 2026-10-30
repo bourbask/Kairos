@@ -1,4 +1,4 @@
-use rusqlite::{params, Connection, Result as SqlResult};
+use rusqlite::{params, Connection, OpenFlags, Result as SqlResult};
 use chrono::{NaiveDate, NaiveDateTime, Utc};
 use crate::models::{JobOffer, Task, Routine, RoutineLogEntry, CalendarEvent};
 use crate::calendar::USER_TZ;
@@ -41,6 +41,16 @@ impl Storage {
         let store = Self { conn };
         store.initialize()?;
         Ok(store)
+    }
+
+    /// Ouverture en lecture seule, sans initialisation du schéma : toute écriture échoue.
+    pub fn open_readonly(path: &str) -> SqlResult<Self> {
+        let conn = Connection::open_with_flags(
+            path,
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX | OpenFlags::SQLITE_OPEN_URI,
+        )?;
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
+        Ok(Self { conn })
     }
 
     fn initialize(&self) -> SqlResult<()> {
@@ -507,7 +517,22 @@ impl Storage {
     // --- Calendar ---
 
     pub fn upsert_calendar_event(&self, event: &CalendarEvent) -> SqlResult<()> {
-        self.conn.execute(
+        Self::upsert_event_on(&self.conn, event)
+    }
+
+    /// Remplace tous les événements d'une source en une seule transaction :
+    /// les lecteurs ne voient jamais un agenda vide à mi-synchronisation.
+    pub fn replace_calendar_events(&self, source: &str, events: &[CalendarEvent]) -> SqlResult<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute("DELETE FROM calendar_events WHERE source = ?1", params![source])?;
+        for e in events {
+            Self::upsert_event_on(&tx, e)?;
+        }
+        tx.commit()
+    }
+
+    fn upsert_event_on(conn: &Connection, event: &CalendarEvent) -> SqlResult<()> {
+        conn.execute(
             "INSERT OR REPLACE INTO calendar_events (uid, summary, description, location, start_time, end_time, all_day, source, etag, last_synced)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
@@ -554,6 +579,30 @@ impl Storage {
         rows.collect::<SqlResult<Vec<_>>>().map(|v| v.into_iter().flatten().collect())
     }
 
+    /// Événements chevauchant [from, to[, triés par début.
+    pub fn get_events_between(&self, from: NaiveDateTime, to: NaiveDateTime) -> SqlResult<Vec<CalendarEvent>> {
+        let fmt = |t: NaiveDateTime| t.format("%Y-%m-%dT%H:%M:%S").to_string();
+        let mut stmt = self.conn.prepare(
+            "SELECT uid, summary, description, location, start_time, end_time, all_day, source, etag
+             FROM calendar_events
+             WHERE start_time < ?2 AND end_time > ?1
+             ORDER BY start_time"
+        )?;
+        let rows = stmt.query_map(params![fmt(from), fmt(to)], row_to_event)?;
+        rows.collect::<SqlResult<Vec<_>>>().map(|v| v.into_iter().flatten().collect())
+    }
+
+    /// Occupation à l'instant `at` ; les événements « journée entière » sont ignorés.
+    pub fn is_busy_at(&self, at: NaiveDateTime) -> SqlResult<BusyStatus> {
+        let covering = self.get_events_between(at, at + chrono::Duration::seconds(1))?;
+        let mut st = BusyStatus { busy: false, work: false };
+        for e in covering.iter().filter(|e| !e.all_day) {
+            st.busy = true;
+            st.work |= e.source == crate::calendar::SOURCE_WORK;
+        }
+        Ok(st)
+    }
+
     pub fn delete_calendar_events_by_source(&self, source: &str) -> SqlResult<usize> {
         let deleted = self.conn.execute("DELETE FROM calendar_events WHERE source = ?1", params![source])?;
         Ok(deleted)
@@ -567,6 +616,11 @@ impl Storage {
     }
 }
 
+pub struct BusyStatus {
+    pub busy: bool,
+    pub work: bool,
+}
+
 pub struct StorageStats {
     pub total: u32,
     pub presented: u32,
@@ -577,6 +631,31 @@ pub struct StorageStats {
 mod tests {
     use super::*;
     use chrono::Utc;
+
+    #[test]
+    fn open_readonly_reads_but_refuses_writes() {
+        let path = std::env::temp_dir().join(format!("kairos-ro-{}.db", std::process::id()));
+        let p = path.to_str().unwrap();
+        let ev = CalendarEvent {
+            uid: "u1".into(),
+            summary: Some("rdv".into()),
+            description: None,
+            location: None,
+            start_time: NaiveDate::from_ymd_opt(2026, 1, 5).unwrap().and_hms_opt(9, 0, 0).unwrap(),
+            end_time: NaiveDate::from_ymd_opt(2026, 1, 5).unwrap().and_hms_opt(10, 0, 0).unwrap(),
+            all_day: false,
+            source: "test".into(),
+            etag: None,
+        };
+        Storage::open(p).unwrap().upsert_calendar_event(&ev).unwrap();
+        let ro = Storage::open_readonly(p).unwrap();
+        let from = ev.start_time - chrono::Duration::hours(1);
+        assert_eq!(ro.get_events_between(from, ev.end_time).unwrap().len(), 1);
+        assert!(ro.upsert_calendar_event(&ev).is_err());
+        for ext in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{p}{ext}"));
+        }
+    }
 
     #[test]
     fn test_insert_and_count() {
@@ -651,5 +730,71 @@ mod tests {
         let ids: Vec<&str> = all.iter().map(|o| o.id.as_str()).collect();
         assert!(ids.contains(&"a"));
         assert!(ids.contains(&"b"));
+    }
+
+    fn ev(uid: &str, source: &str, all_day: bool, h1: u32, h2: u32) -> CalendarEvent {
+        let d = NaiveDate::from_ymd_opt(2026, 7, 9).unwrap();
+        CalendarEvent {
+            uid: uid.into(), summary: None, description: None, location: None,
+            start_time: d.and_hms_opt(h1, 0, 0).unwrap(), end_time: d.and_hms_opt(h2, 0, 0).unwrap(),
+            all_day, source: source.into(), etag: None,
+        }
+    }
+    fn at(h: u32, m: u32) -> NaiveDateTime {
+        NaiveDate::from_ymd_opt(2026, 7, 9).unwrap().and_hms_opt(h, m, 0).unwrap()
+    }
+
+    #[test]
+    fn sync_by_source_keeps_other_collection() {
+        let s = Storage::open(":memory:").unwrap();
+        s.upsert_calendar_event(&ev("e1", "calendar", false, 9, 10)).unwrap();
+        s.upsert_calendar_event(&ev("e2", "work", false, 9, 10)).unwrap();
+        s.delete_calendar_events_by_source("calendar").unwrap();
+        assert_eq!(s.get_calendar_stats().unwrap(), 1);
+        assert_eq!(s.get_events_between(at(0, 0), at(23, 0)).unwrap()[0].uid, "e2");
+    }
+
+    #[test]
+    fn replace_calendar_events_swaps_one_source_only() {
+        let s = Storage::open(":memory:").unwrap();
+        s.upsert_calendar_event(&ev("old", "calendar", false, 9, 10)).unwrap();
+        s.upsert_calendar_event(&ev("w", "work", false, 9, 10)).unwrap();
+        s.replace_calendar_events("calendar", &[ev("n1", "calendar", false, 11, 12), ev("n2", "calendar", false, 13, 14)]).unwrap();
+        let uids: Vec<_> = s.get_events_between(at(0, 0), at(23, 0)).unwrap().into_iter().map(|e| e.uid).collect();
+        assert_eq!(uids, ["w", "n1", "n2"]);
+    }
+
+    #[test]
+    fn replace_calendar_events_rolls_back_on_failure() {
+        let s = Storage::open(":memory:").unwrap();
+        s.upsert_calendar_event(&ev("old", "calendar", false, 9, 10)).unwrap();
+        s.conn.execute_batch("CREATE TRIGGER boom BEFORE INSERT ON calendar_events WHEN NEW.uid = 'bad' BEGIN SELECT RAISE(ABORT, 'x'); END;").unwrap();
+        assert!(s.replace_calendar_events("calendar", &[ev("ok", "calendar", false, 11, 12), ev("bad", "calendar", false, 13, 14)]).is_err());
+        let uids: Vec<_> = s.get_events_between(at(0, 0), at(23, 0)).unwrap().into_iter().map(|e| e.uid).collect();
+        assert_eq!(uids, ["old"]);
+    }
+
+    #[test]
+    fn events_between_overlap() {
+        let s = Storage::open(":memory:").unwrap();
+        s.upsert_calendar_event(&ev("e1", "calendar", false, 10, 11)).unwrap();
+        assert_eq!(s.get_events_between(at(10, 30), at(12, 0)).unwrap().len(), 1);
+        assert_eq!(s.get_events_between(at(11, 0), at(12, 0)).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn busy_at_work_meeting() {
+        let s = Storage::open(":memory:").unwrap();
+        s.upsert_calendar_event(&ev("w", "work", false, 14, 15)).unwrap();
+        let b = s.is_busy_at(at(14, 30)).unwrap();
+        assert!(b.busy && b.work);
+        assert!(!s.is_busy_at(at(15, 0)).unwrap().busy);
+    }
+
+    #[test]
+    fn all_day_work_event_is_not_busy() {
+        let s = Storage::open(":memory:").unwrap();
+        s.upsert_calendar_event(&ev("w", "work", true, 0, 23)).unwrap();
+        assert!(!s.is_busy_at(at(10, 0)).unwrap().busy);
     }
 }
