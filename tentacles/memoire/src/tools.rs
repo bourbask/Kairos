@@ -101,6 +101,8 @@ struct ConversationIngestArgs {
     /// Fin locale, `AAAA-MM-JJ HH:MM`.
     ended_at: String,
     transcript: String,
+    /// Identifiant de session : une ré-ingestion de la même session remplace la précédente.
+    session_id: Option<String>,
 }
 #[derive(Deserialize, schemars::JsonSchema)]
 struct LimitArgs {
@@ -196,6 +198,7 @@ impl MemoryServer {
             started_at: parse_dt(&a.started_at)?,
             ended_at: parse_dt(&a.ended_at)?,
             transcript: a.transcript,
+            session_id: a.session_id.filter(|s| !s.is_empty()),
         };
         json_out(serde_json::json!({ "id": self.db()?.conversation_ingest(&c).map_err(err)? }))
     }

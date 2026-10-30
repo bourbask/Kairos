@@ -113,6 +113,9 @@ pub struct NewConversation {
     pub started_at: NaiveDateTime,
     pub ended_at: NaiveDateTime,
     pub transcript: String,
+    /// Clé de session : une nouvelle ingestion de la même session remplace la précédente.
+    #[serde(default)]
+    pub session_id: Option<String>,
 }
 
 /// Fiche de conversation : tout sauf la transcription.
@@ -156,7 +159,8 @@ CREATE TABLE IF NOT EXISTS intentions (
 CREATE TABLE IF NOT EXISTS conversations (
     id INTEGER PRIMARY KEY, channel TEXT NOT NULL, device TEXT NOT NULL,
     started_at TEXT NOT NULL, ended_at TEXT NOT NULL, transcript TEXT NOT NULL,
-    summary TEXT, topics TEXT NOT NULL DEFAULT '[]', decisions TEXT NOT NULL DEFAULT '[]');
+    summary TEXT, topics TEXT NOT NULL DEFAULT '[]', decisions TEXT NOT NULL DEFAULT '[]',
+    session_id TEXT);
 CREATE VIRTUAL TABLE IF NOT EXISTS conversations_fts USING fts5(text);
 CREATE TABLE IF NOT EXISTS lessons (
     id INTEGER PRIMARY KEY, context TEXT NOT NULL, qualification TEXT NOT NULL,
@@ -219,6 +223,16 @@ impl MemoryStore {
     pub fn open(path: &str) -> Result<MemoryStore> {
         let conn = Connection::open(path)?;
         conn.execute_batch(SCHEMA)?;
+        // Migration idempotente des bases créées avant la clé de session.
+        let has: bool = conn
+            .prepare("SELECT 1 FROM pragma_table_info('conversations') WHERE name = 'session_id'")?
+            .exists([])?;
+        if !has {
+            conn.execute_batch("ALTER TABLE conversations ADD COLUMN session_id TEXT;")?;
+        }
+        conn.execute_batch(
+            "CREATE UNIQUE INDEX IF NOT EXISTS conversations_session ON conversations(session_id) WHERE session_id IS NOT NULL;",
+        )?;
         Ok(MemoryStore { conn })
     }
 
@@ -360,9 +374,26 @@ impl MemoryStore {
             bail!("transcription trop volumineuse ({} octets)", c.transcript.len());
         }
         let tx = self.conn.unchecked_transaction()?;
+        let existing: Option<i64> = match &c.session_id {
+            Some(sid) => tx
+                .query_row("SELECT id FROM conversations WHERE session_id = ?", [sid], |r| r.get(0))
+                .optional()?,
+            None => None,
+        };
+        if let Some(id) = existing {
+            // Même session : la dernière transcription fait foi, la synthèse sera refaite.
+            tx.execute(
+                "UPDATE conversations SET channel = ?, device = ?, started_at = MIN(started_at, ?), ended_at = ?,
+                 transcript = ?, summary = NULL, topics = '[]', decisions = '[]' WHERE id = ?",
+                params![c.channel, c.device, ts(c.started_at), ts(c.ended_at), c.transcript, id],
+            )?;
+            tx.execute("UPDATE conversations_fts SET text = ? WHERE rowid = ?", params![c.transcript, id])?;
+            tx.commit()?;
+            return Ok(id);
+        }
         tx.execute(
-            "INSERT INTO conversations (channel, device, started_at, ended_at, transcript) VALUES (?,?,?,?,?)",
-            params![c.channel, c.device, ts(c.started_at), ts(c.ended_at), c.transcript],
+            "INSERT INTO conversations (channel, device, started_at, ended_at, transcript, session_id) VALUES (?,?,?,?,?,?)",
+            params![c.channel, c.device, ts(c.started_at), ts(c.ended_at), c.transcript, c.session_id],
         )?;
         let id = tx.last_insert_rowid();
         tx.execute("INSERT INTO conversations_fts (rowid, text) VALUES (?,?)", params![id, c.transcript])?;
@@ -428,7 +459,7 @@ mod tests {
     }
 
     fn conv(text: &str) -> NewConversation {
-        NewConversation { channel: "voix".into(), device: "d".into(), started_at: t(), ended_at: t(), transcript: text.into() }
+        NewConversation { channel: "voix".into(), device: "d".into(), started_at: t(), ended_at: t(), transcript: text.into(), session_id: None }
     }
 
     #[test]
@@ -506,6 +537,53 @@ mod tests {
         let r = s.conversation_search("balade", 10).unwrap();
         assert_eq!(r[0].topics, ["a"]);
         assert_eq!(s.conversation_search("rando", 10).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn reingest_same_session_replaces() {
+        let s = store();
+        let mut a = conv("ancien texte unique");
+        a.session_id = Some("s1".into());
+        let id = s.conversation_ingest(&a).unwrap();
+        s.conversation_set_summary(id, "résumé", &[], &[]).unwrap();
+        let mut b = conv("nouveau texte complet");
+        b.session_id = Some("s1".into());
+        b.started_at = t() + Duration::hours(1);
+        b.ended_at = t() + Duration::hours(2);
+        assert_eq!(s.conversation_ingest(&b).unwrap(), id);
+        let n: i64 = s.conn.query_row("SELECT COUNT(*) FROM conversations", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 1);
+        assert_eq!(s.conversations_unsummarized(10).unwrap().len(), 1);
+        assert!(s.conversation_search("ancien", 10).unwrap().is_empty());
+        let r = s.conversation_search("nouveau", 10).unwrap();
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].started_at, t());
+        assert_eq!(r[0].ended_at, t() + Duration::hours(2));
+        // sans clé de session, chaque ingestion reste distincte
+        s.conversation_ingest(&conv("x")).unwrap();
+        s.conversation_ingest(&conv("x")).unwrap();
+        let n: i64 = s.conn.query_row("SELECT COUNT(*) FROM conversations", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 3);
+    }
+
+    #[test]
+    fn open_adds_session_column_to_old_schema() {
+        let path = std::env::temp_dir().join(format!("kairos-mem-old-{}.db", std::process::id()));
+        let p = path.to_str().unwrap();
+        {
+            let c = Connection::open(p).unwrap();
+            c.execute_batch("CREATE TABLE conversations (
+                id INTEGER PRIMARY KEY, channel TEXT NOT NULL, device TEXT NOT NULL,
+                started_at TEXT NOT NULL, ended_at TEXT NOT NULL, transcript TEXT NOT NULL,
+                summary TEXT, topics TEXT NOT NULL DEFAULT '[]', decisions TEXT NOT NULL DEFAULT '[]');").unwrap();
+        }
+        let s = MemoryStore::open(p).unwrap();
+        let mut a = conv("t");
+        a.session_id = Some("s".into());
+        assert_eq!(s.conversation_ingest(&a).unwrap(), s.conversation_ingest(&a).unwrap());
+        drop(s);
+        MemoryStore::open(p).unwrap(); // idempotent
+        let _ = std::fs::remove_file(p);
     }
 
     #[test]
