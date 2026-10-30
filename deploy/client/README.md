@@ -35,8 +35,11 @@ Ajouter, dans les réglages utilisateur du client, un hook sur l'événement
 ```
 
 Le script lit sur stdin `transcript_path`, ne garde que le texte des messages
-utilisateur et assistant (pas les sorties d'outils), tronque à 1 400 000 octets
-en conservant la fin, puis appelle `conversation_ingest`. Dépendances : `bash`,
+utilisateur et assistant (ni sorties d'outils, ni sorties de commandes shell `!`,
+ni entrées méta ou enveloppes de commandes), tronque à 1 400 000 octets (et
+davantage si l'échappement JSON dépasse 1 900 000 octets de corps) en
+conservant la fin, puis appelle `conversation_ingest` avec le `session_id` :
+une session ré-archivée (reprise, `/clear`) remplace son archive précédente. Dépendances : `bash`,
 `jq`, `curl`, `iconv`. Il sort toujours en 0 ; les échecs sont journalisés dans
 `${XDG_STATE_HOME:-~/.local/state}/kairos/hook.log`.
 
