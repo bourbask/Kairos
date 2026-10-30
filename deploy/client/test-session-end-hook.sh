@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Fuseau fixé pour des horodatages reproductibles ; le hook suit le fuseau du poste.
+export TZ=UTC
 # Test du hook de fin de session (jq + bash uniquement).
 set -u
 cd "$(dirname "$0")" || exit 1
@@ -20,8 +22,8 @@ echo "$out" | grep -q '"name":"conversation_ingest"' ; ok $? "nom de l'outil"
 echo "$out" | grep -q jeton-secret ; [ $? -ne 0 ] ; ok $? "jeton masqué"
 body=$(echo "$out" | tail -n1)
 [ "$(echo "$body" | jq -r .params.arguments.session_id)" = "s1" ] ; ok $? "session_id transmis"
-[ "$(echo "$body" | jq -r .params.arguments.started_at)" = "2026-10-29 09:00:00" ] ; ok $? "début en heure locale"
-[ "$(echo "$body" | jq -r .params.arguments.ended_at)" = "2026-10-29 09:10:30" ] ; ok $? "fin en heure locale"
+[ "$(echo "$body" | jq -r .params.arguments.started_at)" = "2026-10-29 08:00:00" ] ; ok $? "début en heure locale"
+[ "$(echo "$body" | jq -r .params.arguments.ended_at)" = "2026-10-29 08:10:30" ] ; ok $? "fin en heure locale"
 
 # transcription gonflée à ~3 Mo, avec caractères multi-octets
 big="$T/big.jsonl"

@@ -80,12 +80,12 @@ NTFY_TOKEN=<token généré ci-dessus>
 `NTFY_URL` est déjà fixé en interne (`http://ntfy`) dans `docker-compose.yml` — ne pas le redéfinir dans `kairos.env`.
 
 Côté téléphone (app [ntfy](https://ntfy.sh/) — Android/iOS/web) : ajouter un serveur self-hosted
-pointant sur l'adresse tailnet du VPS (`http://<IP-tailnet>:8090` ou nom MagicDNS), s'authentifier avec
+pointant sur l'adresse privée de l'hôte (`http://<adresse-privée>:<port>`), s'authentifier avec
 le même token (champ "Access token" dans les paramètres du serveur), puis s'abonner au topic. Aucune
-configuration réseau supplémentaire si le téléphone est déjà un nœud du tailnet.
+configuration supplémentaire si le téléphone joint déjà le réseau privé.
 
 Adresse/port de bind du serveur configurables via `NTFY_BIND_ADDR`/`NTFY_BIND_PORT`
-(défaut : boucle locale, port `8090` — le port 80 est déjà pris par Traefik sur cet hôte) — même
+(défaut : boucle locale, port `8090`) — même
 convention que `RADICALE_BIND_ADDR`.
 
 ## Tentacules (mémoire, agenda)
@@ -99,8 +99,8 @@ Générer un jeton par service et les renseigner dans `kairos.env` :
 openssl rand -hex 32   # -> MEMOIRE_TOKEN ; relancer pour AGENDA_TOKEN
 ```
 
-Publication : `${TAILNET_IP:-127.0.0.1}` (défaut : boucle locale), ports `MEMOIRE_BIND_PORT` (8091) et
-`AGENDA_BIND_PORT` (8092). `TAILNET_IP` est une variable de substitution de compose : elle se définit dans
+Publication : `${TENTACLES_BIND_ADDR:-127.0.0.1}` (défaut : boucle locale), ports `MEMOIRE_BIND_PORT` (8091) et
+`AGENDA_BIND_PORT` (8092). `TENTACLES_BIND_ADDR` est une variable de substitution de compose : elle se définit dans
 `deploy/docker/.env` (gitignoré) ou dans l'environnement du shell, **pas** dans `kairos.env`
 (qui n'alimente que l'intérieur des conteneurs). Au démarrage de l'hôte, le bind échoue si l'adresse du
 réseau privé n'est pas encore montée : le réseau privé doit démarrer avant Docker (ou relancer les services).

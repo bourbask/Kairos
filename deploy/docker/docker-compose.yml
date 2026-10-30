@@ -57,7 +57,6 @@ services:
       - ntfy-auth:/var/lib/ntfy
     ports:
       # Adresse/port de bind configurables (app mobile ntfy) ; défaut = boucle locale.
-      # Port hôte 8090 (pas 80) : Traefik occupe déjà le port 80 sur cet hôte.
       - "${NTFY_BIND_ADDR:-127.0.0.1}:${NTFY_BIND_PORT:-8090}:80"
     # ponytail : pas de cache persistant des messages (in-memory only) — ajouter un volume si un
     # message doit survivre à un redémarrage / être livré à un appareil resté hors-ligne trop longtemps.
@@ -89,7 +88,7 @@ services:
     volumes:
       - memoire-data:/app/memoire
     ports:
-      - "${TAILNET_IP:-127.0.0.1}:${MEMOIRE_BIND_PORT:-8091}:8091"
+      - "${TENTACLES_BIND_ADDR:-127.0.0.1}:${MEMOIRE_BIND_PORT:-8091}:8091"
 
   agenda:
     image: kairos:local
@@ -106,7 +105,7 @@ services:
     volumes:
       - ../../data:/app/data   # écriture requise par SQLite (WAL) ; lecture seule imposée par la connexion
     ports:
-      - "${TAILNET_IP:-127.0.0.1}:${AGENDA_BIND_PORT:-8092}:8092"
+      - "${TENTACLES_BIND_ADDR:-127.0.0.1}:${AGENDA_BIND_PORT:-8092}:8092"
 
   # Exécutions manuelles : `docker compose run --rm kairos <scrape|briefing|status|prompt ...>`
   kairos:

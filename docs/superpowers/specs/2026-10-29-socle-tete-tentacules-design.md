@@ -43,7 +43,7 @@ le contrat.
 Responsabilités, et seulement celles-ci :
 
 1. **Conversation** sur un canal de messagerie auto-hébergé (protocole
-   Matrix), salon privé utilisateur ↔ bot. Le bot n'accepte que les
+   ouvert), salon privé utilisateur ↔ bot. Le bot n'accepte que les
    messages de l'identifiant utilisateur configuré (provenance stricte,
    fail-closed).
 2. **Boucle d'agent** : message utilisateur → LLM avec les outils de tous les
@@ -189,8 +189,8 @@ socle ; il deviendra une section quand l'emploi deviendra un tentacule.
 
 ### Sécurité
 
-- Tentacules et tête joignables **uniquement sur le réseau privé**
-  (tailnet), aucun port public. Chaque tentacule exige un jeton porteur.
+- Tentacules et tête joignables **uniquement sur le réseau privé**,
+  aucun port public. Chaque tentacule exige un jeton porteur.
 - Identifiants sensibles (IBAN, numéros de contrat, numéros d'assuré,
   adresses) **masqués de façon déterministe** avant tout envoi à un moteur
   externe.
@@ -245,12 +245,11 @@ socle ; il deviendra une section quand l'emploi deviendra un tentacule.
 ## Contraintes
 
 - Rust 2024 partout. SDK MCP officiel Rust.
-- Hôte d'exécution partagé, ~2 Go de mémoire vive disponible **mesurés avec
-  tous les services actuels en marche** (modèle local compris) : c'est la
-  marge pour la tête et les tentacules, qui doivent rester sobres (ordre de
-  grandeur visé : quelques dizaines de Mo chacun).
-- Le serveur de messagerie existe déjà sur l'hôte (hors repo) : le socle ne
-  le déploie pas, il y inscrit seulement un compte bot.
+- Mémoire vive limitée sur l'hôte d'exécution : la tête et les tentacules
+  doivent rester sobres (ordre de grandeur visé : quelques dizaines de Mo
+  chacun).
+- Le serveur de messagerie n'est pas déployé par le socle : il y inscrit
+  seulement un compte bot.
 - SQLite comme stockage.
 - Déploiement Docker Compose existant (`deploy/docker/`), procédure de
   déploiement existante.
@@ -265,7 +264,7 @@ socle ; il deviendra une section quand l'emploi deviendra un tentacule.
 - Transport MCP (HTTP « streamable » recommandé pour l'accès réseau) et
   authentification par jeton.
 - Schéma SQLite précis du tentacule mémoire, une base par tentacule ou non.
-- Bibliothèque cliente Matrix et activation du chiffrement de bout en bout
+- Bibliothèque cliente de messagerie et activation du chiffrement de bout en bout
   (souhaitable si le coût mémoire reste raisonnable).
 - Format des fiches de conversation et du hook de fin de session.
 - Fréquence de l'évaluation des suggestions spontanées et forme du budget.

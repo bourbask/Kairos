@@ -236,7 +236,7 @@ Les en-têtes requis par le transport (Accept, version de protocole) sont ceux d
 
 **Interfaces:**
 - Consumes: binaires et variables des Tasks 4 et 6.
-- Produces: services compose `memoire` (volume dédié `memoire-data`, `MEMOIRE_DB_PATH=/app/memoire/memoire.db`) et `agenda` (base `kairos.db` montée en lecture seule), chacun `mem_limit: 64m`, `restart: unless-stopped`, ports publiés sur `${TAILNET_IP:-127.0.0.1}` uniquement (même convention que `radicale`), jetons lus depuis `kairos.env`.
+- Produces: services compose `memoire` (volume dédié `memoire-data`, `MEMOIRE_DB_PATH=/app/memoire/memoire.db`) et `agenda` (base `kairos.db` montée en lecture seule), chacun `mem_limit: 64m`, `restart: unless-stopped`, ports publiés sur `${TENTACLES_BIND_ADDR:-127.0.0.1}` uniquement (même convention que `radicale`), jetons lus depuis `kairos.env`.
 
 - [ ] **Step 1: Modifier** Dockerfile, compose, exemples, README.
 - [ ] **Step 2: Vérifier**

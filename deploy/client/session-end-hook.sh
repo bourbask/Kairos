@@ -36,7 +36,7 @@ tail -c "$MAX" "$T/full" | iconv -f UTF-8 -t UTF-8 -c >"$T/tr"
 [ -s "$T/tr" ] || { log "transcription vide"; exit 0; }
 
 ts=$(jq -r "$KEEP"' | .timestamp // empty' "$path" 2>/dev/null)
-loc() { TZ=Europe/Paris date -d "$1" '+%F %T' 2>/dev/null; }
+loc() { date -d "$1" '+%F %T' 2>/dev/null; }
 start=$(loc "$(printf '%s\n' "$ts" | head -n1)"); end=$(loc "$(printf '%s\n' "$ts" | tail -n1)")
 [ -n "$start" ] && [ -n "$end" ] || { log "horodatages illisibles"; exit 0; }
 
