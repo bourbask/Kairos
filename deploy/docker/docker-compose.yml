@@ -78,6 +78,57 @@ services:
     <<: *kairos-common
     profiles: ["tools"]
 
+  # Second profil isolé : même image, sa propre config/DB/notif via kairos-secondary.env.
+  # Répète l'environment de x-kairos-common (le `<<:` ne fusionne pas les sous-clés d'un
+  # bloc `environment:` redéfini localement — cf. note ci-dessus) avec 3 valeurs overridées.
+  # Exécutions manuelles :
+  kairos-secondary:
+    <<: *kairos-common
+    profiles: ["tools"]
+    environment:
+      OLLAMA_URL: http://ollama:11434
+      OLLAMA_MODEL: phi3:mini
+      NTFY_URL: http://ntfy
+      TZ: Europe/Paris
+      PROFILE_PATH: /app/config/profile-secondary.toml
+      DATABASE_PATH: /app/data/secondary.db
+      BRIEFINGS_DIR: /app/briefings-secondary
+    env_file:
+      - path: kairos-secondary.env   # secrets/config du second profil (gitignoré)
+        required: false
+    volumes:
+      - ../../config:/app/config:ro
+      - ../../data:/app/data
+      - ../../briefings:/app/briefings
+      - ../../briefings-secondary:/app/briefings-secondary
+
+  # Planificateur du second profil — même image/crontab que `scheduler`, environnement propre.
+  scheduler-secondary:
+    <<: *kairos-common
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    restart: unless-stopped
+    init: true
+    entrypoint: ["supercronic"]
+    command: ["/app/supercronic.crontab"]
+    environment:
+      OLLAMA_URL: http://ollama:11434
+      OLLAMA_MODEL: phi3:mini
+      NTFY_URL: http://ntfy
+      TZ: Europe/Paris
+      PROFILE_PATH: /app/config/profile-secondary.toml
+      DATABASE_PATH: /app/data/secondary.db
+      BRIEFINGS_DIR: /app/briefings-secondary
+    env_file:
+      - path: kairos-secondary.env
+        required: false
+    volumes:
+      - ../../config:/app/config:ro
+      - ../../data:/app/data
+      - ../../briefings:/app/briefings
+      - ../../briefings-secondary:/app/briefings-secondary
+
 volumes:
   ollama-models:
   radicale-data:

@@ -19,13 +19,10 @@ remote = "full"          # "full" | "hybrid" | "on-site"
 countries = ["FR", "BE", "CH"]
 languages = ["français", "anglais"]
 min_score = 0.60         # seuil 0-1 : offres sous ce score exclues du briefing (tunable sans rebuild)
+# location_keywords = ["Toulouse", "31", "Haute-Garonne"]   # optionnel : vide = aucune contrainte géo (profil remote international)
 
 [skills]
-backend = ["Node.js", "Python"]        # adapter à ton stack
-frontend = ["React", "Vue.js"]
-database = ["PostgreSQL", "SQLite"]
-devops = ["Docker"]
-learning = []
+skills = ["Node.js", "Python", "React", "Vue.js", "PostgreSQL", "SQLite", "Docker"]   # adapter à ton domaine
 
 [experience]
 years = 5
