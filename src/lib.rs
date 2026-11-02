@@ -6,6 +6,7 @@ pub mod ranker;
 pub mod storage;
 pub mod enrichment;
 pub mod llm;
+pub mod redact;
 pub mod briefing;
 pub mod planning;
 pub mod calendar;

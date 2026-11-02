@@ -15,6 +15,11 @@
 # la donnée de cet usage quittera la machine. Le routeur la journalise.
 strategic_concessions = []
 
+# Termes à masquer avant tout envoi vers un moteur externe (littéraux, sans
+# distinction de casse). Les IBAN, numéros de carte, de sécurité sociale, de
+# téléphone et les emails sont masqués d'office.
+redact_terms = []
+
 # Voie auto-hébergée : seule destination des générations stratégiques.
 [self_hosted]
 endpoint = ""
@@ -29,3 +34,24 @@ model = ""
 protocol = "openai-compatible"
 # Requis seulement si l'endpoint exige un jeton porteur
 # api_key = ""
+
+# Moteurs nommés, optionnels. Un usage listé dans [usages] suit son moteur ;
+# un usage absent suit le routage ci-dessus.
+# placement : "self_hosted" ou "external". Un moteur externe reste soumis à
+# strategic_concessions pour les générations stratégiques.
+#
+# [engines.<nom>]
+# endpoint = ""
+# model = ""
+# protocol = ""   # "ollama", "openai-compatible" ou "messages"
+# placement = ""
+# api_key = ""
+# api_key_header = ""
+# daily_token_cap =     # jetons (entrée + sortie) par jour local ; atteint = refus avant envoi ; absent = illimité
+#
+# En-têtes fixes envoyés tels quels (protocole "messages" notamment).
+# [engines.<nom>.headers]
+
+# Association usage → nom de moteur.
+# [usages]
+# <usage> = ""
