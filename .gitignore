@@ -23,6 +23,7 @@ deploy/docker/.env
 deploy/docker/radicale/config/config
 deploy/docker/radicale/config/users
 CLAUDE.local.md
+deploy/docker/docker-compose.override.yml
 
 # Config et base locales de la tête
 config/tete.toml

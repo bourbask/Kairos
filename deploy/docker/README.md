@@ -9,7 +9,6 @@
 - `docker-compose.yml` :
   - `ollama` — service persistant, non exposé (réseau interne only) ;
   - `radicale` — serveur du module calendar ;
-  - `ntfy` — serveur de notifications push (alerte offre forte) ;
   - `scheduler` — toujours actif, lance `scrape`/`calendar sync`/`briefing` via `supercronic` ;
   - `kairos` — profil `tools`, pour les exécutions manuelles ;
   - `kairos-secondary` / `scheduler-secondary` — second profil isolé (même image, sa propre
@@ -64,37 +63,9 @@ Les spécificités d'hôte (exposition réseau, client) restent hors du dépôt 
 
 ## Notifications (module optionnel)
 
-Serveur ntfy self-hosted pour l'alerte "offre forte" (score > 0.9), séparée du digest Discord.
-
-```bash
-docker compose up -d ntfy
-```
-
-Auth activée (`NTFY_AUTH_DEFAULT_ACCESS=deny-all`) — un user + un token à créer une fois :
-
-```bash
-docker compose exec ntfy ntfy user add --role=user kairos     # mot de passe demandé (peu importe, non utilisé)
-docker compose exec ntfy ntfy access kairos <topic> rw        # <topic> = nom choisi, ex. kairos-alertes
-docker compose exec ntfy ntfy token add kairos                 # affiche le token à copier
-```
-
-Renseigner dans `kairos.env` :
-
-```
-NTFY_TOPIC=<topic choisi ci-dessus>
-NTFY_TOKEN=<token généré ci-dessus>
-```
-
-`NTFY_URL` est déjà fixé en interne (`http://ntfy`) dans `docker-compose.yml` — ne pas le redéfinir dans `kairos.env`.
-
-Côté téléphone (app [ntfy](https://ntfy.sh/) — Android/iOS/web) : ajouter un serveur self-hosted
-pointant sur l'adresse privée de l'hôte (`http://<adresse-privée>:<port>`), s'authentifier avec
-le même token (champ "Access token" dans les paramètres du serveur), puis s'abonner au topic. Aucune
-configuration supplémentaire si le téléphone joint déjà le réseau privé.
-
-Adresse/port de bind du serveur configurables via `NTFY_BIND_ADDR`/`NTFY_BIND_PORT`
-(défaut : boucle locale, port `8090`) — même
-convention que `RADICALE_BIND_ADDR`.
+Alertes push optionnelles pour les offres fortes (score > 0.9), servies par un service
+auto-hébergé déclaré dans un `docker-compose.override.yml` local à l'hôte (non versionné).
+Configuration via `ALERT_URL`, `ALERT_TOPIC` et `ALERT_TOKEN` dans `kairos.env`.
 
 ## Tentacules (mémoire, agenda)
 
@@ -176,7 +147,7 @@ docker compose up -d tete
 
 ## Second profil (module optionnel)
 
-Fait tourner un second profil isolé (config, base de données, notification Discord distincts)
+Fait tourner un second profil isolé (config, base de données, canal de digest distinct)
 sur la même image, sans rien dupliquer côté code.
 
 ```bash
@@ -187,7 +158,7 @@ cp ../../config/profile.example.toml ../../config/profile-secondary.toml
 
 # 2. secrets/config déploiement du second profil
 cp ../kairos.env.example kairos-secondary.env
-"$EDITOR" kairos-secondary.env   # au minimum NOTIFY_CHANNEL_ID (thread Discord dédié)
+"$EDITOR" kairos-secondary.env   # au minimum NOTIFY_CHANNEL_ID (canal dédié)
 
 # 3. test manuel
 docker compose run --rm kairos-secondary scrape

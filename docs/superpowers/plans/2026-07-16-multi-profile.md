@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make Kairos capable of running a second, fully isolated user profile (different config, database, and Discord destination) by generalizing the config path, the skills format, and three scoring rules (remote gate, salary adjustment, plus a new opt-in location gate) that currently hardcode assumptions specific to one profile.
+**Goal:** Make Kairos capable of running a second, fully isolated user profile (different config, database, and digest destination) by generalizing the config path, the skills format, and three scoring rules (remote gate, salary adjustment, plus a new opt-in location gate) that currently hardcode assumptions specific to one profile.
 
-**Architecture:** All changes are config-driven generalizations of existing single-profile logic in `src/config.rs` and `src/matching.rs` — no new modules, no new binary, no branching on "which profile am I." A second Docker Compose service pair (manual + scheduled) reuses the exact same image with a different env file to get full runtime isolation (own DB, own config file, own Discord channel) for free, since every value that must differ between profiles already flows through env vars today.
+**Architecture:** All changes are config-driven generalizations of existing single-profile logic in `src/config.rs` and `src/matching.rs` — no new modules, no new binary, no branching on "which profile am I." A second Docker Compose service pair (manual + scheduled) reuses the exact same image with a different env file to get full runtime isolation (own DB, own config file, own digest channel) for free, since every value that must differ between profiles already flows through env vars today.
 
 **Tech Stack:** Rust 2024, serde/toml (config), Docker Compose (deployment). No new dependencies.
 
@@ -503,7 +503,7 @@ In `deploy/docker/docker-compose.yml`, add after the existing `kairos:` service 
 top-level keys into the service, but if the service *also* defines its own `environment:`
 block, that local block **fully replaces** the anchor's `environment:` map — it does not
 deep-merge individual variables. Both new services below therefore repeat every one of
-`x-kairos-common`'s environment values (`OLLAMA_URL`, `OLLAMA_MODEL`, `NTFY_URL`, `TZ`)
+`x-kairos-common`'s environment values (`OLLAMA_URL`, `OLLAMA_MODEL`, `TZ`)
 alongside the three overridden ones (`PROFILE_PATH`, `DATABASE_PATH`, `BRIEFINGS_DIR`) —
 this is not duplication for its own sake, it is required for `OLLAMA_URL` etc. to survive
 the merge at all.
@@ -519,7 +519,6 @@ the merge at all.
     environment:
       OLLAMA_URL: http://ollama:11434
       OLLAMA_MODEL: phi3:mini
-      NTFY_URL: http://ntfy
       TZ: Europe/Paris
       PROFILE_PATH: /app/config/profile-secondary.toml
       DATABASE_PATH: /app/data/secondary.db
@@ -541,7 +540,6 @@ the merge at all.
     environment:
       OLLAMA_URL: http://ollama:11434
       OLLAMA_MODEL: phi3:mini
-      NTFY_URL: http://ntfy
       TZ: Europe/Paris
       PROFILE_PATH: /app/config/profile-secondary.toml
       DATABASE_PATH: /app/data/secondary.db
@@ -572,7 +570,7 @@ Add a new section right before "## Notes" (at the end of the file):
 ```markdown
 ## Second profil (module optionnel)
 
-Fait tourner un second profil isolé (config, base de données, notification Discord distincts)
+Fait tourner un second profil isolé (config, base de données, canal de digest distinct)
 sur la même image, sans rien dupliquer côté code.
 
 ```bash
@@ -583,7 +581,7 @@ cp ../../config/profile.example.toml ../../config/profile-secondary.toml
 
 # 2. secrets/config déploiement du second profil
 cp ../kairos.env.example kairos-secondary.env
-"$EDITOR" kairos-secondary.env   # au minimum NOTIFY_CHANNEL_ID (thread Discord dédié)
+"$EDITOR" kairos-secondary.env   # au minimum NOTIFY_CHANNEL_ID (canal dédié)
 
 # 3. test manuel
 docker compose run --rm kairos-secondary scrape

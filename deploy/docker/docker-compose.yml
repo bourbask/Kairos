@@ -7,7 +7,6 @@ x-kairos-common: &kairos-common
   environment:
     OLLAMA_URL: http://ollama:11434
     OLLAMA_MODEL: phi3:mini
-    NTFY_URL: http://ntfy      # posté en interne ; NTFY_TOPIC reste un secret (kairos.env)
     DATABASE_PATH: /app/data/kairos.db
     BRIEFINGS_DIR: /app/briefings
     TZ: Europe/Paris          # fuseau de planification
@@ -45,21 +44,6 @@ services:
     ports:
       # Adresse de bind configurable ; défaut = boucle locale.
       - "${RADICALE_BIND_ADDR:-127.0.0.1}:5232:5232"
-
-  ntfy:
-    image: binwiederhier/ntfy
-    restart: unless-stopped
-    command: serve
-    environment:
-      NTFY_AUTH_FILE: /var/lib/ntfy/auth.db
-      NTFY_AUTH_DEFAULT_ACCESS: deny-all   # rien de public : topic + user créés une fois (cf. README)
-    volumes:
-      - ntfy-auth:/var/lib/ntfy
-    ports:
-      # Adresse/port de bind configurables (app mobile ntfy) ; défaut = boucle locale.
-      - "${NTFY_BIND_ADDR:-127.0.0.1}:${NTFY_BIND_PORT:-8090}:80"
-    # ponytail : pas de cache persistant des messages (in-memory only) — ajouter un volume si un
-    # message doit survivre à un redémarrage / être livré à un appareil resté hors-ligne trop longtemps.
 
   # Planificateur interne (supercronic) : scrape 04:30, calendar sync 04:45, briefing 05:00. Toujours actif.
   scheduler:
@@ -134,7 +118,6 @@ services:
     environment:
       OLLAMA_URL: http://ollama:11434
       OLLAMA_MODEL: phi3:mini
-      NTFY_URL: http://ntfy
       TZ: Europe/Paris
       PROFILE_PATH: /app/config/profile-secondary.toml
       DATABASE_PATH: /app/data/secondary.db
@@ -161,7 +144,6 @@ services:
     environment:
       OLLAMA_URL: http://ollama:11434
       OLLAMA_MODEL: phi3:mini
-      NTFY_URL: http://ntfy
       TZ: Europe/Paris
       PROFILE_PATH: /app/config/profile-secondary.toml
       DATABASE_PATH: /app/data/secondary.db
@@ -178,5 +160,4 @@ services:
 volumes:
   ollama-models:
   radicale-data:
-  ntfy-auth:
   memoire-data:
