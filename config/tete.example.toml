@@ -30,3 +30,9 @@ end = "18:00"
 # name = ""
 # url = ""         # point d'accès MCP
 # token_env = ""   # nom de la variable d'environnement portant le jeton
+#
+# Exemple (tentacule finances ; port 8094 par défaut) :
+# [[tentacles]]
+# name = "finances"
+# url = "http://finances:8094/mcp"
+# token_env = "FINANCES_TOKEN"

@@ -91,6 +91,20 @@ services:
     ports:
       - "${TENTACLES_BIND_ADDR:-127.0.0.1}:${AGENDA_BIND_PORT:-8092}:8092"
 
+  finances:
+    image: kairos:local
+    restart: unless-stopped
+    user: "1001:1001"
+    mem_limit: 64m
+    entrypoint: ["/app/kairos-finances"]
+    environment:
+      FINANCES_BIND: 0.0.0.0:8094
+    env_file:
+      - path: kairos.env
+        required: false
+    ports:
+      - "${TENTACLES_BIND_ADDR:-127.0.0.1}:${FINANCES_BIND_PORT:-8094}:8094"
+
   # Tête : boucle principale (conversation, briefs, suggestions) ; joint les tentacules par nom de service.
   tete:
     <<: *kairos-common

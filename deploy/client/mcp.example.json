@@ -9,6 +9,11 @@
       "type": "http",
       "url": "${KAIROS_AGENDA_URL}",
       "headers": { "Authorization": "Bearer ${KAIROS_AGENDA_TOKEN}" }
+    },
+    "kairos-finances": {
+      "type": "http",
+      "url": "${KAIROS_FINANCES_URL}",
+      "headers": { "Authorization": "Bearer ${KAIROS_FINANCES_TOKEN}" }
     }
   }
 }

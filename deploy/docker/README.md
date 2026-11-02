@@ -67,7 +67,7 @@ Alertes push optionnelles pour les offres fortes (score > 0.9), servies par un s
 auto-hébergé déclaré dans un `docker-compose.override.yml` local à l'hôte (non versionné).
 Configuration via `ALERT_URL`, `ALERT_TOPIC` et `ALERT_TOKEN` dans `kairos.env`.
 
-## Tentacules (mémoire, agenda)
+## Tentacules (mémoire, agenda, finances)
 
 Services MCP (HTTP, chemin `/mcp`) : `memoire` (base dédiée, volume `memoire-data`) et `agenda`
 (lit `kairos.db`, connexion en lecture seule). Ils refusent de démarrer sans jeton.
@@ -90,6 +90,18 @@ L'image `kairos:local` doit exister (construite par `scheduler`) ; `agenda` exig
 ```bash
 docker compose build scheduler
 docker compose up -d memoire agenda
+```
+
+### Finances
+
+`finances` est un tentacule sans état (aucun volume, aucune dépendance au moteur local) qui interroge une API de
+finances personnelles externe au compose. Variables de `kairos.env` : `FINANCES_TOKEN` (jeton d'accès, obligatoire),
+`FINANCES_API_URL` (adresse privée de l'API, joignable depuis l'hôte ; obligatoire, refus de démarrer sans),
+`FINANCES_API_TOKEN` (jeton de cette API) et, facultatif, `FINANCES_DASHBOARD_URL`. Aucun couplage réseau dans ce
+compose : l'adresse vient uniquement de la configuration. Port publié : `FINANCES_BIND_PORT` (8094).
+
+```bash
+docker compose up -d finances
 ```
 
 ## Tête (processus principal)
