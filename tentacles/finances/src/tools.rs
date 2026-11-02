@@ -126,7 +126,7 @@ impl FinanceServer {
         Ok(cycle_text(&self.api.cycle().await.map_err(api_err)?))
     }
 
-    #[tool(description = "Savoir si une dépense (montant en euros, poste facultatif) est abordable sur le cycle en cours.")]
+    #[tool(description = "Savoir si une dépense est abordable sur le cycle en cours. Montant en euros donné par l'utilisateur ; s'il n'en donne pas, demande-le, ne l'estime jamais. Poste facultatif.")]
     async fn can_afford(&self, Parameters(a): Parameters<AffordArgs>) -> Out {
         check_amount(a.amount)?;
         let poste = match &a.poste {
@@ -137,7 +137,7 @@ impl FinanceServer {
         Ok(verdict_text(&v, a.amount, poste.as_deref().unwrap_or("")))
     }
 
-    #[tool(description = "Savoir si un montant en euros peut être mis de côté sur le cycle en cours.")]
+    #[tool(description = "Savoir si un montant en euros peut être mis de côté sur le cycle en cours. Montant donné par l'utilisateur ; s'il n'en donne pas, demande-le, ne l'estime jamais.")]
     async fn can_save(&self, Parameters(a): Parameters<SaveArgs>) -> Out {
         check_amount(a.amount)?;
         let v = self.api.save(a.amount).await.map_err(api_err)?;

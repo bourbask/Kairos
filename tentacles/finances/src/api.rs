@@ -132,6 +132,21 @@ pub struct RuleResult {
     pub applied: bool,
 }
 
+/// Nature d'une erreur HTTP, sans son texte : il peut citer l'adresse appelée.
+fn kind(e: &reqwest::Error) -> &'static str {
+    if e.is_timeout() {
+        "délai dépassé"
+    } else if e.is_connect() {
+        "connexion refusée"
+    } else if e.is_decode() {
+        "contenu hors contrat"
+    } else if e.is_body() {
+        "corps illisible"
+    } else {
+        "transport"
+    }
+}
+
 pub struct FinanceApi {
     base: String,
     token: String,
@@ -152,15 +167,18 @@ impl FinanceApi {
     }
 
     async fn send<T: DeserializeOwned>(&self, req: reqwest::RequestBuilder) -> Result<T, ApiError> {
-        let resp = req
-            .bearer_auth(&self.token)
-            .send()
-            .await
-            .map_err(|_| ApiError::Unavailable)?;
+        let resp = req.bearer_auth(&self.token).send().await.map_err(|e| {
+            eprintln!("finances : appel impossible ({})", kind(&e));
+            ApiError::Unavailable
+        })?;
         let status = resp.status();
         if status.is_success() {
-            return resp.json().await.map_err(|_| ApiError::Unavailable);
+            return resp.json().await.map_err(|e| {
+                eprintln!("finances : réponse illisible ({})", kind(&e));
+                ApiError::Unavailable
+            });
         }
+        eprintln!("finances : réponse en échec ({})", status.as_u16());
         if status.as_u16() == 401 || status.is_server_error() {
             return Err(ApiError::Unavailable);
         }

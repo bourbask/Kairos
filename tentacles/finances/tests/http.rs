@@ -134,6 +134,11 @@ async fn lists_nine_tools() {
         .bearer_auth("t").json(&body).send().await.unwrap().json().await.unwrap();
     let mut names: Vec<_> = v["result"]["tools"].as_array().unwrap().iter()
         .map(|t| t["name"].as_str().unwrap().to_string()).collect();
+    for t in v["result"]["tools"].as_array().unwrap() {
+        if matches!(t["name"].as_str(), Some("can_afford" | "can_save")) {
+            assert!(t["description"].as_str().unwrap().contains("demande-le, ne l'estime jamais"), "{t}");
+        }
+    }
     names.sort();
     assert_eq!(names, ["alerts","brief_section","can_afford","can_save","classify","cycle_status","dashboard","next_envelopes","unclassified"]);
 }
