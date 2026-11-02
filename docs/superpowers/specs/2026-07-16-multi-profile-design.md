@@ -41,7 +41,7 @@ changent par instance.
   ajouter un filtre.
 - **Second déploiement = second conteneur Docker** (même image `kairos:local`,
   son propre fichier d'env gitignoré), pas un branchement applicatif spécial.
-  Réutilise le pattern déjà en place pour `ollama`/`radicale`/`ntfy`.
+  Réutilise le pattern déjà en place pour `ollama`/`radicale`.
 - **`preferences.remote` (second profil) = `"on-site"`** — gate remote entièrement
   différent de celui de Kevin (`"full"`).
 - **CDI et CDD acceptés** pour le second profil — le gate freelance/contractor existant
@@ -258,10 +258,10 @@ versionné. Même règle que pour les données de Kevin.
 
 Nouvelles entrées dans `supercronic.crontab` (propre planificateur, horaires
 décalés pour ne pas concurrencer les crons de Kevin) invoquant le binaire
-avec les mêmes variables. `notify::discord()` est déjà entièrement piloté
+avec les mêmes variables. `notify::digest()` est déjà entièrement piloté
 par les env vars `NOTIFY_TOKEN`/`NOTIFY_CHANNEL_ID` lues à l'exécution —
 aucun changement de code : `kairos-secondary.env` fixe juste un
-`NOTIFY_CHANNEL_ID` différent (l'ID du thread Discord dédié), et le message
+`NOTIFY_CHANNEL_ID` différent (l'ID du canal dédié), et le message
 part au bon endroit sans branchement supplémentaire.
 
 ## Hors scope (sous-projets séparés)

@@ -250,22 +250,22 @@ async fn main() -> anyhow::Result<()> {
 
             println!("Briefing generated: {}", path.display());
 
-            match notify::discord(&content).await {
-                Ok(true) => println!("→ posté sur Discord."),
+            match notify::digest(&content).await {
+                Ok(true) => println!("→ digest posté."),
                 Ok(false) => {} // non configuré (NOTIFY_* absents)
-                Err(e) => eprintln!("→ Discord non envoyé : {e}"),
+                Err(e) => eprintln!("→ digest non envoyé : {e}"),
             }
 
-            const NTFY_SCORE_THRESHOLD: f64 = 0.9;
+            const ALERT_SCORE_THRESHOLD: f64 = 0.9;
             if let Some(best) = top_jobs.iter().max_by(|a, b| a.score.total_cmp(&b.score))
-                && best.score > NTFY_SCORE_THRESHOLD
+                && best.score > ALERT_SCORE_THRESHOLD
             {
                 let title = format!("Offre forte : {}", best.offer.title);
                 let message = format!("{} — score {:.2}\n{}", best.offer.company, best.score, best.offer.url);
-                match notify::ntfy(&title, &message).await {
-                    Ok(true) => println!("→ alerte ntfy envoyée."),
-                    Ok(false) => {} // non configuré (NTFY_* absents)
-                    Err(e) => eprintln!("→ ntfy non envoyé : {e}"),
+                match notify::alert(&title, &message).await {
+                    Ok(true) => println!("→ alerte envoyée."),
+                    Ok(false) => {} // non configurée (ALERT_* absents)
+                    Err(e) => eprintln!("→ alerte non envoyée : {e}"),
                 }
             }
         }
