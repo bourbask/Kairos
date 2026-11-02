@@ -33,38 +33,37 @@ async fn main() -> anyhow::Result<()> {
     let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(16);
     let listener = tokio::net::TcpListener::bind(cfg.gateway.bind).await?;
     let app = inbound_router(tx, cfg.gateway.inbound_token.clone());
-    tokio::spawn(async move {
-        if let Err(e) = axum::serve(listener, app).await {
-            tracing::error!("serveur entrant arrêté : {e}");
-        }
-    });
+    let mut server = tokio::spawn(async move { axum::serve(listener, app).await });
 
     let mut ctx = Ctx { cfg, state, tentacles, agent, outbound, last_suggestion: None };
     let mut tick = tokio::time::interval(Duration::from_secs(60));
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut last_refresh = tokio::time::Instant::now();
     tracing::info!(tentacules = ctx.cfg.tentacles.len(), "tête prête");
 
     loop {
         tokio::select! {
             Some(msg) = rx.recv() => {
-                let at = now();
-                let answer = ctx.agent.reply(&msg, at, &ctx.tentacles, &ctx.state).await;
+                let answer = ctx.agent.reply(&msg, now(), &ctx.tentacles, &ctx.state).await;
                 if let Err(e) = ctx.outbound.send(&answer).await {
                     tracing::warn!("réponse non envoyée, mise en attente : {e}");
-                    if let Err(e) = ctx.state.enqueue("retry", &answer, at) {
-                        tracing::error!("mise en attente impossible : {e}");
+                    if let Err(e) = ctx.state.enqueue("retry", &answer, now()) {
+                        tracing::error!(longueur = answer.len(), "réponse perdue, mise en attente impossible : {e}");
                     }
                 }
             }
+            res = &mut server => {
+                tracing::error!("serveur entrant arrêté : {res:?}");
+                std::process::exit(1);
+            }
             _ = tick.tick() => {
-                let at = now();
-                ctx.agent.end_session_if_idle(at, &ctx.tentacles).await;
+                ctx.agent.end_session_if_idle(now(), &ctx.tentacles).await;
                 if last_refresh.elapsed() >= REFRESH_EVERY {
                     ctx.tentacles.refresh().await;
                     last_refresh = tokio::time::Instant::now();
                 }
-                for job in due(at, &ctx.cfg, &ctx.state, ctx.last_suggestion) {
-                    if let Err(e) = run(job, at, &mut ctx).await {
+                for job in due(now(), &ctx.cfg, &ctx.state, ctx.last_suggestion) {
+                    if let Err(e) = run(job, now(), &mut ctx).await {
                         tracing::error!(?job, "tâche en échec : {e}");
                     }
                 }

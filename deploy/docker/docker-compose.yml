@@ -114,6 +114,7 @@ services:
     mem_limit: 64m
     entrypoint: ["/app/tete"]
     command: []
+    depends_on: {}              # la tête se dégrade sans moteur : pas d'attente d'Ollama
     ports:
       # Publié pour la passerelle seulement ; port hôte distinct de ntfy.
       - "${TENTACLES_BIND_ADDR:-127.0.0.1}:${TETE_BIND_PORT:-8093}:8090"
