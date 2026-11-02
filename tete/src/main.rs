@@ -1,6 +1,6 @@
-mod config;
-
 use std::path::Path;
+
+use tete::config;
 
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt().init();
