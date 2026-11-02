@@ -35,7 +35,7 @@ async fn main() -> anyhow::Result<()> {
     let app = inbound_router(tx, cfg.gateway.inbound_token.clone());
     let mut server = tokio::spawn(async move { axum::serve(listener, app).await });
 
-    let mut ctx = Ctx { cfg, state, tentacles, agent, outbound, last_suggestion: None };
+    let mut ctx = Ctx { cfg, state, tentacles, agent, outbound, last_suggestion: None, last_alerts: None };
     let mut tick = tokio::time::interval(Duration::from_secs(60));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut last_refresh = tokio::time::Instant::now();
@@ -63,7 +63,7 @@ async fn main() -> anyhow::Result<()> {
                     ctx.tentacles.refresh().await;
                     last_refresh = tokio::time::Instant::now();
                 }
-                for job in due(now(), &ctx.cfg, &ctx.state, ctx.last_suggestion) {
+                for job in due(now(), &ctx.cfg, &ctx.state, ctx.last_suggestion, ctx.last_alerts) {
                     if let Err(e) = run(job, now(), &mut ctx).await {
                         tracing::error!(?job, "tâche en échec : {e}");
                     }

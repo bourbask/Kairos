@@ -1,5 +1,5 @@
 //! Tâches planifiées : briefs, suggestions sous budget, vidage de la file,
-//! résumés différés des conversations.
+//! résumés différés des conversations, rapports d'alerte des tentacules.
 
 use anyhow::{anyhow, bail};
 use chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime, TimeDelta};
@@ -18,6 +18,8 @@ const MORNING: &str = "brief_matin";
 const EVENING: &str = "brief_soir";
 const SUMMARIES: &str = "resumes";
 const RETRY: &str = "retry";
+const ALERT: &str = "alert";
+const ALERTS_EVERY_MINUTES: i64 = 30;
 const SUMMARY_BATCH: u32 = 10;
 /// Transcription réduite par le tentacule (60 000 caractères) et marge.
 const TRANSCRIPT_MAX_CHARS: usize = 70_000;
@@ -39,6 +41,7 @@ pub enum Job {
     Suggestion,
     Flush,
     Summaries,
+    Alerts,
 }
 
 pub struct Ctx {
@@ -49,6 +52,8 @@ pub struct Ctx {
     pub outbound: Outbound,
     /// Dernière tentative de suggestion, en mémoire seulement.
     pub last_suggestion: Option<NaiveDateTime>,
+    /// Dernier relevé des alertes, en mémoire seulement.
+    pub last_alerts: Option<NaiveDateTime>,
 }
 
 /// Fenêtre `[start, until)` d'une tâche quotidienne, éventuellement à cheval
@@ -80,7 +85,13 @@ fn occurrence(key: &str, now: NaiveDateTime, cfg: &HeadConfig) -> Option<NaiveDa
 /// plutôt que de la relancer chaque minute. Une tâche manquée n'est rattrapée
 /// que jusqu'à la suivante : brief du matin avant le soir, brief du soir avant
 /// la nuit, résumés avant la fin de la nuit.
-pub fn due(now: NaiveDateTime, cfg: &HeadConfig, state: &State, last_suggestion: Option<NaiveDateTime>) -> Vec<Job> {
+pub fn due(
+    now: NaiveDateTime,
+    cfg: &HeadConfig,
+    state: &State,
+    last_suggestion: Option<NaiveDateTime>,
+    last_alerts: Option<NaiveDateTime>,
+) -> Vec<Job> {
     let today = now.date();
     let daily = |key: &str| {
         occurrence(key, now, cfg).is_some_and(|day| {
@@ -115,6 +126,9 @@ pub fn due(now: NaiveDateTime, cfg: &HeadConfig, state: &State, last_suggestion:
             Err(e) => tracing::warn!("lecture du budget d'interruptions impossible : {e}"),
         }
     }
+    if last_alerts.is_none_or(|last| now - last >= TimeDelta::minutes(ALERTS_EVERY_MINUTES)) {
+        jobs.push(Job::Alerts);
+    }
     jobs
 }
 
@@ -134,6 +148,7 @@ pub async fn run(job: Job, now: NaiveDateTime, ctx: &mut Ctx) -> anyhow::Result<
             ctx.state.set_last_run(SUMMARIES, run_day(SUMMARIES, now, &ctx.cfg))?;
             res
         }
+        Job::Alerts => alerts(now, ctx).await,
     }
 }
 
@@ -272,6 +287,57 @@ async fn outlet(kind: Spontaneous, now: NaiveDateTime, ctx: &Ctx) -> Outlet {
     });
     let mode = ctx.state.work_mode(now.weekday(), &ctx.cfg.work);
     decide(kind, now, mode, &ctx.cfg.work, &ctx.cfg.schedule, busy, mute)
+}
+
+#[derive(Deserialize)]
+struct Alert {
+    id: String,
+    text: String,
+    counts_budget: bool,
+}
+
+/// Alertes nouvelles remises en rapports écrits. Une alerte est marquée vue
+/// dès qu'elle est envoyée ou mise en file, jamais autrement.
+async fn alerts(now: NaiveDateTime, ctx: &mut Ctx) -> anyhow::Result<()> {
+    ctx.last_alerts = Some(now);
+    let mut fresh = Vec::new();
+    for (name, res) in ctx.tentacles.call_conventional("alerts", json!({})).await {
+        // Données externes : une liste mal formée est ignorée en bloc.
+        match res.map(|t| serde_json::from_str::<Vec<Alert>>(&t)) {
+            Ok(Ok(list)) => {
+                for a in list {
+                    // Identifiants propres à chaque tentacule.
+                    let key = format!("{name}:{}", a.id);
+                    if !ctx.state.alert_seen(&key)? {
+                        fresh.push((key, a));
+                    }
+                }
+            }
+            Ok(Err(_)) => tracing::warn!(tentacule = %name, "liste d'alertes illisible"),
+            Err(e) => tracing::warn!(tentacule = %name, erreur = %e, "alertes indisponibles"),
+        }
+    }
+    if fresh.is_empty() {
+        return Ok(());
+    }
+    let out = outlet(Spontaneous::Report, now, ctx).await;
+    for (key, a) in fresh {
+        if a.counts_budget && ctx.state.interruptions_on(now.date())? >= ctx.cfg.interruptions_per_day {
+            continue;
+        }
+        match out {
+            Outlet::Written => {
+                deliver(&a.text, now, ctx).await?;
+                if a.counts_budget {
+                    ctx.state.record_interruption(now)?;
+                }
+            }
+            // `Report` n'est jamais abandonné : une retenue est mise en file.
+            Outlet::Hold | Outlet::Drop => ctx.state.enqueue(ALERT, &a.text, now)?,
+        }
+        ctx.state.mark_alert(&key, now)?;
+    }
+    Ok(())
 }
 
 #[derive(Deserialize)]

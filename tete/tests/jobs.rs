@@ -18,7 +18,7 @@ use serde_json::{Value, json};
 use tete::agent::Agent;
 use tete::config::{GatewayEnv, HeadConfig, TentacleEntry, WorkMode};
 use tete::gateway::Outbound;
-use tete::jobs::{Ctx, Job, due, run};
+use tete::jobs::{Ctx, Job, run};
 use tete::state::{QuietScope, State};
 use tete::tentacles::Tentacles;
 
@@ -31,6 +31,8 @@ struct Rec {
     summaries: Mutex<Vec<Value>>,
     /// Transcriptions par identifiant, rendues par `conversation_get`.
     transcripts: Mutex<HashMap<i64, String>>,
+    /// Réponse brute de `alerts`.
+    alerts: Mutex<String>,
 }
 
 #[derive(Clone)]
@@ -81,6 +83,11 @@ impl Fake {
         Ok(r#"{"busy":false,"work":false}"#.into())
     }
 
+    #[tool(description = "Alertes.")]
+    fn alerts(&self) -> Result<String, String> {
+        Ok(self.rec.alerts.lock().unwrap().clone())
+    }
+
     #[tool(description = "Conversations à résumer.")]
     fn conversations_unsummarized(&self, Parameters(_): Parameters<Limit>) -> Result<String, String> {
         Ok(self.rec.unsummarized.lock().unwrap().clone())
@@ -112,6 +119,7 @@ async fn tentacle(env: &str) -> (Tentacles, Arc<Rec>) {
     unsafe { std::env::set_var(env, "secret") };
     let rec = Arc::new(Rec::default());
     *rec.unsummarized.lock().unwrap() = "[]".into();
+    *rec.alerts.lock().unwrap() = "[]".into();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}/mcp", listener.local_addr().unwrap());
     let r = rec.clone();
@@ -243,6 +251,7 @@ async fn fixture(env: &str, usages: &[&str], replies: Vec<Value>) -> Fx {
         agent: Agent::new(router, Duration::from_secs(1800)),
         outbound,
         last_suggestion: None,
+        last_alerts: None,
     };
     Fx { ctx, rec, gw, llm }
 }
@@ -252,6 +261,26 @@ fn sent(gw: &Gw) -> Vec<String> {
 }
 
 // --- due ---
+
+/// Tâches dues, alertes neutralisées (relevées à l'instant).
+fn due(now: NaiveDateTime, c: &HeadConfig, s: &State, last_suggestion: Option<NaiveDateTime>) -> Vec<Job> {
+    tete::jobs::due(now, c, s, last_suggestion, Some(now))
+}
+
+#[test]
+fn due_alerts_every_30_minutes() {
+    let c = cfg();
+    let s = State::open_in_memory().unwrap();
+    let day = at(2, 0, 0).date();
+    for job in ["brief_matin", "resumes"] {
+        s.set_last_run(job, day).unwrap();
+    }
+    let now = at(2, 12, 0);
+    let due = |last| tete::jobs::due(now, &c, &s, Some(now), last);
+    assert_eq!(due(None), vec![Job::Alerts]);
+    assert!(due(Some(at(2, 11, 31))).is_empty());
+    assert_eq!(due(Some(at(2, 11, 30))), vec![Job::Alerts]);
+}
 
 #[test]
 fn due_schedule() {
@@ -581,4 +610,65 @@ async fn reworded_brief_losing_a_number_is_sent_raw() {
     let mut fx = fixture("JB_T16", &["brief"], vec![text("Un rendez-vous à 11:00.")]).await;
     run(Job::MorningBrief, at(7, 7, 30), &mut fx.ctx).await.unwrap();
     assert_eq!(sent(&fx.gw), vec!["Brief du matin\n\n- rendez-vous (matin) à 10:00".to_string()]);
+}
+
+// --- alertes ---
+
+fn alert(id: &str, text: &str, counts_budget: bool) -> Value {
+    json!({"id": id, "kind": if counts_budget { "near_limit" } else { "overdue" }, "text": text, "counts_budget": counts_budget})
+}
+
+#[tokio::test]
+async fn same_alert_served_twice_sent_once() {
+    let mut fx = fixture("JB_A1", &[], vec![]).await;
+    *fx.rec.alerts.lock().unwrap() = json!([alert("a1", "Poste presque épuisé.", true)]).to_string();
+    run(Job::Alerts, at(7, 15, 0), &mut fx.ctx).await.unwrap();
+    run(Job::Alerts, at(7, 15, 30), &mut fx.ctx).await.unwrap();
+    assert_eq!(sent(&fx.gw), vec!["Poste presque épuisé.".to_string()]);
+    assert_eq!(fx.ctx.state.interruptions_on(at(7, 0, 0).date()).unwrap(), 1);
+    assert_eq!(fx.ctx.last_alerts, Some(at(7, 15, 30)));
+}
+
+#[tokio::test]
+async fn briefs_mute_does_not_drop_report() {
+    let mut fx = fixture("JB_A2", &[], vec![]).await;
+    fx.ctx.state.add_quiet(at(7, 6, 0), at(7, 18, 0), QuietScope::Briefs).unwrap();
+    *fx.rec.alerts.lock().unwrap() = json!([alert("a1", "Échéance dépassée.", false)]).to_string();
+    run(Job::Alerts, at(7, 15, 0), &mut fx.ctx).await.unwrap();
+    assert_eq!(sent(&fx.gw), vec!["Échéance dépassée.".to_string()]);
+    assert_eq!(fx.ctx.state.interruptions_on(at(7, 0, 0).date()).unwrap(), 0);
+}
+
+#[tokio::test]
+async fn alert_held_on_site_then_flushed() {
+    let mut fx = fixture("JB_A3", &[], vec![]).await;
+    *fx.rec.alerts.lock().unwrap() = json!([alert("a1", "Échéance dépassée.", false)]).to_string();
+    run(Job::Alerts, at(2, 10, 0), &mut fx.ctx).await.unwrap();
+    run(Job::Alerts, at(2, 10, 30), &mut fx.ctx).await.unwrap();
+    assert!(sent(&fx.gw).is_empty());
+    run(Job::Flush, at(2, 17, 30), &mut fx.ctx).await.unwrap();
+    assert_eq!(sent(&fx.gw), vec!["Échéance dépassée.".to_string()]);
+}
+
+#[tokio::test]
+async fn budget_alert_over_budget_not_sent_nor_marked() {
+    let mut fx = fixture("JB_A4", &[], vec![]).await;
+    fx.ctx.state.record_interruption(at(7, 8, 0)).unwrap();
+    fx.ctx.state.record_interruption(at(7, 9, 0)).unwrap();
+    *fx.rec.alerts.lock().unwrap() = json!([alert("a1", "Poste presque épuisé.", true)]).to_string();
+    run(Job::Alerts, at(7, 15, 0), &mut fx.ctx).await.unwrap();
+    assert!(sent(&fx.gw).is_empty());
+    assert!(fx.ctx.state.take_pending().unwrap().is_empty());
+    assert!(!fx.ctx.state.alert_seen("t:a1").unwrap());
+}
+
+#[tokio::test]
+async fn malformed_alerts_ignored() {
+    let mut fx = fixture("JB_A5", &[], vec![]).await;
+    for raw in ["pas du json", r#"[{"id": "a1"}]"#, r#"{"id": "a1"}"#] {
+        *fx.rec.alerts.lock().unwrap() = raw.into();
+        run(Job::Alerts, at(7, 15, 0), &mut fx.ctx).await.unwrap();
+    }
+    assert!(sent(&fx.gw).is_empty());
+    assert!(fx.ctx.state.take_pending().unwrap().is_empty());
 }
