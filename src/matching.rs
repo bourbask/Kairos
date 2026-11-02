@@ -39,18 +39,39 @@ impl Matcher {
     }
 
     pub fn score_with_breakdown(&self, offer: &JobOffer) -> (f64, ScoreBreakdown) {
-        if is_freelance(offer) || !is_remote(offer) {
+        let remote_gate_ok = match self.profile.preferences.remote.as_str() {
+            "full" => is_remote(offer),
+            _ => true, // "on-site"/"hybrid" : pas de contrainte remote pour ce profil
+        };
+        if is_freelance(offer) || !remote_gate_ok || !self.location_gate_ok(offer) {
             return (0.0, ScoreBreakdown { skills: 0.0, remote: 0.0, salary: 0.0, location: 0.0 });
         }
 
         const BASELINE: f64 = 0.40;
         let skills = self.skill_bonus(offer);
         let location = self.country_bonus(offer);
-        let salary = salary_adjustment(offer);
+        let salary = self.salary_adjustment(offer);
 
         let total = (BASELINE + skills + location + salary).clamp(0.0, 1.0);
 
         (total, ScoreBreakdown { skills, remote: 1.0, salary, location })
+    }
+
+    /// Gate localisation (opt-in) : vide = aucune contrainte (profil remote international) ;
+    /// non vide = l'offre doit matcher au moins un mot-clé (ville/région/département), sinon
+    /// exclue — pour un profil régional non-remote.
+    fn location_gate_ok(&self, offer: &JobOffer) -> bool {
+        let keywords = &self.profile.preferences.location_keywords;
+        if keywords.is_empty() {
+            return true;
+        }
+        let haystack = format!(
+            "{} {} {}",
+            offer.location.as_deref().unwrap_or("").to_lowercase(),
+            offer.title.to_lowercase(),
+            offer.description.to_lowercase(),
+        );
+        keywords.iter().any(|k| haystack.contains(&k.to_lowercase()))
     }
 
     pub fn rank(&self, offers: Vec<JobOffer>) -> Vec<ScoredJob> {
@@ -93,18 +114,23 @@ impl Matcher {
             _ => 0.0,
         }
     }
-}
 
-/// Ajustement salaire : seuils en dur (indépendants de preferences.salary_min/salary_target).
-/// Jamais de malus pour absence de donnée — seulement pour un salaire connu et vraiment bas.
-fn salary_adjustment(offer: &JobOffer) -> f64 {
-    let offered = offer.salary_max.or(offer.salary_min);
-    match offered {
-        Some(s) if s >= 48_000 => 0.10,
-        Some(s) if s >= 45_000 => 0.05,
-        Some(s) if s >= 40_000 => 0.0,
-        Some(_) => -0.20,
-        None => 0.0,
+    /// Ajustement salaire relatif au profil (preferences.salary_min/salary_target) : cible →
+    /// +0.10, mi-chemin min/cible → +0.05, min → 0.0, en dessous du min → -0.20, inconnu → 0.0.
+    /// Jamais de malus pour absence de donnée — seulement pour un salaire connu et sous le min.
+    fn salary_adjustment(&self, offer: &JobOffer) -> f64 {
+        let offered = offer.salary_max.or(offer.salary_min);
+        let min = self.profile.preferences.salary_min as f64;
+        let target = self.profile.preferences.salary_target as f64;
+        let mid = min + (target - min) / 2.0;
+
+        match offered.map(|s| s as f64) {
+            Some(s) if target > min && s >= target => 0.10,
+            Some(s) if target > min && s >= mid => 0.05,
+            Some(s) if s >= min => 0.0,
+            Some(_) => -0.20,
+            None => 0.0,
+        }
     }
 }
 
@@ -198,14 +224,76 @@ mod tests {
     }
 
     #[test]
-    fn salaire_sous_40k_malus_vs_neutre() {
+    fn salaire_quatre_paliers_relatifs_au_profil() {
+        // profile.example.toml : salary_min=35000, salary_target=50000, mid=42500
         let matcher = Matcher::new(test_profile());
-        let bas = make_offer("Dev", "Permanent position, fully remote", Some(true), None, None, Some(35000));
-        let neutre = make_offer("Dev", "Permanent position, fully remote", Some(true), None, None, Some(42000));
-        let (score_bas, _) = matcher.score_with_breakdown(&bas);
-        let (score_neutre, _) = matcher.score_with_breakdown(&neutre);
-        assert!((score_bas - 0.20).abs() < 1e-9, "0.40 - 0.20 malus, obtenu {score_bas}");
-        assert!((score_neutre - 0.40).abs() < 1e-9, "0.40 neutre (40-45k), obtenu {score_neutre}");
+        let bonus = make_offer("Dev", "Permanent position, fully remote", Some(true), None, None, Some(55000));
+        let mi_chemin = make_offer("Dev", "Permanent position, fully remote", Some(true), None, None, Some(45000));
+        let neutre = make_offer("Dev", "Permanent position, fully remote", Some(true), None, None, Some(38000));
+        let malus = make_offer("Dev", "Permanent position, fully remote", Some(true), None, None, Some(30000));
+
+        let (s_bonus, _) = matcher.score_with_breakdown(&bonus);
+        let (s_mi, _) = matcher.score_with_breakdown(&mi_chemin);
+        let (s_neutre, _) = matcher.score_with_breakdown(&neutre);
+        let (s_malus, _) = matcher.score_with_breakdown(&malus);
+
+        assert!((s_bonus - 0.50).abs() < 1e-9, "0.40+0.10 (>= cible 50000), obtenu {s_bonus}");
+        assert!((s_mi - 0.45).abs() < 1e-9, "0.40+0.05 (>= mi-chemin 42500), obtenu {s_mi}");
+        assert!((s_neutre - 0.40).abs() < 1e-9, "0.40 neutre (>= min 35000, < mi-chemin), obtenu {s_neutre}");
+        assert!((s_malus - 0.20).abs() < 1e-9, "0.40-0.20 malus (< min 35000), obtenu {s_malus}");
+    }
+
+    #[test]
+    fn salaire_target_egal_min_pas_de_faux_bonus() {
+        let mut profile = test_profile();
+        profile.preferences.salary_min = 40000;
+        profile.preferences.salary_target = 40000; // dégénéré : target == min
+        let matcher = Matcher::new(profile);
+        let offer = make_offer("Dev", "Permanent position, fully remote", Some(true), None, None, Some(41000));
+        let (score, _) = matcher.score_with_breakdown(&offer);
+        // Avant le fix : `mid` collapse à 40000, la garde `>= target` matchait tout salaire >= min,
+        // donnant +0.10 au lieu du palier neutre attendu. Après le fix : neutre (>= min, target pas > min).
+        assert!((score - 0.40).abs() < 1e-9, "attendu 0.40 (neutre, pas de faux bonus), obtenu {score}");
+    }
+
+    #[test]
+    fn remote_gate_desactive_si_profil_onsite() {
+        let mut profile = test_profile();
+        profile.preferences.remote = "on-site".to_string();
+        let matcher = Matcher::new(profile);
+        // Offre clairement non-remote : passe quand même, le gate remote est sauté pour ce profil.
+        let offer = make_offer("Dev", "On-site position in the office", Some(false), None, None, None);
+        let (score, breakdown) = matcher.score_with_breakdown(&offer);
+        assert!(score > 0.0, "gate remote sauté pour un profil on-site, obtenu {score}");
+        assert_eq!(breakdown.remote, 1.0);
+    }
+
+    #[test]
+    fn location_gate_vide_ne_bloque_rien() {
+        let matcher = Matcher::new(test_profile()); // location_keywords vide par défaut (profile.example.toml ne le déclare pas)
+        let offer = make_offer("Dev", "Permanent position, fully remote", Some(true), None, None, None);
+        let (score, _) = matcher.score_with_breakdown(&offer);
+        assert!(score > 0.0);
+    }
+
+    #[test]
+    fn location_gate_exclut_hors_zone() {
+        let mut profile = test_profile();
+        profile.preferences.location_keywords = vec!["Toulouse".into()];
+        let matcher = Matcher::new(profile);
+        let hors_zone = make_offer("Dev", "Poste basé à Lyon", Some(true), None, None, None);
+        let (score, _) = matcher.score_with_breakdown(&hors_zone);
+        assert_eq!(score, 0.0);
+    }
+
+    #[test]
+    fn location_gate_accepte_zone_matchee() {
+        let mut profile = test_profile();
+        profile.preferences.location_keywords = vec!["Toulouse".into()];
+        let matcher = Matcher::new(profile);
+        let dans_zone = make_offer("Dev", "Poste basé à Toulouse", Some(true), None, None, None);
+        let (score, _) = matcher.score_with_breakdown(&dans_zone);
+        assert!(score > 0.0);
     }
 
     #[test]
