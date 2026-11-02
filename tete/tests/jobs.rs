@@ -301,6 +301,53 @@ fn due_catch_up_is_bounded() {
 }
 
 #[test]
+fn due_windows_cross_midnight() {
+    let quiet = |now| Some(now);
+    let day = at(2, 0, 0).date();
+
+    // Nuit à 00:30 : le brief du soir reste dû jusque-là, y compris après minuit.
+    let mut c = cfg();
+    c.schedule.quiet_start = t(0, 30);
+    let s = State::open_in_memory().unwrap();
+    s.set_last_run("brief_matin", day).unwrap();
+    s.set_last_run("brief_matin", at(3, 0, 0).date()).unwrap();
+    s.set_last_run("resumes", at(3, 0, 0).date()).unwrap();
+    assert_eq!(due(at(2, 23, 0), &c, &s, quiet(at(2, 23, 0))), vec![Job::EveningBrief]);
+    assert_eq!(due(at(3, 0, 10), &c, &s, quiet(at(3, 0, 10))), vec![Job::EveningBrief]);
+    assert!(due(at(3, 0, 40), &c, &s, quiet(at(3, 0, 40))).is_empty());
+
+    // Résumés à 23:00 jusqu'à 07:00.
+    let mut c = cfg();
+    c.schedule.summaries = t(23, 0);
+    let s2 = State::open_in_memory().unwrap();
+    for d in [day, at(3, 0, 0).date()] {
+        s2.set_last_run("brief_matin", d).unwrap();
+        s2.set_last_run("brief_soir", d).unwrap();
+    }
+    assert!(due(at(2, 22, 59), &c, &s2, quiet(at(2, 22, 59))).is_empty());
+    assert_eq!(due(at(2, 23, 0), &c, &s2, quiet(at(2, 23, 0))), vec![Job::Summaries]);
+    assert_eq!(due(at(3, 6, 59), &c, &s2, quiet(at(3, 6, 59))), vec![Job::Summaries]);
+    assert!(due(at(3, 7, 0), &c, &s2, quiet(at(3, 7, 0))).is_empty());
+}
+
+#[tokio::test]
+async fn window_run_before_midnight_not_repeated_after() {
+    let mut fx = fixture("JB_T17", &[], vec![]).await;
+    fx.ctx.cfg.schedule.summaries = t(23, 0);
+    let (d2, d3) = (at(2, 0, 0).date(), at(3, 0, 0).date());
+    for d in [d2, d3] {
+        fx.ctx.state.set_last_run("brief_matin", d).unwrap();
+        fx.ctx.state.set_last_run("brief_soir", d).unwrap();
+    }
+    run(Job::Summaries, at(2, 23, 0), &mut fx.ctx).await.unwrap();
+    let now = at(3, 0, 10);
+    assert!(due(now, &fx.ctx.cfg, &fx.ctx.state, Some(now)).is_empty());
+    // L'occurrence suivante reste due le soir même.
+    let now = at(3, 23, 0);
+    assert_eq!(due(now, &fx.ctx.cfg, &fx.ctx.state, Some(now)), vec![Job::Summaries]);
+}
+
+#[test]
 fn due_suggestion_budget_and_flush() {
     let c = cfg();
     let s = State::open_in_memory().unwrap();

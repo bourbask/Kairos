@@ -2,7 +2,7 @@
 //! résumés différés des conversations.
 
 use anyhow::{anyhow, bail};
-use chrono::{Datelike, NaiveDateTime, NaiveTime, TimeDelta};
+use chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime, TimeDelta};
 use kairos::llm::{ChatTurn, LlmClient, Urgency};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -51,28 +51,53 @@ pub struct Ctx {
     pub last_suggestion: Option<NaiveDateTime>,
 }
 
+/// Fenêtre `[start, until)` d'une tâche quotidienne, éventuellement à cheval
+/// sur minuit.
+fn window(key: &str, cfg: &HeadConfig) -> (NaiveTime, NaiveTime) {
+    let s = &cfg.schedule;
+    match key {
+        MORNING => (s.morning, s.evening),
+        EVENING => (s.evening, s.quiet_start),
+        _ => (s.summaries, s.quiet_end),
+    }
+}
+
+/// Jour de l'occurrence de la fenêtre qui contient `now` : celui de son début,
+/// même après minuit. `None` hors fenêtre.
+fn occurrence(key: &str, now: NaiveDateTime, cfg: &HeadConfig) -> Option<NaiveDate> {
+    let (start, until) = window(key, cfg);
+    let t = now.time();
+    if start <= until {
+        (start <= t && t < until).then(|| now.date())
+    } else if t >= start {
+        Some(now.date())
+    } else {
+        (t < until).then(|| now.date() - TimeDelta::days(1))
+    }
+}
+
 /// Tâches dues à `now`. Une lecture d'état en échec rend la tâche non due
 /// plutôt que de la relancer chaque minute. Une tâche manquée n'est rattrapée
 /// que jusqu'à la suivante : brief du matin avant le soir, brief du soir avant
 /// la nuit, résumés avant la fin de la nuit.
 pub fn due(now: NaiveDateTime, cfg: &HeadConfig, state: &State, last_suggestion: Option<NaiveDateTime>) -> Vec<Job> {
     let today = now.date();
-    // ponytail: fenêtre sans passage de minuit ; une heure de résumés avant minuit ne serait jamais due.
-    let daily = |key: &str, time: NaiveTime, until: NaiveTime| {
-        (time..until).contains(&now.time())
-            && state.last_run(key).map(|d| d != Some(today)).unwrap_or_else(|e| {
+    let daily = |key: &str| {
+        occurrence(key, now, cfg).is_some_and(|day| {
+            state.last_run(key).map(|d| d != Some(day)).unwrap_or_else(|e| {
                 tracing::warn!("lecture de la dernière exécution de {key} impossible : {e}");
                 false
             })
+        })
     };
     let mut jobs = Vec::new();
-    if daily(MORNING, cfg.schedule.morning, cfg.schedule.evening) {
+    if daily(MORNING) {
         jobs.push(Job::MorningBrief);
     }
-    if daily(EVENING, cfg.schedule.evening, cfg.schedule.quiet_start) {
+    if daily(EVENING) {
         jobs.push(Job::EveningBrief);
     }
-    if daily(SUMMARIES, cfg.schedule.summaries, cfg.schedule.quiet_end) {
+    if daily(SUMMARIES) {
         jobs.push(Job::Summaries);
     }
     if state.has_pending().unwrap_or_else(|e| {
@@ -93,6 +118,11 @@ pub fn due(now: NaiveDateTime, cfg: &HeadConfig, state: &State, last_suggestion:
     jobs
 }
 
+/// Jour enregistré pour une exécution : celui de l'occurrence en cours, sinon aujourd'hui.
+fn run_day(key: &str, now: NaiveDateTime, cfg: &HeadConfig) -> NaiveDate {
+    occurrence(key, now, cfg).unwrap_or(now.date())
+}
+
 pub async fn run(job: Job, now: NaiveDateTime, ctx: &mut Ctx) -> anyhow::Result<()> {
     match job {
         Job::MorningBrief => brief(MORNING, "matin", "Brief du matin", now, ctx).await,
@@ -101,7 +131,7 @@ pub async fn run(job: Job, now: NaiveDateTime, ctx: &mut Ctx) -> anyhow::Result<
         Job::Flush => flush(now, ctx).await,
         Job::Summaries => {
             let res = summaries(ctx).await;
-            ctx.state.set_last_run(SUMMARIES, now.date())?;
+            ctx.state.set_last_run(SUMMARIES, run_day(SUMMARIES, now, &ctx.cfg))?;
             res
         }
     }
@@ -109,7 +139,7 @@ pub async fn run(job: Job, now: NaiveDateTime, ctx: &mut Ctx) -> anyhow::Result<
 
 async fn brief(key: &str, period: &str, title: &str, now: NaiveDateTime, ctx: &Ctx) -> anyhow::Result<()> {
     // Marqué avant tout envoi : un brief par jour au plus, même si l'état devient illisible.
-    ctx.state.set_last_run(key, now.date())?;
+    ctx.state.set_last_run(key, run_day(key, now, &ctx.cfg))?;
     send_brief(period, title, now, ctx).await
 }
 
