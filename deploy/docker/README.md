@@ -96,7 +96,7 @@ docker compose up -d memoire agenda
 
 `finances` est un tentacule sans état (aucun volume, aucune dépendance au moteur local) qui interroge une API de
 finances personnelles externe au compose. Variables de `kairos.env` : `FINANCES_TOKEN` (jeton d'accès propre au tentacule, obligatoire ; généré avec `openssl rand -hex 32`),
-`FINANCES_API_URL` (adresse privée de l'API, joignable depuis l'hôte ; obligatoire, refus de démarrer sans),
+`FINANCES_API_URL` (adresse privée de l'API, joignable depuis le conteneur `finances` et pas seulement depuis l'hôte : une adresse de boucle locale de l'hôte ne l'est pas ; obligatoire, refus de démarrer sans),
 `FINANCES_API_TOKEN` (non généré ici : copié à l'identique du jeton propre à l'API de finances) et, facultatif, `FINANCES_DASHBOARD_URL`. Aucun couplage réseau dans ce
 compose : l'adresse vient uniquement de la configuration. Port publié : `FINANCES_BIND_PORT` (8094).
 
