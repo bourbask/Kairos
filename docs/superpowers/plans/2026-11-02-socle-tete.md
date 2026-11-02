@@ -17,7 +17,7 @@
 ## Global Constraints
 
 - Repo public : aucun hôte, identifiant de canal ou de compte, fournisseur, nom de tentacule réel dans le code, les commentaires, les exemples ou les commits. Valeurs identifiantes uniquement en variables d'environnement (`kairos.env`) ou dans `config/tete.toml` (gitignoré). `config/tete.example.toml` neutre, placeholders vides.
-- Le code de la tête ne nomme **aucun tentacule**. Il ne connaît que des **noms d'outils conventionnels** : `brief_section`, `busy_at`, `persona_get`, `conversation_ingest`, `conversations_unsummarized`, `conversation_set_summary`. Un tentacule qui n'expose pas l'outil est ignoré pour ce rôle.
+- Le code de la tête ne nomme **aucun tentacule**. Il ne connaît que des **noms d'outils conventionnels** : `brief_section`, `busy_at`, `persona_get`, `conversation_ingest`, `conversations_unsummarized`, `conversation_get`, `conversation_set_summary`. Un tentacule qui n'expose pas l'outil est ignoré pour ce rôle.
 - Provenance stricte, fail-closed : la passerelle ne transmet que les messages texte de l'utilisateur configuré sur son canal privé ; la tête n'accepte que les appels portant le jeton de la passerelle (comparaison à temps constant, `tentacle_common::with_bearer`). Aucun nom de service, de protocole ou de bibliothèque de messagerie dans le dépôt.
 - Le LLM ne calcule aucun montant, ne voit aucune base en bloc ; les résultats d'outils sont tronqués à `TOOL_RESULT_MAX_CHARS = 8000`.
 - Usages routeur : `conversation`, `resume_conversation`, `brief`, `suggestion`. Tous en `Sensitivity::Strategic` (la sortie externe exige une concession dans `llm.toml` de l'hôte, mécanisme existant). Urgence : `Interactive` pour `conversation`, `Deferred` pour les autres.

@@ -100,6 +100,12 @@ impl Tentacles {
     }
 
     pub async fn call(&self, prefixed: &str, args: serde_json::Value) -> Result<String, String> {
+        self.call_limited(prefixed, args, TOOL_RESULT_MAX_CHARS).await
+    }
+
+    /// Comme `call`, avec une borne de résultat explicite : réservé aux lectures
+    /// destinées à un traitement hors conversation.
+    pub async fn call_limited(&self, prefixed: &str, args: serde_json::Value, max_chars: usize) -> Result<String, String> {
         let (t, tool) = self
             .list
             .iter()
@@ -108,20 +114,20 @@ impl Tentacles {
                 t.exposes(tool).then_some((t, tool))
             })
             .ok_or_else(|| format!("outil inconnu : {prefixed}"))?;
-        call_on(t, tool, args).await
+        call_on(t, tool, args, max_chars).await
     }
 
     /// Appelle `tool` sur chaque tentacule qui l'expose, dans l'ordre de la configuration.
     pub async fn call_conventional(&self, tool: &str, args: serde_json::Value) -> Vec<(String, Result<String, String>)> {
         let mut out = Vec::new();
         for t in self.list.iter().filter(|t| t.exposes(tool)) {
-            out.push((t.name.clone(), call_on(t, tool, args.clone()).await));
+            out.push((t.name.clone(), call_on(t, tool, args.clone(), TOOL_RESULT_MAX_CHARS).await));
         }
         out
     }
 }
 
-async fn call_on(t: &Tentacle, tool: &str, args: serde_json::Value) -> Result<String, String> {
+async fn call_on(t: &Tentacle, tool: &str, args: serde_json::Value, max_chars: usize) -> Result<String, String> {
     let (client, _) = t.link.as_ref().ok_or("tentacule absent")?;
     let mut params = CallToolRequestParams::new(tool.to_string());
     params.arguments = match args {
@@ -134,12 +140,12 @@ async fn call_on(t: &Tentacle, tool: &str, args: serde_json::Value) -> Result<St
         .map_err(|_| "délai dépassé".to_string())?
         .map_err(|e| format!("transport : {e}"))?;
     let text: String = res.content.iter().filter_map(|c| c.as_text()).map(|t| t.text.as_str()).collect::<Vec<_>>().join("\n");
-    let text = truncate(text);
+    let text = truncate(text, max_chars);
     if res.is_error == Some(true) { Err(text) } else { Ok(text) }
 }
 
-fn truncate(s: String) -> String {
-    match s.char_indices().nth(TOOL_RESULT_MAX_CHARS) {
+fn truncate(s: String, max_chars: usize) -> String {
+    match s.char_indices().nth(max_chars) {
         Some((i, _)) => format!("{}{TRUNCATED}", &s[..i]),
         None => s,
     }
