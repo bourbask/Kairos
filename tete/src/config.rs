@@ -144,6 +144,20 @@ impl HeadConfig {
     /// Cœur de `load`, avec l'environnement injecté (testable sans état global).
     pub fn from_parts(toml_text: &str, env: impl Fn(&str) -> Option<String>) -> Result<Self> {
         let mut cfg: HeadConfig = toml::from_str(toml_text).context("configuration invalide")?;
+        // Le nom préfixe les outils (`<nom>__<outil>`) : il doit être sans ambiguïté.
+        let mut seen = std::collections::HashSet::new();
+        for e in &cfg.tentacles {
+            let n = &e.name;
+            if n.is_empty()
+                || n.contains("__")
+                || !n.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+            {
+                bail!("nom de tentacule invalide : « {n} » (lettres, chiffres, _ et - ; pas de __)");
+            }
+            if !seen.insert(n) {
+                bail!("nom de tentacule en double : « {n} »");
+            }
+        }
         for e in &cfg.tentacles {
             required(&env, &e.token_env)
                 .with_context(|| format!("jeton du tentacule « {} »", e.name))?;
@@ -225,6 +239,18 @@ mod tests {
         let err = format!("{:#}", HeadConfig::from_parts("", env_of(&env)).unwrap_err());
         assert!(err.contains("TETE_BIND"));
         assert!(!err.contains("bind-secret") && !err.contains("in-secret"));
+    }
+
+    #[test]
+    fn tentacle_names_validated() {
+        let one = |name: &str| format!("[[tentacles]]\nname = \"{name}\"\nurl = \"http://a.invalid\"\ntoken_env = \"A_TOKEN\"\n");
+        let env = [GATEWAY[0], GATEWAY[1], GATEWAY[2], ("A_TOKEN", "a")];
+        assert!(HeadConfig::from_parts(&one("agenda-2_b"), env_of(&env)).is_ok());
+        for bad in ["", "a b", "a__b", "é", "a.b"] {
+            assert!(HeadConfig::from_parts(&one(bad), env_of(&env)).is_err(), "{bad:?} accepté");
+        }
+        let twice = format!("{}{}", one("a"), one("a"));
+        assert!(HeadConfig::from_parts(&twice, env_of(&env)).is_err());
     }
 
     #[test]

@@ -138,7 +138,11 @@ async fn call_on(t: &Tentacle, tool: &str, args: serde_json::Value, max_chars: u
     let res = tokio::time::timeout(TOOL_TIMEOUT, client.call_tool(params))
         .await
         .map_err(|_| "délai dépassé".to_string())?
-        .map_err(|e| format!("transport : {e}"))?;
+        // Le détail peut citer une adresse interne : journalisé, jamais transmis au moteur.
+        .map_err(|e| {
+            tracing::warn!(tentacule = %t.name, erreur = %e, "appel d'outil : erreur de transport");
+            "transport indisponible".to_string()
+        })?;
     let text: String = res.content.iter().filter_map(|c| c.as_text()).map(|t| t.text.as_str()).collect::<Vec<_>>().join("\n");
     let text = truncate(text, max_chars);
     if res.is_error == Some(true) { Err(text) } else { Ok(text) }

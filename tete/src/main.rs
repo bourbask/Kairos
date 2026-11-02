@@ -47,6 +47,7 @@ async fn main() -> anyhow::Result<()> {
                 let answer = ctx.agent.reply(&msg, now(), &ctx.tentacles, &ctx.state).await;
                 if let Err(e) = ctx.outbound.send(&answer).await {
                     tracing::warn!("réponse non envoyée, mise en attente : {e}");
+                    // Renvoyée par le vidage de la file, donc soumise à la politique de sortie.
                     if let Err(e) = ctx.state.enqueue("retry", &answer, now()) {
                         tracing::error!(longueur = answer.len(), "réponse perdue, mise en attente impossible : {e}");
                     }

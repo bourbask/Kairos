@@ -223,6 +223,8 @@ async fn flush(now: NaiveDateTime, ctx: &Ctx) -> anyhow::Result<()> {
 }
 
 /// Envoi sans perte : un échec remet le texte en file.
+// ponytail: renvoi à chaque vidage tant que la passerelle refuse, sans limite d'essais ni d'âge ;
+// ajouter une expiration si des messages trop anciens finissent par partir.
 async fn deliver(text: &str, now: NaiveDateTime, ctx: &Ctx) -> anyhow::Result<()> {
     if let Err(e) = ctx.outbound.send(text).await {
         tracing::warn!(erreur = %format!("{e:#}"), "envoi impossible, message remis en file");

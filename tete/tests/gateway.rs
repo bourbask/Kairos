@@ -42,6 +42,7 @@ async fn texte_vide_refuse() {
     let (tx, mut rx) = mpsc::channel(16);
     let addr = serve(inbound_router(tx, "secret".into())).await;
     assert_eq!(post_msg(addr, Some("secret"), json!({"text": ""})).await, 400);
+    assert_eq!(post_msg(addr, Some("secret"), json!({"text": " \n\t "})).await, 400);
     assert!(rx.try_recv().is_err());
 }
 

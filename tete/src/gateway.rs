@@ -20,7 +20,7 @@ struct Message {
 }
 
 async fn receive(State(tx): State<Sender<String>>, Json(m): Json<Message>) -> StatusCode {
-    if m.text.is_empty() {
+    if m.text.trim().is_empty() {
         return StatusCode::BAD_REQUEST;
     }
     let text: String = m.text.chars().take(MAX_INPUT_CHARS).collect();
