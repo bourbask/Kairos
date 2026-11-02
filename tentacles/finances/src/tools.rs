@@ -29,6 +29,20 @@ impl FinanceServer {
     pub fn new(api: Arc<FinanceApi>, dashboard_url: Option<String>) -> Self {
         Self { api, dashboard_url, tool_router: Self::tool_router() }
     }
+
+    /// Poste ramené au nom exact d'une enveloppe du cycle, sans tenir compte de la casse.
+    async fn poste(&self, p: &str) -> Result<String, String> {
+        let cycle = self.api.cycle().await.map_err(api_err)?;
+        cycle.envelopes.keys().find(|k| k.eq_ignore_ascii_case(p.trim())).cloned().ok_or_else(|| {
+            let valid = cycle.envelopes.keys().cloned().collect::<Vec<_>>().join(", ");
+            format!("Poste inconnu « {} ». Postes valides : {valid}.", clean_payee(p))
+        })
+    }
+}
+
+/// Opérations dont le libellé contient le motif (`needle` en minuscules).
+fn matching(ops: &[crate::api::Operation], needle: &str) -> usize {
+    ops.iter().filter(|o| clean_payee(&o.payee).to_lowercase().contains(needle)).count()
 }
 
 type Out = Result<String, String>;
@@ -115,17 +129,10 @@ impl FinanceServer {
     #[tool(description = "Savoir si une dépense (montant en euros, poste facultatif) est abordable sur le cycle en cours.")]
     async fn can_afford(&self, Parameters(a): Parameters<AffordArgs>) -> Out {
         check_amount(a.amount)?;
-        let mut poste = None;
-        if let Some(p) = &a.poste {
-            let cycle = self.api.cycle().await.map_err(api_err)?;
-            match cycle.envelopes.keys().find(|k| k.eq_ignore_ascii_case(p.trim())) {
-                Some(k) => poste = Some(k.clone()),
-                None => {
-                    let valid = cycle.envelopes.keys().cloned().collect::<Vec<_>>().join(", ");
-                    return Err(format!("Poste inconnu « {} ». Postes valides : {valid}.", clean_payee(p)));
-                }
-            }
-        }
+        let poste = match &a.poste {
+            Some(p) => Some(self.poste(p).await?),
+            None => None,
+        };
         let v = self.api.afford(a.amount, poste.as_deref()).await.map_err(api_err)?;
         Ok(verdict_text(&v, a.amount, poste.as_deref().unwrap_or("")))
     }
@@ -156,21 +163,29 @@ impl FinanceServer {
         if is_generic(&pattern) {
             return Err("Motif trop générique (mots bancaires ou chiffres seuls) : indique le nom du commerçant.".to_string());
         }
+        let poste = self.poste(&a.poste).await?;
         let ops = self.api.unclassified().await.map_err(api_err)?;
         let needle = pattern.to_lowercase();
-        let n = ops.iter().filter(|o| clean_payee(&o.payee).to_lowercase().contains(&needle)).count();
+        let n = matching(&ops, &needle);
         if n == 0 {
             return Err("Ce motif ne figure dans aucune dépense sans catégorie.".to_string());
         }
         if ops.len() >= 3 && n == ops.len() {
             return Err("Motif trop large : il couvrirait toutes les dépenses sans catégorie.".to_string());
         }
-        let r = self.api.create_rule(&pattern, &a.poste).await.map_err(api_err)?;
+        let r = self.api.create_rule(&pattern, &poste).await.map_err(api_err)?;
         let state = if r.created { "enregistrée" } else { "mise à jour" };
-        Ok(format!(
-            "Règle {state} : {pattern} → {} ({n} opération(s) en attente concernée(s)).",
-            clean_payee(&a.poste)
-        ))
+        // Relecture : seul ce qui reste à classer prouve que la règle reconnaît le libellé.
+        let left = match self.api.unclassified().await {
+            Ok(ops) => match matching(&ops, &needle) {
+                0 => " ; il reste 0 opération(s) correspondante(s) à classer.".to_string(),
+                k => format!(
+                    " ; il reste {k} opération(s) correspondante(s) à classer. ⚠ La règle ne les a pas reconnues : précise un autre motif."
+                ),
+            },
+            Err(_) => " ; ⚠ opérations restantes non vérifiables.".to_string(),
+        };
+        Ok(format!("Règle {state} : {pattern} → {poste}{left}"))
     }
 
     #[tool(description = "Obtenir le résumé du budget avec le lien du tableau de bord s'il existe.")]
@@ -196,10 +211,7 @@ impl FinanceServer {
                 if let Some(op) = ops.first() {
                     out.push_str(&format!("\n{}", unclassified_text(&ops, EVENING_LISTED)));
                     // L'exemple doit passer les garde-fous de `classify`.
-                    let covered = |w: &str| {
-                        let w = w.to_lowercase();
-                        ops.iter().filter(|o| clean_payee(&o.payee).to_lowercase().contains(&w)).count()
-                    };
+                    let covered = |w: &str| matching(&ops, &w.to_lowercase());
                     let word = clean_payee(&op.payee)
                         .split(|c: char| !c.is_alphabetic())
                         .filter(|w| w.chars().count() >= 4 && !is_generic(w))

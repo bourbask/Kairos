@@ -29,6 +29,9 @@ async fn fake_with(log: Log, m: String, unc_ok: bool) -> String {
     let mm = move |body: &str| -> Value { serde_json::from_str(&format!("{{{body},{m}}}")).unwrap() };
     let (l1, l2, l3, l4, l5, l6, l7) = (log.clone(), log.clone(), log.clone(), log.clone(), log.clone(), log.clone(), log.clone());
     let (m1, m2, m3) = (mm.clone(), mm.clone(), mm.clone());
+    // Motifs des règles appliquées ; une règle vers « essence » ne reconnaît rien.
+    let rules: Log = Default::default();
+    let applied = rules.clone();
     let app = Router::new()
         .route("/api/cycle", get(move || async move {
             rec(&l1, "GET cycle");
@@ -59,10 +62,18 @@ async fn fake_with(log: Log, m: String, unc_ok: bool) -> String {
             if !unc_ok {
                 return (axum::http::StatusCode::INTERNAL_SERVER_ERROR, Json(json!({})));
             }
-            (axum::http::StatusCode::OK, Json(json!([{"id":"o1","date":"2026-11-01","payee":"CARTE BOULANGERIE ACME","amount":12.5},{"id":"o2","date":"2026-11-01","payee":"CARTE GARAGE ACME","amount":80.0},{"id":"o3","date":"2026-11-02","payee":"PRLV ACME ENERGIE","amount":45.0}])))
+            let all = json!([{"id":"o1","date":"2026-11-01","payee":"CARTE BOULANGERIE ACME","amount":12.5},{"id":"o2","date":"2026-11-01","payee":"CARTE GARAGE ACME","amount":80.0},{"id":"o3","date":"2026-11-02","payee":"PRLV ACME ENERGIE","amount":45.0}]);
+            let rules = rules.lock().unwrap().clone();
+            let left: Vec<Value> = all.as_array().unwrap().iter()
+                .filter(|o| !rules.iter().any(|r| o["payee"].as_str().unwrap().to_lowercase().contains(r)))
+                .cloned().collect();
+            (axum::http::StatusCode::OK, Json(Value::Array(left)))
         }))
         .route("/api/rules", post(move |Json(b): Json<Value>| async move {
             rec(&l7, &format!("POST rules {b}"));
+            if b["poste"] != "essence" {
+                applied.lock().unwrap().push(b["payee"].as_str().unwrap().to_lowercase());
+            }
             if b["poste"] == "inconnu" {
                 return (axum::http::StatusCode::UNPROCESSABLE_ENTITY, Json(json!({"detail": "Poste inconnu."})));
             }
@@ -176,16 +187,24 @@ async fn classify_pattern_rules() {
     }
     assert!(posts(&log).is_empty());
     let v = call(&url, "classify", json!({"payee": "boulangerie", "poste": "courses"})).await;
-    assert_eq!(text(&v), "Règle enregistrée : boulangerie → courses (1 opération(s) en attente concernée(s)).");
+    assert_eq!(text(&v), "Règle enregistrée : boulangerie → courses ; il reste 0 opération(s) correspondante(s) à classer.");
     let p = posts(&log);
     assert_eq!(p.len(), 1);
     let b: Value = serde_json::from_str(p[0].trim_start_matches("POST rules ")).unwrap();
     assert_eq!(b, json!({"payee":"boulangerie","poste":"courses"}));
     let v = call(&url, "classify", json!({"payee": "garage", "poste": "essence"})).await;
-    assert!(text(&v).starts_with("Règle mise à jour : garage → essence"), "{v}");
+    assert_eq!(
+        text(&v),
+        "Règle mise à jour : garage → essence ; il reste 1 opération(s) correspondante(s) à classer. ⚠ La règle ne les a pas reconnues : précise un autre motif."
+    );
     let v = call(&url, "classify", json!({"payee": "garage", "poste": "inconnu"})).await;
     assert!(is_err(&v));
-    assert_eq!(text(&v), "Poste inconnu.");
+    assert_eq!(text(&v), "Poste inconnu « inconnu ». Postes valides : courses, essence.");
+    assert_eq!(posts(&log).len(), 2);
+    // Poste ramené à la casse des enveloppes.
+    let v = call(&url, "classify", json!({"payee": "energie", "poste": "COURSES"})).await;
+    assert!(text(&v).starts_with("Règle enregistrée : energie → courses ;"), "{v}");
+    assert!(posts(&log)[2].ends_with(r#""poste":"courses"}"#), "{:?}", posts(&log));
 }
 
 #[tokio::test]
