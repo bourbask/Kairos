@@ -22,6 +22,10 @@ fn rec(log: &Log, s: &str) {
 }
 
 async fn fake(log: Log, m: String) -> String {
+    fake_with(log, m, true).await
+}
+
+async fn fake_with(log: Log, m: String, unc_ok: bool) -> String {
     let mm = move |body: &str| -> Value { serde_json::from_str(&format!("{{{body},{m}}}")).unwrap() };
     let (l1, l2, l3, l4, l5, l6, l7) = (log.clone(), log.clone(), log.clone(), log.clone(), log.clone(), log.clone(), log.clone());
     let (m1, m2, m3) = (mm.clone(), mm.clone(), mm.clone());
@@ -30,8 +34,8 @@ async fn fake(log: Log, m: String) -> String {
             rec(&l1, "GET cycle");
             Json(m1(r#""start":"2026-10-28","end":"2026-11-30","today":"2026-11-02","days_left":28,"mode":"serein","available":{"available":73.0,"balance":500.0,"charges_left_total":50.0,"variable_expected":{},"margin":50.0,"days_left":28},"charges_left":[],"envelopes":{"courses":300,"essence":80},"spent":{},"cushion":{"balance":5000.0,"floor":3000}"#))
         }))
-        .route("/api/cycle/afford", get(move || async move {
-            rec(&l2, "GET afford");
+        .route("/api/cycle/afford", get(move |axum::extract::RawQuery(q): axum::extract::RawQuery| async move {
+            rec(&l2, &format!("GET afford {}", q.unwrap_or_default()));
             Json(m2(r#""ok":true,"after":10.0,"reason":"ok","cuts":[],"available":73.0,"reserve_used":0.0"#))
         }))
         .route("/api/cycle/save", get(move || async move {
@@ -52,7 +56,10 @@ async fn fake(log: Log, m: String) -> String {
         }))
         .route("/api/unclassified", get(move || async move {
             rec(&l6, "GET unclassified");
-            Json(json!([{"id":"o1","date":"2026-11-01","payee":"CARTE BOULANGERIE ACME","amount":12.5},{"id":"o2","date":"2026-11-01","payee":"CARTE GARAGE ACME","amount":80.0},{"id":"o3","date":"2026-11-02","payee":"PRLV ACME ENERGIE","amount":45.0}]))
+            if !unc_ok {
+                return (axum::http::StatusCode::INTERNAL_SERVER_ERROR, Json(json!({})));
+            }
+            (axum::http::StatusCode::OK, Json(json!([{"id":"o1","date":"2026-11-01","payee":"CARTE BOULANGERIE ACME","amount":12.5},{"id":"o2","date":"2026-11-01","payee":"CARTE GARAGE ACME","amount":80.0},{"id":"o3","date":"2026-11-02","payee":"PRLV ACME ENERGIE","amount":45.0}])))
         }))
         .route("/api/rules", post(move |Json(b): Json<Value>| async move {
             rec(&l7, &format!("POST rules {b}"));
@@ -139,6 +146,7 @@ async fn can_afford_checks_poste_against_cycle() {
     assert!(!log.lock().unwrap().iter().any(|l| l.contains("afford")));
     let v = call(&url, "can_afford", json!({"amount": 10.0, "poste": "Essence"})).await;
     assert!(text(&v).starts_with("Oui"), "{v}");
+    assert!(log.lock().unwrap().iter().any(|l| l.starts_with("GET afford") && l.contains("poste=essence")));
 }
 
 fn posts(log: &Log) -> Vec<String> {
@@ -148,16 +156,23 @@ fn posts(log: &Log) -> Vec<String> {
 #[tokio::test]
 async fn classify_pattern_rules() {
     let (url, log) = setup().await;
-    for (payee, why) in [
-        ("INCONNU", "absent"),
-        ("ab", "trop court"),
-        ("carte", "générique"),
-        ("PRLV SEPA", "générique"),
-        ("12345", "numérique"),
-        ("acme", "couvre tout"),
+    let long = "x".repeat(101);
+    for (payee, want) in [
+        ("INCONNU", "ne figure dans aucune"),
+        ("ab", "entre 3 et 100"),
+        (long.as_str(), "entre 3 et 100"),
+        ("carte", "trop générique"),
+        ("PRLV SEPA", "trop générique"),
+        ("VIR SEPA", "trop générique"),
+        ("CARTE CB", "trop générique"),
+        ("PRLV SEPA 12", "trop générique"),
+        ("PRÊT", "trop générique"),
+        ("prlv.", "trop générique"),
+        ("12.34", "trop générique"),
+        ("acme", "trop large"),
     ] {
         let v = call(&url, "classify", json!({"payee": payee, "poste": "courses"})).await;
-        assert!(is_err(&v), "{why}: {v}");
+        assert!(is_err(&v) && text(&v).contains(want), "{payee}: {v}");
     }
     assert!(posts(&log).is_empty());
     let v = call(&url, "classify", json!({"payee": "boulangerie", "poste": "courses"})).await;
@@ -214,4 +229,12 @@ async fn alerts_json_and_stale_prefix() {
     let url = start(fake(Default::default(), expired).await, None).await;
     let a: Value = serde_json::from_str(text(&call(&url, "alerts", json!({})).await)).unwrap();
     assert!(a[0]["text"].as_str().unwrap().starts_with("Consentement bancaire expiré"), "{a}");
+}
+
+#[tokio::test]
+async fn evening_brief_survives_unclassified_failure() {
+    let url = start(fake_with(Default::default(), META.to_string(), false).await, None).await;
+    let v = call(&url, "brief_section", json!({"period": "soir"})).await;
+    assert!(!is_err(&v), "{v}");
+    assert!(text(&v).starts_with("Disponible jusqu'au") && text(&v).contains("Coussin") && !text(&v).contains("Réponds"), "{v}");
 }

@@ -369,6 +369,11 @@ mod tests {
     }
 
     #[test]
+    fn empty_unclassified_wording() {
+        assert_eq!(unclassified_text(&[]), "Aucune opération à classer.");
+    }
+
+    #[test]
     fn negative_amounts_keep_sign() {
         assert_eq!(eur(-0.4), "-1");
         assert_eq!(eur(-1204.0), "-1 204");

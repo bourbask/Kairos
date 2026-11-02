@@ -40,13 +40,38 @@ fn api_err(e: ApiError) -> String {
     }
 }
 
-/// Préfixes bancaires génériques : seuls, ils ne désignent aucun commerçant.
-const GENERIC_PREFIXES: [&str; 10] = [
-    "PRLV", "CARTE", "VIR", "VIR INST", "ECH", "ECH PRET", "PRET", "SEPA", "PAYPAL", "PRLV SEPA",
+/// Mots bancaires génériques (sans accents, en minuscules) : seuls, ils ne désignent aucun commerçant.
+const GENERIC_TOKENS: [&str; 19] = [
+    "prlv", "prlvt", "carte", "cb", "vir", "inst", "ech", "pret", "sepa", "paypal", "eur",
+    "facture", "paiement", "prelevement", "virement", "cheque", "retrait", "dab", "ref",
 ];
 
-fn is_generic(word: &str) -> bool {
-    GENERIC_PREFIXES.iter().any(|g| g.eq_ignore_ascii_case(word))
+fn fold(s: &str) -> String {
+    s.to_lowercase()
+        .chars()
+        .map(|c| match c {
+            'à' | 'â' | 'ä' => 'a',
+            'é' | 'è' | 'ê' | 'ë' => 'e',
+            'î' | 'ï' => 'i',
+            'ô' | 'ö' => 'o',
+            'ù' | 'û' | 'ü' => 'u',
+            'ç' => 'c',
+            c => c,
+        })
+        .collect()
+}
+
+fn is_generic_token(t: &str) -> bool {
+    let t = fold(t);
+    t.chars().all(|c| c.is_ascii_digit()) || GENERIC_TOKENS.contains(&t.as_str())
+}
+
+/// Vrai si chaque mot du motif est générique ou numérique.
+fn is_generic(pattern: &str) -> bool {
+    pattern
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|t| !t.is_empty())
+        .all(is_generic_token)
 }
 
 /// Un montant se valide avant tout appel : strictement positif et fini.
@@ -121,15 +146,12 @@ impl FinanceServer {
 
     #[tool(description = "Enregistrer une règle de classement : un motif (nom du commerçant, 3 caractères au moins) présent dans un libellé de la liste des dépenses sans catégorie, vers un poste.")]
     async fn classify(&self, Parameters(a): Parameters<ClassifyArgs>) -> Out {
-        let pattern = clean_payee(&a.payee);
-        if !(3..=100).contains(&pattern.chars().count()) {
+        if !(3..=100).contains(&a.payee.trim().chars().count()) {
             return Err("Le motif doit faire entre 3 et 100 caractères.".to_string());
         }
-        if pattern.chars().all(|c| c.is_ascii_digit() || c.is_whitespace()) {
-            return Err("Le motif ne peut pas être uniquement numérique.".to_string());
-        }
+        let pattern = clean_payee(&a.payee);
         if is_generic(&pattern) {
-            return Err("Motif trop générique : indique le nom du commerçant.".to_string());
+            return Err("Motif trop générique (mots bancaires ou chiffres seuls) : indique le nom du commerçant.".to_string());
         }
         let ops = self.api.unclassified().await.map_err(api_err)?;
         let needle = pattern.to_lowercase();
@@ -170,9 +192,15 @@ impl FinanceServer {
             if let Ok(ops) = self.api.unclassified().await {
                 if let Some(op) = ops.first() {
                     out.push_str(&format!("\n{}", unclassified_text(&ops)));
+                    // L'exemple doit passer les garde-fous de `classify`.
+                    let covered = |w: &str| {
+                        let w = w.to_lowercase();
+                        ops.iter().filter(|o| clean_payee(&o.payee).to_lowercase().contains(&w)).count()
+                    };
                     let word = clean_payee(&op.payee)
                         .split(|c: char| !c.is_alphabetic())
                         .filter(|w| w.chars().count() >= 4 && !is_generic(w))
+                        .filter(|w| !(ops.len() >= 3 && covered(w) == ops.len()))
                         .max_by_key(|w| w.chars().count())
                         .map(str::to_string);
                     let postes: Vec<_> = cycle.envelopes.keys().cloned().collect();
