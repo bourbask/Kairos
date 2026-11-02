@@ -4,3 +4,4 @@ pub mod state;
 pub mod tentacles;
 pub mod policy;
 pub mod agent;
+pub mod jobs;

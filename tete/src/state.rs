@@ -164,6 +164,10 @@ impl State {
         Ok(())
     }
 
+    pub fn has_pending(&self) -> Result<bool> {
+        Ok(self.conn.query_row("SELECT EXISTS (SELECT 1 FROM pending)", [], |r| r.get(0))?)
+    }
+
     /// Vide la file et rend (genre, corps) dans l'ordre d'arrivée.
     pub fn take_pending(&self) -> Result<Vec<(String, String)>> {
         let tx = self.conn.unchecked_transaction()?;

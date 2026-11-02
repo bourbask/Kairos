@@ -70,6 +70,10 @@ impl Agent {
         }
     }
 
+    pub fn router(&self) -> &LlmRouter {
+        &self.router
+    }
+
     pub async fn reply(&mut self, msg: &str, now: NaiveDateTime, tentacles: &Tentacles, state: &State) -> String {
         self.end_session_if_idle(now, tentacles).await;
         if self.started.is_none() {
