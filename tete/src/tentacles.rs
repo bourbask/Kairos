@@ -119,9 +119,19 @@ impl Tentacles {
 
     /// Appelle `tool` sur chaque tentacule qui l'expose, dans l'ordre de la configuration.
     pub async fn call_conventional(&self, tool: &str, args: serde_json::Value) -> Vec<(String, Result<String, String>)> {
+        self.call_conventional_limited(tool, args, TOOL_RESULT_MAX_CHARS).await
+    }
+
+    /// Comme `call_conventional`, avec une borne de résultat explicite (voir `call_limited`).
+    pub async fn call_conventional_limited(
+        &self,
+        tool: &str,
+        args: serde_json::Value,
+        max_chars: usize,
+    ) -> Vec<(String, Result<String, String>)> {
         let mut out = Vec::new();
         for t in self.list.iter().filter(|t| t.exposes(tool)) {
-            out.push((t.name.clone(), call_on(t, tool, args.clone(), TOOL_RESULT_MAX_CHARS).await));
+            out.push((t.name.clone(), call_on(t, tool, args.clone(), max_chars).await));
         }
         out
     }

@@ -715,3 +715,14 @@ async fn gateway_failure_queues_retry_and_marks() {
     assert!(fx.ctx.state.alert_seen("t:a1").unwrap() && fx.ctx.state.alert_seen("t:a2").unwrap());
     assert_eq!(fx.ctx.state.interruptions_on(at(7, 0, 0).date()).unwrap(), 1);
 }
+
+#[tokio::test]
+async fn long_alert_list_not_truncated() {
+    let mut fx = fixture("JB_A10", &[], vec![]).await;
+    // Liste au-delà de la borne d'un appel en conversation.
+    let all: Vec<Value> = (0..10).map(|i| alert(&format!("a{i}"), &format!("{i}{}", "x".repeat(900)), false)).collect();
+    *fx.rec.alerts.lock().unwrap() = Value::Array(all).to_string();
+    run(Job::Alerts, at(7, 15, 0), &mut fx.ctx).await.unwrap();
+    assert_eq!(sent(&fx.gw).len(), 1);
+    assert!(fx.ctx.state.alert_seen("t:a9").unwrap());
+}

@@ -21,6 +21,8 @@ const RETRY: &str = "retry";
 const ALERT: &str = "alert";
 const ALERTS_EVERY_MINUTES: i64 = 30;
 const ALERTS_PER_POLL: usize = 10;
+/// Une liste tronquée serait illisible en bloc : borne large, lue hors conversation.
+const ALERTS_MAX_CHARS: usize = 64_000;
 const SUMMARY_BATCH: u32 = 10;
 /// Transcription réduite par le tentacule (60 000 caractères) et marge.
 const TRANSCRIPT_MAX_CHARS: usize = 70_000;
@@ -306,7 +308,7 @@ async fn alerts(now: NaiveDateTime, ctx: &mut Ctx) -> anyhow::Result<()> {
     let mut keys = Vec::new();
     let mut texts = Vec::new();
     let mut budgeted = false;
-    'poll: for (name, res) in ctx.tentacles.call_conventional("alerts", json!({})).await {
+    'poll: for (name, res) in ctx.tentacles.call_conventional_limited("alerts", json!({}), ALERTS_MAX_CHARS).await {
         // Données externes : une liste mal formée est ignorée en bloc.
         let list = match res.map(|t| serde_json::from_str::<Vec<Alert>>(&t)) {
             Ok(Ok(list)) => list,
