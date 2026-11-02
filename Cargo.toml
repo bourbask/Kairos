@@ -12,6 +12,7 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 cron = "0.13"
 scraper = "0.21"
 toml = "0.8"
+regex = "1"
 chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.10"
 dotenvy = "0.15"

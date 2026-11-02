@@ -119,9 +119,50 @@ impl Storage {
             );
 
             CREATE INDEX IF NOT EXISTS idx_calendar_start ON calendar_events(start_time);
+
+            CREATE TABLE IF NOT EXISTS llm_usage (
+                day TEXT NOT NULL,
+                engine TEXT NOT NULL,
+                usage TEXT NOT NULL,
+                input_tokens INTEGER NOT NULL,
+                output_tokens INTEGER NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_llm_usage_day ON llm_usage(day, engine);
             "
         )?;
         Ok(())
+    }
+
+    /// Chemin de la base : variable d'environnement, sinon valeur par défaut.
+    pub fn default_path() -> String {
+        std::env::var("DATABASE_PATH").unwrap_or_else(|_| "data/kairos.db".into())
+    }
+
+    pub fn record_llm_usage(
+        &self,
+        day: NaiveDate,
+        engine: &str,
+        usage: &str,
+        t: &crate::llm::TokenUsage,
+    ) -> SqlResult<()> {
+        self.conn.execute(
+            "INSERT INTO llm_usage (day, engine, usage, input_tokens, output_tokens)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![day.to_string(), engine, usage, t.input as i64, t.output as i64],
+        )?;
+        Ok(())
+    }
+
+    /// Jetons (entrée + sortie) consommés par un moteur un jour donné.
+    pub fn llm_tokens_on(&self, day: NaiveDate, engine: &str) -> SqlResult<u64> {
+        let n: i64 = self.conn.query_row(
+            "SELECT COALESCE(SUM(input_tokens + output_tokens), 0) FROM llm_usage
+             WHERE day = ?1 AND engine = ?2",
+            params![day.to_string(), engine],
+            |r| r.get(0),
+        )?;
+        Ok(n as u64)
     }
 
     pub fn insert_offer(&self, offer: &JobOffer) -> SqlResult<()> {
@@ -577,6 +618,18 @@ pub struct StorageStats {
 mod tests {
     use super::*;
     use chrono::Utc;
+
+    #[test]
+    fn usage_is_summed_per_day_and_engine() {
+        let store = Storage::open(":memory:").unwrap();
+        let d = NaiveDate::from_ymd_opt(2026, 1, 5).unwrap();
+        let t = |input, output| crate::llm::TokenUsage { input, output };
+        store.record_llm_usage(d, "a", "x", &t(10, 5)).unwrap();
+        store.record_llm_usage(d, "a", "y", &t(3, 2)).unwrap();
+        assert_eq!(store.llm_tokens_on(d, "a").unwrap(), 20);
+        assert_eq!(store.llm_tokens_on(d, "b").unwrap(), 0);
+        assert_eq!(store.llm_tokens_on(d.succ_opt().unwrap(), "a").unwrap(), 0);
+    }
 
     #[test]
     fn test_insert_and_count() {

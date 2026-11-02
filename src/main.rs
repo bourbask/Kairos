@@ -6,6 +6,7 @@ mod ranker;
 mod storage;
 mod enrichment;
 mod llm;
+mod redact;
 mod briefing;
 mod planning;
 mod calendar;
@@ -151,7 +152,7 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
     let cli = Cli::parse();
-    let db_path = std::env::var("DATABASE_PATH").unwrap_or_else(|_| "data/kairos.db".into());
+    let db_path = Storage::default_path();
     let profile_path = std::env::var("PROFILE_PATH").unwrap_or_else(|_| "config/profile.toml".into());
     let profile = Profile::from_file(&profile_path)?;
     let storage = Arc::new(Storage::open(&db_path)?);
