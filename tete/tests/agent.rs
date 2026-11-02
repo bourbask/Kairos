@@ -284,7 +284,11 @@ async fn builtin_set_work_day() {
     let tools = tool_messages(&s.requests[3]);
     assert!(tools[0]["content"].as_str().unwrap().starts_with("Erreur : "));
     assert!(tools[1]["content"].as_str().unwrap().starts_with("Erreur : "));
-    assert!(!tools[2]["content"].as_str().unwrap().starts_with("Erreur : "));
+    assert_eq!(tools[2]["content"], "désormais chaque mardi : remote");
+    // Changement durable : un jour isolé passe par `quiet`.
+    let spec = s.requests[0]["tools"].as_array().unwrap().iter().find(|t| t["function"]["name"] == "set_work_day").unwrap().clone();
+    let desc = spec["function"]["description"].as_str().unwrap();
+    assert!(desc.contains("durablement") && desc.contains("quiet"));
 }
 
 #[tokio::test]

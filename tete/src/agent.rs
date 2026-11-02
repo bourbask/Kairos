@@ -284,9 +284,11 @@ fn quiet(args: &Value, state: &State) -> anyhow::Result<String> {
 fn set_work_day(args: &Value, state: &State) -> anyhow::Result<String> {
     let day = str_arg(args, "day")?;
     let (_, weekday) = DAYS.iter().find(|(n, _)| *n == day).ok_or_else(|| anyhow!("jour inconnu : {day}"))?;
-    let mode: WorkMode = serde_json::from_value(args["mode"].clone()).map_err(|_| anyhow!("mode inconnu"))?;
-    state.set_work_day(*weekday, mode)?;
-    Ok("rythme enregistré".into())
+    let mode = str_arg(args, "mode")?;
+    let parsed: WorkMode = serde_json::from_value(json!(mode)).map_err(|_| anyhow!("mode inconnu"))?;
+    state.set_work_day(*weekday, parsed)?;
+    // Reformulé pour que le modèle annonce un changement durable.
+    Ok(format!("désormais chaque {day} : {mode}"))
 }
 
 fn builtin_specs() -> Vec<ToolSpec> {
@@ -307,7 +309,9 @@ fn builtin_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "set_work_day".into(),
-            description: "Change le mode de travail d'un jour de la semaine.".into(),
+            description: "Change durablement le rythme hebdomadaire : le mode vaut pour ce jour de la semaine \
+                          toutes les semaines. Pour un seul jour, utiliser quiet."
+                .into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
