@@ -33,6 +33,8 @@ struct Rec {
     transcripts: Mutex<HashMap<i64, String>>,
     /// Réponse brute de `alerts`.
     alerts: Mutex<String>,
+    /// Section de brief imposée ; vide → section par défaut.
+    brief: Mutex<String>,
 }
 
 #[derive(Clone)]
@@ -74,6 +76,10 @@ struct SetSummary {
 impl Fake {
     #[tool(description = "Section de brief.")]
     fn brief_section(&self, Parameters(p): Parameters<Period>) -> Result<String, String> {
+        let fixed = self.rec.brief.lock().unwrap().clone();
+        if !fixed.is_empty() {
+            return Ok(fixed);
+        }
         Ok(format!("- rendez-vous ({}) à 10:00", p.period))
     }
 
@@ -610,6 +616,59 @@ async fn reworded_brief_losing_a_number_is_sent_raw() {
     let mut fx = fixture("JB_T16", &["brief"], vec![text("Un rendez-vous à 11:00.")]).await;
     run(Job::MorningBrief, at(7, 7, 30), &mut fx.ctx).await.unwrap();
     assert_eq!(sent(&fx.gw), vec!["Brief du matin\n\n- rendez-vous (matin) à 10:00".to_string()]);
+}
+
+// --- avertissements « ⚠ » et nombres ---
+
+const WARNED: &str = "⚠ Estimation incertaine. Disponible : 10 €.";
+
+#[tokio::test]
+async fn reworded_brief_losing_a_warning_is_sent_raw() {
+    let mut fx = fixture("JB_W1", &["brief"], vec![text("Disponible : 10 €. Estimation incertaine.")]).await;
+    *fx.rec.brief.lock().unwrap() = WARNED.into();
+    run(Job::MorningBrief, at(7, 7, 30), &mut fx.ctx).await.unwrap();
+    assert_eq!(sent(&fx.gw), vec![format!("Brief du matin\n\n{WARNED}")]);
+}
+
+#[tokio::test]
+async fn reworded_brief_adding_a_number_is_sent_raw() {
+    let mut fx = fixture("JB_W2", &["brief"], vec![text("Un rendez-vous à 10:00, durée 2 h.")]).await;
+    run(Job::MorningBrief, at(7, 7, 30), &mut fx.ctx).await.unwrap();
+    assert_eq!(sent(&fx.gw), vec!["Brief du matin\n\n- rendez-vous (matin) à 10:00".to_string()]);
+}
+
+#[tokio::test]
+async fn reworded_brief_keeping_warning_and_numbers_is_sent() {
+    let reworded = "⚠ Estimation incertaine. Il te reste 10 €.";
+    let mut fx = fixture("JB_W3", &["brief"], vec![text(reworded)]).await;
+    *fx.rec.brief.lock().unwrap() = WARNED.into();
+    run(Job::MorningBrief, at(7, 7, 30), &mut fx.ctx).await.unwrap();
+    assert_eq!(sent(&fx.gw), vec![reworded.to_string()]);
+}
+
+#[tokio::test]
+async fn suggestion_with_foreign_number_dropped() {
+    let mut fx = fixture("JB_W4", &["suggestion"], vec![text("Mets 50 € de côté.")]).await;
+    run(Job::Suggestion, at(7, 15, 0), &mut fx.ctx).await.unwrap();
+    assert!(sent(&fx.gw).is_empty());
+    assert_eq!(fx.ctx.state.interruptions_on(at(7, 0, 0).date()).unwrap(), 0);
+}
+
+#[tokio::test]
+async fn suggestion_without_context_warning_dropped() {
+    let mut fx = fixture("JB_W5", &["suggestion"], vec![text("Garde 10 € pour demain.")]).await;
+    *fx.rec.brief.lock().unwrap() = WARNED.into();
+    run(Job::Suggestion, at(7, 15, 0), &mut fx.ctx).await.unwrap();
+    assert!(sent(&fx.gw).is_empty());
+}
+
+#[tokio::test]
+async fn suggestion_led_by_context_warning_sent() {
+    let reply = "⚠ Estimation incertaine. Garde 10 € pour demain.";
+    let mut fx = fixture("JB_W6", &["suggestion"], vec![text(reply)]).await;
+    *fx.rec.brief.lock().unwrap() = WARNED.into();
+    run(Job::Suggestion, at(7, 15, 0), &mut fx.ctx).await.unwrap();
+    assert_eq!(sent(&fx.gw), vec![reply.to_string()]);
 }
 
 // --- alertes ---
