@@ -15,5 +15,5 @@ markets_path = ""        # chemin retournant les cotations (peut porter une quer
 forecasts_path = ""      # chemin retournant les estimations
 interests = []           # sujets suivis, ex. ["géopolitique", "énergie", "marchés"]
                          # sans cette liste la synthèse ne lit les signaux que sous l'angle emploi
-llm_endpoint = "http://localhost:11434"
-llm_model = "phi3:mini"
+# Le moteur de synthèse n'est pas déclaré ici : ce module produit une génération
+# stratégique et différée, le routage vit dans llm.toml (cf. llm.example.toml).
