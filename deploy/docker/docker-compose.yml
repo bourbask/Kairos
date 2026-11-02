@@ -91,6 +91,18 @@ services:
     ports:
       - "${TENTACLES_BIND_ADDR:-127.0.0.1}:${AGENDA_BIND_PORT:-8092}:8092"
 
+  # Tête : boucle principale (conversation, briefs, suggestions) ; joint les tentacules par nom de service.
+  tete:
+    <<: *kairos-common
+    restart: unless-stopped
+    mem_limit: 64m
+    entrypoint: ["/app/tete"]
+    command: []
+    depends_on: {}              # la tête se dégrade sans moteur : pas d'attente d'Ollama
+    ports:
+      # Publié pour la passerelle seulement.
+      - "${TENTACLES_BIND_ADDR:-127.0.0.1}:${TETE_BIND_PORT:-8093}:8090"
+
   # Exécutions manuelles : `docker compose run --rm kairos <scrape|briefing|status|prompt ...>`
   kairos:
     <<: *kairos-common

@@ -1,0 +1,32 @@
+# Tête — configuration
+# Copier ce fichier en tete.toml et remplir les valeurs
+# Ne jamais commiter tete.toml (gitignored)
+#
+# Les secrets ne sont jamais ici : chaque jeton est lu dans une variable
+# d'environnement. La passerelle se règle par TETE_BIND (optionnel),
+# TETE_INBOUND_TOKEN, TETE_OUTBOUND_URL et TETE_OUTBOUND_TOKEN.
+
+# Cadence des sorties spontanées
+interruptions_per_day = 2        # plafond d'interruptions hors briefs
+suggestion_every_minutes = 120   # délai minimal entre deux suggestions
+session_idle_minutes = 30        # inactivité qui clôt une conversation
+
+[schedule]
+morning = "07:30"      # brief du matin
+evening = "21:00"      # brief du soir
+summaries = "03:00"    # résumés des conversations
+quiet_start = "22:30"  # début de la nuit : aucune sortie spontanée, mise en file
+quiet_end = "07:00"    # fin de la nuit
+
+[work]
+start = "09:00"
+end = "18:00"
+# Mode par jour : "on_site", "remote" ou "off". Jour absent = "off".
+[work.days]
+# monday = "remote"
+
+# Une section par tentacule ; `name` préfixe ses outils.
+# [[tentacles]]
+# name = ""
+# url = ""         # point d'accès MCP
+# token_env = ""   # nom de la variable d'environnement portant le jeton

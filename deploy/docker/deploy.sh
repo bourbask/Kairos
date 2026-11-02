@@ -25,7 +25,7 @@ ssh "$VPS_HOST" "cd '$KAIROS_DIR/deploy/docker' && docker compose build"
 
 echo "==> [3/3] (Re)démarrage des services"
 # Les services propres à l'hôte (docker-compose.override.yml, non versionné) sont démarrés par l'opérateur.
-ssh "$VPS_HOST" "cd '$KAIROS_DIR/deploy/docker' && docker compose up -d ollama scheduler memoire agenda"
+ssh "$VPS_HOST" "cd '$KAIROS_DIR/deploy/docker' && docker compose up -d ollama scheduler memoire agenda tete"
 
 cat <<'EOF'
 

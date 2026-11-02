@@ -46,7 +46,7 @@ async fn tools_list_requires_token() {
     let url = start().await;
     assert_eq!(post(&url, None, list()).await.status(), 401);
     let v: Value = post(&url, Some("t"), list()).await.json().await.unwrap();
-    assert_eq!(v["result"]["tools"].as_array().unwrap().len(), 15);
+    assert_eq!(v["result"]["tools"].as_array().unwrap().len(), 16);
 }
 
 #[tokio::test]
@@ -64,6 +64,13 @@ async fn ingest_then_search_over_raw_http() {
     let text = v["result"]["content"][0]["text"].as_str().unwrap();
     let cards: Value = serde_json::from_str(text).unwrap();
     assert_eq!(cards[0]["id"].as_i64().unwrap(), id);
+
+    let v: Value = post(&url, Some("t"), call("conversation_get", json!({"id": id}))).await.json().await.unwrap();
+    let got: Value = serde_json::from_str(v["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(got["transcript"], "on parle de rando ce week-end");
+    assert_eq!(got["channel"], "vocal");
+    let v: Value = post(&url, Some("t"), call("conversation_get", json!({"id": id + 1}))).await.json().await.unwrap();
+    assert_eq!(v["result"]["isError"], json!(true), "{v}");
 }
 
 #[tokio::test]

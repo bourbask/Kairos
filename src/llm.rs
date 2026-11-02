@@ -79,6 +79,11 @@ impl LlmRouter {
         router
     }
 
+    /// Vrai si `[usages]` déclare explicitement cet usage.
+    pub fn has_usage(&self, usage: &str) -> bool {
+        self.config.usages.contains_key(usage)
+    }
+
     fn usable(voie: &Option<LlmConfig>) -> Option<&LlmConfig> {
         voie.as_ref().filter(|c| c.is_usable())
     }
@@ -293,8 +298,6 @@ struct ChatChoice {
 }
 
 /// Tour de conversation, indépendant du protocole.
-// Construit par la boucle d'agent (tâche ultérieure du plan).
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum ChatTurn {
     User(String),
@@ -330,8 +333,6 @@ pub struct TokenUsage {
     pub output: u64,
 }
 
-// Lue par la boucle d'agent et la comptabilité des jetons (tâches ultérieures).
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct ChatReply {
     pub text: Option<String>,
@@ -793,8 +794,6 @@ impl LlmClient {
         }
     }
 
-    // Consommé par la boucle d'agent (tâche ultérieure du plan).
-    #[allow(dead_code)]
     pub async fn chat(
         &self,
         system: &str,
@@ -1187,6 +1186,13 @@ mod tests {
         });
         let err = r.route("x", Sensitivity::Common).unwrap_err();
         assert!(err.to_string().contains("absent"));
+    }
+
+    #[test]
+    fn has_usage_only_for_declared_usages() {
+        let r = mapped_router(Some(voie("http://interne.invalid")), vec![]);
+        assert!(r.has_usage("conversation"));
+        assert!(!r.has_usage("autre"));
     }
 
     #[test]
