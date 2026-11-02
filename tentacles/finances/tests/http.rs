@@ -205,6 +205,7 @@ async fn brief_sections_and_dashboard() {
     let v = call(&url, "brief_section", json!({"period": "matin"})).await;
     assert!(text(&v).starts_with("Disponible jusqu'au") && text(&v).contains("Coussin"), "{v}");
     assert!(!text(&v).contains("Réponds"));
+    assert!(text(&v).lines().next().unwrap().ends_with("(date de synchro inconnue)."), "{v}");
     let v = call(&url, "brief_section", json!({"period": "soir"})).await;
     assert!(text(&v).ends_with("Réponds par exemple « BOULANGERIE = courses » (le nom du commerçant suffit). Postes : courses, essence."), "{v}");
     assert!(!text(&v).contains("<poste>"));
@@ -224,11 +225,11 @@ async fn alerts_json_and_stale_prefix() {
     let stale = start(fake(log, META.replace(r#""stale":false"#, r#""stale":true"#)).await, None).await;
     let v = call(&stale, "alerts", json!({})).await;
     let a: Value = serde_json::from_str(text(&v)).unwrap();
-    assert!(a[0]["text"].as_str().unwrap().starts_with("Données au"), "{a}");
+    assert!(a[0]["text"].as_str().unwrap().starts_with("⚠ Données au"), "{a}");
     let expired = META.replace(r#""consent_expired":false"#, r#""consent_expired":true"#);
     let url = start(fake(Default::default(), expired).await, None).await;
     let a: Value = serde_json::from_str(text(&call(&url, "alerts", json!({})).await)).unwrap();
-    assert!(a[0]["text"].as_str().unwrap().starts_with("Consentement bancaire expiré"), "{a}");
+    assert!(a[0]["text"].as_str().unwrap().starts_with("⚠ Consentement bancaire expiré"), "{a}");
 }
 
 #[tokio::test]
