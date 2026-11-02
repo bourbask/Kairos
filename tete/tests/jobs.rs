@@ -672,3 +672,46 @@ async fn malformed_alerts_ignored() {
     assert!(sent(&fx.gw).is_empty());
     assert!(fx.ctx.state.take_pending().unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn duplicate_id_in_one_response_sent_once() {
+    let mut fx = fixture("JB_A6", &[], vec![]).await;
+    *fx.rec.alerts.lock().unwrap() = json!([alert("a1", "Une.", false), alert("a1", "Une.", false)]).to_string();
+    run(Job::Alerts, at(7, 15, 0), &mut fx.ctx).await.unwrap();
+    assert_eq!(sent(&fx.gw), vec!["Une.".to_string()]);
+}
+
+#[tokio::test]
+async fn alerts_grouped_and_capped_per_poll() {
+    let mut fx = fixture("JB_A7", &[], vec![]).await;
+    let all: Vec<Value> = (0..15).map(|i| alert(&format!("a{i}"), &format!("Alerte {i}."), i == 0)).collect();
+    *fx.rec.alerts.lock().unwrap() = Value::Array(all).to_string();
+    run(Job::Alerts, at(7, 15, 0), &mut fx.ctx).await.unwrap();
+    let first = (0..10).map(|i| format!("Alerte {i}.")).collect::<Vec<_>>().join("\n\n");
+    assert_eq!(sent(&fx.gw), vec![first.clone()]);
+    assert_eq!(fx.ctx.state.interruptions_on(at(7, 0, 0).date()).unwrap(), 1);
+    run(Job::Alerts, at(7, 15, 30), &mut fx.ctx).await.unwrap();
+    let rest = (10..15).map(|i| format!("Alerte {i}.")).collect::<Vec<_>>().join("\n\n");
+    assert_eq!(sent(&fx.gw), vec![first, rest]);
+}
+
+#[tokio::test]
+async fn blank_and_control_chars_cleaned() {
+    let mut fx = fixture("JB_A8", &[], vec![]).await;
+    *fx.rec.alerts.lock().unwrap() =
+        json!([alert("a1", " \u{7} \n ", false), alert("a2", "Ligne\u{1b}[31m un\nLigne deux", false)]).to_string();
+    run(Job::Alerts, at(7, 15, 0), &mut fx.ctx).await.unwrap();
+    assert_eq!(sent(&fx.gw), vec!["Ligne[31m un\nLigne deux".to_string()]);
+    assert!(!fx.ctx.state.alert_seen("t:a1").unwrap());
+}
+
+#[tokio::test]
+async fn gateway_failure_queues_retry_and_marks() {
+    let mut fx = fixture("JB_A9", &[], vec![]).await;
+    fx.gw.fail.store(true, Ordering::SeqCst);
+    *fx.rec.alerts.lock().unwrap() = json!([alert("a1", "Une.", true), alert("a2", "Deux.", true)]).to_string();
+    run(Job::Alerts, at(7, 15, 0), &mut fx.ctx).await.unwrap();
+    assert_eq!(fx.ctx.state.take_pending().unwrap(), vec![("retry".to_string(), "Une.\n\nDeux.".to_string())]);
+    assert!(fx.ctx.state.alert_seen("t:a1").unwrap() && fx.ctx.state.alert_seen("t:a2").unwrap());
+    assert_eq!(fx.ctx.state.interruptions_on(at(7, 0, 0).date()).unwrap(), 1);
+}

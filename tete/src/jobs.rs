@@ -20,6 +20,7 @@ const SUMMARIES: &str = "resumes";
 const RETRY: &str = "retry";
 const ALERT: &str = "alert";
 const ALERTS_EVERY_MINUTES: i64 = 30;
+const ALERTS_PER_POLL: usize = 10;
 const SUMMARY_BATCH: u32 = 10;
 /// Transcription réduite par le tentacule (60 000 caractères) et marge.
 const TRANSCRIPT_MAX_CHARS: usize = 70_000;
@@ -296,46 +297,60 @@ struct Alert {
     counts_budget: bool,
 }
 
-/// Alertes nouvelles remises en rapports écrits. Une alerte est marquée vue
-/// dès qu'elle est envoyée ou mise en file, jamais autrement.
+/// Alertes nouvelles remises en un seul rapport écrit par relevé, au plus
+/// `ALERTS_PER_POLL` ; le reste attend le relevé suivant. Une alerte est
+/// marquée vue dès qu'elle est envoyée ou mise en file, jamais autrement.
 async fn alerts(now: NaiveDateTime, ctx: &mut Ctx) -> anyhow::Result<()> {
     ctx.last_alerts = Some(now);
-    let mut fresh = Vec::new();
-    for (name, res) in ctx.tentacles.call_conventional("alerts", json!({})).await {
+    let over_budget = ctx.state.interruptions_on(now.date())? >= ctx.cfg.interruptions_per_day;
+    let mut keys = Vec::new();
+    let mut texts = Vec::new();
+    let mut budgeted = false;
+    'poll: for (name, res) in ctx.tentacles.call_conventional("alerts", json!({})).await {
         // Données externes : une liste mal formée est ignorée en bloc.
-        match res.map(|t| serde_json::from_str::<Vec<Alert>>(&t)) {
-            Ok(Ok(list)) => {
-                for a in list {
-                    // Identifiants propres à chaque tentacule.
-                    let key = format!("{name}:{}", a.id);
-                    if !ctx.state.alert_seen(&key)? {
-                        fresh.push((key, a));
-                    }
-                }
+        let list = match res.map(|t| serde_json::from_str::<Vec<Alert>>(&t)) {
+            Ok(Ok(list)) => list,
+            Ok(Err(_)) => {
+                tracing::warn!(tentacule = %name, "liste d'alertes illisible");
+                continue;
             }
-            Ok(Err(_)) => tracing::warn!(tentacule = %name, "liste d'alertes illisible"),
-            Err(e) => tracing::warn!(tentacule = %name, erreur = %e, "alertes indisponibles"),
+            Err(e) => {
+                tracing::warn!(tentacule = %name, erreur = %e, "alertes indisponibles");
+                continue;
+            }
+        };
+        for a in list {
+            if keys.len() == ALERTS_PER_POLL {
+                break 'poll;
+            }
+            // Identifiants propres à chaque tentacule.
+            let key = format!("{name}:{}", a.id);
+            let text: String = a.text.chars().filter(|c| !c.is_control() || *c == '\n').collect();
+            let text = text.trim();
+            if text.is_empty() || (a.counts_budget && over_budget) || keys.contains(&key) || ctx.state.alert_seen(&key)? {
+                continue;
+            }
+            budgeted |= a.counts_budget;
+            keys.push(key);
+            texts.push(text.to_string());
         }
     }
-    if fresh.is_empty() {
+    if keys.is_empty() {
         return Ok(());
     }
-    let out = outlet(Spontaneous::Report, now, ctx).await;
-    for (key, a) in fresh {
-        if a.counts_budget && ctx.state.interruptions_on(now.date())? >= ctx.cfg.interruptions_per_day {
-            continue;
-        }
-        match out {
-            Outlet::Written => {
-                deliver(&a.text, now, ctx).await?;
-                if a.counts_budget {
-                    ctx.state.record_interruption(now)?;
-                }
-            }
-            // `Report` n'est jamais abandonné : une retenue est mise en file.
-            Outlet::Hold | Outlet::Drop => ctx.state.enqueue(ALERT, &a.text, now)?,
-        }
-        ctx.state.mark_alert(&key, now)?;
+    let report = texts.join("\n\n");
+    let written = outlet(Spontaneous::Report, now, ctx).await == Outlet::Written;
+    if written {
+        deliver(&report, now, ctx).await?;
+    } else {
+        // `Report` n'est jamais abandonné : une retenue est mise en file.
+        ctx.state.enqueue(ALERT, &report, now)?;
+    }
+    for key in &keys {
+        ctx.state.mark_alert(key, now)?;
+    }
+    if written && budgeted {
+        ctx.state.record_interruption(now)?;
     }
     Ok(())
 }
