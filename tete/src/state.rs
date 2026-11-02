@@ -1,10 +1,11 @@
 //! État persistant de la tête : surcharges de rythme, sourdines, file de
-//! messages en attente, budget d'interruptions, dernières exécutions.
+//! messages en attente, budget d'interruptions, dernières exécutions,
+//! alertes déjà remises.
 //! Horodatages en heure murale locale naïve.
 
 use crate::config::{WorkMode, WorkRhythm};
 use anyhow::{Result, bail};
-use chrono::{NaiveDate, NaiveDateTime, Weekday};
+use chrono::{NaiveDate, NaiveDateTime, TimeDelta, Weekday};
 use rusqlite::{Connection, OptionalExtension, params};
 use std::path::Path;
 
@@ -79,7 +80,9 @@ impl State {
              CREATE TABLE IF NOT EXISTS interruption (
                  id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS last_run (
-                 job TEXT PRIMARY KEY, day TEXT NOT NULL);",
+                 job TEXT PRIMARY KEY, day TEXT NOT NULL);
+             CREATE TABLE IF NOT EXISTS seen_alerts (
+                 id TEXT PRIMARY KEY, at TEXT NOT NULL);",
         )?;
         Ok(Self { conn })
     }
@@ -216,6 +219,25 @@ impl State {
         )?;
         Ok(())
     }
+
+    pub fn alert_seen(&self, id: &str) -> Result<bool> {
+        Ok(self.conn.query_row(
+            "SELECT EXISTS (SELECT 1 FROM seen_alerts WHERE id = ?1)",
+            params![id],
+            |r| r.get(0),
+        )?)
+    }
+
+    /// Marque une alerte remise ; oublie celles de plus de 90 jours avant `at`.
+    pub fn mark_alert(&self, id: &str, at: NaiveDateTime) -> Result<()> {
+        let cutoff = (at - TimeDelta::days(90)).format(TS).to_string();
+        self.conn.execute("DELETE FROM seen_alerts WHERE at < ?1", params![cutoff])?;
+        self.conn.execute(
+            "INSERT OR REPLACE INTO seen_alerts (id, at) VALUES (?1, ?2)",
+            params![id, at.format(TS).to_string()],
+        )?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -303,6 +325,20 @@ mod tests {
         assert_eq!(s.interruptions_on(d(3)).unwrap(), 2);
         assert_eq!(s.interruptions_on(d(4)).unwrap(), 1);
         assert_eq!(s.interruptions_on(d(5)).unwrap(), 0);
+    }
+
+    #[test]
+    fn alertes_vues_purgees_apres_90_jours() {
+        let s = State::open_in_memory().unwrap();
+        assert!(!s.alert_seen("t:a").unwrap());
+        s.mark_alert("t:a", dt("2026-08-01 10:00:00")).unwrap();
+        assert!(s.alert_seen("t:a").unwrap());
+        assert!(!s.alert_seen("t:b").unwrap());
+        // Rejouée : sans erreur.
+        s.mark_alert("t:a", dt("2026-08-01 10:00:00")).unwrap();
+        s.mark_alert("t:b", dt("2026-11-01 10:00:00")).unwrap();
+        assert!(!s.alert_seen("t:a").unwrap());
+        assert!(s.alert_seen("t:b").unwrap());
     }
 
     #[test]

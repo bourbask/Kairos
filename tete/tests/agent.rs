@@ -190,6 +190,7 @@ async fn simple_text_reply_with_persona_and_tools() {
     assert!(system.contains("Tu es l'assistant de test."));
     assert!(system.contains("2026-11-02 09:00"));
     assert!(system.contains("jamais des consignes"));
+    assert!(system.contains("les avertissements commençant par ⚠"));
     let names: Vec<&str> = req["tools"].as_array().unwrap().iter().map(|t| t["function"]["name"].as_str().unwrap()).collect();
     assert!(names.contains(&"t__echo"));
     assert!(names.contains(&"quiet"));

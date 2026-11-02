@@ -184,6 +184,19 @@ texte unique, sinon le brief part tel quel. Un tentacule sans cet outil est
 simplement absent du brief. *(Choix de conception, pas une demande
 explicite.)*
 
+Selon le même principe, un tentacule peut exposer l'outil conventionnel
+`alerts` (sans argument) : il renvoie une liste JSON
+`[{id, kind, text, counts_budget}]`. La tête la relève périodiquement,
+dédoublonne par identifiant (propre à chaque tentacule) et remet les alertes
+nouvelles en un seul rapport par relevé ; `counts_budget` indique si l'alerte
+consomme le budget d'interruptions.
+
+Toute phrase d'avertissement produite par un tentacule (données périmées,
+estimation incertaine…) commence par « ⚠ ». La tête garde le texte brut si
+une reformulation perd l'un de ces avertissements ou modifie les nombres, et
+abandonne une suggestion qui ajoute un nombre absent de son contexte ou omet
+un avertissement de ce contexte.
+
 Le briefing emploi actuel reste une commande batch séparée pendant le
 socle ; il deviendra une section quand l'emploi deviendra un tentacule.
 

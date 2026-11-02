@@ -18,6 +18,8 @@ pub enum Spontaneous {
     Brief,
     Suggestion,
     Flush,
+    /// Rapport écrit d'un tentacule : comme un brief, sans abandon par la sourdine des briefs.
+    Report,
 }
 
 /// Signal d'occupation renvoyé par un outil conventionnel.
@@ -122,6 +124,10 @@ mod tests {
             ("sourdine briefs", Brief, at(7, 15, 0), Off, FREE, Some(QuietScope::Briefs), Drop),
             ("sourdine briefs, suggestion", Suggestion, at(7, 15, 0), Off, FREE, Some(QuietScope::Briefs), Written),
             ("flush", Flush, at(7, 15, 0), Off, FREE, None, Written),
+            ("sourdine briefs, rapport", Report, at(7, 15, 0), Off, FREE, Some(QuietScope::Briefs), Written),
+            ("sourdine briefs, rapport sur site", Report, at(2, 10, 0), OnSite, FREE, Some(QuietScope::Briefs), Hold),
+            ("rapport nuit", Report, at(3, 23, 30), Remote, FREE, None, Hold),
+            ("rapport sourdine tout", Report, at(7, 15, 0), Off, FREE, Some(QuietScope::All), Hold),
         ];
         for (name, kind, when, mode, busy, mute, want) in cases {
             assert_eq!(decide(kind, when, mode, &rhythm(), &sched(), busy, mute), want, "{name}");
