@@ -14,6 +14,7 @@ use crate::tentacles::Tentacles;
 
 pub const MAX_TOOL_ROUNDS: usize = 8;
 const MAX_TURNS: usize = 40;
+const MAX_PENDING: usize = 20;
 const TS: &str = "%Y-%m-%d %H:%M";
 
 const NO_ENGINE_MSG: &str = "Conversation indisponible : aucun moteur configuré.";
@@ -50,6 +51,9 @@ pub struct Agent {
     persona: String,
     started: Option<NaiveDateTime>,
     last: Option<NaiveDateTime>,
+    /// Archives de sessions closes pas encore acceptées par un tentacule.
+    // ponytail: en mémoire, perdues au redémarrage ; les persister dans State si ça compte.
+    pending: Vec<Value>,
 }
 
 impl Agent {
@@ -62,6 +66,7 @@ impl Agent {
             persona: String::new(),
             started: None,
             last: None,
+            pending: Vec::new(),
         }
     }
 
@@ -86,47 +91,81 @@ impl Agent {
         )
         .await
         {
-            Ok(text) => text,
+            Ok(text) => {
+                self.history.push(ChatTurn::Assistant { text: Some(text.clone()), tool_calls: Vec::new() });
+                text
+            }
+            // Les messages de dégradation ne sont pas des paroles du modèle : hors historique.
             Err(e) if e.is::<NoEngine>() => NO_ENGINE_MSG.to_string(),
             Err(e) => {
                 tracing::warn!(erreur = %format!("{e:#}"), "conversation : échec du moteur");
                 LLM_DOWN_MSG.to_string()
             }
         };
-
-        self.history.push(ChatTurn::Assistant { text: Some(out.clone()), tool_calls: Vec::new() });
         trim(&mut self.history);
         self.transcript.push(format!("Utilisateur : {msg}"));
         self.transcript.push(format!("Kairos : {out}"));
         out
     }
 
-    /// Clôt la session si le dernier message dépasse `idle` : archivage puis oubli.
+    /// Clôt la session si le dernier message dépasse `idle` (archive mise en
+    /// attente), puis tente d'envoyer toutes les archives en attente.
+    /// Vrai si une session a été close.
     pub async fn end_session_if_idle(&mut self, now: NaiveDateTime, tentacles: &Tentacles) -> bool {
+        let closed = self.close_if_idle(now);
+        self.flush_pending(tentacles).await;
+        closed
+    }
+
+    fn close_if_idle(&mut self, now: NaiveDateTime) -> bool {
         let (Some(started), Some(last)) = (self.started, self.last) else {
             return false;
         };
         if now - last <= TimeDelta::from_std(self.idle).unwrap_or(TimeDelta::MAX) {
             return false;
         }
-        let args = json!({
+        // Même session_id à chaque renvoi : le tentacule remplace au lieu de dupliquer.
+        self.pending.push(json!({
             "channel": "messagerie",
             "device": "tete",
             "started_at": started.format(TS).to_string(),
             "ended_at": last.format(TS).to_string(),
             "transcript": self.transcript.join("\n"),
             "session_id": format!("tete-{}", started.format("%Y%m%d%H%M")),
-        });
-        for (name, res) in tentacles.call_conventional("conversation_ingest", args).await {
-            if let Err(e) = res {
-                tracing::warn!(tentacule = %name, erreur = %e, "archivage de session refusé");
-            }
+        }));
+        if self.pending.len() > MAX_PENDING {
+            self.pending.remove(0);
+            tracing::warn!("archives de session en attente saturées : la plus ancienne est abandonnée");
         }
         self.history.clear();
         self.transcript.clear();
         self.started = None;
         self.last = None;
         true
+    }
+
+    /// Une archive n'est retirée que si au moins un tentacule l'a acceptée.
+    async fn flush_pending(&mut self, tentacles: &Tentacles) {
+        let mut unexposed = false;
+        let mut kept = Vec::new();
+        for payload in std::mem::take(&mut self.pending) {
+            let results = tentacles.call_conventional("conversation_ingest", payload.clone()).await;
+            unexposed |= results.is_empty();
+            let mut accepted = false;
+            for (name, res) in results {
+                match res {
+                    Ok(_) => accepted = true,
+                    Err(e) => tracing::warn!(tentacule = %name, erreur = %e, "archivage de session refusé"),
+                }
+            }
+            if !accepted {
+                kept.push(payload);
+            }
+        }
+        if unexposed {
+            tracing::warn!("aucun tentacule n'archive les conversations : archives conservées en attente");
+        }
+        self.pending = kept;
     }
 }
 

@@ -1,9 +1,10 @@
 use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use axum::{Json, Router, extract::State as AxState, http::StatusCode, routing::post};
-use chrono::{NaiveDate, NaiveDateTime};
+use chrono::{NaiveDate, NaiveDateTime, NaiveTime, Weekday};
 use kairos::config::{EngineConfig, LlmConfig, LlmProtocol, LlmRoutingConfig, Placement};
 use kairos::llm::LlmRouter;
 use rmcp::{
@@ -15,15 +16,22 @@ use rmcp::{
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tete::agent::Agent;
-use tete::config::TentacleEntry;
+use tete::config::{TentacleEntry, WorkMode, WorkRhythm};
 use tete::state::{QuietScope, State};
 use tete::tentacles::Tentacles;
 
 // --- Tentacule factice ---
 
+/// Archives reçues ; `fail` fait refuser l'archivage.
+#[derive(Default)]
+struct Rec {
+    ingested: Mutex<Vec<Value>>,
+    fail: AtomicBool,
+}
+
 #[derive(Clone)]
 struct Fake {
-    ingested: Arc<Mutex<Vec<Value>>>,
+    rec: Arc<Rec>,
     tool_router: ToolRouter<Self>,
 }
 
@@ -54,7 +62,10 @@ impl Fake {
 
     #[tool(description = "Archive une conversation.")]
     fn conversation_ingest(&self, Parameters(i): Parameters<Ingest>) -> Result<String, String> {
-        self.ingested.lock().unwrap().push(json!({
+        if self.rec.fail.load(Ordering::SeqCst) {
+            return Err("indisponible".into());
+        }
+        self.rec.ingested.lock().unwrap().push(json!({
             "channel": i.channel, "device": i.device, "started_at": i.started_at,
             "ended_at": i.ended_at, "transcript": i.transcript, "session_id": i.session_id,
         }));
@@ -74,14 +85,14 @@ impl ServerHandler for Fake {
     }
 }
 
-async fn tentacle(env: &str) -> (Tentacles, Arc<Mutex<Vec<Value>>>) {
+async fn tentacle(env: &str) -> (Tentacles, Arc<Rec>) {
     unsafe { std::env::set_var(env, "secret") };
-    let ingested = Arc::new(Mutex::new(Vec::new()));
+    let ingested = Arc::new(Rec::default());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}/mcp", listener.local_addr().unwrap());
     let rec = ingested.clone();
     tokio::spawn(tentacle_common::serve_listener(listener, "secret".into(), move || Fake {
-        ingested: rec.clone(),
+        rec: rec.clone(),
         tool_router: Fake::tool_router(),
     }));
     let t = Tentacles::connect(&[TentacleEntry { name: "t".into(), url, token_env: env.into() }]).await;
@@ -102,8 +113,9 @@ async fn completions(AxState(s): AxState<Shared>, Json(body): Json<Value>) -> (S
     let mut s = s.lock().unwrap();
     s.requests.push(body);
     match s.replies.pop_front() {
-        Some(message) => (StatusCode::OK, Json(json!({"choices": [{"message": message}]}))),
-        None => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({}))),
+        // `null` dans le script simule une panne du moteur.
+        Some(message) if !message.is_null() => (StatusCode::OK, Json(json!({"choices": [{"message": message}]}))),
+        _ => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({}))),
     }
 }
 
@@ -225,6 +237,81 @@ async fn too_many_tool_rounds_stop() {
 }
 
 #[tokio::test]
+async fn eight_tool_rounds_then_answer() {
+    let (t, _) = tentacle("AG_T9").await;
+    let mut script: Vec<Value> = (0..8).map(|i| call(&format!("c{i}"), "t__echo", json!({"text": "x"}))).collect();
+    script.push(text("enfin"));
+    let (router, _) = llm(script).await;
+    let state = State::open_in_memory().unwrap();
+    let mut agent = Agent::new(router, IDLE);
+    assert_eq!(agent.reply("boucle", at(9, 0), &t, &state).await, "enfin");
+}
+
+#[tokio::test]
+async fn builtin_set_work_day() {
+    let (t, _) = tentacle("AG_T10").await;
+    let (router, shared) = llm(vec![
+        call("c1", "set_work_day", json!({"day": "mardy", "mode": "off"})),
+        call("c2", "set_work_day", json!({"day": "mercredi", "mode": "maison"})),
+        call("c3", "set_work_day", json!({"day": "mardi", "mode": "remote"})),
+        text("noté"),
+    ])
+    .await;
+    let state = State::open_in_memory().unwrap();
+    let mut agent = Agent::new(router, IDLE);
+    assert_eq!(agent.reply("mardi télétravail", at(9, 0), &t, &state).await, "noté");
+
+    let rhythm = WorkRhythm {
+        start: NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
+        end: NaiveTime::from_hms_opt(18, 0, 0).unwrap(),
+        days: HashMap::from([(Weekday::Wed, WorkMode::OnSite)]),
+    };
+    assert_eq!(state.work_mode(Weekday::Tue, &rhythm), WorkMode::Remote);
+    assert_eq!(state.work_mode(Weekday::Wed, &rhythm), WorkMode::OnSite);
+    let s = shared.lock().unwrap();
+    let tools = tool_messages(&s.requests[3]);
+    assert!(tools[0]["content"].as_str().unwrap().starts_with("Erreur : "));
+    assert!(tools[1]["content"].as_str().unwrap().starts_with("Erreur : "));
+    assert!(!tools[2]["content"].as_str().unwrap().starts_with("Erreur : "));
+}
+
+#[tokio::test]
+async fn refused_ingest_is_retried_until_accepted() {
+    let (t, rec) = tentacle("AG_T11").await;
+    rec.fail.store(true, Ordering::SeqCst);
+    let (router, _) = llm(vec![text("Bonjour.")]).await;
+    let state = State::open_in_memory().unwrap();
+    let mut agent = Agent::new(router, IDLE);
+    agent.reply("salut", at(9, 0), &t, &state).await;
+
+    assert!(agent.end_session_if_idle(at(9, 40), &t).await);
+    assert!(rec.ingested.lock().unwrap().is_empty());
+    rec.fail.store(false, Ordering::SeqCst);
+    assert!(!agent.end_session_if_idle(at(9, 41), &t).await);
+    let got = rec.ingested.lock().unwrap().clone();
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0]["session_id"], "tete-202611020900");
+    assert_eq!(got[0]["transcript"], "Utilisateur : salut\nKairos : Bonjour.");
+    // Acceptée : plus renvoyée.
+    agent.end_session_if_idle(at(9, 42), &t).await;
+    assert_eq!(rec.ingested.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn ingest_without_archiving_tentacle_is_kept() {
+    let (t, rec) = tentacle("AG_T12").await;
+    let none = Tentacles::connect(&[]).await;
+    let (router, _) = llm(vec![text("Bonjour.")]).await;
+    let state = State::open_in_memory().unwrap();
+    let mut agent = Agent::new(router, IDLE);
+    agent.reply("salut", at(9, 0), &none, &state).await;
+
+    assert!(agent.end_session_if_idle(at(9, 40), &none).await);
+    assert!(!agent.end_session_if_idle(at(9, 41), &t).await);
+    assert_eq!(rec.ingested.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
 async fn no_engine_degrades() {
     let (t, _) = tentacle("AG_T6").await;
     let state = State::open_in_memory().unwrap();
@@ -238,13 +325,18 @@ async fn no_engine_degrades() {
 #[tokio::test]
 async fn llm_failure_is_reported_plainly() {
     let (t, _) = tentacle("AG_T7").await;
-    let (router, _) = llm(vec![]).await;
+    let (router, shared) = llm(vec![Value::Null, text("ok")]).await;
     let state = State::open_in_memory().unwrap();
     let mut agent = Agent::new(router, IDLE);
     assert_eq!(
         agent.reply("salut", at(9, 0), &t, &state).await,
         "Je n'arrive pas à joindre mon moteur pour l'instant."
     );
+    // Le message de dégradation n'entre pas dans l'historique vu par le modèle.
+    assert_eq!(agent.reply("encore", at(9, 1), &t, &state).await, "ok");
+    let s = shared.lock().unwrap();
+    let roles: Vec<&str> = s.requests[1]["messages"].as_array().unwrap().iter().map(|m| m["role"].as_str().unwrap()).collect();
+    assert_eq!(roles, ["system", "user", "user"]);
 }
 
 #[tokio::test]
@@ -263,10 +355,10 @@ async fn idle_session_is_ingested_then_cleared() {
     agent.reply("quelle heure ?", at(9, 5), &t, &state).await;
 
     assert!(!agent.end_session_if_idle(at(9, 20), &t).await);
-    assert!(ingested.lock().unwrap().is_empty());
+    assert!(ingested.ingested.lock().unwrap().is_empty());
     assert!(agent.end_session_if_idle(at(9, 40), &t).await);
 
-    let got = ingested.lock().unwrap().clone();
+    let got = ingested.ingested.lock().unwrap().clone();
     assert_eq!(got.len(), 1);
     let g = &got[0];
     assert_eq!(g["channel"], "messagerie");
