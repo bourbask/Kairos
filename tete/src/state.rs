@@ -94,18 +94,26 @@ impl State {
 
     /// Surcharge persistée si présente, sinon configuration (jour absent = repos).
     pub fn work_mode(&self, day: Weekday, cfg: &WorkRhythm) -> WorkMode {
-        let over: Option<String> = self
+        let over = self
             .conn
             .query_row(
                 "SELECT mode FROM work_override WHERE day = ?1",
                 params![day.num_days_from_monday()],
-                |r| r.get(0),
+                |r| r.get::<_, String>(0),
             )
             .optional()
-            .unwrap_or(None);
-        over.as_deref()
-            .and_then(parse_mode)
-            .or_else(|| cfg.days.get(&day).copied())
+            .unwrap_or_else(|e| {
+                tracing::warn!("lecture de la surcharge de rythme impossible : {e}");
+                None
+            })
+            .and_then(|s| {
+                let m = parse_mode(&s);
+                if m.is_none() {
+                    tracing::warn!("mode de surcharge illisible : {s}");
+                }
+                m
+            });
+        over.or_else(|| cfg.days.get(&day).copied())
             .unwrap_or(WorkMode::Off)
     }
 
@@ -126,7 +134,8 @@ impl State {
         Ok(())
     }
 
-    /// Sourdine active à `at` (`All` l'emporte) ; purge les échues.
+    /// Sourdine active à `at` (`All` l'emporte) ; purge les échues relativement
+    /// à `at`, qui doit donc être l'instant courant (les appelants passent « maintenant »).
     pub fn quiet_at(&self, at: NaiveDateTime) -> Result<Option<QuietScope>> {
         let at = at.format(TS).to_string();
         self.conn
