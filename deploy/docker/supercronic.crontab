@@ -3,3 +3,4 @@
 30 4 * * * /app/kairos scrape
 45 4 * * * /app/kairos calendar sync
 0 5 * * * /app/kairos briefing
+*/30 7-19 * * 1-5 /app/kairos calendar sync

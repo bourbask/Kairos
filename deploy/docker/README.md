@@ -121,6 +121,37 @@ docker compose build scheduler
 docker compose up -d memoire agenda
 ```
 
+## Tête (processus principal)
+
+`tete` est le processus qui relie les tentacules, le moteur de langage et une passerelle de messagerie :
+conversation, briefs du matin et du soir, suggestions, résumés nocturnes. Il tourne en continu (`mem_limit: 64m`)
+et joint les tentacules par leur nom de service compose.
+
+Contrat de la passerelle (HTTP, JSON `{"text": "..."}`) :
+- entrant : la passerelle fait `POST /message` sur la tête avec `Authorization: Bearer <jeton entrant>` ; réponse `202`.
+- sortant : la tête fait `POST` sur `TETE_OUTBOUND_URL` avec `Authorization: Bearer <jeton sortant>`.
+- la passerelle filtre l'expéditeur et le canal (seul l'utilisateur configuré passe), ignore l'arriéré
+  à son démarrage et découpe les messages trop longs. La tête n'accepte que les appels portant le jeton entrant.
+
+Jetons (obligatoires, refus de démarrer si le jeton entrant est vide), à renseigner dans `kairos.env` :
+
+```bash
+openssl rand -hex 32   # -> TETE_INBOUND_TOKEN ; relancer pour TETE_OUTBOUND_TOKEN
+```
+
+Configuration : copier `config/tete.example.toml` en `config/tete.toml` (gitignoré) et déclarer les tentacules
+(URL internes du compose, jeton lu dans une variable d'environnement). Chemins surchargeables :
+`TETE_CONFIG`, `TETE_DB` (défaut `data/tete.db`). Port hôte : `TETE_BIND_PORT` (8093), publié sur `${TENTACLES_BIND_ADDR:-127.0.0.1}`.
+
+Moteur de langage : `config/llm.toml` doit déclarer les usages `conversation`, `resume_conversation`, `brief` et
+`suggestion`. Tous sont sensibles : si le moteur est externe, chacun exige une concession explicite dans
+`llm.toml`. Sans usage configuré, la tête se dégrade proprement (briefs bruts, réponse fixe, ni suggestions ni résumés).
+
+```bash
+docker compose build scheduler
+docker compose up -d tete
+```
+
 ## Second profil (module optionnel)
 
 Fait tourner un second profil isolé (config, base de données, notification Discord distincts)

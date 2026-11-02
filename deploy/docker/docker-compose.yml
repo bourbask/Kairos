@@ -107,6 +107,17 @@ services:
     ports:
       - "${TENTACLES_BIND_ADDR:-127.0.0.1}:${AGENDA_BIND_PORT:-8092}:8092"
 
+  # Tête : boucle principale (conversation, briefs, suggestions) ; joint les tentacules par nom de service.
+  tete:
+    <<: *kairos-common
+    restart: unless-stopped
+    mem_limit: 64m
+    entrypoint: ["/app/tete"]
+    command: []
+    ports:
+      # Publié pour la passerelle seulement ; port hôte distinct de ntfy.
+      - "${TENTACLES_BIND_ADDR:-127.0.0.1}:${TETE_BIND_PORT:-8093}:8090"
+
   # Exécutions manuelles : `docker compose run --rm kairos <scrape|briefing|status|prompt ...>`
   kairos:
     <<: *kairos-common
