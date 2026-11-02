@@ -293,8 +293,6 @@ struct ChatChoice {
 }
 
 /// Tour de conversation, indépendant du protocole.
-// Construit par la boucle d'agent (tâche ultérieure du plan).
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum ChatTurn {
     User(String),
@@ -330,8 +328,6 @@ pub struct TokenUsage {
     pub output: u64,
 }
 
-// Lue par la boucle d'agent et la comptabilité des jetons (tâches ultérieures).
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct ChatReply {
     pub text: Option<String>,
@@ -793,8 +789,6 @@ impl LlmClient {
         }
     }
 
-    // Consommé par la boucle d'agent (tâche ultérieure du plan).
-    #[allow(dead_code)]
     pub async fn chat(
         &self,
         system: &str,
