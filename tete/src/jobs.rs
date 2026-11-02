@@ -199,7 +199,7 @@ async fn send_brief(period: &str, title: &str, now: NaiveDateTime, ctx: &Ctx) ->
 async fn reword(raw: &str, ctx: &Ctx) -> Option<String> {
     let client = engine(ctx.agent.router(), "brief", Urgency::Deferred).ok()?;
     match chat(&client, Urgency::Deferred, BRIEF_PROMPT, &[ChatTurn::User(raw.to_string())], &[]).await {
-        Ok(r) => r.text.filter(|t| !t.trim().is_empty()).filter(|t| {
+        Ok(r) => r.text.map(|t| plain(&t)).filter(|t| !t.trim().is_empty()).filter(|t| {
             let kept = faithful(raw, t);
             if !kept {
                 tracing::warn!("reformulation du brief infidèle aux nombres ou aux avertissements : texte brut envoyé");
@@ -213,9 +213,28 @@ async fn reword(raw: &str, ctx: &Ctx) -> Option<String> {
     }
 }
 
-/// Suites maximales de chiffres.
+/// Suites maximales de chiffres, avec leur signe moins (`-` ou `−`) quand il les précède
+/// directement et n'est pas lui-même collé à un mot (« 2026-11 » reste deux nombres positifs).
 fn numbers(s: &str) -> std::collections::HashSet<&str> {
-    s.split(|c: char| !c.is_ascii_digit()).filter(|n| !n.is_empty()).collect()
+    let mut out = std::collections::HashSet::new();
+    let mut start = None;
+    for (i, c) in s.char_indices().chain(std::iter::once((s.len(), ' '))) {
+        if c.is_ascii_digit() {
+            start.get_or_insert(i);
+        } else if let Some(b) = start.take() {
+            let b = match s[..b].strip_suffix(['-', '\u{2212}']) {
+                Some(before) if !before.chars().next_back().is_some_and(char::is_alphanumeric) => before.len(),
+                _ => b,
+            };
+            out.insert(&s[b..i]);
+        }
+    }
+    out
+}
+
+/// Sortie de moteur : le sélecteur de variante emoji (« ⚠️ ») est retiré avant toute comparaison.
+fn plain(text: &str) -> String {
+    text.replace('\u{FE0F}', "")
 }
 
 /// Phrases d'avertissement (convention des tentacules : elles commencent par « ⚠ ») :
@@ -259,7 +278,7 @@ async fn suggestion(now: NaiveDateTime, ctx: &mut Ctx) -> anyhow::Result<()> {
         brief_sections(period, ctx).await.join("\n\n")
     );
     let text = match chat(&client, Urgency::Deferred, SUGGESTION_PROMPT, &[ChatTurn::User(context.clone())], &[]).await {
-        Ok(r) => r.text.unwrap_or_default(),
+        Ok(r) => plain(&r.text.unwrap_or_default()),
         Err(e) => {
             tracing::warn!(erreur = %format!("{e:#}"), "suggestion : échec du moteur");
             return Ok(());

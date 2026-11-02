@@ -671,6 +671,29 @@ async fn suggestion_led_by_context_warning_sent() {
     assert_eq!(sent(&fx.gw), vec![reply.to_string()]);
 }
 
+#[tokio::test]
+async fn reworded_brief_dropping_a_sign_is_sent_raw() {
+    let raw = "Disponible : −71 €, écart -12 €.";
+    let mut fx = fixture("JB_W7", &["brief"], vec![text("Il reste 71 € disponibles, écart 12 €.")]).await;
+    *fx.rec.brief.lock().unwrap() = raw.into();
+    run(Job::MorningBrief, at(7, 7, 30), &mut fx.ctx).await.unwrap();
+    assert_eq!(sent(&fx.gw), vec![format!("Brief du matin\n\n{raw}")]);
+}
+
+#[tokio::test]
+async fn emoji_variant_warning_still_recognised() {
+    // « ⚠️ » = U+26A0 suivi du sélecteur de variante U+FE0F.
+    let mut fx = fixture("JB_W8", &["brief"], vec![text("⚠\u{FE0F} Estimation incertaine. Il te reste 10 €.")]).await;
+    *fx.rec.brief.lock().unwrap() = WARNED.into();
+    run(Job::MorningBrief, at(7, 7, 30), &mut fx.ctx).await.unwrap();
+    assert_eq!(sent(&fx.gw), vec!["⚠ Estimation incertaine. Il te reste 10 €.".to_string()]);
+    let reply = "⚠\u{FE0F} Estimation incertaine. Garde 10 € pour demain.";
+    let mut fx = fixture("JB_W9", &["suggestion"], vec![text(reply)]).await;
+    *fx.rec.brief.lock().unwrap() = WARNED.into();
+    run(Job::Suggestion, at(7, 15, 0), &mut fx.ctx).await.unwrap();
+    assert_eq!(sent(&fx.gw), vec!["⚠ Estimation incertaine. Garde 10 € pour demain.".to_string()]);
+}
+
 // --- alertes ---
 
 fn alert(id: &str, text: &str, counts_budget: bool) -> Value {
