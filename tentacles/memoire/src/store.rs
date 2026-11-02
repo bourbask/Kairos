@@ -11,6 +11,9 @@ use serde::{Deserialize, Serialize};
 pub const PERSONA_KEY: &str = "persona";
 /// Taille maximale d'une transcription acceptée.
 pub const MAX_TRANSCRIPT_BYTES: usize = 1_500_000;
+/// Transcription remise pour résumé : début et fin conservés, milieu élidé.
+pub const GET_HEAD_CHARS: usize = 15_000;
+pub const GET_TAIL_CHARS: usize = 45_000;
 
 const TS: &str = "%Y-%m-%d %H:%M:%S";
 
@@ -129,6 +132,25 @@ pub struct ConversationCard {
     pub summary: Option<String>,
     pub topics: Vec<String>,
     pub decisions: Vec<String>,
+}
+
+/// Transcription d'une conversation, réduite pour tenir dans un résumé.
+#[derive(Debug, Clone, Serialize)]
+pub struct ConversationText {
+    pub id: i64,
+    pub channel: String,
+    pub started_at: NaiveDateTime,
+    pub transcript: String,
+}
+
+fn reduce(t: String) -> String {
+    let n = t.chars().count();
+    if n <= GET_HEAD_CHARS + GET_TAIL_CHARS {
+        return t;
+    }
+    let head: String = t.chars().take(GET_HEAD_CHARS).collect();
+    let tail: String = t.chars().skip(n - GET_TAIL_CHARS).collect();
+    format!("{head}\n…\n{tail}")
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -417,6 +439,21 @@ impl MemoryStore {
         st.query_map([limit], card_from_row)?.map(|r| finish_card(r?)).collect()
     }
 
+    pub fn conversation_get(&self, id: i64) -> Result<Option<ConversationText>> {
+        let row = self
+            .conn
+            .query_row(
+                "SELECT channel, started_at, transcript FROM conversations WHERE id = ?",
+                [id],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)),
+            )
+            .optional()?;
+        row.map(|(channel, started, transcript)| {
+            Ok(ConversationText { id, channel, started_at: parse_ts(&started)?, transcript: reduce(transcript) })
+        })
+        .transpose()
+    }
+
     /// Enregistre la synthèse et la rend cherchable avec la transcription.
     pub fn conversation_set_summary(&self, id: i64, summary: &str, topics: &[String], decisions: &[String]) -> Result<bool> {
         let tx = self.conn.unchecked_transaction()?;
@@ -537,6 +574,24 @@ mod tests {
         let r = s.conversation_search("balade", 10).unwrap();
         assert_eq!(r[0].topics, ["a"]);
         assert_eq!(s.conversation_search("rando", 10).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn conversation_get_reduces_long_transcript() {
+        let s = store();
+        let id = s.conversation_ingest(&conv("court")).unwrap();
+        let c = s.conversation_get(id).unwrap().unwrap();
+        assert_eq!((c.id, c.channel.as_str(), c.started_at, c.transcript.as_str()), (id, "voix", t(), "court"));
+        assert!(s.conversation_get(id + 1).unwrap().is_none());
+
+        // Caractères multi-octets : coupe sur les frontières de caractères.
+        let long = format!("{}{}{}", "é".repeat(15_000), "m".repeat(10), "à".repeat(45_000));
+        let id = s.conversation_ingest(&conv(&long)).unwrap();
+        let r = s.conversation_get(id).unwrap().unwrap().transcript;
+        assert_eq!(r, format!("{}\n…\n{}", "é".repeat(15_000), "à".repeat(45_000)));
+        let exact = "x".repeat(60_000);
+        let id = s.conversation_ingest(&conv(&exact)).unwrap();
+        assert_eq!(s.conversation_get(id).unwrap().unwrap().transcript, exact);
     }
 
     #[test]

@@ -109,6 +109,10 @@ struct LimitArgs {
     limit: Option<u32>,
 }
 #[derive(Deserialize, schemars::JsonSchema)]
+struct IdArgs {
+    id: i64,
+}
+#[derive(Deserialize, schemars::JsonSchema)]
 struct SummaryArgs {
     id: i64,
     summary: String,
@@ -211,6 +215,11 @@ impl MemoryServer {
     #[tool(description = "Lister les conversations pas encore résumées, pour les traiter en différé.")]
     fn conversations_unsummarized(&self, Parameters(a): Parameters<LimitArgs>) -> Out {
         json_out(self.db()?.conversations_unsummarized(a.limit.unwrap_or(10)).map_err(err)?)
+    }
+
+    #[tool(description = "Lire la transcription d'une conversation (début et fin si elle est très longue), pour la résumer.")]
+    fn conversation_get(&self, Parameters(a): Parameters<IdArgs>) -> Out {
+        json_out(self.db()?.conversation_get(a.id).map_err(err)?.ok_or("conversation inconnue")?)
     }
 
     #[tool(description = "Attacher résumé, sujets et décisions à une conversation une fois qu'elle a été résumée.")]
