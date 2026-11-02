@@ -1,6 +1,9 @@
 //! Configuration de la tête : fichier TOML pour la structure, environnement
 //! pour tout ce qui est secret ou identifiant.
 
+// Consommés par les tâches suivantes.
+#![allow(dead_code)]
+
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::Path;
@@ -10,6 +13,7 @@ use chrono::{NaiveTime, Weekday};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TentacleEntry {
     /// Préfixe des outils du tentacule, choisi par l'opérateur.
     pub name: String,
@@ -23,7 +27,7 @@ fn t(h: u32, m: u32) -> NaiveTime {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct Schedule {
     pub morning: NaiveTime,
     pub evening: NaiveTime,
@@ -54,7 +58,7 @@ pub enum WorkMode {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct WorkRhythm {
     pub start: NaiveTime,
     pub end: NaiveTime,
@@ -68,7 +72,6 @@ impl Default for WorkRhythm {
     }
 }
 
-#[derive(Debug)]
 pub struct GatewayEnv {
     pub bind: SocketAddr,
     pub inbound_token: String,
@@ -77,7 +80,7 @@ pub struct GatewayEnv {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct HeadConfig {
     pub tentacles: Vec<TentacleEntry>,
     pub schedule: Schedule,
@@ -87,6 +90,18 @@ pub struct HeadConfig {
     pub session_idle_minutes: u32,
     #[serde(skip, default = "no_gateway")]
     pub gateway: GatewayEnv,
+}
+
+impl std::fmt::Debug for GatewayEnv {
+    // Jetons masqués : jamais dans les journaux.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GatewayEnv")
+            .field("bind", &self.bind)
+            .field("inbound_token", &"***")
+            .field("outbound_url", &self.outbound_url)
+            .field("outbound_token", &"***")
+            .finish()
+    }
 }
 
 fn no_gateway() -> GatewayEnv {
@@ -197,10 +212,26 @@ mod tests {
 
     #[test]
     fn token_value_never_in_error() {
-        let toml = "[[tentacles]]\nname = \"x\"\nurl = \"http://t.invalid\"\ntoken_env = \"T_TOKEN\"\n";
-        let env = [("T_TOKEN", ""), ("TETE_INBOUND_TOKEN", "in-secret")];
+        // Le premier jeton (valide) est lu avant l'échec du second.
+        let toml = "[[tentacles]]\nname = \"a\"\nurl = \"http://a.invalid\"\ntoken_env = \"A_TOKEN\"\n\
+                    [[tentacles]]\nname = \"b\"\nurl = \"http://b.invalid\"\ntoken_env = \"B_TOKEN\"\n";
+        let env = [("A_TOKEN", "a-secret"), ("B_TOKEN", "")];
         let err = format!("{:#}", HeadConfig::from_parts(toml, env_of(&env)).unwrap_err());
-        assert!(err.contains("T_TOKEN"));
-        assert!(!err.contains("in-secret"));
+        assert!(err.contains("B_TOKEN"));
+        assert!(!err.contains("a-secret"));
+
+        // Une valeur invalide lue dans l'environnement n'est pas recopiée.
+        let env = [("TETE_BIND", "bind-secret"), ("TETE_INBOUND_TOKEN", "in-secret")];
+        let err = format!("{:#}", HeadConfig::from_parts("", env_of(&env)).unwrap_err());
+        assert!(err.contains("TETE_BIND"));
+        assert!(!err.contains("bind-secret") && !err.contains("in-secret"));
+    }
+
+    #[test]
+    fn debug_redacts_tokens_and_unknown_fields_fail() {
+        let c = HeadConfig::from_parts("", env_of(&GATEWAY)).unwrap();
+        let d = format!("{c:?}");
+        assert!(!d.contains("in-secret") && !d.contains("out-secret"));
+        assert!(HeadConfig::from_parts("[schedule]\nquiet_strat = \"22:00\"\n", env_of(&GATEWAY)).is_err());
     }
 }
