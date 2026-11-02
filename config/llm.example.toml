@@ -1,12 +1,31 @@
-# Kairos — configuration du modèle de langage
+# Kairos — routage des générations
 # Copier ce fichier en llm.toml et remplir les valeurs
 # Ne jamais commiter llm.toml (gitignored)
+#
+# Source unique du choix du moteur : aucun module ne porte d'endpoint ni de
+# modèle. L'appelant déclare la nature de la donnée, le routeur applique.
+#
+#   stratégique → voie auto-hébergée uniquement, sans repli
+#   commun      → voie externe si déclarée, sinon repli auto-hébergé
+#
+# Une voie dont l'endpoint ou le modèle est vide compte comme absente.
 
+# Usages stratégiques concédés à la voie externe, par nom d'usage.
+# Liste vide = refus (défaut). Chaque nom listé est une exception assumée :
+# la donnée de cet usage quittera la machine. Le routeur la journalise.
+strategic_concessions = []
+
+# Voie auto-hébergée : seule destination des générations stratégiques.
+[self_hosted]
 endpoint = ""
 model = ""
-
 # "ollama" (défaut) ou "openai-compatible"
 protocol = "ollama"
 
+# Voie externe : générations banales, et les seuls usages listés ci-dessus.
+[external]
+endpoint = ""
+model = ""
+protocol = "openai-compatible"
 # Requis seulement si l'endpoint exige un jeton porteur
 # api_key = ""
