@@ -1282,11 +1282,15 @@ dependencies = [
 name = "kairos-finances"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "axum",
  "chrono",
  "reqwest 0.12.28",
+ "rmcp",
+ "schemars",
  "serde",
  "serde_json",
+ "tentacle-common",
  "thiserror",
  "tokio",
 ]
