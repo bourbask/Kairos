@@ -11,7 +11,11 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 echo "==> [1/3] Envoi du working tree vers l'hôte"
 ssh "$VPS_HOST" "mkdir -p '$KAIROS_DIR'"
-tar czf - -C "$ROOT" \
+# --exclude-vcs-ignores écarte tout ce que le dépôt ignore : configuration et
+# secrets propres à une machine restent sur leur hôte, les fichiers d'exemple
+# suivent. Sans lui, la configuration locale de l'opérateur écrase celle de
+# l'hôte cible à chaque envoi, y compris ses jetons.
+tar czf - -C "$ROOT" --exclude-vcs-ignores \
     --exclude=target --exclude=.git --exclude=data --exclude=briefings \
     --exclude=logs --exclude=private . \
   | ssh "$VPS_HOST" "tar xzf - -C '$KAIROS_DIR'"
