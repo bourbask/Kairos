@@ -23,3 +23,7 @@ deploy/docker/.env
 deploy/docker/radicale/config/config
 deploy/docker/radicale/config/users
 CLAUDE.local.md
+
+# Config et base locales de la tête
+config/tete.toml
+data/tete.db*
