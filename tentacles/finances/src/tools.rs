@@ -40,6 +40,15 @@ fn api_err(e: ApiError) -> String {
     }
 }
 
+/// Préfixes bancaires génériques : seuls, ils ne désignent aucun commerçant.
+const GENERIC_PREFIXES: [&str; 10] = [
+    "PRLV", "CARTE", "VIR", "VIR INST", "ECH", "ECH PRET", "PRET", "SEPA", "PAYPAL", "PRLV SEPA",
+];
+
+fn is_generic(word: &str) -> bool {
+    GENERIC_PREFIXES.iter().any(|g| g.eq_ignore_ascii_case(word))
+}
+
 /// Un montant se valide avant tout appel : strictement positif et fini.
 fn check_amount(a: f64) -> Result<(), String> {
     if a.is_finite() && a > 0.0 {
@@ -78,15 +87,19 @@ impl FinanceServer {
     #[tool(description = "Savoir si une dépense (montant en euros, poste facultatif) est abordable sur le cycle en cours.")]
     async fn can_afford(&self, Parameters(a): Parameters<AffordArgs>) -> Out {
         check_amount(a.amount)?;
+        let mut poste = None;
         if let Some(p) = &a.poste {
             let cycle = self.api.cycle().await.map_err(api_err)?;
-            if !cycle.envelopes.contains_key(p) {
-                let valid = cycle.envelopes.keys().cloned().collect::<Vec<_>>().join(", ");
-                return Err(format!("Poste inconnu « {} ». Postes valides : {valid}.", clean_payee(p)));
+            match cycle.envelopes.keys().find(|k| k.eq_ignore_ascii_case(p.trim())) {
+                Some(k) => poste = Some(k.clone()),
+                None => {
+                    let valid = cycle.envelopes.keys().cloned().collect::<Vec<_>>().join(", ");
+                    return Err(format!("Poste inconnu « {} ». Postes valides : {valid}.", clean_payee(p)));
+                }
             }
         }
-        let v = self.api.afford(a.amount, a.poste.as_deref()).await.map_err(api_err)?;
-        Ok(verdict_text(&v, a.amount, a.poste.as_deref().unwrap_or("")))
+        let v = self.api.afford(a.amount, poste.as_deref()).await.map_err(api_err)?;
+        Ok(verdict_text(&v, a.amount, poste.as_deref().unwrap_or("")))
     }
 
     #[tool(description = "Savoir si un montant en euros peut être mis de côté sur le cycle en cours.")]
@@ -106,21 +119,33 @@ impl FinanceServer {
         Ok(unclassified_text(&self.api.unclassified().await.map_err(api_err)?))
     }
 
-    #[tool(description = "Enregistrer une règle de classement : un libellé figurant dans la liste des dépenses sans catégorie vers un poste.")]
+    #[tool(description = "Enregistrer une règle de classement : un motif (nom du commerçant, 3 caractères au moins) présent dans un libellé de la liste des dépenses sans catégorie, vers un poste.")]
     async fn classify(&self, Parameters(a): Parameters<ClassifyArgs>) -> Out {
-        let want = clean_payee(&a.payee);
-        if !(3..=100).contains(&a.payee.trim().chars().count()) {
-            return Err("Le libellé doit faire entre 3 et 100 caractères.".to_string());
+        let pattern = clean_payee(&a.payee);
+        if !(3..=100).contains(&pattern.chars().count()) {
+            return Err("Le motif doit faire entre 3 et 100 caractères.".to_string());
+        }
+        if pattern.chars().all(|c| c.is_ascii_digit() || c.is_whitespace()) {
+            return Err("Le motif ne peut pas être uniquement numérique.".to_string());
+        }
+        if is_generic(&pattern) {
+            return Err("Motif trop générique : indique le nom du commerçant.".to_string());
         }
         let ops = self.api.unclassified().await.map_err(api_err)?;
-        // Seul un libellé de la liste courante peut devenir une règle.
-        let op = ops
-            .iter()
-            .find(|o| clean_payee(&o.payee) == want)
-            .ok_or("Ce libellé ne figure pas parmi les dépenses sans catégorie.")?;
-        let r = self.api.create_rule(&op.payee, &a.poste).await.map_err(api_err)?;
-        let state = if r.created { "enregistrée" } else { "déjà connue" };
-        Ok(format!("Règle {state} : {want} → {}.", clean_payee(&a.poste)))
+        let needle = pattern.to_lowercase();
+        let n = ops.iter().filter(|o| clean_payee(&o.payee).to_lowercase().contains(&needle)).count();
+        if n == 0 {
+            return Err("Ce motif ne figure dans aucune dépense sans catégorie.".to_string());
+        }
+        if ops.len() >= 3 && n == ops.len() {
+            return Err("Motif trop large : il couvrirait toutes les dépenses sans catégorie.".to_string());
+        }
+        let r = self.api.create_rule(&pattern, &a.poste).await.map_err(api_err)?;
+        let state = if r.created { "enregistrée" } else { "mise à jour" };
+        Ok(format!(
+            "Règle {state} : {pattern} → {} ({n} opération(s) en attente concernée(s)).",
+            clean_payee(&a.poste)
+        ))
     }
 
     #[tool(description = "Obtenir le résumé du budget avec le lien du tableau de bord s'il existe.")]
@@ -135,19 +160,29 @@ impl FinanceServer {
 
     #[tool(description = "Obtenir la section finances d'un briefing : le matin le cycle, le soir aussi les dépenses à classer.")]
     async fn brief_section(&self, Parameters(a): Parameters<BriefArgs>) -> Out {
-        let c = cycle_text(&self.api.cycle().await.map_err(api_err)?);
-        let mut lines = c.lines();
-        let first = lines.next().unwrap_or_default();
+        let cycle = self.api.cycle().await.map_err(api_err)?;
+        let c = cycle_text(&cycle);
+        let first = c.lines().next().unwrap_or_default();
         let cushion = c.lines().last().unwrap_or_default();
         let mut out = format!("{first}\n{cushion}");
         if a.period == BriefPeriod::Soir {
-            let ops = self.api.unclassified().await.map_err(api_err)?;
-            if let Some(op) = ops.first() {
-                out.push_str(&format!(
-                    "\n{}\nRéponds par exemple « {} = <poste> ».",
-                    unclassified_text(&ops),
-                    clean_payee(&op.payee)
-                ));
+            // Un échec côté classement ne retire pas la partie cycle.
+            if let Ok(ops) = self.api.unclassified().await {
+                if let Some(op) = ops.first() {
+                    out.push_str(&format!("\n{}", unclassified_text(&ops)));
+                    let word = clean_payee(&op.payee)
+                        .split(|c: char| !c.is_alphabetic())
+                        .filter(|w| w.chars().count() >= 4 && !is_generic(w))
+                        .max_by_key(|w| w.chars().count())
+                        .map(str::to_string);
+                    let postes: Vec<_> = cycle.envelopes.keys().cloned().collect();
+                    if let (Some(w), Some(p)) = (word, postes.first()) {
+                        out.push_str(&format!(
+                            "\nRéponds par exemple « {w} = {p} » (le nom du commerçant suffit). Postes : {}.",
+                            postes.join(", ")
+                        ));
+                    }
+                }
             }
         }
         Ok(out)

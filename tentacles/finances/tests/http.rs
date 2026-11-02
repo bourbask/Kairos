@@ -21,12 +21,7 @@ fn rec(log: &Log, s: &str) {
     log.lock().unwrap().push(s.to_string());
 }
 
-async fn fake(log: Log, stale: bool) -> String {
-    let m = if stale {
-        META.replace(r#""stale":false"#, r#""stale":true"#)
-    } else {
-        META.to_string()
-    };
+async fn fake(log: Log, m: String) -> String {
     let mm = move |body: &str| -> Value { serde_json::from_str(&format!("{{{body},{m}}}")).unwrap() };
     let (l1, l2, l3, l4, l5, l6, l7) = (log.clone(), log.clone(), log.clone(), log.clone(), log.clone(), log.clone(), log.clone());
     let (m1, m2, m3) = (mm.clone(), mm.clone(), mm.clone());
@@ -52,16 +47,19 @@ async fn fake(log: Log, stale: bool) -> String {
             let m = mm.clone();
             async move {
                 rec(&l, "GET alerts");
-                Json(m(r#""alerts":[{"id":"a1","kind":"near_limit","title":"T1","details":"D1","remedy":"R1"},{"id":"a2","kind":"duplicate","title":"T2","details":"D2","remedy":"R2"}]"#))
+                Json(m(r#""alerts":[{"id":"a1","kind":"near_limit","title":"T1","details":"D1","remedy":"R1"},{"id":"a2","kind":"unexpected","title":"T2","details":"D2","remedy":"R2"}]"#))
             }
         }))
         .route("/api/unclassified", get(move || async move {
             rec(&l6, "GET unclassified");
-            Json(json!([{"id":"o1","date":"2026-11-01","payee":"BOULANGERIE ACME","amount":-12.5}]))
+            Json(json!([{"id":"o1","date":"2026-11-01","payee":"CARTE BOULANGERIE ACME","amount":12.5},{"id":"o2","date":"2026-11-01","payee":"CARTE GARAGE ACME","amount":80.0},{"id":"o3","date":"2026-11-02","payee":"PRLV ACME ENERGIE","amount":45.0}]))
         }))
         .route("/api/rules", post(move |Json(b): Json<Value>| async move {
             rec(&l7, &format!("POST rules {b}"));
-            Json(json!({"rule_id":"r1","created":true,"applied":true}))
+            if b["poste"] == "inconnu" {
+                return (axum::http::StatusCode::UNPROCESSABLE_ENTITY, Json(json!({"detail": "Poste inconnu."})));
+            }
+            (axum::http::StatusCode::OK, Json(json!({"rule_id":"r1","created": b["poste"] != "essence","applied":true})))
         }));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
@@ -105,7 +103,7 @@ fn is_err(v: &Value) -> bool {
 
 async fn setup() -> (String, Log) {
     let log: Log = Default::default();
-    let api = fake(log.clone(), false).await;
+    let api = fake(log.clone(), META.to_string()).await;
     (start(api, Some("http://dash.invalid/")).await, log)
 }
 
@@ -139,25 +137,40 @@ async fn can_afford_checks_poste_against_cycle() {
     assert!(is_err(&v));
     assert!(text(&v).contains("courses") && text(&v).contains("essence"), "{v}");
     assert!(!log.lock().unwrap().iter().any(|l| l.contains("afford")));
-    let v = call(&url, "can_afford", json!({"amount": 10.0, "poste": "essence"})).await;
+    let v = call(&url, "can_afford", json!({"amount": 10.0, "poste": "Essence"})).await;
     assert!(text(&v).starts_with("Oui"), "{v}");
 }
 
+fn posts(log: &Log) -> Vec<String> {
+    log.lock().unwrap().iter().filter(|l| l.starts_with("POST")).cloned().collect()
+}
+
 #[tokio::test]
-async fn classify_only_known_payee() {
+async fn classify_pattern_rules() {
     let (url, log) = setup().await;
-    let v = call(&url, "classify", json!({"payee": "AUTRE CHOSE", "poste": "courses"})).await;
+    for (payee, why) in [
+        ("INCONNU", "absent"),
+        ("ab", "trop court"),
+        ("carte", "générique"),
+        ("PRLV SEPA", "générique"),
+        ("12345", "numérique"),
+        ("acme", "couvre tout"),
+    ] {
+        let v = call(&url, "classify", json!({"payee": payee, "poste": "courses"})).await;
+        assert!(is_err(&v), "{why}: {v}");
+    }
+    assert!(posts(&log).is_empty());
+    let v = call(&url, "classify", json!({"payee": "boulangerie", "poste": "courses"})).await;
+    assert_eq!(text(&v), "Règle enregistrée : boulangerie → courses (1 opération(s) en attente concernée(s)).");
+    let p = posts(&log);
+    assert_eq!(p.len(), 1);
+    let b: Value = serde_json::from_str(p[0].trim_start_matches("POST rules ")).unwrap();
+    assert_eq!(b, json!({"payee":"boulangerie","poste":"courses"}));
+    let v = call(&url, "classify", json!({"payee": "garage", "poste": "essence"})).await;
+    assert!(text(&v).starts_with("Règle mise à jour : garage → essence"), "{v}");
+    let v = call(&url, "classify", json!({"payee": "garage", "poste": "inconnu"})).await;
     assert!(is_err(&v));
-    let v = call(&url, "classify", json!({"payee": "ab", "poste": "courses"})).await;
-    assert!(is_err(&v));
-    assert!(!log.lock().unwrap().iter().any(|l| l.starts_with("POST")));
-    let v = call(&url, "classify", json!({"payee": "BOULANGERIE ACME", "poste": "courses"})).await;
-    assert!(!is_err(&v), "{v}");
-    assert_eq!(text(&v), "Règle enregistrée : BOULANGERIE ACME → courses.");
-    let posts: Vec<_> = log.lock().unwrap().iter().filter(|l| l.starts_with("POST")).cloned().collect();
-    assert_eq!(posts.len(), 1);
-    let b: Value = serde_json::from_str(posts[0].trim_start_matches("POST rules ")).unwrap();
-    assert_eq!(b, json!({"payee":"BOULANGERIE ACME","poste":"courses"}));
+    assert_eq!(text(&v), "Poste inconnu.");
 }
 
 #[tokio::test]
@@ -178,7 +191,8 @@ async fn brief_sections_and_dashboard() {
     assert!(text(&v).starts_with("Disponible jusqu'au") && text(&v).contains("Coussin"), "{v}");
     assert!(!text(&v).contains("Réponds"));
     let v = call(&url, "brief_section", json!({"period": "soir"})).await;
-    assert!(text(&v).ends_with("Réponds par exemple « BOULANGERIE ACME = <poste> »."), "{v}");
+    assert!(text(&v).ends_with("Réponds par exemple « BOULANGERIE = courses » (le nom du commerçant suffit). Postes : courses, essence."), "{v}");
+    assert!(!text(&v).contains("<poste>"));
     let v = call(&url, "dashboard", json!({})).await;
     assert!(text(&v).ends_with("Tableau de bord : http://dash.invalid/"), "{v}");
 }
@@ -192,8 +206,12 @@ async fn alerts_json_and_stale_prefix() {
     assert_eq!(a[1]["counts_budget"], json!(false));
     assert_eq!(a[0]["text"], "T1\nD1\nR1");
     let log: Log = Default::default();
-    let stale = start(fake(log, true).await, None).await;
+    let stale = start(fake(log, META.replace(r#""stale":false"#, r#""stale":true"#)).await, None).await;
     let v = call(&stale, "alerts", json!({})).await;
     let a: Value = serde_json::from_str(text(&v)).unwrap();
     assert!(a[0]["text"].as_str().unwrap().starts_with("Données au"), "{a}");
+    let expired = META.replace(r#""consent_expired":false"#, r#""consent_expired":true"#);
+    let url = start(fake(Default::default(), expired).await, None).await;
+    let a: Value = serde_json::from_str(text(&call(&url, "alerts", json!({})).await)).unwrap();
+    assert!(a[0]["text"].as_str().unwrap().starts_with("Consentement bancaire expiré"), "{a}");
 }

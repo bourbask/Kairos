@@ -13,10 +13,12 @@ fn required(name: &str) -> anyhow::Result<String> {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let env = TentacleEnv::from_env("FINANCES")?;
-    let api = Arc::new(FinanceApi::new(
-        required("FINANCES_API_URL")?,
-        required("FINANCES_API_TOKEN")?,
-    ));
+    let url = required("FINANCES_API_URL")?;
+    let valid = reqwest::Url::parse(&url).is_ok_and(|u| matches!(u.scheme(), "http" | "https") && u.has_host());
+    if !valid {
+        anyhow::bail!("variable FINANCES_API_URL invalide");
+    }
+    let api = Arc::new(FinanceApi::new(url, required("FINANCES_API_TOKEN")?));
     let dashboard = std::env::var("FINANCES_DASHBOARD_URL").ok().filter(|u| !u.is_empty());
     tentacle_common::serve(env, move || FinanceServer::new(api.clone(), dashboard.clone())).await
 }

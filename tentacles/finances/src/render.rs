@@ -202,7 +202,7 @@ pub fn clean_payee(s: &str) -> String {
 
 pub fn unclassified_text(ops: &[Operation]) -> String {
     if ops.is_empty() {
-        return "Aucune dépense à classer.".to_string();
+        return "Aucune opération à classer.".to_string();
     }
     let lines = ops
         .iter()
