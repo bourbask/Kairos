@@ -365,6 +365,64 @@ async fn suggestion_rien_sends_nothing() {
 }
 
 #[tokio::test]
+async fn suggestion_rien_variants_send_nothing() {
+    let mut fx = fixture("JB_T8", &["suggestion"], vec![text("`RIEN`."), text("« Rien »")]).await;
+    run(Job::Suggestion, at(7, 15, 0), &mut fx.ctx).await.unwrap();
+    run(Job::Suggestion, at(7, 17, 0), &mut fx.ctx).await.unwrap();
+    assert!(sent(&fx.gw).is_empty());
+    assert_eq!(fx.ctx.state.interruptions_on(at(7, 0, 0).date()).unwrap(), 0);
+    let s = fx.llm.lock().unwrap();
+    assert_eq!(s.requests.len(), 2);
+    assert!(!s.requests[0]["messages"][0]["content"].as_str().unwrap().contains('`'));
+}
+
+#[tokio::test]
+async fn held_suggestion_calls_nothing() {
+    let mut fx = fixture("JB_T9", &["suggestion"], vec![text("Une idée.")]).await;
+    // Lundi sur site, en journée : retenue, donc ni moteur ni envoi.
+    run(Job::Suggestion, at(2, 10, 0), &mut fx.ctx).await.unwrap();
+    assert!(fx.llm.lock().unwrap().requests.is_empty());
+    assert!(sent(&fx.gw).is_empty());
+    assert_eq!(fx.ctx.state.interruptions_on(at(2, 0, 0).date()).unwrap(), 0);
+}
+
+#[tokio::test]
+async fn dropped_brief_does_not_call_engine() {
+    let mut fx = fixture("JB_T10", &["brief"], vec![text("reformulé")]).await;
+    fx.ctx.state.add_quiet(at(7, 6, 0), at(7, 12, 0), QuietScope::Briefs).unwrap();
+    run(Job::MorningBrief, at(7, 7, 30), &mut fx.ctx).await.unwrap();
+    assert!(fx.llm.lock().unwrap().requests.is_empty());
+}
+
+#[tokio::test]
+async fn flush_send_failure_requeues_once() {
+    let mut fx = fixture("JB_T11", &[], vec![]).await;
+    fx.ctx.state.enqueue("brief", "un", at(7, 6, 0)).unwrap();
+    fx.ctx.state.enqueue("brief", "deux", at(7, 6, 0)).unwrap();
+    fx.gw.fail.store(true, Ordering::SeqCst);
+    run(Job::Flush, at(7, 15, 0), &mut fx.ctx).await.unwrap();
+    assert_eq!(fx.ctx.state.take_pending().unwrap(), vec![("retry".to_string(), "un\n\ndeux".to_string())]);
+}
+
+#[tokio::test]
+async fn unreadable_quiet_holds_brief() {
+    let mut fx = fixture("JB_T12", &[], vec![]).await;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("tete.db");
+    fx.ctx.state = State::open(&path).unwrap();
+    rusqlite::Connection::open(&path)
+        .unwrap()
+        .execute(
+            "INSERT INTO quiet (from_ts, until_ts, scope) VALUES ('2026-11-07 00:00:00', '2026-11-08 00:00:00', 'inconnue')",
+            [],
+        )
+        .unwrap();
+    run(Job::MorningBrief, at(7, 7, 30), &mut fx.ctx).await.unwrap();
+    assert!(sent(&fx.gw).is_empty());
+    assert_eq!(fx.ctx.state.take_pending().unwrap().len(), 1);
+}
+
+#[tokio::test]
 async fn suggestion_sent_counts_budget() {
     let mut fx = fixture("JB_T5", &["suggestion"], vec![text("Une idée.")]).await;
     run(Job::Suggestion, at(7, 13, 59), &mut fx.ctx).await.unwrap();
@@ -376,7 +434,7 @@ async fn suggestion_sent_counts_budget() {
 #[tokio::test]
 async fn invalid_summary_skipped_next_one_stored() {
     let valid = r#"{"summary": "Salutations.", "topics": ["accueil"], "decisions": []}"#;
-    let replies = vec![text("Voici le résumé : ..."), text(valid)];
+    let replies = vec![text("Voici le résumé : ..."), text(&format!("```json\n{valid}\n```"))];
     let mut fx = fixture("JB_T6", &["resume_conversation"], replies).await;
     // Entrées mal formées et identifiant inconnu ignorés.
     *fx.rec.unsummarized.lock().unwrap() = r#"[{"id": "x"}, {}, {"id": 5}, {"id": 6}, {"id": 7}]"#.into();
@@ -394,11 +452,25 @@ async fn invalid_summary_skipped_next_one_stored() {
 }
 
 #[tokio::test]
+async fn fenced_summary_still_strict() {
+    let extra = r#"{"summary": "s", "topics": [], "decisions": [], "mood": "x"}"#;
+    let ok = r#"{"summary": "s", "topics": [], "decisions": []}"#;
+    let replies = vec![text(&format!("```\n{extra}\n```")), text(&format!("```\n{ok}\n```"))];
+    let mut fx = fixture("JB_T13", &["resume_conversation"], replies).await;
+    *fx.rec.unsummarized.lock().unwrap() = r#"[{"id": 6}, {"id": 7}]"#.into();
+    *fx.rec.transcripts.lock().unwrap() = HashMap::from([(6, "a".to_string()), (7, "b".to_string())]);
+    run(Job::Summaries, at(2, 3, 0), &mut fx.ctx).await.unwrap();
+    let got = fx.rec.summaries.lock().unwrap().clone();
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0]["id"], 7);
+}
+
+#[tokio::test]
 async fn long_transcript_reaches_engine_whole() {
     let reply = r#"{"summary": "Long.", "topics": [], "decisions": []}"#;
     let mut fx = fixture("JB_T7", &["resume_conversation"], vec![text(reply)]).await;
-    // Transcription déjà réduite par le tentacule (60 000 caractères + séparateur).
-    let long = format!("{}\n…\n{}FIN", "a".repeat(15_000), "b".repeat(44_997));
+    // Transcription déjà réduite par le tentacule (60 000 caractères).
+    let long = format!("{}\n…\n{}FIN", "a".repeat(15_000), "b".repeat(44_994));
     *fx.rec.unsummarized.lock().unwrap() = r#"[{"id": 7}]"#.into();
     *fx.rec.transcripts.lock().unwrap() = HashMap::from([(7, long.clone())]);
     run(Job::Summaries, at(2, 3, 0), &mut fx.ctx).await.unwrap();

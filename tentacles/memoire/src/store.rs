@@ -11,9 +11,11 @@ use serde::{Deserialize, Serialize};
 pub const PERSONA_KEY: &str = "persona";
 /// Taille maximale d'une transcription acceptée.
 pub const MAX_TRANSCRIPT_BYTES: usize = 1_500_000;
-/// Transcription remise pour résumé : début et fin conservés, milieu élidé.
+/// Transcription remise pour résumé : au plus `GET_MAX_CHARS` caractères,
+/// début et fin conservés, milieu remplacé par `ELISION`.
+pub const GET_MAX_CHARS: usize = 60_000;
 pub const GET_HEAD_CHARS: usize = 15_000;
-pub const GET_TAIL_CHARS: usize = 45_000;
+const ELISION: &str = "\n…\n";
 
 const TS: &str = "%Y-%m-%d %H:%M:%S";
 
@@ -145,12 +147,13 @@ pub struct ConversationText {
 
 fn reduce(t: String) -> String {
     let n = t.chars().count();
-    if n <= GET_HEAD_CHARS + GET_TAIL_CHARS {
+    if n <= GET_MAX_CHARS {
         return t;
     }
+    let tail_len = GET_MAX_CHARS - GET_HEAD_CHARS - ELISION.chars().count();
     let head: String = t.chars().take(GET_HEAD_CHARS).collect();
-    let tail: String = t.chars().skip(n - GET_TAIL_CHARS).collect();
-    format!("{head}\n…\n{tail}")
+    let tail: String = t.chars().skip(n - tail_len).collect();
+    format!("{head}{ELISION}{tail}")
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -588,7 +591,10 @@ mod tests {
         let long = format!("{}{}{}", "é".repeat(15_000), "m".repeat(10), "à".repeat(45_000));
         let id = s.conversation_ingest(&conv(&long)).unwrap();
         let r = s.conversation_get(id).unwrap().unwrap().transcript;
-        assert_eq!(r, format!("{}\n…\n{}", "é".repeat(15_000), "à".repeat(45_000)));
+        assert_eq!(r, format!("{}\n…\n{}", "é".repeat(15_000), "à".repeat(44_997)));
+        assert_eq!(r.chars().count(), 60_000);
+        let id = s.conversation_ingest(&conv(&"y".repeat(60_001))).unwrap();
+        assert_eq!(s.conversation_get(id).unwrap().unwrap().transcript.chars().count(), 60_000);
         let exact = "x".repeat(60_000);
         let id = s.conversation_ingest(&conv(&exact)).unwrap();
         assert_eq!(s.conversation_get(id).unwrap().unwrap().transcript, exact);
