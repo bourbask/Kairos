@@ -152,7 +152,8 @@ async fn main() -> anyhow::Result<()> {
 
     let cli = Cli::parse();
     let db_path = std::env::var("DATABASE_PATH").unwrap_or_else(|_| "data/kairos.db".into());
-    let profile = Profile::from_file("config/profile.toml")?;
+    let profile_path = std::env::var("PROFILE_PATH").unwrap_or_else(|_| "config/profile.toml".into());
+    let profile = Profile::from_file(&profile_path)?;
     let storage = Arc::new(Storage::open(&db_path)?);
 
     match cli.command {
