@@ -52,24 +52,27 @@ pub struct Ctx {
 }
 
 /// Tâches dues à `now`. Une lecture d'état en échec rend la tâche non due
-/// plutôt que de la relancer chaque minute.
+/// plutôt que de la relancer chaque minute. Une tâche manquée n'est rattrapée
+/// que jusqu'à la suivante : brief du matin avant le soir, brief du soir avant
+/// la nuit, résumés avant la fin de la nuit.
 pub fn due(now: NaiveDateTime, cfg: &HeadConfig, state: &State, last_suggestion: Option<NaiveDateTime>) -> Vec<Job> {
     let today = now.date();
-    let daily = |key: &str, time: NaiveTime| {
-        now.time() >= time
+    // ponytail: fenêtre sans passage de minuit ; une heure de résumés avant minuit ne serait jamais due.
+    let daily = |key: &str, time: NaiveTime, until: NaiveTime| {
+        (time..until).contains(&now.time())
             && state.last_run(key).map(|d| d != Some(today)).unwrap_or_else(|e| {
                 tracing::warn!("lecture de la dernière exécution de {key} impossible : {e}");
                 false
             })
     };
     let mut jobs = Vec::new();
-    if daily(MORNING, cfg.schedule.morning) {
+    if daily(MORNING, cfg.schedule.morning, cfg.schedule.evening) {
         jobs.push(Job::MorningBrief);
     }
-    if daily(EVENING, cfg.schedule.evening) {
+    if daily(EVENING, cfg.schedule.evening, cfg.schedule.quiet_start) {
         jobs.push(Job::EveningBrief);
     }
-    if daily(SUMMARIES, cfg.schedule.summaries) {
+    if daily(SUMMARIES, cfg.schedule.summaries, cfg.schedule.quiet_end) {
         jobs.push(Job::Summaries);
     }
     if state.has_pending().unwrap_or_else(|e| {

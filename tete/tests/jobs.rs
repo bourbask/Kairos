@@ -278,6 +278,29 @@ fn due_schedule() {
 }
 
 #[test]
+fn due_catch_up_is_bounded() {
+    let c = cfg();
+    let quiet = |now| Some(now);
+    let day = at(2, 0, 0).date();
+
+    // Brief du matin manqué : plus rattrapé à l'heure du soir.
+    let s = State::open_in_memory().unwrap();
+    s.set_last_run("resumes", day).unwrap();
+    assert_eq!(due(at(2, 20, 59), &c, &s, quiet(at(2, 20, 59))), vec![Job::MorningBrief]);
+    assert_eq!(due(at(2, 21, 0), &c, &s, quiet(at(2, 21, 0))), vec![Job::EveningBrief]);
+    // Brief du soir manqué : plus rattrapé une fois la nuit commencée.
+    assert_eq!(due(at(2, 22, 29), &c, &s, quiet(at(2, 22, 29))), vec![Job::EveningBrief]);
+    assert!(due(at(2, 22, 30), &c, &s, quiet(at(2, 22, 30))).is_empty());
+
+    // Résumés : seulement dans la nuit.
+    let s2 = State::open_in_memory().unwrap();
+    s2.set_last_run("brief_matin", day).unwrap();
+    s2.set_last_run("brief_soir", day).unwrap();
+    assert_eq!(due(at(2, 6, 59), &c, &s2, quiet(at(2, 6, 59))), vec![Job::Summaries]);
+    assert!(due(at(2, 7, 0), &c, &s2, quiet(at(2, 7, 0))).is_empty());
+}
+
+#[test]
 fn due_suggestion_budget_and_flush() {
     let c = cfg();
     let s = State::open_in_memory().unwrap();
