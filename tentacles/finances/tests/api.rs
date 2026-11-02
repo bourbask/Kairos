@@ -1,4 +1,9 @@
-use axum::{Json, Router, extract::Query, http::{HeaderMap, StatusCode}, routing::{get, post}};
+use axum::{
+    Json, Router,
+    extract::Query,
+    http::{HeaderMap, StatusCode},
+    routing::{get, post},
+};
 use kairos_finances::api::{ApiError, FinanceApi};
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -29,7 +34,12 @@ async fn serve() -> String {
             assert_eq!(q.get("poste").map(String::as_str), Some("essence"));
             (StatusCode::OK, Json(meta(r#""ok":false,"after":-70.97,"reason":"disponible insuffisant","cuts":[{"poste":"restos","amount":0.01},{"poste":null,"amount":5}],"available":73.03,"reserve_used":56.0"#)))
         }))
-        .route("/api/cycle/save", get(|| async { Json(meta(r#""ok":true,"after":23.03,"available":73.03"#)) }))
+        .route("/api/cycle/save", get(|Query(q): Query<HashMap<String, String>>| async move {
+            if q["amount"] == "13" {
+                return Json(json!({"ok": true, "after": 1.0, "available": 2.0}));
+            }
+            Json(meta(r#""ok":true,"after":23.03,"available":73.03"#))
+        }))
         .route("/api/envelopes", get(|| async { Json(meta(r#""days":31,"mode":"serein","envelopes":{"restos":0.0,"courses":300.0}"#)) }))
         .route("/api/finance-alerts", get(|| async { Json(meta(r#""alerts":[{"id":"a","kind":"negative","title":"t","details":"d","remedy":"r"}]"#)) }))
         .route("/api/unclassified", get(|| async { Json(json!([{"id":"c5","date":"2026-11-02","payee":"BOULANGERIE","amount":12.5}])) }))
@@ -58,7 +68,7 @@ async fn routes_deserialize() {
     assert!(!v.ok && v.cuts.len() == 2 && v.cuts[1].poste.is_none());
     assert!(api.save(50.0).await.unwrap().ok);
     assert_eq!(api.envelopes().await.unwrap().days, 31);
-    assert_eq!(api.alerts().await.unwrap()[0].kind, "negative");
+    assert_eq!(api.alerts().await.unwrap().alerts[0].kind, "negative");
     assert_eq!(api.unclassified().await.unwrap()[0].payee, "BOULANGERIE");
     assert!(api.create_rule("MAGASIN", "courses").await.unwrap().created);
 }
@@ -82,4 +92,11 @@ async fn rejected_and_unavailable() {
     }
     let closed = FinanceApi::new("http://127.0.0.1:1".into(), "tok".into());
     assert!(matches!(closed.cycle().await, Err(ApiError::Unavailable)));
+}
+
+#[tokio::test]
+async fn missing_quality_is_an_error() {
+    let api = api().await;
+    // Réponse sans champs méta : erreur, pas de valeurs par défaut.
+    assert!(matches!(api.save(13.0).await, Err(ApiError::Unavailable)));
 }

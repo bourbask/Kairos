@@ -13,7 +13,6 @@ pub enum ApiError {
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
-#[serde(default)]
 pub struct Basis {
     pub pay_date: Option<String>,
     pub complete_cycles: u32,
@@ -21,9 +20,9 @@ pub struct Basis {
     pub coverage: f64,
 }
 
+/// Désérialisation stricte : une dérive du contrat devient une erreur, jamais un zéro plausible.
 /// Champs communs à plat dans les réponses de calcul.
 #[derive(Debug, Clone, Default, Deserialize)]
-#[serde(default)]
 pub struct Meta {
     pub quality: String,
     pub stale: bool,
@@ -33,7 +32,6 @@ pub struct Meta {
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
-#[serde(default)]
 pub struct Available {
     pub available: f64,
     pub balance: f64,
@@ -44,7 +42,6 @@ pub struct Available {
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
-#[serde(default)]
 pub struct Charge {
     pub name: String,
     pub amount: f64,
@@ -53,14 +50,12 @@ pub struct Charge {
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
-#[serde(default)]
 pub struct Cushion {
     pub balance: f64,
     pub floor: f64,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
-#[serde(default)]
 pub struct Cycle {
     pub start: String,
     pub end: String,
@@ -77,7 +72,6 @@ pub struct Cycle {
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
-#[serde(default)]
 pub struct Cut {
     pub poste: Option<String>,
     pub amount: f64,
@@ -85,20 +79,20 @@ pub struct Cut {
 
 /// Réponse de `afford` et de `save` (ce dernier sans `reason` ni `cuts`).
 #[derive(Debug, Clone, Default, Deserialize)]
-#[serde(default)]
 pub struct Verdict {
     pub ok: bool,
     pub after: f64,
     pub reason: Option<String>,
+    #[serde(default)]
     pub cuts: Vec<Cut>,
     pub available: f64,
+    #[serde(default)]
     pub reserve_used: f64,
     #[serde(flatten)]
     pub meta: Meta,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
-#[serde(default)]
 pub struct Envelopes {
     pub days: i64,
     pub mode: String,
@@ -108,7 +102,6 @@ pub struct Envelopes {
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
-#[serde(default)]
 pub struct Alert {
     pub id: String,
     pub kind: String,
@@ -117,14 +110,14 @@ pub struct Alert {
     pub remedy: String,
 }
 
-#[derive(Debug, Deserialize)]
-struct AlertsBody {
-    #[serde(default)]
-    alerts: Vec<Alert>,
+#[derive(Debug, Clone, Deserialize)]
+pub struct Alerts {
+    pub alerts: Vec<Alert>,
+    #[serde(flatten)]
+    pub meta: Meta,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
-#[serde(default)]
 pub struct Operation {
     pub id: String,
     pub date: String,
@@ -133,7 +126,6 @@ pub struct Operation {
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
-#[serde(default)]
 pub struct RuleResult {
     pub rule_id: String,
     pub created: bool,
@@ -152,7 +144,11 @@ impl FinanceApi {
             .timeout(Duration::from_secs(15))
             .build()
             .expect("client HTTP");
-        FinanceApi { base: base.trim_end_matches('/').to_string(), token, http }
+        FinanceApi {
+            base: base.trim_end_matches('/').to_string(),
+            token,
+            http,
+        }
     }
 
     async fn send<T: DeserializeOwned>(&self, req: reqwest::RequestBuilder) -> Result<T, ApiError> {
@@ -176,8 +172,13 @@ impl FinanceApi {
         Err(ApiError::Rejected(text))
     }
 
-    async fn get<T: DeserializeOwned>(&self, path: &str, query: &[(&str, String)]) -> Result<T, ApiError> {
-        self.send(self.http.get(format!("{}{path}", self.base)).query(query)).await
+    async fn get<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        query: &[(&str, String)],
+    ) -> Result<T, ApiError> {
+        self.send(self.http.get(format!("{}{path}", self.base)).query(query))
+            .await
     }
 
     pub async fn cycle(&self) -> Result<Cycle, ApiError> {
@@ -193,15 +194,16 @@ impl FinanceApi {
     }
 
     pub async fn save(&self, amount: f64) -> Result<Verdict, ApiError> {
-        self.get("/api/cycle/save", &[("amount", amount.to_string())]).await
+        self.get("/api/cycle/save", &[("amount", amount.to_string())])
+            .await
     }
 
     pub async fn envelopes(&self) -> Result<Envelopes, ApiError> {
         self.get("/api/envelopes", &[]).await
     }
 
-    pub async fn alerts(&self) -> Result<Vec<Alert>, ApiError> {
-        Ok(self.get::<AlertsBody>("/api/finance-alerts", &[]).await?.alerts)
+    pub async fn alerts(&self) -> Result<Alerts, ApiError> {
+        self.get("/api/finance-alerts", &[]).await
     }
 
     pub async fn unclassified(&self) -> Result<Vec<Operation>, ApiError> {
