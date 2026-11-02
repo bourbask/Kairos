@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [workspace]
-members = [".", "tete", "crates/tentacle-common", "tentacles/memoire", "tentacles/agenda"]
+members = [".", "tete", "crates/tentacle-common", "tentacles/memoire", "tentacles/agenda", "tentacles/finances"]
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
