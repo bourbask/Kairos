@@ -72,10 +72,10 @@ Configuration via `ALERT_URL`, `ALERT_TOPIC` et `ALERT_TOKEN` dans `kairos.env`.
 Services MCP (HTTP, chemin `/mcp`) : `memoire` (base dédiée, volume `memoire-data`) et `agenda`
 (lit `kairos.db`, connexion en lecture seule). Ils refusent de démarrer sans jeton.
 
-Générer un jeton par service et les renseigner dans `kairos.env` :
+Générer un jeton par service (`MEMOIRE_TOKEN`, `AGENDA_TOKEN`, `FINANCES_TOKEN`) et les renseigner dans `kairos.env` :
 
 ```bash
-openssl rand -hex 32   # -> MEMOIRE_TOKEN ; relancer pour AGENDA_TOKEN
+openssl rand -hex 32   # -> MEMOIRE_TOKEN ; relancer pour AGENDA_TOKEN, puis FINANCES_TOKEN
 ```
 
 Publication : `${TENTACLES_BIND_ADDR:-127.0.0.1}` (défaut : boucle locale), ports `MEMOIRE_BIND_PORT` (8091) et
@@ -95,12 +95,16 @@ docker compose up -d memoire agenda
 ### Finances
 
 `finances` est un tentacule sans état (aucun volume, aucune dépendance au moteur local) qui interroge une API de
-finances personnelles externe au compose. Variables de `kairos.env` : `FINANCES_TOKEN` (jeton d'accès, obligatoire),
+finances personnelles externe au compose. Variables de `kairos.env` : `FINANCES_TOKEN` (jeton d'accès propre au tentacule, obligatoire ; généré avec `openssl rand -hex 32`),
 `FINANCES_API_URL` (adresse privée de l'API, joignable depuis l'hôte ; obligatoire, refus de démarrer sans),
-`FINANCES_API_TOKEN` (jeton de cette API) et, facultatif, `FINANCES_DASHBOARD_URL`. Aucun couplage réseau dans ce
+`FINANCES_API_TOKEN` (non généré ici : copié à l'identique du jeton propre à l'API de finances) et, facultatif, `FINANCES_DASHBOARD_URL`. Aucun couplage réseau dans ce
 compose : l'adresse vient uniquement de la configuration. Port publié : `FINANCES_BIND_PORT` (8094).
 
+Déclarer ensuite le tentacule dans `config/tete.toml` (modèle : `config/tete.example.toml`). L'image `kairos:local`
+doit exister :
+
 ```bash
+docker compose build scheduler
 docker compose up -d finances
 ```
 
