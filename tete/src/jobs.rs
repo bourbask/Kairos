@@ -3,11 +3,11 @@
 
 use anyhow::{anyhow, bail};
 use chrono::{Datelike, NaiveDateTime, NaiveTime, TimeDelta};
-use kairos::llm::{ChatTurn, LlmClient, Sensitivity, Urgency};
+use kairos::llm::{ChatTurn, LlmClient, Urgency};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::agent::Agent;
+use crate::agent::{Agent, chat, engine};
 use crate::config::HeadConfig;
 use crate::gateway::Outbound;
 use crate::policy::{Outlet, Spontaneous, busy_from_tentacles, decide};
@@ -143,14 +143,28 @@ async fn send_brief(period: &str, title: &str, now: NaiveDateTime, ctx: &Ctx) ->
 
 /// Reformulation par le moteur `brief` ; absent ou en échec → `None` (texte brut).
 async fn reword(raw: &str, ctx: &Ctx) -> Option<String> {
-    let client = ctx.agent.router().client("brief", Sensitivity::Strategic, Urgency::Deferred).ok()?;
-    match client.chat(BRIEF_PROMPT, &[ChatTurn::User(raw.to_string())], &[]).await {
-        Ok(r) => r.text.filter(|t| !t.trim().is_empty()),
+    let client = engine(ctx.agent.router(), "brief", Urgency::Deferred).ok()?;
+    match chat(&client, Urgency::Deferred, BRIEF_PROMPT, &[ChatTurn::User(raw.to_string())], &[]).await {
+        Ok(r) => r.text.filter(|t| !t.trim().is_empty()).filter(|t| {
+            let kept = keeps_numbers(raw, t);
+            if !kept {
+                tracing::warn!("reformulation du brief infidèle aux nombres : texte brut envoyé");
+            }
+            kept
+        }),
         Err(e) => {
             tracing::warn!(erreur = %format!("{e:#}"), "reformulation du brief impossible");
             None
         }
     }
+}
+
+/// Chaque suite maximale de chiffres de `raw` figure telle quelle dans `reworded`.
+fn keeps_numbers(raw: &str, reworded: &str) -> bool {
+    let numbers = |s: &str| -> std::collections::HashSet<String> {
+        s.split(|c: char| !c.is_ascii_digit()).filter(|n| !n.is_empty()).map(str::to_string).collect()
+    };
+    numbers(raw).is_subset(&numbers(reworded))
 }
 
 async fn suggestion(now: NaiveDateTime, ctx: &mut Ctx) -> anyhow::Result<()> {
@@ -159,7 +173,7 @@ async fn suggestion(now: NaiveDateTime, ctx: &mut Ctx) -> anyhow::Result<()> {
     if outlet(Spontaneous::Suggestion, now, ctx).await != Outlet::Written {
         return Ok(());
     }
-    let Ok(client) = ctx.agent.router().client("suggestion", Sensitivity::Strategic, Urgency::Deferred) else {
+    let Ok(client) = engine(ctx.agent.router(), "suggestion", Urgency::Deferred) else {
         return Ok(());
     };
     let period = if now.time() < NaiveTime::from_hms_opt(14, 0, 0).expect("heure valide") { "matin" } else { "soir" };
@@ -168,7 +182,7 @@ async fn suggestion(now: NaiveDateTime, ctx: &mut Ctx) -> anyhow::Result<()> {
         now.format("%Y-%m-%d %H:%M"),
         brief_sections(period, ctx).await.join("\n\n")
     );
-    let text = match client.chat(SUGGESTION_PROMPT, &[ChatTurn::User(context)], &[]).await {
+    let text = match chat(&client, Urgency::Deferred, SUGGESTION_PROMPT, &[ChatTurn::User(context)], &[]).await {
         Ok(r) => r.text.unwrap_or_default(),
         Err(e) => {
             tracing::warn!(erreur = %format!("{e:#}"), "suggestion : échec du moteur");
@@ -236,8 +250,7 @@ struct Summary {
 /// Une conversation non résumée (lecture, moteur ou sortie en échec) reste
 /// pour la nuit suivante ; les autres sont traitées.
 async fn summaries(ctx: &Ctx) -> anyhow::Result<()> {
-    let Ok(client) = ctx.agent.router().client("resume_conversation", Sensitivity::Strategic, Urgency::Deferred)
-    else {
+    let Ok(client) = engine(ctx.agent.router(), "resume_conversation", Urgency::Deferred) else {
         return Ok(());
     };
     let lists = ctx.tentacles.call_conventional("conversations_unsummarized", json!({"limit": SUMMARY_BATCH})).await;
@@ -272,7 +285,7 @@ async fn summarize(client: &LlmClient, name: &str, id: i64, ctx: &Ctx) -> anyhow
         .map_err(|e| anyhow!("lecture : {e}"))?;
     let got: Value = serde_json::from_str(&got).map_err(|_| anyhow!("lecture illisible"))?;
     let transcript = got["transcript"].as_str().ok_or_else(|| anyhow!("transcription absente"))?;
-    let reply = client.chat(SUMMARY_PROMPT, &[ChatTurn::User(transcript.to_string())], &[]).await?;
+    let reply = chat(client, Urgency::Deferred, SUMMARY_PROMPT, &[ChatTurn::User(transcript.to_string())], &[]).await?;
     let s: Summary = serde_json::from_str(unfence(reply.text.as_deref().unwrap_or_default()))
         .map_err(|_| anyhow!("résumé hors schéma"))?;
     let args = json!({"id": id, "summary": s.summary, "topics": s.topics, "decisions": s.decisions});

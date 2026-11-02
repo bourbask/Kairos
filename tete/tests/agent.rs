@@ -110,9 +110,14 @@ struct Script {
 type Shared = Arc<Mutex<Script>>;
 
 async fn completions(AxState(s): AxState<Shared>, Json(body): Json<Value>) -> (StatusCode, Json<Value>) {
-    let mut s = s.lock().unwrap();
-    s.requests.push(body);
-    match s.replies.pop_front() {
+    let reply = {
+        let mut s = s.lock().unwrap();
+        s.requests.push(body);
+        s.replies.pop_front()
+    };
+    match reply {
+        // `"pendre"` simule un moteur qui ne répond jamais.
+        Some(Value::String(h)) if h == "pendre" => std::future::pending().await,
         // `null` dans le script simule une panne du moteur.
         Some(message) if !message.is_null() => (StatusCode::OK, Json(json!({"choices": [{"message": message}]}))),
         _ => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({}))),
@@ -131,6 +136,12 @@ fn call(id: &str, name: &str, args: Value) -> Value {
 }
 
 async fn llm(replies: Vec<Value>) -> (LlmRouter, Shared) {
+    llm_for(&["conversation"], replies).await
+}
+
+/// Seuls `usages` sont déclarés ; la voie auto-hébergée pointe aussi sur le
+/// moteur factice, comme quand l'environnement la renseigne.
+async fn llm_for(usages: &[&str], replies: Vec<Value>) -> (LlmRouter, Shared) {
     let shared: Shared = Arc::new(Mutex::new(Script { replies: replies.into(), ..Default::default() }));
     let app = Router::new().route("/v1/chat/completions", post(completions)).with_state(shared.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -147,8 +158,9 @@ async fn llm(replies: Vec<Value>) -> (LlmRouter, Shared) {
         daily_token_cap: None,
     };
     let config = LlmRoutingConfig {
+        self_hosted: Some(engine.llm.clone()),
         engines: HashMap::from([("e".into(), engine)]),
-        usages: HashMap::from([("conversation".into(), "e".into())]),
+        usages: usages.iter().map(|u| (u.to_string(), "e".to_string())).collect(),
         ..Default::default()
     };
     (LlmRouter::from_config(config), shared)
@@ -377,4 +389,30 @@ async fn idle_session_is_ingested_then_cleared() {
     let s = shared.lock().unwrap();
     let users = s.requests.last().unwrap()["messages"].as_array().unwrap().iter().filter(|m| m["role"] == "user").count();
     assert_eq!(users, 1);
+}
+
+#[tokio::test]
+async fn undeclared_usage_degrades_like_no_engine() {
+    let (t, _) = tentacle("AG_T13").await;
+    let (router, shared) = llm_for(&["brief"], vec![text("ne doit pas servir")]).await;
+    let state = State::open_in_memory().unwrap();
+    let mut agent = Agent::new(router, IDLE);
+    assert_eq!(
+        agent.reply("salut", at(9, 0), &t, &state).await,
+        "Conversation indisponible : aucun moteur configuré."
+    );
+    assert!(shared.lock().unwrap().requests.is_empty());
+}
+
+#[tokio::test]
+async fn hung_engine_times_out() {
+    tete::agent::override_llm_timeout(Duration::from_millis(300));
+    let (t, _) = tentacle("AG_T14").await;
+    let (router, _) = llm(vec![json!("pendre")]).await;
+    let state = State::open_in_memory().unwrap();
+    let mut agent = Agent::new(router, IDLE);
+    assert_eq!(
+        agent.reply("salut", at(9, 0), &t, &state).await,
+        "Je n'arrive pas à joindre mon moteur pour l'instant."
+    );
 }

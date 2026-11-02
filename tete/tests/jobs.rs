@@ -134,9 +134,14 @@ struct Script {
 type Shared = Arc<Mutex<Script>>;
 
 async fn completions(AxState(s): AxState<Shared>, Json(body): Json<Value>) -> (StatusCode, Json<Value>) {
-    let mut s = s.lock().unwrap();
-    s.requests.push(body);
-    match s.replies.pop_front() {
+    let reply = {
+        let mut s = s.lock().unwrap();
+        s.requests.push(body);
+        s.replies.pop_front()
+    };
+    match reply {
+        // `"pendre"` simule un moteur qui ne répond jamais.
+        Some(Value::String(h)) if h == "pendre" => std::future::pending().await,
         Some(message) => (StatusCode::OK, Json(json!({"choices": [{"message": message}]}))),
         None => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({}))),
     }
@@ -159,6 +164,8 @@ async fn llm(usages: &[&str], replies: Vec<Value>) -> (LlmRouter, Shared) {
         daily_token_cap: None,
     };
     let config = LlmRoutingConfig {
+        // Voie auto-hébergée renseignée comme par l'environnement : un usage non déclaré ne doit pas la prendre.
+        self_hosted: Some(engine.llm.clone()),
         engines: HashMap::from([("e".into(), engine)]),
         usages: usages.iter().map(|u| (u.to_string(), "e".to_string())).collect(),
         ..Default::default()
@@ -477,4 +484,31 @@ async fn long_transcript_reaches_engine_whole() {
     assert_eq!(fx.rec.summaries.lock().unwrap().len(), 1);
     let s = fx.llm.lock().unwrap();
     assert_eq!(s.requests[0]["messages"][1]["content"].as_str().unwrap(), long);
+}
+
+#[tokio::test]
+async fn undeclared_usages_call_no_engine() {
+    let mut fx = fixture("JB_T14", &[], vec![text("reformulé"), text("Une idée.")]).await;
+    *fx.rec.unsummarized.lock().unwrap() = r#"[{"id": 7}]"#.into();
+    *fx.rec.transcripts.lock().unwrap() = HashMap::from([(7, "a".to_string())]);
+    run(Job::MorningBrief, at(7, 7, 30), &mut fx.ctx).await.unwrap();
+    run(Job::Suggestion, at(7, 15, 0), &mut fx.ctx).await.unwrap();
+    run(Job::Summaries, at(7, 3, 0), &mut fx.ctx).await.unwrap();
+    assert!(fx.llm.lock().unwrap().requests.is_empty());
+    assert_eq!(sent(&fx.gw), vec!["Brief du matin\n\n- rendez-vous (matin) à 10:00".to_string()]);
+}
+
+#[tokio::test]
+async fn hung_engine_sends_raw_brief() {
+    tete::agent::override_llm_timeout(Duration::from_millis(300));
+    let mut fx = fixture("JB_T15", &["brief"], vec![json!("pendre")]).await;
+    run(Job::MorningBrief, at(7, 7, 30), &mut fx.ctx).await.unwrap();
+    assert_eq!(sent(&fx.gw), vec!["Brief du matin\n\n- rendez-vous (matin) à 10:00".to_string()]);
+}
+
+#[tokio::test]
+async fn reworded_brief_losing_a_number_is_sent_raw() {
+    let mut fx = fixture("JB_T16", &["brief"], vec![text("Un rendez-vous à 11:00.")]).await;
+    run(Job::MorningBrief, at(7, 7, 30), &mut fx.ctx).await.unwrap();
+    assert_eq!(sent(&fx.gw), vec!["Brief du matin\n\n- rendez-vous (matin) à 10:00".to_string()]);
 }

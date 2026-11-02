@@ -144,8 +144,30 @@ Configuration : copier `config/tete.example.toml` en `config/tete.toml` (gitigno
 `TETE_CONFIG`, `TETE_DB` (défaut `data/tete.db`). Port hôte : `TETE_BIND_PORT` (8093), publié sur `${TENTACLES_BIND_ADDR:-127.0.0.1}`.
 
 Moteur de langage : `config/llm.toml` doit déclarer les usages `conversation`, `resume_conversation`, `brief` et
-`suggestion`. Tous sont sensibles : si le moteur est externe, chacun exige une concession explicite dans
-`llm.toml`. Sans usage configuré, la tête se dégrade proprement (briefs bruts, réponse fixe, ni suggestions ni résumés).
+`suggestion` dans `[usages]`. Tous sont sensibles : si le moteur est externe, chacun exige une concession explicite
+dans `strategic_concessions`. La tête n'utilise que les usages déclarés : la voie auto-hébergée par défaut (y compris
+celle renseignée par l'environnement) ne sert jamais de repli. Un usage non déclaré se dégrade proprement : réponse
+fixe en conversation, brief envoyé brut, ni suggestion ni résumé.
+
+```toml
+# Seulement si le moteur est externe : chaque usage listé quitte la machine.
+strategic_concessions = ["conversation", "resume_conversation", "brief", "suggestion"]
+
+[engines.principal]
+endpoint = ""
+model = ""
+protocol = ""    # "ollama", "openai-compatible" ou "messages"
+placement = ""   # "self_hosted" ou "external"
+
+[usages]
+conversation = "principal"
+resume_conversation = "principal"
+brief = "principal"
+suggestion = "principal"
+```
+
+Après chaque redémarrage, le premier passage de la minute peut tenter une suggestion : elle reste bornée par le
+budget quotidien d'interruptions et par la politique de sortie.
 
 ```bash
 docker compose build scheduler

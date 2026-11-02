@@ -1,11 +1,12 @@
 //! Boucle d'agent : conversation avec les outils des tentacules et deux outils
 //! intégrés, sessions bornées par l'inactivité et archivées à leur clôture.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context, anyhow, bail};
 use chrono::{Datelike, NaiveDateTime, TimeDelta, Weekday};
-use kairos::llm::{ChatTurn, LlmRouter, Sensitivity, ToolCall, ToolSpec, Urgency};
+use kairos::llm::{ChatReply, ChatTurn, LlmClient, LlmRouter, Sensitivity, ToolCall, ToolSpec, Urgency};
 use serde_json::{Value, json};
 
 use crate::config::WorkMode;
@@ -16,6 +17,10 @@ pub const MAX_TOOL_ROUNDS: usize = 8;
 const MAX_TURNS: usize = 40;
 const MAX_PENDING: usize = 20;
 const TS: &str = "%Y-%m-%d %H:%M";
+const INTERACTIVE_TIMEOUT: Duration = Duration::from_secs(180);
+const DEFERRED_TIMEOUT: Duration = Duration::from_secs(600);
+/// Délai imposé par les tests, en millisecondes ; 0 = délais normaux.
+static TIMEOUT_OVERRIDE_MS: AtomicU64 = AtomicU64::new(0);
 
 const NO_ENGINE_MSG: &str = "Conversation indisponible : aucun moteur configuré.";
 const LLM_DOWN_MSG: &str = "Je n'arrive pas à joindre mon moteur pour l'instant.";
@@ -40,6 +45,39 @@ impl std::fmt::Display for NoEngine {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("aucun moteur pour cet usage")
     }
+}
+
+/// Raccourcit le délai d'attente des moteurs ; réservé aux tests.
+#[doc(hidden)]
+pub fn override_llm_timeout(d: Duration) {
+    TIMEOUT_OVERRIDE_MS.store(d.as_millis().try_into().unwrap_or(u64::MAX), Ordering::Relaxed);
+}
+
+/// Client du moteur de `usage`. Un usage non déclaré compte comme absent
+/// (`NoEngine`) : aucun repli implicite vers une voie par défaut.
+pub fn engine(router: &LlmRouter, usage: &str, urgency: Urgency) -> anyhow::Result<LlmClient> {
+    if !router.has_usage(usage) {
+        return Err(anyhow::Error::msg(NoEngine));
+    }
+    router.client(usage, Sensitivity::Strategic, urgency).context(NoEngine)
+}
+
+/// Appel au moteur borné dans le temps : un moteur muet ne bloque pas la boucle.
+pub async fn chat(
+    client: &LlmClient,
+    urgency: Urgency,
+    system: &str,
+    turns: &[ChatTurn],
+    tools: &[ToolSpec],
+) -> anyhow::Result<ChatReply> {
+    let limit = match (TIMEOUT_OVERRIDE_MS.load(Ordering::Relaxed), urgency) {
+        (0, Urgency::Interactive) => INTERACTIVE_TIMEOUT,
+        (0, _) => DEFERRED_TIMEOUT,
+        (ms, _) => Duration::from_millis(ms),
+    };
+    tokio::time::timeout(limit, client.chat(system, turns, tools))
+        .await
+        .map_err(|_| anyhow!("délai du moteur dépassé"))?
 }
 
 pub struct Agent {
@@ -184,13 +222,13 @@ pub async fn run_tools_loop(
     tentacles: &Tentacles,
     state: &State,
 ) -> anyhow::Result<String> {
-    let client = router.client(usage, Sensitivity::Strategic, urgency).context(NoEngine)?;
+    let client = engine(router, usage, urgency)?;
     let mut tools = tentacles.tool_specs();
     tools.extend(builtin_specs());
 
     // `MAX_TOOL_ROUNDS` tours d'outils, puis une dernière chance de répondre.
     for round in 0..=MAX_TOOL_ROUNDS {
-        let reply = client.chat(system, &turns, &tools).await?;
+        let reply = chat(&client, urgency, system, &turns, &tools).await?;
         if reply.tool_calls.is_empty() {
             return reply.text.filter(|t| !t.trim().is_empty()).ok_or_else(|| anyhow!("réponse vide"));
         }
