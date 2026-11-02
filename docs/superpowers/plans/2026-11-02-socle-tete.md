@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Un processus `tete` qui converse dans un salon de messagerie privé avec les outils de tous les tentacules configurés, envoie les briefs écrits matin et soir, propose de rares suggestions sous budget, respecte la politique de canal et résume en différé les conversations archivées.
+**Goal:** Un processus `tete` qui converse sur un canal de messagerie privé avec les outils de tous les tentacules configurés, envoie les briefs écrits matin et soir, propose de rares suggestions sous budget, respecte la politique de canal et résume en différé les conversations archivées.
 
-**Architecture:** Nouvelle crate de workspace `tete` (binaire long, tokio). Elle consomme `kairos` (routeur LLM, `chat`, masquage, plafond) et parle MCP en client HTTP aux tentacules listés en configuration. Messagerie par l'API client-serveur du protocole, en HTTP brut (`reqwest`), sans SDK. État propre à la tête (rythme modifié, mises en sourdine, file d'attente, budget) dans une base SQLite dédiée `tete.db`. Planification interne (boucle à la minute), pas de cron.
+**Architecture:** Nouvelle crate de workspace `tete` (binaire long, tokio). Elle consomme `kairos` (routeur LLM, `chat`, masquage, plafond) et parle MCP en client HTTP aux tentacules listés en configuration. La tête ne parle **aucun protocole de messagerie** : elle expose une petite API HTTP neutre (message entrant) et poste ses messages sortants vers une passerelle externe, hors dépôt, qui fait l'adaptation au service de messagerie. État propre à la tête (rythme modifié, mises en sourdine, file d'attente, budget) dans une base SQLite dédiée `tete.db`. Planification interne (boucle à la minute), pas de cron.
 
 **Tech Stack:** Rust 2024, tokio, rmcp 3.8 (client), reqwest, rusqlite, chrono / chrono-tz, axum (serveurs factices de test uniquement).
 
@@ -16,19 +16,19 @@
 
 ## Global Constraints
 
-- Repo public : aucun hôte, identifiant de salon ou de compte, fournisseur, nom de tentacule réel dans le code, les commentaires, les exemples ou les commits. Valeurs identifiantes uniquement en variables d'environnement (`kairos.env`) ou dans `config/tete.toml` (gitignoré). `config/tete.example.toml` neutre, placeholders vides.
+- Repo public : aucun hôte, identifiant de canal ou de compte, fournisseur, nom de tentacule réel dans le code, les commentaires, les exemples ou les commits. Valeurs identifiantes uniquement en variables d'environnement (`kairos.env`) ou dans `config/tete.toml` (gitignoré). `config/tete.example.toml` neutre, placeholders vides.
 - Le code de la tête ne nomme **aucun tentacule**. Il ne connaît que des **noms d'outils conventionnels** : `brief_section`, `busy_at`, `persona_get`, `conversation_ingest`, `conversations_unsummarized`, `conversation_set_summary`. Un tentacule qui n'expose pas l'outil est ignoré pour ce rôle.
-- Provenance stricte, fail-closed : seul l'événement texte venant de l'identifiant utilisateur configuré, dans le salon configuré, est traité. Tout le reste est ignoré sans réponse.
+- Provenance stricte, fail-closed : la passerelle ne transmet que les messages texte de l'utilisateur configuré sur son canal privé ; la tête n'accepte que les appels portant le jeton de la passerelle (comparaison à temps constant, `tentacle_common::with_bearer`). Aucun nom de service, de protocole ou de bibliothèque de messagerie dans le dépôt.
 - Le LLM ne calcule aucun montant, ne voit aucune base en bloc ; les résultats d'outils sont tronqués à `TOOL_RESULT_MAX_CHARS = 8000`.
 - Usages routeur : `conversation`, `resume_conversation`, `brief`, `suggestion`. Tous en `Sensitivity::Strategic` (la sortie externe exige une concession dans `llm.toml` de l'hôte, mécanisme existant). Urgence : `Interactive` pour `conversation`, `Deferred` pour les autres.
 - Aucun usage configuré → dégradation propre : briefs envoyés en concaténation brute, réponse fixe en conversation (`"Conversation indisponible : aucun moteur configuré."`), ni suggestions ni résumés.
-- Sobriété mémoire : `mem_limit: 64m` en compose. Pas de SDK de messagerie.
+- Sobriété mémoire : `mem_limit: 64m` en compose.
 - Sorties spontanées : uniquement écrites dans le socle (aucun signal téléphone ⇒ voix interdite).
 - Commentaires = intention seule. Commits `--no-gpg-sign`, aucune attribution IA.
 
 ## Décisions prises par ce plan (à valider en relecture)
 
-- **Pas de chiffrement de bout en bout** dans le socle : le salon doit être non chiffré. Un client chiffré coûte un SDK lourd et un stockage de clés. `// ponytail:` dans le code ; reprise quand le client mobile arrivera.
+- **Passerelle de messagerie hors dépôt** : contrat HTTP neutre décrit en tâche 3 ; l'adaptateur réel vit dans la configuration privée de l'hôte.
 - **État de la politique dans la tête, pas dans le tentacule mémoire.** La spec range les exceptions (« pas de brief demain ») dans la mémoire immédiate. Un garde-fou codé ne peut pas dépendre d'un texte libre d'intention ; la tête expose donc deux outils intégrés (`quiet`, `set_work_day`) qui écrivent dans `tete.db`. Coût si faux : migrer deux tables.
 - **Session de conversation = messages séparés de moins de `session_idle_minutes` (défaut 30).** À l'inactivité, la transcription part vers `conversation_ingest` (`channel = "messagerie"`, `device = "tete"`, `session_id = "tete-<début AAAAMMJJHHMM>"`) ; l'historique en mémoire est vidé.
 - **Synchronisation agenda plus fréquente** (toutes les 30 min en journée ouvrée) pour que les réunions ajoutées dans la journée soient vues par `busy_at`.
@@ -37,10 +37,10 @@
 ## Review Focus
 
 1. Tentacule injoignable au démarrage ou en cours de route → la tête démarre quand même, ses outils disparaissent de la liste, reconnexion à chaque rafraîchissement (5 min) ; une conversation ne plante jamais.
-2. Redémarrage de la tête → l'arriéré du salon n'est **pas** rejoué (la première synchro sert seulement à obtenir le jeton `since`).
+2. Passerelle injoignable à l'envoi → message conservé dans la file (`State::enqueue`, kind `retry`) et renvoyé au vidage suivant, jamais perdu.
 3. Modèle qui boucle sur les outils → coupure à `MAX_TOOL_ROUNDS = 8`, réponse `"Je m'arrête là : trop d'appels d'outils."`.
 4. Brief du matin tombant dans une plage bloquée (télétravail en réunion) → mis en file, parti regroupé à la fin de la plage ; brief d'un jour « sauté » → jamais envoyé.
-5. Message utilisateur très long ou réponse modèle très longue → entrée tronquée à `MAX_INPUT_CHARS = 8000`, sortie découpée en messages de `MAX_MESSAGE_CHARS = 16000`.
+5. Message utilisateur très long ou réponse modèle très longue → entrée tronquée à `MAX_INPUT_CHARS = 8000`, sortie envoyée entière (découpage à la charge de la passerelle).
 
 ---
 
@@ -52,7 +52,7 @@ tete/
   src/main.rs        démarrage, boucle principale (messages + horloge)
   src/config.rs      HeadConfig (TOML + env)
   src/tentacles.rs   client MCP multi-tentacules, outils préfixés, appels conventionnels
-  src/messaging.rs   client du protocole de messagerie (sync longue, envoi, filtre de provenance)
+  src/gateway.rs     API entrante neutre + envoi vers la passerelle
   src/state.rs       tete.db : rythme, sourdines, file d'attente, budget, dernières exécutions
   src/policy.rs      politique de canal (fonction pure)
   src/agent.rs       boucle d'agent, outils intégrés, sessions
@@ -71,15 +71,15 @@ deploy/docker/…      service tete, crontab, README
 
 **Interfaces:**
 - Produces:
-  - `pub struct HeadConfig { pub tentacles: Vec<TentacleEntry>, pub schedule: Schedule, pub work: WorkRhythm, pub interruptions_per_day: u32, pub suggestion_every_minutes: u32, pub session_idle_minutes: u32, pub messaging: MessagingEnv }`
+  - `pub struct HeadConfig { pub tentacles: Vec<TentacleEntry>, pub schedule: Schedule, pub work: WorkRhythm, pub interruptions_per_day: u32, pub suggestion_every_minutes: u32, pub session_idle_minutes: u32, pub gateway: GatewayEnv }`
   - `pub struct TentacleEntry { pub name: String, pub url: String, pub token_env: String }` — `name` sert de préfixe d'outil, choisi par l'opérateur.
   - `pub struct Schedule { pub morning: NaiveTime, pub evening: NaiveTime, pub summaries: NaiveTime, pub quiet_start: NaiveTime, pub quiet_end: NaiveTime }` — `quiet_*` : nuit, aucune sortie spontanée (mise en file).
   - `pub struct WorkRhythm { pub start: NaiveTime, pub end: NaiveTime, pub days: BTreeMap<Weekday, WorkMode> }`, `pub enum WorkMode { OnSite, Remote, Off }` (serde `"on_site" | "remote" | "off"`, jour absent = `Off`).
-  - `pub struct MessagingEnv { pub homeserver: String, pub token: String, pub room_id: String, pub user_id: String, pub bot_user_id: String }` lu dans l'environnement : `TETE_HOMESERVER`, `TETE_TOKEN`, `TETE_ROOM_ID`, `TETE_USER_ID`, `TETE_BOT_USER_ID`.
+  - `pub struct GatewayEnv { pub bind: SocketAddr, pub inbound_token: String, pub outbound_url: String, pub outbound_token: String }` lu dans l'environnement : `TETE_BIND` (défaut `0.0.0.0:8090`), `TETE_INBOUND_TOKEN`, `TETE_OUTBOUND_URL`, `TETE_OUTBOUND_TOKEN`.
   - `HeadConfig::load(path: &Path) -> anyhow::Result<HeadConfig>` : erreur si une variable `TETE_*` manque ou est vide, ou si un `token_env` référencé est absent (message nommant la variable, jamais sa valeur).
   - Defaults : `interruptions_per_day = 2`, `suggestion_every_minutes = 120`, `session_idle_minutes = 30`, `morning = 07:30`, `evening = 21:00`, `summaries = 03:00`, `quiet_start = 22:30`, `quiet_end = 07:00`.
 
-- [ ] **Step 1: Tests** dans `config.rs` : `parses_example_with_env` (l'exemple + env factice → valeurs par défaut ci-dessus, `days` vide), `missing_env_is_named_error` (sans `TETE_ROOM_ID` → l'erreur contient `TETE_ROOM_ID`), `token_value_never_in_error` (variable de jeton de tentacule vide → l'erreur nomme la variable et ne contient pas la valeur d'une autre variable posée).
+- [ ] **Step 1: Tests** dans `config.rs` : `parses_example_with_env` (l'exemple + env factice → valeurs par défaut ci-dessus, `days` vide), `missing_env_is_named_error` (sans `TETE_OUTBOUND_URL` → l'erreur contient `TETE_OUTBOUND_URL`), `token_value_never_in_error` (variable de jeton de tentacule vide → l'erreur nomme la variable et ne contient pas la valeur d'une autre variable posée).
 - [ ] **Step 2:** `cargo test -p tete` → échec (crate absente).
 - [ ] **Step 3:** crate (dépendances : `kairos = { path = ".." }`, `tokio`, `rmcp` features `client`, `transport-streamable-http-client-reqwest`, `reqwest`, `rusqlite` (même version que le workspace), `serde`, `toml`, `chrono`, `chrono-tz`, `anyhow`, `tracing`, `tracing-subscriber`, `serde_json` ; dev : `axum`, `tentacle-common`, `tempfile`). `main.rs` réduit à charger la config et journaliser « tête prête ». Exemple neutre, commenté par intention.
 - [ ] **Step 4:** `cargo test -p tete` → vert.
@@ -104,23 +104,20 @@ deploy/docker/…      service tete, crontab, README
 - [ ] **Step 4:** vert.
 - [ ] **Step 5:** commit `feat(tete): client des tentacules`.
 
-### Task 3: Client de messagerie
+### Task 3: Passerelle de messagerie (contrat neutre)
 
-**Files:** Create `tete/src/messaging.rs`; test `tete/tests/messaging.rs` (serveur factice axum)
+**Files:** Create `tete/src/gateway.rs`; test `tete/tests/gateway.rs`
 
 **Interfaces:**
-- Consumes: `MessagingEnv`.
+- Consumes: `GatewayEnv`.
 - Produces:
-  - `pub struct Messenger` ; `Messenger::new(env: MessagingEnv) -> Messenger`.
-  - `pub async fn prime(&mut self) -> anyhow::Result<()>` — synchro initiale `timeout=0`, conserve `next_batch`, **ignore** les événements reçus.
-  - `pub async fn next_messages(&mut self) -> anyhow::Result<Vec<String>>` — `GET /_matrix/client/v3/sync?since=…&timeout=30000` ; ne garde que `m.room.message`, `msgtype == "m.text"`, salon `room_id`, `sender == user_id` ; tronque chaque corps à `MAX_INPUT_CHARS`.
-  - `pub async fn send(&self, text: &str) -> anyhow::Result<()>` — `PUT /_matrix/client/v3/rooms/{room}/send/m.room.message/{txn}` (txn unique : horodatage + compteur) ; découpe en morceaux de `MAX_MESSAGE_CHARS` aux fins de ligne si possible.
-  - Échec réseau de `next_messages` : erreur ; l'appelant attend 5 s puis réessaie (pas de plantage).
-- Jeton en en-tête `Authorization`, jamais dans l'URL ni les journaux.
+  - `pub fn inbound_router(tx: tokio::sync::mpsc::Sender<String>, token: String) -> axum::Router` — `POST /message`, corps JSON `{"text": string}`, protégé par `tentacle_common::with_bearer` ; texte vide → 400 ; corps > 64 Kio → 413 ; file pleine (capacité 16) → 503 ; sinon 202, texte tronqué à `MAX_INPUT_CHARS` puis envoyé dans `tx`. Aucune réponse synchrone : la réponse de la tête repart par l'envoi sortant.
+  - `pub struct Outbound` ; `Outbound::new(env: &GatewayEnv) -> Outbound` ; `pub async fn send(&self, text: &str) -> anyhow::Result<()>` — `POST <outbound_url>`, corps `{"text": string}`, en-tête `Authorization: Bearer <outbound_token>`, délai 15 s, statut non 2xx → erreur (jeton jamais dans l'erreur ni les journaux).
+- Contrat documenté dans `deploy/docker/README.md` (tâche 8) en termes neutres : la passerelle filtre l'expéditeur et le canal, ignore l'arriéré à son démarrage, découpe les messages trop longs.
 
-- [ ] **Step 1: Tests** contre un serveur factice : `prime_skips_backlog` (événement présent à la 1re synchro → `next_messages` suivant ne le rend pas) ; `filters_sender_room_and_type` (autres expéditeur / salon / `m.notice` / message du bot → ignorés) ; `send_splits_long_text` (40 000 caractères → 3 PUT, txn distincts) ; `token_in_header_not_url`.
-- [ ] **Step 2–4:** rouge, implémentation, vert. `// ponytail: salon non chiffré, chiffrement de bout en bout avec le client mobile`.
-- [ ] **Step 5:** commit `feat(tete): client de messagerie`.
+- [ ] **Step 1: Tests** : sans jeton / mauvais jeton → 401 et rien dans `tx` ; bon jeton → 202 et texte reçu ; texte vide → 400 ; 10 000 caractères → reçu tronqué à 8000 ; `Outbound::send` contre un serveur factice axum : corps et en-tête reçus ; statut 500 → `Err` dont le texte ne contient pas le jeton.
+- [ ] **Step 2–4:** rouge, implémentation, vert.
+- [ ] **Step 5:** commit `feat(tete): passerelle de messagerie`.
 
 ### Task 4: État de la tête (`tete.db`)
 
@@ -194,7 +191,7 @@ deploy/docker/…      service tete, crontab, README
     - `Summaries` : idem à `schedule.summaries`.
     - `Suggestion` : toutes les `suggestion_every_minutes` (clé `last_run` + horodatage minute en mémoire suffit), seulement si `interruptions_on(today) < interruptions_per_day`.
     - `Flush` : chaque minute si la file n'est pas vide.
-  - `pub async fn run(job: Job, ctx: &mut Ctx) -> anyhow::Result<()>` avec `pub struct Ctx { cfg, state, tentacles, router, messenger }`.
+  - `pub async fn run(job: Job, ctx: &mut Ctx) -> anyhow::Result<()>` avec `pub struct Ctx { cfg, state, tentacles, router, outbound }`.
 - Comportements :
   - **Brief** : `call_conventional("brief_section", {"period": "matin"|"soir"})`, sections non vides concaténées dans l'ordre de la configuration sous un titre `Brief du matin` / `Brief du soir` ; usage `brief` disponible → reformulé en un texte unique (consigne : ne rien ajouter, ne rien inventer, garder chiffres et heures) ; sinon tel quel. Rien à dire → rien envoyé. Puis `decide(Brief, …)` : `Written` → envoi ; `Hold` → `enqueue` ; `Drop` → rien. `set_last_run` dans tous les cas.
   - **Suggestion** : usage `suggestion` absent → rien. Sinon un tour de boucle d'agent sans historique, outils des tentacules en lecture, consigne : « propose au plus une chose utile maintenant, ou réponds exactement `RIEN` ». `RIEN` (casse et espaces ignorés) → rien. Sinon `decide(Suggestion, …)` ; `Written` → envoi + `record_interruption` ; `Hold` → **abandon** (une suggestion périmée n'a pas de valeur) ; ne compte pas dans le budget.
@@ -211,15 +208,15 @@ deploy/docker/…      service tete, crontab, README
 **Files:**
 - Modify: `tete/src/main.rs`, `deploy/docker/Dockerfile`, `deploy/docker/docker-compose.yml`, `deploy/docker/supercronic.crontab`, `deploy/docker/deploy.sh`, `deploy/docker/README.md`, `deploy/kairos.env.example`
 
-- [ ] **Step 1:** `main.rs` : charger config + `llm.toml` (`LlmRouter::load`), ouvrir `State` (`data/tete.db`), `Tentacles::connect`, `Messenger::prime` ; boucle `tokio::select!` : messages entrants (réponse séquentielle, toujours écrite), tic d'une minute (`end_session_if_idle`, `due` → `run`, `refresh` des tentacules toutes les 5 min). Toute erreur d'itération journalisée, la boucle continue.
-- [ ] **Step 2:** Docker : binaire `tete` construit dans l'image existante ; service `tete` (`mem_limit: 64m`, `restart: unless-stopped`, env `kairos.env`, volumes `data` en rw et `config` en lecture, réseau interne du compose pour joindre les tentacules, aucun `ports:`). `deploy.sh` lance aussi `tete`. Crontab : `*/30 7-19 * * 1-5 /app/kairos calendar sync`. Variables `TETE_*` vides dans `kairos.env.example`. README : créer le compte bot sur le serveur de messagerie, salon privé **non chiffré** avec l'utilisateur, récupérer le jeton, déclarer les concessions `conversation`, `resume_conversation`, `brief`, `suggestion` dans `llm.toml` si le moteur est externe.
-- [ ] **Step 3: Vérification** : `cargo test --workspace` vert ; `docker compose config -q` sans erreur ; `tete` lancé sans `TETE_TOKEN` refuse de démarrer avec un message nommant la variable.
+- [ ] **Step 1:** `main.rs` : charger config + `llm.toml` (`LlmRouter::load`), ouvrir `State` (`data/tete.db`), `Tentacles::connect`, serveur `inbound_router` sur `TETE_BIND` ; boucle `tokio::select!` : messages reçus du canal (réponse séquentielle, toujours envoyée par `Outbound::send` ; échec → `enqueue("retry", …)`), tic d'une minute (`end_session_if_idle`, `due` → `run`, `refresh` des tentacules toutes les 5 min). Toute erreur d'itération journalisée, la boucle continue.
+- [ ] **Step 2:** Docker : binaire `tete` construit dans l'image existante ; service `tete` (`mem_limit: 64m`, `restart: unless-stopped`, env `kairos.env`, volumes `data` en rw et `config` en lecture, réseau interne du compose pour joindre les tentacules ; port `TETE_BIND_PORT` (8090) publié sur `${TENTACLES_BIND_ADDR:-127.0.0.1}` seulement, pour la passerelle). `deploy.sh` lance aussi `tete`. Crontab : `*/30 7-19 * * 1-5 /app/kairos calendar sync`. Variables `TETE_*` vides dans `kairos.env.example`. README : contrat de la passerelle (tâche 3) en termes neutres, génération des deux jetons (`openssl rand -hex 32`), déclarer les concessions `conversation`, `resume_conversation`, `brief`, `suggestion` dans `llm.toml` si le moteur est externe.
+- [ ] **Step 3: Vérification** : `cargo test --workspace` vert ; `docker compose config -q` sans erreur ; `tete` lancé sans `TETE_INBOUND_TOKEN` refuse de démarrer avec un message nommant la variable.
 - [ ] **Step 4:** passe OSINT sur le diff complet de la branche (aucun hôte, identifiant, fournisseur, nom de tentacule réel ; exemples neutres).
 - [ ] **Step 5:** commit `feat(tete): assemblage et déploiement`.
 
 ## Après fusion (opérateur, hors repo)
 
-1. Créer le compte bot, le salon privé non chiffré, inviter l'utilisateur ; renseigner `TETE_*` dans `kairos.env`.
+1. Installer la passerelle (procédure dans la documentation privée) ; renseigner `TETE_*` dans `kairos.env`.
 2. `config/tete.toml` sur l'hôte : tentacules (URL internes du compose + variables de jeton), rythme de travail, horaires.
 3. `llm.toml` : moteurs et usages, concessions des quatre usages si moteur externe, plafond quotidien.
 4. Déployer.
