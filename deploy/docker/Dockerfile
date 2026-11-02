@@ -4,7 +4,7 @@
 FROM rust:1-bookworm AS build
 WORKDIR /src
 COPY . .
-RUN cargo build --release --bin kairos
+RUN cargo build --release -p kairos -p kairos-memoire -p kairos-agenda
 
 # ---- Runtime ----
 FROM debian:bookworm-slim
@@ -18,7 +18,9 @@ RUN curl -fsSL -o /usr/local/bin/supercronic \
       "https://github.com/aptible/supercronic/releases/download/${SUPERCRONIC_VERSION}/supercronic-linux-amd64" \
  && chmod +x /usr/local/bin/supercronic
 WORKDIR /app
-COPY --from=build /src/target/release/kairos /app/kairos
+# Répertoire de la base mémoire : propriété de l'utilisateur d'exécution (hérité par le volume nommé).
+RUN mkdir -p /app/memoire && chown 1001:1001 /app/memoire
+COPY --from=build /src/target/release/kairos /src/target/release/kairos-memoire /src/target/release/kairos-agenda /app/
 COPY deploy/docker/supercronic.crontab /app/supercronic.crontab
 # config/profile.toml monté en volume sur /app/config ; data + briefings via env (volumes).
 ENTRYPOINT ["/app/kairos"]

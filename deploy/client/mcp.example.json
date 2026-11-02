@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "kairos-memoire": {
+      "type": "http",
+      "url": "${KAIROS_MEMOIRE_URL}",
+      "headers": { "Authorization": "Bearer ${KAIROS_MEMOIRE_TOKEN}" }
+    },
+    "kairos-agenda": {
+      "type": "http",
+      "url": "${KAIROS_AGENDA_URL}",
+      "headers": { "Authorization": "Bearer ${KAIROS_AGENDA_TOKEN}" }
+    }
+  }
+}
