@@ -1,0 +1,31 @@
+# Tentacule médias : tourne sur la machine qui héberge la stack média, dans
+# son réseau Docker, pour joindre les services par leur nom interne.
+#
+#   cp medias.env.example medias.env   # puis remplir (hors dépôt)
+#   MEDIAS_NETWORK=<réseau de la stack> docker compose up -d --build
+#
+# Publié sur la boucle locale seulement ; l'accès MCP exige le jeton porteur.
+name: kairos-pc
+
+services:
+  medias:
+    build:
+      context: ../..
+      dockerfile: deploy/pc/Dockerfile
+    image: kairos-medias:local
+    restart: unless-stopped
+    mem_limit: 64m
+    env_file:
+      - path: medias.env
+        required: true
+    environment:
+      MEDIAS_BIND: 0.0.0.0:8095
+    ports:
+      - "${MEDIAS_BIND_ADDR:-127.0.0.1}:${MEDIAS_BIND_PORT:-8095}:8095"
+    networks:
+      - media
+
+networks:
+  media:
+    external: true
+    name: ${MEDIAS_NETWORK:?nom du réseau Docker de la stack média}
