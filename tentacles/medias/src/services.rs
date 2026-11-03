@@ -424,6 +424,8 @@ pub fn is_session_cookie(kv: &str) -> bool {
     kv.split_once('=').is_some_and(|(k, v)| (k == "SID" || k.starts_with("QBT_SID")) && !v.is_empty())
 }
 
+pub const QBIT_LOGIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45);
+
 /// Session qBittorrent : connexion par formulaire, cookie de session.
 async fn qbit_login(s: &Svc, user: &str, pass: &str) -> R<String> {
     let resp = s
@@ -431,6 +433,8 @@ async fn qbit_login(s: &Svc, user: &str, pass: &str) -> R<String> {
         .post(s.url("/api/v2/auth/login"))
         .header("Referer", s.url(""))
         .form(&[("username", user), ("password", pass)])
+        // Sous charge, la connexion seule peut dépasser 10 s ; les appels suivants restent rapides.
+        .timeout(QBIT_LOGIN_TIMEOUT)
         .send()
         .await
         .map_err(|_| {
