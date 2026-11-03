@@ -66,6 +66,10 @@ pub struct Preferences {
     pub remote: String,
     pub countries: Vec<String>,
     pub languages: Vec<String>,
+    /// Villes acceptées en présentiel/hybride.
+    /// Vide = full-remote strict, comportement historique.
+    #[serde(default)]
+    pub onsite_cities: Vec<String>,
     #[serde(default = "default_min_score")]
     pub min_score: f64,
     #[serde(default)]
