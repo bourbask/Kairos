@@ -39,18 +39,41 @@ impl Matcher {
     }
 
     pub fn score_with_breakdown(&self, offer: &JobOffer) -> (f64, ScoreBreakdown) {
-        if is_freelance(offer) || !is_remote(offer) {
-            return (0.0, ScoreBreakdown { skills: 0.0, remote: 0.0, salary: 0.0, location: 0.0 });
+        if is_freelance(offer) || !self.passes_location(offer) {
+            return (0.0, ScoreBreakdown { skills: 0.0, remote: 0.0, salary: 0.0, location: 0.0, seniority: 0.0 });
         }
 
         const BASELINE: f64 = 0.40;
         let skills = self.skill_bonus(offer);
         let location = self.country_bonus(offer);
         let salary = salary_adjustment(offer);
+        let seniority = seniority_adjustment(offer);
 
-        let total = (BASELINE + skills + location + salary).clamp(0.0, 1.0);
+        let total = (BASELINE + skills + location + salary + seniority).clamp(0.0, 1.0);
 
-        (total, ScoreBreakdown { skills, remote: 1.0, salary, location })
+        (total, ScoreBreakdown { skills, remote: 1.0, salary, location, seniority })
+    }
+
+    /// Gate localisation : full-remote OU présentiel/hybride dans une ville acceptée
+    /// (preferences.onsite_cities).
+    fn passes_location(&self, offer: &JobOffer) -> bool {
+        is_remote(offer) || self.matches_onsite_city(offer)
+    }
+
+    /// Vrai si l'offre est localisée dans une des villes présentiel acceptées.
+    /// Liste vide = full-remote strict (comportement historique préservé).
+    fn matches_onsite_city(&self, offer: &JobOffer) -> bool {
+        let cities = &self.profile.preferences.onsite_cities;
+        if cities.is_empty() {
+            return false;
+        }
+        let hay = format!(
+            "{} {} {}",
+            offer.location.as_deref().unwrap_or("").to_lowercase(),
+            offer.title.to_lowercase(),
+            offer.description.to_lowercase(),
+        );
+        cities.iter().any(|c| !c.is_empty() && hay.contains(&c.to_lowercase()))
     }
 
     pub fn rank(&self, offers: Vec<JobOffer>) -> Vec<ScoredJob> {
@@ -95,17 +118,25 @@ impl Matcher {
     }
 }
 
-/// Ajustement salaire : seuils en dur (indépendants de preferences.salary_min/salary_target).
-/// Jamais de malus pour absence de donnée — seulement pour un salaire connu et vraiment bas.
+/// Ajustement salaire : seuils en dur (cible, plancher).
+/// Jamais de malus pour absence de donnée — seulement pour un salaire connu sous le plancher.
 fn salary_adjustment(offer: &JobOffer) -> f64 {
     let offered = offer.salary_max.or(offer.salary_min);
     match offered {
-        Some(s) if s >= 48_000 => 0.10,
-        Some(s) if s >= 45_000 => 0.05,
-        Some(s) if s >= 40_000 => 0.0,
-        Some(_) => -0.20,
+        Some(s) if s >= 45_000 => 0.10,   // cible atteinte
+        Some(s) if s >= 42_000 => 0.05,   // plancher acceptable
+        Some(_) => -0.20,                 // connu et sous le plancher
         None => 0.0,
     }
+}
+
+/// Déprioriser (pas exclure) les postes à scope senior/lead/archi. Malus léger, jamais un gate.
+/// Titre seulement : « senior » dans une description (« équipe senior ») ne compte pas.
+fn seniority_adjustment(offer: &JobOffer) -> f64 {
+    let t = offer.title.to_lowercase();
+    const SENIOR: [&str; 5] = ["senior", "lead", "staff", "principal", "architect"];
+    // "architect" couvre "architecte" (préfixe commun).
+    if SENIOR.iter().any(|m| t.contains(m)) { -0.10 } else { 0.0 }
 }
 
 /// Détecte une offre freelance/contract (l'utilisateur veut un CDI, sans statut freelance).
@@ -169,15 +200,48 @@ mod tests {
     #[test]
     fn offre_realiste_depasse_le_seuil() {
         let matcher = Matcher::new(test_profile());
-        // 6/7 compétences du profil (pas SQLite) + remote confirmé + CDI + salaire >=48k + pays préféré
+        // 6/7 compétences du profil (pas SQLite) + remote confirmé + CDI + salaire >=45k + pays préféré,
+        // titre sans marqueur senior (pas de malus séniorité)
         let offer = make_offer(
-            "Senior Full-Stack Developer",
+            "Full-Stack Developer",
             "Node.js, Python, React, Vue.js, PostgreSQL, Docker. Permanent position, fully remote.",
             Some(true), Some("FR"), None, Some(55000),
         );
         let (score, breakdown) = matcher.score_with_breakdown(&offer);
         assert!((score - 0.90).abs() < 1e-9, "attendu 0.90 (0.40+0.30+0.10+0.10), obtenu {score}");
         assert_eq!(breakdown.remote, 1.0);
+    }
+
+    #[test]
+    fn hybride_accepte_si_ville_configuree() {
+        let mut profile = test_profile();
+        profile.preferences.onsite_cities = vec!["Lyon".into()];
+        let matcher = Matcher::new(profile);
+        // Offre hybride (pas full-remote) mais localisée Lyon : passe le gate
+        let offer = make_offer("Full-Stack Developer", "Hybrid role based in Lyon. Permanent.", None, Some("FR"), None, Some(46000));
+        let (score, breakdown) = matcher.score_with_breakdown(&offer);
+        assert!(score > 0.0, "hybride en ville acceptée doit passer le gate, obtenu {score}");
+        assert_eq!(breakdown.remote, 1.0);
+    }
+
+    #[test]
+    fn hybride_rejete_sans_ville_configuree() {
+        let matcher = Matcher::new(test_profile()); // onsite_cities vide dans l'exemple
+        let offer = make_offer("Full-Stack Developer", "Hybrid role based in Lyon. Permanent.", None, Some("FR"), None, Some(46000));
+        let (score, _) = matcher.score_with_breakdown(&offer);
+        assert_eq!(score, 0.0, "sans onsite_cities, full-remote strict : hybride rejeté");
+    }
+
+    #[test]
+    fn malus_seniorite_deprioritise_sans_exclure() {
+        let matcher = Matcher::new(test_profile());
+        let base = make_offer("Full-Stack Developer", "Permanent, fully remote", Some(true), Some("FR"), None, Some(46000));
+        let senior = make_offer("Senior Full-Stack Developer", "Permanent, fully remote", Some(true), Some("FR"), None, Some(46000));
+        let (s_base, _) = matcher.score_with_breakdown(&base);
+        let (s_senior, bd) = matcher.score_with_breakdown(&senior);
+        assert!((s_base - s_senior - 0.10).abs() < 1e-9, "senior = -0.10 vs standard, base {s_base} senior {s_senior}");
+        assert!(s_senior > 0.0, "déprioriser, pas exclure");
+        assert!((bd.seniority + 0.10).abs() < 1e-9);
     }
 
     #[test]
@@ -201,11 +265,11 @@ mod tests {
     fn salaire_sous_40k_malus_vs_neutre() {
         let matcher = Matcher::new(test_profile());
         let bas = make_offer("Dev", "Permanent position, fully remote", Some(true), None, None, Some(35000));
-        let neutre = make_offer("Dev", "Permanent position, fully remote", Some(true), None, None, Some(42000));
+        let plancher = make_offer("Dev", "Permanent position, fully remote", Some(true), None, None, Some(42000));
         let (score_bas, _) = matcher.score_with_breakdown(&bas);
-        let (score_neutre, _) = matcher.score_with_breakdown(&neutre);
-        assert!((score_bas - 0.20).abs() < 1e-9, "0.40 - 0.20 malus, obtenu {score_bas}");
-        assert!((score_neutre - 0.40).abs() < 1e-9, "0.40 neutre (40-45k), obtenu {score_neutre}");
+        let (score_plancher, _) = matcher.score_with_breakdown(&plancher);
+        assert!((score_bas - 0.20).abs() < 1e-9, "0.40 - 0.20 malus (sous plancher), obtenu {score_bas}");
+        assert!((score_plancher - 0.45).abs() < 1e-9, "0.40 + 0.05 (plancher 42k), obtenu {score_plancher}");
     }
 
     #[test]

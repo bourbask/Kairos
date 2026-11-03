@@ -32,6 +32,9 @@ pub struct ScoreBreakdown {
     pub remote: f64,
     pub salary: f64,
     pub location: f64,
+    /// Malus de déprioritisation des postes senior/lead/archi (0.0 ou négatif).
+    #[serde(default)]
+    pub seniority: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -219,6 +219,7 @@ mod tests {
                 remote: 1.0,
                 salary: 1.0,
                 location: 1.0,
+                seniority: 0.0,
             },
         }
     }
