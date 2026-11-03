@@ -769,7 +769,8 @@ impl MediaServer {
             let failing: Vec<_> = st
                 .iter()
                 .filter(|x| x.disabled_till.as_deref().and_then(parse_utc).is_some_and(|t| t > now))
-                .filter_map(|x| idx.iter().find(|i| i.id == x.indexer_id).map(|i| i.name.clone()))
+                // Un indexeur désactivé à la main n'est plus « en échec ».
+                .filter_map(|x| idx.iter().find(|i| i.id == x.indexer_id && i.enable).map(|i| i.name.clone()))
                 .collect();
             let enabled = idx.iter().filter(|i| i.enable).count();
             out.push(if failing.is_empty() {
