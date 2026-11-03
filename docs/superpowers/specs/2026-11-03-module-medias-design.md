@@ -66,13 +66,36 @@ finances l'a fait pour l'application de finances.
 Correspondance lecteur ↔ gestionnaires par identifiants externes (TVDB, TMDB) :
 les titres affichés diffèrent souvent (traductions).
 
+### Actions — étape 2 (livrée)
+
+Chaque écriture se fait **en deux temps** : sans `confirm`, l'outil décrit ce
+qu'il ferait et ne touche à rien ; avec `confirm=true` (seulement après accord
+explicite de l'utilisateur), il exécute.
+
+| Outil | Effet |
+|---|---|
+| `search` | Recherche d'une série / d'un film à ajouter (type, identifiant, état) — lecture |
+| `request` | Demande (saisons au choix) ; suivie jusqu'au bout |
+| `requests` | Demandes suivies et leur état — lecture |
+| `follow` / `unfollow` | Reprendre / arrêter la surveillance, sans rien supprimer |
+| `retry` | Relancer la recherche de versions et/ou de sous-titres |
+| `blocklist_release` | Écarter les versions en échec de la file et relancer (la bibliothèque n'est pas touchée) |
+| `downloads_control` | Pause / reprise (torrents, usenet), débit réduit / normal |
+| `mark_watched` | Marquer vu / non vu (film, épisode, saison, série) |
+
+**Suivi des demandes** (tâche de fond, base SQLite sur un volume) :
+
+- **prêt** : le film, ou le premier épisode demandé, est dans le lecteur avec
+  VF ou sous-titres français complets → notification avec lien ;
+- **échec** : demande refusée ou en échec → notification ;
+- **en retard** : sorti depuis plus de 72 h (réglable) sans être regardable →
+  notification une fois, le suivi continue ;
+- **abandon** : au-delà de 60 jours (réglable) → notification.
+
+Alerte disque : sous le seuil, au plus une notification par 24 h.
+
 ### Étapes suivantes
 
-2. **Écritures et suivi asynchrone** : `request` (demande d'une série / d'un
-   film, d'un artiste, d'un livre), `follow` / `unfollow`, `retry` (recherche
-   de la version ou des sous-titres), `blocklist_release`,
-   `downloads_control` (pause, débit réduit), `mark_watched`. Les demandes
-   sont suivies jusqu'au bout et notifiées (D4).
 3. **Calendrier des sorties** poussé vers le serveur CalDAV (calendrier dédié),
    tant que la machine tourne ; consultable même machine éteinte.
 4. **Musique, lecture, livres audio** (`music_updates`, `reading_updates`,
@@ -87,4 +110,5 @@ les titres affichés diffèrent souvent (traductions).
 - Journaux sans adresse ni secret (nature de l'erreur seulement).
 - Client torrent : session réutilisée, une seule reconnexion par appel — il
   bannit une adresse après quelques échecs.
-- Lecture seule à l'étape 1.
+- Écritures en deux temps (aperçu, puis `confirm=true`) ; aucune suppression
+  de fichier de la bibliothèque.

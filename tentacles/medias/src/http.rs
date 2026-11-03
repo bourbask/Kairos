@@ -98,6 +98,24 @@ impl Svc {
         self.send(self.http.post(self.url(path)).json(body)).await
     }
 
+    /// Écriture dont seul le statut compte (corps vide ou ignoré).
+    pub async fn send_unit(&self, req: reqwest::RequestBuilder) -> Result<(), SvcError> {
+        let resp = self.authed(req).send().await.map_err(|e| {
+            eprintln!("medias/{} : appel impossible ({})", self.name, kind(&e));
+            SvcError::Unavailable
+        })?;
+        let status = resp.status();
+        if status.as_u16() == 401 || status.as_u16() == 403 {
+            eprintln!("medias/{} : accès refusé ({})", self.name, status.as_u16());
+            return Err(SvcError::Denied);
+        }
+        if !status.is_success() {
+            eprintln!("medias/{} : réponse en échec ({})", self.name, status.as_u16());
+            return Err(SvcError::Unavailable);
+        }
+        Ok(())
+    }
+
     pub fn raw(&self) -> &reqwest::Client {
         &self.http
     }

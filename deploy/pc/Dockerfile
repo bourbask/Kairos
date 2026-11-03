@@ -13,5 +13,7 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 COPY --from=build /src/target/release/kairos-medias /app/
+# Base du suivi des demandes : volume nommé, propriété de l'utilisateur d'exécution.
+RUN mkdir -p /data && chown 1001:1001 /data
 USER 1001:1001
 ENTRYPOINT ["/app/kairos-medias"]

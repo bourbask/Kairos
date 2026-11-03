@@ -3,8 +3,12 @@
 use chrono_tz::Tz;
 
 use crate::http::{Auth, Opt, Svc, client};
+use crate::notify::Notifier;
 use crate::render::tz_or_paris;
-use crate::services::Qbit;
+use crate::services::{self as sv, Qbit, Series};
+
+/// Durée de validité de la liste des séries (lente à obtenir sous charge).
+const SERIES_TTL: std::time::Duration = std::time::Duration::from_secs(600);
 
 pub struct Stack {
     pub plex: Opt,
@@ -19,6 +23,15 @@ pub struct Stack {
     pub tz: Tz,
     /// Seuil d'espace libre (Go) sous lequel le disque est signalé.
     pub disk_min_gb: i64,
+    /// Notifications push ; absentes, le suivi tourne sans prévenir.
+    pub notifier: Option<Notifier>,
+    /// Heures après la sortie au-delà desquelles une demande non regardable est « en retard ».
+    pub late_hours: i64,
+    /// Jours après lesquels le suivi d'une demande s'arrête.
+    pub drop_days: i64,
+    /// Période du suivi des demandes, en minutes.
+    pub track_minutes: u64,
+    series_cache: tokio::sync::Mutex<Option<(std::time::Instant, Vec<Series>)>>,
 }
 
 fn valid_url(u: &str) -> bool {
@@ -29,6 +42,28 @@ fn valid_url(u: &str) -> bool {
 pub type Lookup<'a> = &'a dyn Fn(&str) -> Option<String>;
 
 impl Stack {
+    /// Séries du gestionnaire, en cache ; en cas d'échec, la dernière liste connue.
+    pub async fn series(&self) -> Result<Vec<Series>, crate::http::SvcError> {
+        let mut c = self.series_cache.lock().await;
+        if let Some((at, v)) = c.as_ref() {
+            if at.elapsed() < SERIES_TTL {
+                return Ok(v.clone());
+            }
+        }
+        match sv::sonarr_series(&self.sonarr).await {
+            Ok(v) => {
+                *c = Some((std::time::Instant::now(), v.clone()));
+                Ok(v)
+            }
+            Err(e) => c.as_ref().map(|(_, v)| v.clone()).ok_or(e),
+        }
+    }
+
+    /// À appeler après une modification côté gestionnaire.
+    pub async fn forget_series(&self) {
+        *self.series_cache.lock().await = None;
+    }
+
     pub fn from_env() -> anyhow::Result<Stack> {
         let get = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
         Stack::from_lookup(&get)
@@ -74,6 +109,15 @@ impl Stack {
             tdarr: url("TDARR")?.map(|u| Svc::new("tdarr", &u, Auth::None, http.clone())),
             tz: tz_or_paris(get("MEDIAS_TZ").as_deref()),
             disk_min_gb: get("MEDIAS_DISK_MIN_GB").and_then(|v| v.parse().ok()).unwrap_or(50),
+            notifier: match (url("NTFY")?, get("MEDIAS_NTFY_TOPIC")) {
+                (Some(u), Some(t)) => Some(Notifier::new(&u, &t, get("MEDIAS_NTFY_TOKEN"))),
+                (Some(_), None) => anyhow::bail!("variable MEDIAS_NTFY_TOPIC absente ou vide"),
+                _ => None,
+            },
+            late_hours: get("MEDIAS_LATE_HOURS").and_then(|v| v.parse().ok()).unwrap_or(72),
+            drop_days: get("MEDIAS_DROP_DAYS").and_then(|v| v.parse().ok()).unwrap_or(60),
+            series_cache: Default::default(),
+            track_minutes: get("MEDIAS_TRACK_MINUTES").and_then(|v| v.parse().ok()).filter(|m| *m > 0).unwrap_or(10),
         })
     }
 }
@@ -95,6 +139,8 @@ mod tests {
         assert!(s.plex.is_none() && s.sonarr.is_none() && s.qbit.is_none() && s.tdarr.is_none());
         assert_eq!(s.disk_min_gb, 50);
         assert_eq!(s.tz, chrono_tz::Europe::Paris);
+        assert!(s.notifier.is_none());
+        assert_eq!((s.late_hours, s.drop_days, s.track_minutes), (72, 60, 10));
     }
 
     #[test]
@@ -103,6 +149,13 @@ mod tests {
         assert!(stack(&[("MEDIAS_QBIT_URL", "http://q:1"), ("MEDIAS_QBIT_USER", "u")]).is_err());
         let s = stack(&[("MEDIAS_SONARR_URL", "http://sonarr:8989"), ("MEDIAS_SONARR_KEY", "k")]).unwrap();
         assert!(s.sonarr.is_some());
+    }
+
+    #[test]
+    fn notifier_needs_a_topic() {
+        assert!(stack(&[("MEDIAS_NTFY_URL", "http://ntfy:80")]).is_err());
+        let s = stack(&[("MEDIAS_NTFY_URL", "http://ntfy:80"), ("MEDIAS_NTFY_TOPIC", "t")]).unwrap();
+        assert!(s.notifier.is_some());
     }
 
     #[test]
