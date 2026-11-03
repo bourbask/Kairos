@@ -156,7 +156,7 @@ impl MediaServer {
     }
 
     /// Élément du lecteur pour une cible suivie (identifiants externes), sinon par titre.
-    async fn plex_item(&self, title: &str) -> Result<PlexItem, String> {
+    pub(crate) async fn plex_item(&self, title: &str) -> Result<PlexItem, String> {
         let s = &self.stack;
         let target = self.resolve(title).await.ok();
         let q = [("includeGuids", "1".to_string())];
@@ -262,11 +262,11 @@ impl MediaServer {
                 return Ok(format!("Artistes :\n{}", lines.join("\n")));
             }
             Some("livre" | "livres" | "book" | "audio" | "livre audio") => {
-                let r =
-                    sv::ll_find_book(&s.lazylibrarian, a.query.trim()).await.map_err(|e| match e {
+                let r = sv::ll_find_book(&s.lazylibrarian, a.query.trim()).await.map_err(|e| match e {
                     // Une recherche trop large (un seul mot) peut durer plusieurs minutes.
                     crate::http::SvcError::Unavailable => {
-                        "Recherche de livres trop longue : précise le titre et l'auteur (ex. « fondation asimov »).".to_string()
+                        "Recherche de livres trop longue : précise le titre et l'auteur (ex. « fondation asimov »)."
+                            .to_string()
                     }
                     e => why("LazyLibrarian", &e),
                 })?;

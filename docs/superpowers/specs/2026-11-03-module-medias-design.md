@@ -127,10 +127,18 @@ complète) et `book` / `audiobook`. Bibliothèques vides : chaque outil indique
 comment commencer. Le suivi jusqu'à disponibilité reste limité aux séries et
 films.
 
-### Étapes suivantes
+### Résumé et visios — étape 5 (livrée)
 
-5. `recap` (matière d'un résumé sans spoiler) ; débit réduit pendant les
-   visioconférences (lecture directe du calendrier CalDAV, opt-in).
+- `recap` : synopsis des épisodes **déjà vus** de la saison (jusqu'au dernier
+  vu, jamais au-delà ; épisodes spéciaux exclus), pour un résumé
+  « previously » sans spoiler rédigé par la tête.
+- **Débit réduit pendant les visios** (opt-in) : toutes les 5 minutes, lecture
+  de l'agenda personnel en CalDAV (récurrences dépliées par le serveur) ; un
+  événement en cours dont le titre, le lieu, la description ou le lien contient
+  un mot-clé de visio réduit le débit des torrents, rétabli à la fin. Un
+  réglage manuel n'est jamais défait. Exception d'infrastructure assumée : le
+  tentacule lit l'agenda directement (CalDAV), sans passer par le tentacule
+  agenda. `stack_health` indique l'état.
 
 ## Sécurité
 

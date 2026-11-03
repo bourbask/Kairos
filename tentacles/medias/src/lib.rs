@@ -9,3 +9,4 @@ pub mod services;
 pub mod store;
 pub mod tools;
 pub mod tracker;
+pub mod visio;

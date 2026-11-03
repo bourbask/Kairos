@@ -88,6 +88,39 @@ impl CalDav {
         }
     }
 
+    /// Événements ayant une occurrence entre `start` et `end`, récurrences dépliées (corps brut).
+    pub async fn report(&self, start: DateTime<Utc>, end: DateTime<Utc>) -> Result<String, SvcError> {
+        let (a, b) = (stamp(start), stamp(end));
+        let body = format!(
+            r#"<?xml version="1.0" encoding="utf-8"?>
+<C:calendar-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+ <D:prop><C:calendar-data><C:expand start="{a}" end="{b}"/></C:calendar-data></D:prop>
+ <C:filter><C:comp-filter name="VCALENDAR"><C:comp-filter name="VEVENT">
+  <C:time-range start="{a}" end="{b}"/>
+ </C:comp-filter></C:comp-filter></C:filter>
+</C:calendar-query>"#
+        );
+        let m = Method::from_bytes(b"REPORT").expect("méthode HTTP");
+        let r = self
+            .http
+            .request(m, &self.url)
+            .basic_auth(&self.user, Some(&self.pass))
+            .header("Depth", "1")
+            .header("Content-Type", "application/xml")
+            .body(body)
+            .send()
+            .await
+            .map_err(|_| {
+                eprintln!("medias/caldav : appel impossible");
+                SvcError::Unavailable
+            })?;
+        match r.status().as_u16() {
+            207 => r.text().await.map_err(|_| SvcError::Unavailable),
+            401 | 403 => Err(SvcError::Denied),
+            _ => Err(SvcError::Unavailable),
+        }
+    }
+
     pub async fn put(&self, uid: &str, ics: &str) -> Result<(), SvcError> {
         let url = format!("{}{uid}.ics", self.url);
         let st = self.call("PUT", &url, Some((ics.to_string(), "text/calendar; charset=utf-8")), false).await?;

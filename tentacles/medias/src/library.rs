@@ -19,6 +19,20 @@ struct WeeksArgs {
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
+struct RecapArgs {
+    /// Titre de la série.
+    title: String,
+    /// Saison à résumer ; absent = celle du dernier épisode vu.
+    season: Option<i64>,
+}
+
+/// Synopsis tronqué proprement.
+fn clip(s: &str, max: usize) -> String {
+    let s = s.trim().replace('\n', " ");
+    if s.chars().count() <= max { s } else { format!("{}…", s.chars().take(max).collect::<String>().trim_end()) }
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
 struct DaysArgs {
     /// Période en jours (7 par défaut, 365 au plus).
     days: Option<i64>,
@@ -101,6 +115,53 @@ impl MediaServer {
             out.push_str(&format!(
                 "\n{still} encore surveillée(s) : `unfollow` arrête leur téléchargement, sans rien supprimer."
             ));
+        }
+        Ok(out)
+    }
+
+    #[tool(
+        description = "Donner la matière d'un résumé « previously » d'une série : synopsis des épisodes déjà vus de la saison (jusqu'au dernier vu), sans rien au-delà. Résume à partir de ces seuls éléments, sans spoiler la suite."
+    )]
+    async fn recap(&self, Parameters(a): Parameters<RecapArgs>) -> Out {
+        let s = &self.stack;
+        let show = self.plex_item(&a.title).await?;
+        if show.kind != "show" {
+            return Err(format!("« {} » n'est pas une série.", show.title));
+        }
+        let mut leaves = sv::plex_all_leaves(&s.plex, &show.rating_key).await.map_err(|e| why("Plex", &e))?;
+        leaves.retain(|l| l.parent_index.unwrap_or(0) > 0);
+        leaves.sort_by_key(|l| (l.parent_index.unwrap_or(0), l.index.unwrap_or(0)));
+        let Some(last) = leaves.iter().rposition(|l| l.view_count.unwrap_or(0) > 0) else {
+            return Ok(format!("Aucun épisode de « {} » n'a été vu : rien à résumer sans spoiler.", show.title));
+        };
+        let season = a.season.unwrap_or(leaves[last].parent_index.unwrap_or(1));
+        // Borne : jamais au-delà du dernier épisode vu.
+        let seen: Vec<_> = leaves[..=last].iter().filter(|l| l.parent_index == Some(season)).collect();
+        if seen.is_empty() {
+            return Err(format!("Saison {season} pas encore commencée : rien à résumer sans spoiler."));
+        }
+        let next = leaves.get(last + 1).map(|l| crate::render::se(l.parent_index, l.index));
+        let skip = seen.len().saturating_sub(26);
+        let lines: Vec<_> = seen[skip..]
+            .iter()
+            .map(|l| {
+                let syn = l.summary.as_deref().filter(|x| !x.trim().is_empty()).map(|x| clip(x, 400));
+                format!(
+                    "- {} « {} » : {}",
+                    crate::render::se(l.parent_index, l.index),
+                    l.title,
+                    syn.unwrap_or_else(|| "(pas de synopsis)".into())
+                )
+            })
+            .collect();
+        let up_to = crate::render::se(leaves[last].parent_index, leaves[last].index);
+        let mut out = format!("« {} », saison {season}, épisodes vus jusqu'à {up_to}", show.title);
+        if let Some(n) = next {
+            out.push_str(&format!(" (prochain : {n})"));
+        }
+        out.push_str(&format!(" :\n{}", lines.join("\n")));
+        if let Some(sum) = show.summary.as_deref().filter(|x| !x.trim().is_empty()) {
+            out.push_str(&format!("\nSérie : {}", clip(sum, 400)));
         }
         Ok(out)
     }

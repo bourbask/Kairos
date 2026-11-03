@@ -7,6 +7,7 @@ use crate::http::{Auth, Opt, Svc, client};
 use crate::notify::Notifier;
 use crate::render::tz_or_paris;
 use crate::services::{self as sv, Kavita, Qbit, Series};
+use crate::visio::{DEFAULT_KEYWORDS, VisioWatch, parse_keywords};
 
 /// Durée de validité de la liste des séries (lente à obtenir sous charge).
 const SERIES_TTL: std::time::Duration = std::time::Duration::from_secs(600);
@@ -40,6 +41,8 @@ pub struct Stack {
     pub caldav: Option<CalDav>,
     /// Période de synchronisation du calendrier, en minutes.
     pub caldav_minutes: u64,
+    /// Débit réduit pendant les visios (agenda lu en CalDAV) ; absent = désactivé.
+    pub visio: Option<VisioWatch>,
     series_cache: tokio::sync::Mutex<Option<(std::time::Instant, Vec<Series>)>>,
 }
 
@@ -153,6 +156,14 @@ impl Stack {
             drop_days: get("MEDIAS_DROP_DAYS").and_then(|v| v.parse().ok()).unwrap_or(60),
             series_cache: Default::default(),
             caldav: basic("CALDAV", "caldav")?.map(|(u, user, pass, _)| CalDav::new(&u, user, pass)),
+            visio: match url("VISIO_CALENDAR")? {
+                None => None,
+                Some(u) => Some(VisioWatch {
+                    cal: CalDav::new(&u, req("MEDIAS_CALDAV_USER".into())?, req("MEDIAS_CALDAV_PASS".into())?),
+                    keywords: parse_keywords(&get("MEDIAS_VISIO_KEYWORDS").unwrap_or_else(|| DEFAULT_KEYWORDS.into())),
+                    minutes: get("MEDIAS_VISIO_MINUTES").and_then(|v| v.parse().ok()).filter(|m| *m > 0).unwrap_or(5),
+                }),
+            },
             caldav_minutes: get("MEDIAS_CALDAV_MINUTES").and_then(|v| v.parse().ok()).filter(|m| *m > 0).unwrap_or(60),
             track_minutes: get("MEDIAS_TRACK_MINUTES").and_then(|v| v.parse().ok()).filter(|m| *m > 0).unwrap_or(10),
         })
