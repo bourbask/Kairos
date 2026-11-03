@@ -123,6 +123,25 @@ async fn fake(log: Log) -> String {
             }),
         )
         .route(
+            "/prowlarr/api/v1/indexer",
+            get(|| async {
+                Json(json!([
+                    {"id": 1, "name": "Indexeur Actif", "enable": true},
+                    {"id": 2, "name": "Indexeur Coupé", "enable": false},
+                    {"id": 3, "name": "Indexeur Sain", "enable": true},
+                ]))
+            }),
+        )
+        .route(
+            "/prowlarr/api/v1/indexerstatus",
+            get(|| async {
+                Json(json!([
+                    {"indexerId": 1, "disabledTill": "2999-01-01T00:00:00Z"},
+                    {"indexerId": 2, "disabledTill": "2999-01-01T00:00:00Z"},
+                ]))
+            }),
+        )
+        .route(
             "/radarr/api/v3/calendar",
             get(move || async move {
                 rec(&l5, "GET radarr calendar");
@@ -269,4 +288,14 @@ async fn unreachable_service_is_reported() {
     let url = start(stack("http://127.0.0.1:9", &["sonarr"])).await;
     let t = text(&call(&url, "downloads", json!({})).await).to_string();
     assert!(t.contains("Sonarr injoignable"), "{t}");
+}
+
+#[tokio::test]
+async fn disabled_indexers_are_not_reported_as_failing() {
+    let log: Log = Default::default();
+    let base = fake(log.clone()).await;
+    let url = start(stack(&base, &["prowlarr"])).await;
+    let t = text(&call(&url, "stack_health", json!({})).await).to_string();
+    assert!(t.contains("Indexeurs : 2 actif(s), en échec : Indexeur Actif."), "{t}");
+    assert!(!t.contains("Coupé"), "{t}");
 }
