@@ -179,6 +179,18 @@ impl Store {
         self.db.lock().unwrap().query_row("SELECT v FROM kv WHERE k = ?1", [k], |r| r.get(0)).optional()
     }
 
+    /// Clés commençant par `prefix`.
+    pub fn kv_keys(&self, prefix: &str) -> rusqlite::Result<Vec<String>> {
+        let db = self.db.lock().unwrap();
+        let mut st = db.prepare("SELECT k FROM kv WHERE substr(k, 1, length(?1)) = ?1")?;
+        st.query_map([prefix], |r| r.get(0))?.collect()
+    }
+
+    pub fn del_kv(&self, k: &str) -> rusqlite::Result<()> {
+        self.db.lock().unwrap().execute("DELETE FROM kv WHERE k = ?1", [k])?;
+        Ok(())
+    }
+
     pub fn set_kv(&self, k: &str, v: &str) -> rusqlite::Result<()> {
         self.db.lock().unwrap().execute(
             "INSERT INTO kv (k, v) VALUES (?1, ?2) ON CONFLICT(k) DO UPDATE SET v = excluded.v",
@@ -215,5 +227,13 @@ mod tests {
         s.set_kv("a", "1").unwrap();
         s.set_kv("a", "2").unwrap();
         assert_eq!(s.get_kv("a").unwrap().as_deref(), Some("2"));
+        s.set_kv("cal:x", "1").unwrap();
+        s.set_kv("cal:y", "1").unwrap();
+        s.set_kv("calz", "1").unwrap();
+        let mut k = s.kv_keys("cal:").unwrap();
+        k.sort();
+        assert_eq!(k, ["cal:x", "cal:y"]);
+        s.del_kv("cal:x").unwrap();
+        assert_eq!(s.kv_keys("cal:").unwrap(), ["cal:y"]);
     }
 }

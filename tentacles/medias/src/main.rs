@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use kairos_medias::{config::Stack, store::Store, tools::MediaServer, tracker};
+use kairos_medias::{caldav, config::Stack, store::Store, tools::MediaServer, tracker};
 use tentacle_common::TentacleEnv;
 use tokio::sync::OnceCell;
 
@@ -12,6 +12,8 @@ async fn main() -> anyhow::Result<()> {
     let store = Arc::new(Store::open(&db)?);
     // Suivi des demandes et alerte disque, en tâche de fond.
     tokio::spawn(tracker::run(stack.clone(), store.clone()));
+    // Calendrier des sorties poussé vers le serveur CalDAV, s'il est configuré.
+    tokio::spawn(caldav::run(stack.clone(), store.clone()));
     // Identifiant du serveur Plex (liens) : lu une fois, au premier besoin.
     let machine = Arc::new(OnceCell::new());
     tentacle_common::serve(env, move || MediaServer::new(stack.clone(), store.clone(), machine.clone())).await

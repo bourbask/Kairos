@@ -94,10 +94,24 @@ explicite de l'utilisateur), il exécute.
 
 Alerte disque : sous le seuil, au plus une notification par 24 h.
 
+### Calendrier des sorties — étape 3 (livrée)
+
+Tâche de fond (toutes les heures, réglable) qui pousse vers un calendrier
+CalDAV dédié, créé au besoin :
+
+- épisodes suivis : heure de diffusion et durée, « ✓ » une fois téléchargés ;
+- films suivis : une journée entière par date de sortie (cinéma, numérique,
+  physique) ;
+- fenêtre de 14 jours passés à 90 jours à venir ;
+- événements « transparents » : ils n'occupent pas l'agenda (créneaux libres) ;
+- incrémental : seul ce qui change est réécrit, ce qui disparaît est retiré ;
+  un gestionnaire injoignable interrompt la synchronisation sans rien retirer.
+
+Le calendrier vit sur le serveur CalDAV : il reste consultable machine éteinte.
+`stack_health` indique la dernière synchronisation.
+
 ### Étapes suivantes
 
-3. **Calendrier des sorties** poussé vers le serveur CalDAV (calendrier dédié),
-   tant que la machine tourne ; consultable même machine éteinte.
 4. **Musique, lecture, livres audio** (`music_updates`, `reading_updates`,
    `audiobooks`) ; `abandoned`, `watch_stats`, `seeding_obligations`.
 5. `recap` (matière d'un résumé sans spoiler) ; débit réduit pendant les
