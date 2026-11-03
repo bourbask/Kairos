@@ -43,23 +43,42 @@ impl Matcher {
             "full" => is_remote(offer),
             _ => true, // "on-site"/"hybrid" : pas de contrainte remote pour ce profil
         };
-        if is_freelance(offer) || !remote_gate_ok || !self.location_gate_ok(offer) {
-            return (0.0, ScoreBreakdown { skills: 0.0, remote: 0.0, salary: 0.0, location: 0.0 });
+        // Ville présentiel acceptée : passe même si le profil exige le full-remote.
+        let location_ok = (remote_gate_ok && self.location_gate_ok(offer)) || self.matches_onsite_city(offer);
+        if is_freelance(offer) || !location_ok {
+            return (0.0, ScoreBreakdown { skills: 0.0, remote: 0.0, salary: 0.0, location: 0.0, seniority: 0.0 });
         }
 
         const BASELINE: f64 = 0.40;
         let skills = self.skill_bonus(offer);
         let location = self.country_bonus(offer);
         let salary = self.salary_adjustment(offer);
+        let seniority = seniority_adjustment(offer);
 
-        let total = (BASELINE + skills + location + salary).clamp(0.0, 1.0);
+        let total = (BASELINE + skills + location + salary + seniority).clamp(0.0, 1.0);
 
-        (total, ScoreBreakdown { skills, remote: 1.0, salary, location })
+        (total, ScoreBreakdown { skills, remote: 1.0, salary, location, seniority })
     }
 
     /// Gate localisation (opt-in) : vide = aucune contrainte (profil remote international) ;
     /// non vide = l'offre doit matcher au moins un mot-clé (ville/région/département), sinon
     /// exclue — pour un profil régional non-remote.
+    /// Vrai si l'offre mentionne une des villes présentiel acceptées
+    /// (preferences.onsite_cities). Liste vide = aucune exception au gate.
+    fn matches_onsite_city(&self, offer: &JobOffer) -> bool {
+        let cities = &self.profile.preferences.onsite_cities;
+        if cities.is_empty() {
+            return false;
+        }
+        let hay = format!(
+            "{} {} {}",
+            offer.location.as_deref().unwrap_or("").to_lowercase(),
+            offer.title.to_lowercase(),
+            offer.description.to_lowercase(),
+        );
+        cities.iter().any(|c| !c.is_empty() && hay.contains(&c.to_lowercase()))
+    }
+
     fn location_gate_ok(&self, offer: &JobOffer) -> bool {
         let keywords = &self.profile.preferences.location_keywords;
         if keywords.is_empty() {
@@ -134,6 +153,15 @@ impl Matcher {
     }
 }
 
+/// Déprioriser (pas exclure) les postes à scope senior/lead/archi. Malus léger, jamais un gate.
+/// Titre seulement : « senior » dans une description (« équipe senior ») ne compte pas.
+fn seniority_adjustment(offer: &JobOffer) -> f64 {
+    let t = offer.title.to_lowercase();
+    // "architect" couvre "architecte" (préfixe commun).
+    const SENIOR: [&str; 5] = ["senior", "lead", "staff", "principal", "architect"];
+    if SENIOR.iter().any(|m| t.contains(m)) { -0.10 } else { 0.0 }
+}
+
 /// Détecte une offre freelance/contract (l'utilisateur veut un CDI, sans statut freelance).
 /// Heuristique par mots-clés sur titre + description. Rapatriée depuis ranker.rs (K-F0x scoring rework).
 // ponytail: schéma-libre ; migrer vers un champ employment_type structuré si l'imprécision gêne.
@@ -195,9 +223,10 @@ mod tests {
     #[test]
     fn offre_realiste_depasse_le_seuil() {
         let matcher = Matcher::new(test_profile());
-        // 6/7 compétences du profil (pas SQLite) + remote confirmé + CDI + salaire >=48k + pays préféré
+        // 6/7 compétences du profil (pas SQLite) + remote confirmé + CDI + salaire >= cible + pays préféré,
+        // titre sans marqueur senior (pas de malus séniorité)
         let offer = make_offer(
-            "Senior Full-Stack Developer",
+            "Full-Stack Developer",
             "Node.js, Python, React, Vue.js, PostgreSQL, Docker. Permanent position, fully remote.",
             Some(true), Some("FR"), None, Some(55000),
         );
@@ -347,5 +376,37 @@ mod tests {
         let ranked = matcher.rank(vec![bad, good]);
         assert_eq!(ranked.len(), 2);
         assert!(ranked[0].score > ranked[1].score);
+    }
+
+    #[test]
+    fn hybride_accepte_si_ville_configuree() {
+        let mut profile = test_profile();
+        profile.preferences.onsite_cities = vec!["Lyon".into()];
+        let matcher = Matcher::new(profile);
+        // Offre hybride (pas full-remote) mais localisée dans une ville acceptée : passe le gate
+        let offer = make_offer("Full-Stack Developer", "Hybrid role based in Lyon. Permanent.", None, Some("FR"), None, Some(46000));
+        let (score, breakdown) = matcher.score_with_breakdown(&offer);
+        assert!(score > 0.0, "hybride en ville acceptée doit passer le gate, obtenu {score}");
+        assert_eq!(breakdown.remote, 1.0);
+    }
+
+    #[test]
+    fn hybride_rejete_sans_ville_configuree() {
+        let matcher = Matcher::new(test_profile());
+        let offer = make_offer("Full-Stack Developer", "Hybrid role based in Lyon. Permanent.", None, Some("FR"), None, Some(46000));
+        let (score, _) = matcher.score_with_breakdown(&offer);
+        assert_eq!(score, 0.0, "sans onsite_cities, full-remote strict : hybride rejeté");
+    }
+
+    #[test]
+    fn malus_seniorite_deprioritise_sans_exclure() {
+        let matcher = Matcher::new(test_profile());
+        let base = make_offer("Full-Stack Developer", "Permanent, fully remote", Some(true), Some("FR"), None, Some(46000));
+        let senior = make_offer("Senior Full-Stack Developer", "Permanent, fully remote", Some(true), Some("FR"), None, Some(46000));
+        let (s_base, _) = matcher.score_with_breakdown(&base);
+        let (s_senior, bd) = matcher.score_with_breakdown(&senior);
+        assert!((s_base - s_senior - 0.10).abs() < 1e-9, "senior = -0.10 vs standard, base {s_base} senior {s_senior}");
+        assert!(s_senior > 0.0, "déprioriser, pas exclure");
+        assert!((bd.seniority + 0.10).abs() < 1e-9);
     }
 }
