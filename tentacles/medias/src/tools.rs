@@ -809,6 +809,12 @@ impl MediaServer {
                 out.push(format!("Réencodage : état « {} ».", t.status));
             }
         }
+        if s.visio.is_some() {
+            out.push(match crate::visio::slowed_for(&self.store) {
+                Some(t) => format!("Débit réduit pendant les visios : actif, réduit en ce moment (« {t} »)."),
+                None => "Débit réduit pendant les visios : actif.".to_string(),
+            });
+        }
         if s.caldav.is_some() {
             let last = self.store.get_kv("cal_last").ok().flatten();
             let parsed =

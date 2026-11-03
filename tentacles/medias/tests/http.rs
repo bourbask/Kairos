@@ -232,6 +232,7 @@ async fn lists_tools_and_writes_require_confirmation() {
             "music_updates",
             "reading_updates",
             "ready_to_watch",
+            "recap",
             "request",
             "requests",
             "retry",
