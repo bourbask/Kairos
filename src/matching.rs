@@ -279,7 +279,7 @@ mod tests {
     #[test]
     fn location_gate_exclut_hors_zone() {
         let mut profile = test_profile();
-        profile.preferences.location_keywords = vec!["Toulouse".into()];
+        profile.preferences.location_keywords = vec!["Lyon".into()];
         let matcher = Matcher::new(profile);
         let hors_zone = make_offer("Dev", "Poste basé à Lyon", Some(true), None, None, None);
         let (score, _) = matcher.score_with_breakdown(&hors_zone);
@@ -289,9 +289,9 @@ mod tests {
     #[test]
     fn location_gate_accepte_zone_matchee() {
         let mut profile = test_profile();
-        profile.preferences.location_keywords = vec!["Toulouse".into()];
+        profile.preferences.location_keywords = vec!["Lyon".into()];
         let matcher = Matcher::new(profile);
-        let dans_zone = make_offer("Dev", "Poste basé à Toulouse", Some(true), None, None, None);
+        let dans_zone = make_offer("Dev", "Poste basé à Lyon", Some(true), None, None, None);
         let (score, _) = matcher.score_with_breakdown(&dans_zone);
         assert!(score > 0.0);
     }
