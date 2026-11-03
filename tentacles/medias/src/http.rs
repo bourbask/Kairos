@@ -37,6 +37,10 @@ pub enum Auth {
     /// En-tête porteur de clé (`X-Api-Key`, `X-Plex-Token`…).
     Header(&'static str, String),
     Basic(String, String),
+    /// Jeton porteur (`Authorization: Bearer`).
+    Bearer(String),
+    /// Clé passée en paramètre d'URL (`?apikey=`).
+    Query(&'static str, String),
 }
 
 /// Un service joignable : nom (journaux), adresse de base, authentification.
@@ -67,6 +71,8 @@ impl Svc {
             Auth::None => req,
             Auth::Header(h, v) => req.header(*h, v),
             Auth::Basic(u, p) => req.basic_auth(u, Some(p)),
+            Auth::Bearer(t) => req.bearer_auth(t),
+            Auth::Query(k, v) => req.query(&[(*k, v)]),
         }
     }
 

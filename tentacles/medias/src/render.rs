@@ -75,7 +75,9 @@ pub fn gb(bytes: i64) -> i64 {
 
 /// Taille lisible en Go avec une décimale, séparateur français.
 pub fn go(bytes: f64) -> String {
-    format!("{:.1} Go", bytes / 1_073_741_824.0).replace('.', ",")
+    // Une somme vide de flottants vaut -0 : pas de « -0,0 Go ».
+    let g = bytes / 1_073_741_824.0;
+    format!("{:.1} Go", if g == 0.0 { 0.0 } else { g }).replace('.', ",")
 }
 
 pub fn plex_link(machine: &str, rating_key: &str) -> String {
@@ -305,6 +307,12 @@ mod tests {
         assert_eq!(r.label(), "Titre (2023)");
         assert_eq!(seerr_status(&r), "non demandé");
         assert_eq!(kind_fr(&r.media_type), "série");
+    }
+
+    #[test]
+    fn sizes_never_show_negative_zero() {
+        assert_eq!(go(Vec::<f64>::new().into_iter().sum()), "0,0 Go");
+        assert_eq!(go(1_610_612_736.0), "1,5 Go");
     }
 
     #[test]
