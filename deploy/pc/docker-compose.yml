@@ -20,10 +20,16 @@ services:
         required: true
     environment:
       MEDIAS_BIND: 0.0.0.0:8095
+      MEDIAS_DB: /data/medias.db
+    volumes:
+      - medias-data:/data
     ports:
       - "${MEDIAS_BIND_ADDR:-127.0.0.1}:${MEDIAS_BIND_PORT:-8095}:8095"
     networks:
       - media
+
+volumes:
+  medias-data: {}
 
 networks:
   media:

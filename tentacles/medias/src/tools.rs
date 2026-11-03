@@ -1,4 +1,4 @@
-//! Outils MCP du tentacule médias : lecture seule, par intention.
+//! Outils MCP de lecture du tentacule médias, par intention (actions : `actions.rs`).
 //!
 //! Chaque outil interroge plusieurs services et renvoie un texte déjà digéré.
 //! Un service absent ou injoignable dégrade la réponse sans la faire échouer.
@@ -25,13 +25,14 @@ use crate::render::{
     when,
 };
 use crate::services::{self as sv, PlexItem, QueueItem};
+use crate::store::Store;
 
 type Out = Result<String, String>;
 
 /// Fenêtre au-delà de laquelle une série n'est plus « en cours » (jours sans visionnage).
 const IN_PROGRESS_DAYS: i64 = 120;
 
-fn why(name: &str, e: &SvcError) -> String {
+pub(crate) fn why(name: &str, e: &SvcError) -> String {
     match e {
         SvcError::NotConfigured => format!("{name} non configuré"),
         SvcError::Unavailable => format!("{name} injoignable"),
@@ -42,7 +43,8 @@ fn why(name: &str, e: &SvcError) -> String {
 /// Handler MCP ; bon marché à construire (la stack est partagée).
 #[derive(Clone)]
 pub struct MediaServer {
-    stack: Arc<Stack>,
+    pub(crate) stack: Arc<Stack>,
+    pub(crate) store: Arc<Store>,
     machine: Arc<OnceCell<String>>,
     tool_router: ToolRouter<Self>,
 }
@@ -62,8 +64,8 @@ struct Ready {
 }
 
 impl MediaServer {
-    pub fn new(stack: Arc<Stack>, machine: Arc<OnceCell<String>>) -> Self {
-        Self { stack, machine, tool_router: Self::tool_router() }
+    pub fn new(stack: Arc<Stack>, store: Arc<Store>, machine: Arc<OnceCell<String>>) -> Self {
+        Self { stack, store, machine, tool_router: Self::tool_router() + Self::action_router() }
     }
 
     async fn link(&self, rating_key: &str) -> String {
@@ -77,7 +79,7 @@ impl MediaServer {
     /// Épisodes que Bazarr cherche encore : (id série Sonarr, saison, épisode), et tvdb → id Sonarr.
     async fn wanted_subs(&self) -> (HashSet<(i64, i64, i64)>, HashMap<i64, i64>) {
         let s = &self.stack;
-        let (w, series) = tokio::join!(sv::bazarr_wanted_episodes(&s.bazarr), sv::sonarr_series(&s.sonarr));
+        let (w, series) = tokio::join!(sv::bazarr_wanted_episodes(&s.bazarr), s.series());
         let wanted = w
             .map(|w| {
                 w.data.iter().filter_map(|e| e.season_episode().map(|(a, b)| (e.sonarr_series_id, a, b))).collect()
@@ -506,7 +508,7 @@ impl MediaServer {
         }
         let now = Utc::now();
         let (series, movies, (queue, mut notes), wanted, nzb) = tokio::join!(
-            sv::sonarr_series(&s.sonarr),
+            s.series(),
             sv::radarr_movies(&s.radarr),
             self.queues(),
             sv::bazarr_wanted_episodes(&s.bazarr),

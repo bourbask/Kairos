@@ -15,6 +15,7 @@ tentacle-common = { path = "../../crates/tentacle-common" }
 rmcp = { version = "3.8", features = ["server", "macros"] }
 schemars = "1"
 tokio = { version = "1", features = ["full"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
 
 [[bin]]
 name = "kairos-medias"

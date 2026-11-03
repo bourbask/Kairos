@@ -126,6 +126,10 @@ pub async fn plex_section_items(p: &Opt, section: &str, query: &[(&str, String)]
     Ok(plex_get(need(p)?, &format!("/library/sections/{section}/all"), query, Some(size)).await?.items)
 }
 
+pub async fn plex_all_leaves(p: &Opt, show_key: &str) -> R<Vec<PlexItem>> {
+    Ok(plex_get(need(p)?, &format!("/library/metadata/{show_key}/allLeaves"), &[], None).await?.items)
+}
+
 pub async fn plex_unwatched_leaves(p: &Opt, show_key: &str) -> R<Vec<PlexItem>> {
     let q = [("unwatched", "1".to_string())];
     Ok(plex_get(need(p)?, &format!("/library/metadata/{show_key}/allLeaves"), &q, None).await?.items)
@@ -196,6 +200,7 @@ pub struct StatusMessage {
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct QueueItem {
+    pub id: i64,
     pub title: String,
     pub status: String,
     pub tracked_download_status: String,
@@ -303,8 +308,10 @@ pub async fn arr_missing_count(s: &Opt) -> R<i64> {
     Ok(need(s)?.get::<Page<serde_json::Value>>("/api/v3/wanted/missing", &q).await?.total_records)
 }
 
+/// Liste lente sous charge (statistiques recalculées) : délai long ; passer par `Stack::series`.
 pub async fn sonarr_series(s: &Opt) -> R<Vec<Series>> {
-    need(s)?.get("/api/v3/series", &[]).await
+    let s = need(s)?;
+    s.send(s.raw().get(s.url("/api/v3/series")).timeout(std::time::Duration::from_secs(90))).await
 }
 
 pub async fn radarr_movies(s: &Opt) -> R<Vec<Movie>> {
@@ -387,9 +394,20 @@ pub struct SeerrSearch {
     pub results: Vec<SeerrResult>,
 }
 
+/// Encodage d'un composant d'URL en `%XX` : Seerr refuse l'espace encodé en `+`.
+pub fn encode_component(s: &str) -> String {
+    s.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => (b as char).to_string(),
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
+}
+
 pub async fn seerr_search(s: &Opt, query: &str) -> R<Vec<SeerrResult>> {
-    let q = [("query", query.to_string()), ("page", "1".into()), ("language", "fr".into())];
-    let r: SeerrSearch = need(s)?.get("/api/v1/search", &q).await?;
+    let s = need(s)?;
+    let url = format!("{}?query={}&page=1&language=fr", s.url("/api/v1/search"), encode_component(query));
+    let r: SeerrSearch = s.send(s.raw().get(url)).await?;
     Ok(r.results.into_iter().filter(|r| r.media_type == "tv" || r.media_type == "movie").collect())
 }
 
@@ -582,9 +600,186 @@ pub async fn prowlarr_status(s: &Opt) -> R<(Vec<Indexer>, Vec<IndexerStatus>)> {
     Ok((a?, b?))
 }
 
+// ---------------------------------------------------------------- Écritures
+
+/// Fiche Seerr d'une série ou d'un film (aperçu d'une demande).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SeerrSeason {
+    pub season_number: i64,
+    pub episode_count: i64,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SeerrExternalIds {
+    pub tvdb_id: Option<i64>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SeerrDetails {
+    pub id: i64,
+    pub name: Option<String>,
+    pub title: Option<String>,
+    pub first_air_date: Option<String>,
+    pub release_date: Option<String>,
+    pub seasons: Vec<SeerrSeason>,
+    pub external_ids: Option<SeerrExternalIds>,
+    pub media_info: Option<SeerrMediaInfo>,
+    pub runtime: Option<i64>,
+}
+
+impl SeerrDetails {
+    pub fn label(&self) -> String {
+        let t = self.name.clone().or_else(|| self.title.clone()).unwrap_or_default();
+        match self.first_air_date.as_deref().or(self.release_date.as_deref()).and_then(|d| d.get(..4)) {
+            Some(y) if !y.is_empty() => format!("{t} ({y})"),
+            _ => t,
+        }
+    }
+}
+
+pub async fn seerr_details(s: &Opt, media_type: &str, tmdb: i64) -> R<SeerrDetails> {
+    let q = [("language", "fr".to_string())];
+    need(s)?.get(&format!("/api/v1/{media_type}/{tmdb}"), &q).await
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct SeerrRequest {
+    pub id: i64,
+    /// 1 en attente de validation, 2 validée, 3 refusée, 4 en échec, 5 terminée.
+    pub status: i64,
+}
+
+/// Crée une demande ; `seasons` vide = toutes les saisons (séries).
+pub async fn seerr_request(s: &Opt, media_type: &str, tmdb: i64, seasons: &[i64]) -> R<SeerrRequest> {
+    let mut body = serde_json::json!({"mediaType": media_type, "mediaId": tmdb});
+    if media_type == "tv" {
+        body["seasons"] = if seasons.is_empty() { serde_json::json!("all") } else { serde_json::json!(seasons) };
+    }
+    need(s)?.post("/api/v1/request", &body).await
+}
+
+pub async fn seerr_request_status(s: &Opt, id: i64) -> R<SeerrRequest> {
+    need(s)?.get(&format!("/api/v1/request/{id}"), &[]).await
+}
+
+/// Active ou coupe la surveillance d'une série (`series`) ou d'un film (`movie`), sans rien supprimer.
+pub async fn arr_set_monitored(s: &Opt, resource: &str, id: i64, monitored: bool) -> R<()> {
+    let s = need(s)?;
+    let path = format!("/api/v3/{resource}/{id}");
+    let mut obj: serde_json::Value = s.get(&path, &[]).await?;
+    obj["monitored"] = serde_json::json!(monitored);
+    s.send_unit(s.raw().put(s.url(&path)).json(&obj)).await
+}
+
+/// Lance une commande Sonarr / Radarr (`SeriesSearch`, `MoviesSearch`…).
+pub async fn arr_command(s: &Opt, body: serde_json::Value) -> R<()> {
+    let s = need(s)?;
+    s.send_unit(s.raw().post(s.url("/api/v3/command")).json(&body)).await
+}
+
+/// Retire un élément de la file, écarte la version et relance une recherche.
+/// Le fichier en cours de téléchargement est abandonné ; la bibliothèque n'est pas touchée.
+pub async fn arr_blocklist(s: &Opt, queue_id: i64) -> R<()> {
+    let s = need(s)?;
+    let q = [("removeFromClient", "true"), ("blocklist", "true"), ("skipRedownload", "false")];
+    s.send_unit(s.raw().delete(s.url(&format!("/api/v3/queue/{queue_id}"))).query(&q)).await
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Episode {
+    pub season_number: i64,
+    pub episode_number: i64,
+    pub air_date_utc: Option<String>,
+    pub has_file: bool,
+}
+
+pub async fn sonarr_episodes(s: &Opt, series_id: i64) -> R<Vec<Episode>> {
+    need(s)?.get("/api/v3/episode", &[("seriesId", series_id.to_string())]).await
+}
+
+/// Recherche des sous-titres manquants d'une série (`series`, id Sonarr) ou d'un film (`movies`, id Radarr).
+pub async fn bazarr_search_missing(s: &Opt, resource: &str, id: i64) -> R<()> {
+    let s = need(s)?;
+    let key = if resource == "series" { "seriesid" } else { "radarrid" };
+    let q = [(key, id.to_string()), ("action", "search-missing".to_string())];
+    s.send_unit(s.raw().patch(s.url(&format!("/api/{resource}"))).query(&q)).await
+}
+
+/// Marque vu / non vu dans le lecteur (film, épisode, ou série entière).
+pub async fn plex_scrobble(p: &Opt, rating_key: &str, watched: bool) -> R<()> {
+    let s = need(p)?;
+    let path = if watched { "/:/scrobble" } else { "/:/unscrobble" };
+    let q = [("key", rating_key), ("identifier", "com.plexapp.plugins.library")];
+    s.send_unit(s.raw().get(s.url(path)).query(&q)).await
+}
+
+async fn qbit_post(q: &Option<Qbit>, paths: &[&str], form: &[(&str, &str)]) -> R<()> {
+    let q = q.as_ref().ok_or(SvcError::NotConfigured)?;
+    let mut sid = q.sid.lock().await;
+    let cookie = match sid.as_ref() {
+        Some(c) => c.clone(),
+        None => {
+            let c = qbit_login(&q.svc, &q.user, &q.pass).await?;
+            *sid = Some(c.clone());
+            c
+        }
+    };
+    // Variantes selon la version : la première qui existe gagne.
+    let mut last = SvcError::Unavailable;
+    for path in paths {
+        let req = q.svc.raw().post(q.svc.url(path)).header("Cookie", cookie.clone()).form(form);
+        match q.svc.send_unit(req).await {
+            Ok(()) => return Ok(()),
+            Err(SvcError::Denied) => {
+                *sid = None;
+                return Err(SvcError::Denied);
+            }
+            Err(e) => last = e,
+        }
+    }
+    Err(last)
+}
+
+/// Met en pause ou relance tous les torrents.
+pub async fn qbit_pause_all(q: &Option<Qbit>, pause: bool) -> R<()> {
+    let paths: &[&str] = if pause {
+        &["/api/v2/torrents/stop", "/api/v2/torrents/pause"]
+    } else {
+        &["/api/v2/torrents/start", "/api/v2/torrents/resume"]
+    };
+    qbit_post(q, paths, &[("hashes", "all")]).await
+}
+
+/// Mode de débit réduit (limites alternatives) : vrai s'il est actif.
+pub async fn qbit_slow_mode(q: &Option<Qbit>) -> R<bool> {
+    let v: i64 = qbit_get(q, "/api/v2/transfer/speedLimitsMode", &[]).await?;
+    Ok(v == 1)
+}
+
+pub async fn qbit_toggle_slow(q: &Option<Qbit>) -> R<()> {
+    qbit_post(q, &["/api/v2/transfer/toggleSpeedLimitsMode"], &[]).await
+}
+
+pub async fn nzbget_pause(s: &Opt, pause: bool) -> R<()> {
+    let path = if pause { "/jsonrpc/pausedownload" } else { "/jsonrpc/resumedownload" };
+    let r: RpcResult<bool> = need(s)?.get(path, &[]).await?;
+    if r.result { Ok(()) } else { Err(SvcError::Unavailable) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn url_components_use_percent_encoding() {
+        assert_eq!(encode_component("deux mots"), "deux%20mots");
+        assert_eq!(encode_component("é&a+b"), "%C3%A9%26a%2Bb");
+    }
 
     #[test]
     fn session_cookie_names() {

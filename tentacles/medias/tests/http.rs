@@ -25,6 +25,7 @@ fn count(log: &Log, s: &str) -> usize {
 
 fn queue_item(series: &str, s: i64, e: i64, status: &str, err: Option<&str>, protocol: &str) -> Value {
     json!({
+        "id": s * 100 + e,
         "title": format!("{series}.S{s:02}E{e:02}.1080p"),
         "status": status,
         "trackedDownloadStatus": if err.is_some() { "warning" } else { "ok" },
@@ -169,11 +170,12 @@ fn stack(base: &str, services: &[&str]) -> Stack {
 
 async fn start(stack: Stack) -> String {
     let stack = Arc::new(stack);
+    let store = Arc::new(kairos_medias::store::Store::memory());
     let machine = Arc::new(OnceCell::new());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}/mcp", listener.local_addr().unwrap());
     tokio::spawn(tentacle_common::serve_listener(listener, "t".into(), move || {
-        MediaServer::new(stack.clone(), machine.clone())
+        MediaServer::new(stack.clone(), store.clone(), machine.clone())
     }));
     url
 }
@@ -207,25 +209,39 @@ fn is_err(v: &Value) -> bool {
 const ALL: [&str; 6] = ["sonarr", "radarr", "bazarr", "seerr", "nzbget", "qbit"];
 
 #[tokio::test]
-async fn lists_read_only_tools() {
+async fn lists_tools_and_writes_require_confirmation() {
     let url = start(stack("http://unused.invalid", &[])).await;
     let v = rpc(&url, json!({"jsonrpc":"2.0","id":1,"method":"tools/list"})).await;
-    let mut names: Vec<_> =
-        v["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap().to_string()).collect();
+    let tools = v["result"]["tools"].as_array().unwrap();
+    let mut names: Vec<_> = tools.iter().map(|t| t["name"].as_str().unwrap().to_string()).collect();
     names.sort();
     assert_eq!(
         names,
         [
+            "blocklist_release",
             "brief_section",
             "continue_watching",
             "downloads",
+            "downloads_control",
+            "follow",
             "library_health",
+            "mark_watched",
             "media_status",
             "ready_to_watch",
+            "request",
+            "requests",
+            "retry",
+            "search",
             "stack_health",
+            "unfollow",
             "upcoming"
         ]
     );
+    let writes = ["blocklist_release", "downloads_control", "follow", "mark_watched", "request", "retry", "unfollow"];
+    for t in tools.iter().filter(|t| writes.contains(&t["name"].as_str().unwrap())) {
+        assert!(t["description"].as_str().unwrap().contains("accord explicite"), "{t}");
+        assert!(t["inputSchema"]["properties"]["confirm"].is_object(), "{t}");
+    }
 }
 
 #[tokio::test]
