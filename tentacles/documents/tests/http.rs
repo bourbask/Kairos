@@ -28,8 +28,12 @@ async fn start() -> (String, PathBuf) {
     let root = tree();
     let index = Arc::new(Index::memory());
     index.scan(&root, 1).unwrap();
-    let settings =
-        Arc::new(Settings { root: root.clone(), private: vec!["identite".into()], tz: chrono_tz::Europe::Paris });
+    let settings = Arc::new(Settings {
+        root: root.clone(),
+        private: vec!["identite".into()],
+        tz: chrono_tz::Europe::Paris,
+        model: None,
+    });
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}/mcp", listener.local_addr().unwrap());
     tokio::spawn(tentacle_common::serve_listener(listener, "t".into(), move || {
@@ -88,5 +92,50 @@ async fn excerpts_are_targeted_never_whole_documents() {
     assert!(err && t.contains("Document inconnu"), "{t}");
     let (t, err) = call(&url, "docs_list", json!({"nature": "Inconnue"})).await;
     assert!(err && t.contains("Natures : Assurances, Identité"), "{t}");
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+#[tokio::test]
+async fn deadlines_and_facts_respect_private_natures() {
+    let root = tree();
+    let index = Arc::new(Index::memory());
+    index.scan(&root, 1).unwrap();
+    let soon = (chrono::Utc::now() + chrono::Duration::days(10)).format("%Y-%m-%d").to_string();
+    let later = (chrono::Utc::now() + chrono::Duration::days(200)).format("%Y-%m-%d").to_string();
+    let auto = json!({"type_document": "contrat d'assurance auto", "organisme": "Assureur Oméga", "reference": "AB-12",
+        "resume": "Contrat auto.", "dates": [{"type": "echeance", "date": later, "libelle": "échéance annuelle"}],
+        "montants": [{"libelle": "prime", "montant": 42.5, "periodicite": "mensuel"}]});
+    let id = json!({"type_document": "carte d'identité", "organisme": "Préfecture Secrète", "reference": "X999",
+        "resume": "Pièce.", "dates": [{"type": "expiration", "date": soon, "libelle": "fin de validité"}], "montants": []});
+    index.set_facts("Assurances/auto.md", "m", Some(&auto.to_string()), 1).unwrap();
+    index.set_facts("Identité/carte.md", "m", Some(&id.to_string()), 1).unwrap();
+    let settings = Arc::new(Settings {
+        root: root.clone(),
+        private: vec!["identite".into()],
+        tz: chrono_tz::Europe::Paris,
+        model: Some("m".into()),
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/mcp", listener.local_addr().unwrap());
+    tokio::spawn(tentacle_common::serve_listener(listener, "t".into(), move || {
+        DocServer::new(index.clone(), settings.clone())
+    }));
+
+    let (t, _) = call(&url, "deadlines", json!({"days": 365})).await;
+    assert!(t.contains("carte d'identité : expiration — document privé"), "{t}");
+    assert!(t.contains("contrat d'assurance auto — Assureur Oméga : échéance — Assurances/auto.md"), "{t}");
+    assert!(!t.contains("Préfecture") && !t.contains("Identité/carte.md"), "{t}");
+    let (t, _) = call(&url, "deadlines", json!({"days": 30})).await;
+    assert!(t.contains("carte d'identité") && !t.contains("assurance"), "{t}");
+
+    let (t, _) = call(&url, "contract_facts", json!({"query": "assurance"})).await;
+    assert!(t.contains("référence : AB-12") && t.contains("prime : 42,50 € (mensuel)"), "{t}");
+    let (t, _) = call(&url, "contract_facts", json!({})).await;
+    assert!(!t.contains("X999") && !t.contains("carte d'identité"), "{t}");
+
+    let (t, _) = call(&url, "brief_section", json!({"period": "matin"})).await;
+    assert!(t.starts_with("Documents — échéances proches :") && t.contains("document privé"), "{t}");
+    let (t, _) = call(&url, "docs_overview", json!({})).await;
+    assert!(t.contains("Faits extraits : 2 document(s)"), "{t}");
     std::fs::remove_dir_all(&root).unwrap();
 }
