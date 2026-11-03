@@ -110,12 +110,27 @@ CalDAV dédié, créé au besoin :
 Le calendrier vit sur le serveur CalDAV : il reste consultable machine éteinte.
 `stack_health` indique la dernière synchronisation.
 
+### Bilans et autres médias — étape 4 (livrée)
+
+| Outil | Rôle |
+|---|---|
+| `abandoned` | Séries commencées puis délaissées, en signalant celles encore surveillées |
+| `watch_stats` | Bilan de visionnage : épisodes, films, temps estimé, séries les plus regardées |
+| `seeding_obligations` | Terminés encore dus au partage (trackers privés) / limites atteintes — lecture seule |
+| `music_updates` | Albums sortis récemment et à venir des artistes suivis |
+| `reading_updates` | Lectures en cours (progression), ajouts récents, livres demandés |
+| `audiobooks` | Livres audio en cours : progression, temps restant |
+
+`search` couvre aussi les artistes (`kind=musique`) et les livres
+(`kind=livre`) ; `request` accepte `artist` (albums à venir, ou discographie
+complète) et `book` / `audiobook`. Bibliothèques vides : chaque outil indique
+comment commencer. Le suivi jusqu'à disponibilité reste limité aux séries et
+films.
+
 ### Étapes suivantes
 
-4. **Musique, lecture, livres audio** (`music_updates`, `reading_updates`,
-   `audiobooks`) ; `abandoned`, `watch_stats`, `seeding_obligations`.
 5. `recap` (matière d'un résumé sans spoiler) ; débit réduit pendant les
-   visioconférences (automatisme à placer : le tentacule ne lit pas l'agenda).
+   visioconférences (lecture directe du calendrier CalDAV, opt-in).
 
 ## Sécurité
 

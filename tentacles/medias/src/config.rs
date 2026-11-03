@@ -6,7 +6,7 @@ use crate::caldav::CalDav;
 use crate::http::{Auth, Opt, Svc, client};
 use crate::notify::Notifier;
 use crate::render::tz_or_paris;
-use crate::services::{self as sv, Qbit, Series};
+use crate::services::{self as sv, Kavita, Qbit, Series};
 
 /// Durée de validité de la liste des séries (lente à obtenir sous charge).
 const SERIES_TTL: std::time::Duration = std::time::Duration::from_secs(600);
@@ -21,6 +21,10 @@ pub struct Stack {
     pub nzbget: Opt,
     pub tdarr: Opt,
     pub qbit: Option<Qbit>,
+    pub lidarr: Opt,
+    pub lazylibrarian: Opt,
+    pub kavita: Option<Kavita>,
+    pub audiobookshelf: Opt,
     pub tz: Tz,
     /// Seuil d'espace libre (Go) sous lequel le disque est signalé.
     pub disk_min_gb: i64,
@@ -112,6 +116,32 @@ impl Stack {
             qbit: basic("QBIT", "qbittorrent")?
                 .map(|(u, user, pass, l)| Qbit::new(Svc::new(l, &u, Auth::None, http.clone()), user, pass)),
             tdarr: url("TDARR")?.map(|u| Svc::new("tdarr", &u, Auth::None, http.clone())),
+            lidarr: keyed("LIDARR", "lidarr", "X-Api-Key")?,
+            lazylibrarian: match url("LAZYLIBRARIAN")? {
+                None => None,
+                Some(u) => Some(Svc::new(
+                    "lazylibrarian",
+                    &u,
+                    Auth::Query("apikey", req("MEDIAS_LAZYLIBRARIAN_KEY".into())?),
+                    http.clone(),
+                )),
+            },
+            kavita: match url("KAVITA")? {
+                None => None,
+                Some(u) => Some(Kavita::new(
+                    Svc::new("kavita", &u, Auth::None, http.clone()),
+                    req("MEDIAS_KAVITA_KEY".into())?,
+                )),
+            },
+            audiobookshelf: match url("AUDIOBOOKSHELF")? {
+                None => None,
+                Some(u) => Some(Svc::new(
+                    "audiobookshelf",
+                    &u,
+                    Auth::Bearer(req("MEDIAS_AUDIOBOOKSHELF_KEY".into())?),
+                    http.clone(),
+                )),
+            },
             tz: tz_or_paris(get("MEDIAS_TZ").as_deref()),
             disk_min_gb: get("MEDIAS_DISK_MIN_GB").and_then(|v| v.parse().ok()).unwrap_or(50),
             notifier: match (url("NTFY")?, get("MEDIAS_NTFY_TOPIC")) {

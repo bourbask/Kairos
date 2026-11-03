@@ -65,7 +65,12 @@ struct Ready {
 
 impl MediaServer {
     pub fn new(stack: Arc<Stack>, store: Arc<Store>, machine: Arc<OnceCell<String>>) -> Self {
-        Self { stack, store, machine, tool_router: Self::tool_router() + Self::action_router() }
+        Self {
+            stack,
+            store,
+            machine,
+            tool_router: Self::tool_router() + Self::action_router() + Self::library_router(),
+        }
     }
 
     async fn link(&self, rating_key: &str) -> String {
@@ -731,6 +736,12 @@ impl MediaServer {
             sv::nzbget_status(&s.nzbget),
             sv::tdarr_status(&s.tdarr)
         );
+        let (li, ll, ka, ab) = tokio::join!(
+            sv::lidarr_artists(&s.lidarr),
+            sv::ll_wanted(&s.lazylibrarian),
+            sv::kavita_on_deck(&s.kavita),
+            sv::abs_in_progress(&s.audiobookshelf)
+        );
         let mut up = Vec::new();
         let mut down = Vec::new();
         let mut mark = |name: &str, r: Result<(), &SvcError>| match r {
@@ -747,6 +758,10 @@ impl MediaServer {
         mark("qBittorrent", qb.as_ref().map(|_| ()));
         mark("NZBGet", nzb.as_ref().map(|_| ()));
         mark("Tdarr", td.as_ref().map(|_| ()));
+        mark("Lidarr", li.as_ref().map(|_| ()));
+        mark("LazyLibrarian", ll.as_ref().map(|_| ()));
+        mark("Kavita", ka.as_ref().map(|_| ()));
+        mark("Audiobookshelf", ab.as_ref().map(|_| ()));
         let mut out =
             vec![format!("Services joignables : {}.", if up.is_empty() { "aucun".into() } else { up.join(", ") })];
         if !down.is_empty() {
