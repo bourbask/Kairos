@@ -32,6 +32,6 @@ build-linux:
 	cargo build --release --target x86_64-unknown-linux-gnu
 
 # Déploiement sur VPS (pile Docker).
-# Usage : VPS_HOST=user@vps make deploy
+# Usage : VPS_HOST=user@vps [KAIROS_SERVICES="…"] make deploy
 deploy:
 	VPS_HOST=$(VPS_HOST) ./deploy/docker/deploy.sh
