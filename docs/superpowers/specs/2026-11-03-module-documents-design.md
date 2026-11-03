@@ -48,12 +48,34 @@ et, plus tard, ajouter, déplacer ou classer des documents.
   (passages autour des mots demandés, plafonnés).
 - Déploiement : `deploy/pc/` (services `documents` et `documents-backup`).
 
-## Étapes suivantes
+## Étape 2 — extraction (livrée)
 
-2. **Extraction** : lecture des scans (reconnaissance de caractères), modèle
-   local sur le GPU du poste pour les faits (dates, montants, échéances,
-   garanties) ; `deadlines`, `contract_facts`, calendrier « Échéances » en
-   CalDAV (visible machine éteinte), `brief_section`.
+- **Lecture des scans** : images et PDF sans couche texte passent par la
+  reconnaissance de caractères (`tesseract`, français ; PDF : 8 pages au plus,
+  converties à 200 ppp). Les documents déjà indexés sans texte sont relus une
+  fois (version d'extraction).
+- **Faits par un modèle local** (Ollama sur le GPU du poste, non publié) :
+  réponse contrainte par un schéma JSON (type, organisme, référence, résumé,
+  dates typées, montants). Le modèle ne fait que lire ; les dates invalides ou
+  partielles sont rejetées par le code. Faits réextraits quand le document
+  change ou que le modèle change ; un échec n'est pas retenté en boucle.
+- **Échéances calculées par le code**, pas par le modèle : fins, échéances,
+  renouvellements, fins d'engagement, dates limites de résiliation,
+  expirations ; contrôle technique à +2 ans du dernier, premier contrôle à
+  +4 ans de la mise en circulation.
+- **Natures privées** : seules l'échéance et le type de document sortent
+  (« document privé »), ni organisme, ni référence, ni montant, ni chemin.
+- Outils : `deadlines`, `contract_facts`, `brief_section` ; `docs_overview`
+  indique l'avancement de l'extraction.
+- **Calendrier « Échéances »** en CalDAV (créé au besoin) : une journée par
+  échéance, rappel une semaine avant, événements transparents, synchronisation
+  incrémentale.
+- Choix du modèle mesuré sur documents réels : un modèle de 8 milliards de
+  paramètres tient dans la mémoire disponible ; un 9B ne se charge pas à côté
+  de la stack du poste.
+
+## Étape suivante
+
 3. **Écritures** en deux temps (aperçu, puis `confirm=true`) dans le dossier
    synchronisé ; « supprimer » = déplacer vers une corbeille ;
    `missing_documents` (pièces attendues par nature).
