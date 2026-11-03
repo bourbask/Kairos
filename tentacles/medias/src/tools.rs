@@ -794,6 +794,19 @@ impl MediaServer {
                 out.push(format!("Réencodage : état « {} ».", t.status));
             }
         }
+        if s.caldav.is_some() {
+            let last = self.store.get_kv("cal_last").ok().flatten();
+            let parsed =
+                last.as_deref().and_then(|v| v.split_once('|')).and_then(|(t, n)| Some((t.parse::<i64>().ok()?, n)));
+            out.push(
+                match parsed.and_then(|(t, n)| Some((chrono::TimeZone::timestamp_opt(&s.tz, t, 0).single()?, n))) {
+                    Some((d, n)) => {
+                        format!("Calendrier des sorties : {n} événement(s), synchronisé à {}.", d.format("%d/%m %H:%M"))
+                    }
+                    None => "Calendrier des sorties : pas encore synchronisé.".to_string(),
+                },
+            );
+        }
         Ok(out.join("\n"))
     }
 
