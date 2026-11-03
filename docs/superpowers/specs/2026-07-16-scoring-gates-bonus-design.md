@@ -12,7 +12,7 @@ diluant le score total bien en dessous de 0.60.
 
 Simulation sur les données réelles (3422 offres, script ad-hoc) : avec un plafond de
 6 compétences au lieu de 25, 127 offres dépassent 0.60 au lieu de 2. Confirmé comme
-direction, mais affiné : Kevin est flexible sur la stack exacte (Java/Kotlin/Rust/JS
+direction, mais affiné : l'utilisateur est flexible sur la stack exacte (Java/Kotlin/Rust/JS
 équivalents à l'ère de l'IA dev) tant que les critères non-négociables (full remote,
 CDI, pas d'entreprise blacklistée) sont respectés — d'où un modèle **gates + bonus**
 plutôt qu'un simple recalibrage de poids.
@@ -24,7 +24,7 @@ langue exploitable — un gate texte en plus n'aurait ajouté que du bruit/faux 
 
 ## Objectif
 
-Que les offres qui respectent déjà les critères durs de Kevin (remote, CDI,
+Que les offres qui respectent déjà les critères durs de l'utilisateur (remote, CDI,
 non-blacklistées) apparaissent systématiquement au-dessus du seuil de qualité,
 sans que l'exigence exacte de stack technique les évince — tout en gardant un vrai
 signal de tri (« liste vide plutôt que du bruit » reste vrai : le seuil filtre
@@ -103,7 +103,7 @@ de le retoucher.
   `preferences.salary_min`, `preferences.salary_target` (existants, mais les
   seuils 45k/48k/40k sont **en dur** dans le code, pas dérivés de `salary_min`/
   `salary_target` — à noter explicitement en commentaire pour éviter la confusion
-  si Kevin change ces préférences plus tard sans toucher les seuils salaire du
+  si l'utilisateur change ces préférences plus tard sans toucher les seuils salaire du
   scoring). `preferences.countries` réutilisé tel quel pour le bonus pays.
 
 ### Migration des offres déjà collectées
