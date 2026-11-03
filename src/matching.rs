@@ -281,7 +281,7 @@ mod tests {
         let mut profile = test_profile();
         profile.preferences.location_keywords = vec!["Lyon".into()];
         let matcher = Matcher::new(profile);
-        let hors_zone = make_offer("Dev", "Poste basé à Lyon", Some(true), None, None, None);
+        let hors_zone = make_offer("Dev", "Poste basé à Lille", Some(true), None, None, None);
         let (score, _) = matcher.score_with_breakdown(&hors_zone);
         assert_eq!(score, 0.0);
     }
