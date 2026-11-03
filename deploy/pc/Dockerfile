@@ -10,7 +10,7 @@ RUN cargo build --release -p kairos-medias -p kairos-documents
 # ---- Runtime ----
 FROM debian:bookworm-slim
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates poppler-utils unzip \
+ && apt-get install -y --no-install-recommends ca-certificates poppler-utils unzip tesseract-ocr tesseract-ocr-fra \
  && rm -rf /var/lib/apt/lists/*
 COPY --from=build /src/target/release/kairos-medias /src/target/release/kairos-documents /app/
 # Bases (suivi des demandes, index des documents) : volumes nommés, propriété de l'utilisateur d'exécution.

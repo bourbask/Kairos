@@ -15,6 +15,7 @@ use rmcp::{
 };
 use serde::Deserialize;
 
+use crate::facts::{self, Deadline, Facts};
 use crate::index::Index;
 
 type Out = Result<String, String>;
@@ -28,6 +29,29 @@ pub struct Settings {
     /// Natures jamais exposées (comparaison insensible à la casse).
     pub private: Vec<String>,
     pub tz: chrono_tz::Tz,
+    /// Modèle d'extraction des faits ; absent = extraction désactivée.
+    pub model: Option<String>,
+}
+
+/// Échéances de tous les documents. Natures privées : type et date seulement,
+/// sans organisme ni chemin (rendu « document privé »).
+pub fn all_deadlines(index: &Index, settings: &Settings, today: chrono::NaiveDate) -> Vec<(Deadline, bool)> {
+    let private = |n: &str| settings.private.iter().any(|p| fold(p) == fold(n));
+    let mut out = Vec::new();
+    for (doc, json) in index.all_facts().unwrap_or_default() {
+        let Ok(mut f) = serde_json::from_str::<Facts>(&json) else { continue };
+        let is_private = private(&doc.nature);
+        if is_private {
+            f.organisme = None;
+            f.reference = None;
+        }
+        for d in facts::deadlines(&doc.path, &f, today) {
+            out.push((d, is_private));
+        }
+    }
+    out.sort_by(|a, b| a.0.date.cmp(&b.0.date).then(a.0.label.cmp(&b.0.label)));
+    out.dedup_by(|a, b| a.0.date == b.0.date && a.0.label == b.0.label);
+    out
 }
 
 #[derive(Clone)]
@@ -114,6 +138,27 @@ struct SearchArgs {
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
+struct DeadlineArgs {
+    /// Horizon en jours (180 par défaut, 1100 au plus).
+    days: Option<i64>,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+struct FactsArgs {
+    /// Organisme, type de document ou mot-clé (ex. « assurance », « internet », « bail »).
+    query: Option<String>,
+    /// Restreindre à une nature.
+    nature: Option<String>,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+struct BriefArgs {
+    /// Contrat commun des sections de brief ; le contenu est le même matin et soir.
+    #[allow(dead_code)]
+    period: tentacle_common::BriefPeriod,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
 struct ExcerptArgs {
     /// Chemin du document tel que renvoyé par `docs_list` ou `docs_search`.
     path: String,
@@ -132,6 +177,21 @@ impl DocServer {
 
     fn date(&self, ts: i64) -> String {
         self.settings.tz.timestamp_opt(ts, 0).single().map(|d| d.format("%d/%m/%Y").to_string()).unwrap_or_default()
+    }
+
+    fn deadline_line(&self, d: &Deadline, private: bool, today: chrono::NaiveDate) -> String {
+        let left = (d.date - today).num_days();
+        let when = match left {
+            l if l < 0 => format!("dépassée depuis {} j", -l),
+            0 => "aujourd'hui".to_string(),
+            l => format!("dans {l} j"),
+        };
+        let src = if private { "document privé".to_string() } else { d.path.clone() };
+        format!("- {} ({when}) — {} — {src}", d.date.format("%d/%m/%Y"), d.label)
+    }
+
+    fn today(&self) -> chrono::NaiveDate {
+        chrono::Utc::now().with_timezone(&self.settings.tz).date_naive()
     }
 
     /// Noms exacts des natures privées présentes dans l'index (comparaison sans casse ni accents),
@@ -174,7 +234,13 @@ impl DocServer {
             })
             .collect();
         let when = self.index.last_scan().map(|t| format!(" (index à jour du {})", self.date(t))).unwrap_or_default();
-        Ok(format!("{total} documents{when} :\n{}", lines.join("\n")))
+        let mut out = format!("{total} documents{when} :\n{}", lines.join("\n"));
+        if let Some(m) = &self.settings.model {
+            if let Ok((ok, ko, todo)) = self.index.facts_status(m) {
+                out.push_str(&format!("\nFaits extraits : {ok} document(s), {todo} en attente, {ko} en échec."));
+            }
+        }
+        Ok(out)
     }
 
     #[tool(description = "Lister les documents d'une nature : chemin, type, taille, date, lisible ou non.")]
@@ -234,6 +300,99 @@ impl DocServer {
             })
             .collect();
         Ok(format!("Résultats :\n{}", lines.join("\n")))
+    }
+
+    #[tool(
+        description = "Lister les échéances tirées des documents (fins de contrat, renouvellements, dates limites de résiliation, expirations, contrôle technique) sur un horizon donné, de la plus proche à la plus lointaine."
+    )]
+    async fn deadlines(&self, Parameters(a): Parameters<DeadlineArgs>) -> Out {
+        let today = self.today();
+        let horizon = today + chrono::Duration::days(a.days.unwrap_or(180).clamp(1, 1100));
+        let all: Vec<_> =
+            all_deadlines(&self.index, &self.settings, today).into_iter().filter(|(d, _)| d.date <= horizon).collect();
+        if all.is_empty() {
+            return Ok(format!("Aucune échéance d'ici le {}.", horizon.format("%d/%m/%Y")));
+        }
+        let lines: Vec<_> = all.iter().map(|(d, p)| self.deadline_line(d, *p, today)).collect();
+        Ok(format!("Échéances jusqu'au {} :\n{}", horizon.format("%d/%m/%Y"), lines.join("\n")))
+    }
+
+    #[tool(
+        description = "Donner les faits extraits des contrats et documents (type, organisme, référence, montants, dates), filtrés par mot-clé ou nature. Utile pour comparer une offre au contrat actuel."
+    )]
+    async fn contract_facts(&self, Parameters(a): Parameters<FactsArgs>) -> Out {
+        let nature = match a.nature.as_deref() {
+            Some(n) => Some(self.nature(n)?),
+            None => None,
+        };
+        let q = a.query.as_deref().map(fold).unwrap_or_default();
+        let words: Vec<&str> = q.split_whitespace().filter(|w| w.chars().count() >= 3).collect();
+        let mut out = Vec::new();
+        for (doc, json) in self.index.all_facts().map_err(|e| e.to_string())? {
+            if self.is_private(&doc.nature) || nature.as_deref().is_some_and(|n| n != doc.nature) {
+                continue;
+            }
+            let Ok(f) = serde_json::from_str::<Facts>(&json) else { continue };
+            let hay = fold(&format!(
+                "{} {} {} {} {}",
+                doc.path,
+                f.type_document,
+                f.organisme.clone().unwrap_or_default(),
+                f.resume,
+                f.reference.clone().unwrap_or_default()
+            ));
+            if !words.iter().all(|w| hay.contains(w)) {
+                continue;
+            }
+            let mut l = vec![format!(
+                "{} — {}{}",
+                doc.path,
+                f.type_document,
+                f.organisme.as_deref().map(|o| format!(", {o}")).unwrap_or_default()
+            )];
+            if let Some(r) = f.reference.as_deref().filter(|r| !r.is_empty()) {
+                l.push(format!("  référence : {r}"));
+            }
+            if !f.resume.is_empty() {
+                l.push(format!("  {}", f.resume));
+            }
+            for m in f.montants.iter().take(6) {
+                l.push(format!(
+                    "  {} : {} € ({})",
+                    m.libelle,
+                    format!("{:.2}", m.montant).replace('.', ","),
+                    m.periodicite
+                ));
+            }
+            for d in f.dates.iter().take(8) {
+                if let Some(x) = facts::parse(&d.date) {
+                    l.push(format!("  {} : {} ({})", d.kind.replace('_', " "), x.format("%d/%m/%Y"), d.libelle));
+                }
+            }
+            out.push(l.join("\n"));
+            if out.len() >= 12 {
+                break;
+            }
+        }
+        if out.is_empty() {
+            return Ok("Aucun fait extrait ne correspond (extraction peut-être encore en cours : voir docs_overview)."
+                .to_string());
+        }
+        Ok(out.join("\n\n"))
+    }
+
+    #[tool(description = "Obtenir la section documents d'un briefing : échéances des 30 prochains jours et retards.")]
+    async fn brief_section(&self, Parameters(_a): Parameters<BriefArgs>) -> Out {
+        let today = self.today();
+        let soon: Vec<_> = all_deadlines(&self.index, &self.settings, today)
+            .into_iter()
+            .filter(|(d, _)| d.date <= today + chrono::Duration::days(30))
+            .collect();
+        if soon.is_empty() {
+            return Ok("Documents : aucune échéance dans les 30 jours.".to_string());
+        }
+        let lines: Vec<_> = soon.iter().map(|(d, p)| self.deadline_line(d, *p, today)).collect();
+        Ok(format!("Documents — échéances proches :\n{}", lines.join("\n")))
     }
 
     #[tool(

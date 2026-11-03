@@ -29,6 +29,13 @@ CREATE VIRTUAL TABLE IF NOT EXISTS fts USING fts5(
     path UNINDEXED, name, body, tokenize = 'unicode61 remove_diacritics 2'
 );
 CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS facts (
+    path TEXT PRIMARY KEY,
+    model TEXT NOT NULL,
+    status TEXT NOT NULL,
+    json TEXT,
+    extracted_at INTEGER NOT NULL
+);
 ";
 
 #[derive(Debug, Clone, PartialEq)]
@@ -53,6 +60,8 @@ pub struct ScanReport {
 
 pub struct Index {
     db: Mutex<Connection>,
+    /// Reconnaissance de caractères des scans et images.
+    pub ocr: bool,
 }
 
 fn rel(root: &Path, p: &Path) -> Option<String> {
@@ -105,6 +114,18 @@ fn row(r: &rusqlite::Row) -> rusqlite::Result<Doc> {
 
 const COLS: &str = "path, nature, name, kind, size, mtime, has_text";
 
+/// Version de l'extraction : quand elle change, les documents sans texte sont relus une fois.
+pub const EXTRACT_VERSION: &str = "2-ocr";
+
+fn upgrade(c: &Connection) -> rusqlite::Result<()> {
+    let v: Option<String> = c.query_row("SELECT v FROM meta WHERE k = 'extract_v'", [], |r| r.get(0)).optional()?;
+    if v.as_deref() != Some(EXTRACT_VERSION) {
+        c.execute("UPDATE files SET mtime = -1 WHERE has_text = 0", [])?;
+        c.execute("INSERT OR REPLACE INTO meta (k, v) VALUES ('extract_v', ?1)", [EXTRACT_VERSION])?;
+    }
+    Ok(())
+}
+
 /// Requête plein texte sûre : chaque mot devient un préfixe entre guillemets (ET implicite).
 pub fn fts_query(q: &str) -> Option<String> {
     let words: Vec<String> = q
@@ -120,13 +141,14 @@ impl Index {
     pub fn open(path: &str) -> anyhow::Result<Index> {
         let c = Connection::open(path)?;
         c.execute_batch(SCHEMA)?;
-        Ok(Index { db: Mutex::new(c) })
+        upgrade(&c)?;
+        Ok(Index { db: Mutex::new(c), ocr: true })
     }
 
     pub fn memory() -> Index {
         let c = Connection::open_in_memory().expect("base en mémoire");
         c.execute_batch(SCHEMA).expect("schéma");
-        Index { db: Mutex::new(c) }
+        Index { db: Mutex::new(c), ocr: false }
     }
 
     /// Un passage d'inventaire. Le texte est extrait hors verrou.
@@ -154,10 +176,12 @@ impl Index {
                 r.unchanged += 1;
                 continue;
             }
-            let body = extract::text(&p);
+            let body = extract::text(&p, self.ocr);
             let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
             let db = self.db.lock().unwrap();
             db.execute("DELETE FROM fts WHERE path = ?1", [&path])?;
+            // Contenu changé : faits à réextraire.
+            db.execute("DELETE FROM facts WHERE path = ?1", [&path])?;
             db.execute(
                 "INSERT INTO files (path, nature, name, kind, size, mtime, has_text, body)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
@@ -181,10 +205,81 @@ impl Index {
         for p in all.into_iter().filter(|p| !seen.contains(p)) {
             db.execute("DELETE FROM files WHERE path = ?1", [&p])?;
             db.execute("DELETE FROM fts WHERE path = ?1", [&p])?;
+            db.execute("DELETE FROM facts WHERE path = ?1", [&p])?;
             r.removed += 1;
         }
         db.execute("INSERT OR REPLACE INTO meta (k, v) VALUES ('last_scan', ?1)", [now.to_string()])?;
         Ok(r)
+    }
+
+    /// Documents lisibles sans faits extraits par ce modèle : (chemin, nom, texte).
+    pub fn pending_facts(&self, model: &str, limit: usize) -> rusqlite::Result<Vec<(String, String, String)>> {
+        let db = self.db.lock().unwrap();
+        let mut st = db.prepare(
+            "SELECT f.path, f.name, f.body FROM files f LEFT JOIN facts x ON x.path = f.path AND x.model = ?1
+             WHERE f.has_text = 1 AND x.path IS NULL ORDER BY f.mtime DESC LIMIT ?2",
+        )?;
+        st.query_map(params![model, limit as i64], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect()
+    }
+
+    /// Enregistre le résultat d'une extraction (`json` absent : échec, non retenté avec ce modèle).
+    pub fn set_facts(&self, path: &str, model: &str, json: Option<&str>, now: i64) -> rusqlite::Result<()> {
+        self.db.lock().unwrap().execute(
+            "INSERT OR REPLACE INTO facts (path, model, status, json, extracted_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![path, model, if json.is_some() { "ok" } else { "erreur" }, json, now],
+        )?;
+        Ok(())
+    }
+
+    /// Faits extraits : (document, JSON).
+    pub fn all_facts(&self) -> rusqlite::Result<Vec<(Doc, String)>> {
+        let db = self.db.lock().unwrap();
+        let mut st = db.prepare(&format!(
+            "SELECT {}, x.json FROM facts x JOIN files f ON f.path = x.path WHERE x.status = 'ok' ORDER BY f.path",
+            COLS.split(", ").map(|c| format!("f.{c}")).collect::<Vec<_>>().join(", ")
+        ))?;
+        st.query_map([], |r| Ok((row(r)?, r.get(7)?)))?.collect()
+    }
+
+    /// (extraits, en échec, lisibles en attente) pour ce modèle.
+    pub fn facts_status(&self, model: &str) -> rusqlite::Result<(i64, i64, i64)> {
+        let db = self.db.lock().unwrap();
+        let ok: i64 =
+            db.query_row("SELECT COUNT(*) FROM facts WHERE model = ?1 AND status = 'ok'", [model], |r| r.get(0))?;
+        let ko: i64 =
+            db.query_row("SELECT COUNT(*) FROM facts WHERE model = ?1 AND status = 'erreur'", [model], |r| r.get(0))?;
+        let todo: i64 = db.query_row(
+            "SELECT COUNT(*) FROM files f LEFT JOIN facts x ON x.path = f.path AND x.model = ?1 WHERE f.has_text = 1 AND x.path IS NULL",
+            [model],
+            |r| r.get(0),
+        )?;
+        Ok((ok, ko, todo))
+    }
+
+    pub fn get_meta(&self, k: &str) -> Option<String> {
+        self.db
+            .lock()
+            .unwrap()
+            .query_row("SELECT v FROM meta WHERE k = ?1", [k], |r| r.get(0))
+            .optional()
+            .ok()
+            .flatten()
+    }
+
+    pub fn set_meta(&self, k: &str, v: &str) {
+        let _ = self.db.lock().unwrap().execute("INSERT OR REPLACE INTO meta (k, v) VALUES (?1, ?2)", [k, v]);
+    }
+
+    pub fn del_meta(&self, k: &str) {
+        let _ = self.db.lock().unwrap().execute("DELETE FROM meta WHERE k = ?1", [k]);
+    }
+
+    pub fn meta_keys(&self, prefix: &str) -> Vec<String> {
+        let db = self.db.lock().unwrap();
+        let Ok(mut st) = db.prepare("SELECT k FROM meta WHERE substr(k, 1, length(?1)) = ?1") else {
+            return Vec::new();
+        };
+        st.query_map([prefix], |r| r.get(0)).map(|it| it.flatten().collect()).unwrap_or_default()
     }
 
     pub fn last_scan(&self) -> Option<i64> {

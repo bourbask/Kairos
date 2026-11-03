@@ -2,7 +2,8 @@
 # - medias : dans le réseau Docker de la stack média (services joints par leur nom) ;
 # - documents : dossier de documents synchronisé localement, monté en lecture seule ;
 # - documents-backup : copie quotidienne de ce dossier, sans jamais rien effacer
-#   (fichiers modifiés ou supprimés rangés dans archives/<date>).
+#   (fichiers modifiés ou supprimés rangés dans archives/<date>) ;
+# - ollama : modèle local sur le GPU du poste (extraction des faits), non publié.
 #
 #   cp medias.env.example medias.env ; cp documents.env.example documents.env   # puis remplir (hors dépôt)
 #   .env : MEDIAS_NETWORK, DOCUMENTS_SOURCE_DIR, DOCUMENTS_BACKUP_DIR
@@ -47,11 +48,28 @@ services:
       DOCUMENTS_BIND: 0.0.0.0:8096
       DOCUMENTS_ROOT: /docs
       DOCUMENTS_DB: /data/documents.db
+      DOCUMENTS_OLLAMA_URL: http://ollama:11434
     volumes:
       - "${DOCUMENTS_SOURCE_DIR:?dossier des documents}:/docs:ro"
       - documents-data:/data
     ports:
       - "${DOCUMENTS_BIND_ADDR:-127.0.0.1}:${DOCUMENTS_BIND_PORT:-8097}:8096"
+
+  ollama:
+    image: ollama/ollama:0.6.8
+    restart: unless-stopped
+    environment:
+      # Libère la mémoire du GPU peu après la dernière extraction.
+      OLLAMA_KEEP_ALIVE: 5m
+    volumes:
+      - ollama-models:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
 
   documents-backup:
     image: rclone/rclone:1.68.2
@@ -71,6 +89,9 @@ services:
 volumes:
   medias-data: {}
   documents-data: {}
+  ollama-models:
+    # Nom fixe : les modèles téléchargés survivent à un renommage du projet.
+    name: kairos-ollama
 
 networks:
   media:
