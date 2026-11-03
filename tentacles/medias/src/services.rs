@@ -58,6 +58,7 @@ pub struct PlexItem {
     pub leaf_count: Option<i64>,
     pub viewed_leaf_count: Option<i64>,
     pub year: Option<i64>,
+    pub summary: Option<String>,
     #[serde(rename = "Guid")]
     pub guids: Vec<PlexGuid>,
     #[serde(rename = "Media")]
