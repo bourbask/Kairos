@@ -55,14 +55,41 @@ fn pick<T>(mut found: Vec<(String, T)>, needle: &str) -> Result<T, Vec<String>> 
 struct SearchArgs {
     /// Titre ou mots-clés.
     query: String,
+    /// « video » (séries et films, défaut), « musique » (artistes) ou « livre ».
+    kind: Option<String>,
+}
+
+/// Identifiant numérique (séries, films) ou texte (artistes, livres).
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(untagged)]
+enum IdArg {
+    Num(i64),
+    Text(String),
+}
+
+impl IdArg {
+    fn text(&self) -> String {
+        match self {
+            IdArg::Num(n) => n.to_string(),
+            IdArg::Text(t) => t.trim().to_string(),
+        }
+    }
+    fn num(&self) -> Option<i64> {
+        match self {
+            IdArg::Num(n) => Some(*n),
+            IdArg::Text(t) => t.trim().parse().ok(),
+        }
+    }
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
 struct RequestArgs {
-    /// « tv » (série) ou « movie » (film), tel que renvoyé par `search`.
+    /// « tv » (série), « movie » (film), « artist », « book » (livre) ou « audiobook », tel que renvoyé par `search`.
     media_type: String,
     /// Identifiant renvoyé par `search`.
-    id: i64,
+    id: IdArg,
+    /// Artistes : vrai = toute la discographie (recherchée maintenant) ; défaut = albums à venir seulement.
+    discography: Option<bool>,
     /// Saisons voulues (séries) ; absent = toutes.
     seasons: Option<Vec<i64>>,
     confirm: Option<bool>,
@@ -204,11 +231,56 @@ impl MediaServer {
 #[tool_router(router = action_router, vis = "pub(crate)")]
 impl MediaServer {
     #[tool(
-        description = "Chercher une série ou un film à ajouter (recherche du service de demandes) : renvoie le type, l'identifiant à passer à `request` et l'état (déjà disponible, demandé, non demandé)."
+        description = "Chercher quoi ajouter : séries et films (défaut), artistes (kind=musique) ou livres (kind=livre ; donner titre et auteur, une recherche d'un seul mot peut être très lente). Renvoie le media_type et l'identifiant à passer à `request`, et l'état (disponible, demandé, suivi…)."
     )]
     async fn search(&self, Parameters(a): Parameters<SearchArgs>) -> Out {
         if fold(&a.query).chars().count() < 2 {
             return Err("Recherche trop courte.".to_string());
+        }
+        let s = &self.stack;
+        match a.kind.as_deref().map(fold).as_deref() {
+            None | Some("video" | "serie" | "series" | "film" | "films") => {}
+            Some("musique" | "music" | "artiste" | "album") => {
+                let r = sv::lidarr_lookup(&s.lidarr, a.query.trim()).await.map_err(|e| why("Lidarr", &e))?;
+                if r.is_empty() {
+                    return Ok(format!("Aucun artiste pour « {} ».", a.query.trim()));
+                }
+                let lines: Vec<_> = r
+                    .iter()
+                    .take(8)
+                    .map(|x| {
+                        let d = x
+                            .disambiguation
+                            .as_deref()
+                            .filter(|d| !d.is_empty())
+                            .map(|d| format!(" ({d})"))
+                            .unwrap_or_default();
+                        let state = if x.id > 0 { "déjà suivi" } else { "non suivi" };
+                        format!("- {}{d} — {state} — media_type=artist id={}", x.artist_name, x.foreign_artist_id)
+                    })
+                    .collect();
+                return Ok(format!("Artistes :\n{}", lines.join("\n")));
+            }
+            Some("livre" | "livres" | "book" | "audio" | "livre audio") => {
+                let r =
+                    sv::ll_find_book(&s.lazylibrarian, a.query.trim()).await.map_err(|e| match e {
+                    // Une recherche trop large (un seul mot) peut durer plusieurs minutes.
+                    crate::http::SvcError::Unavailable => {
+                        "Recherche de livres trop longue : précise le titre et l'auteur (ex. « fondation asimov »).".to_string()
+                    }
+                    e => why("LazyLibrarian", &e),
+                })?;
+                if r.is_empty() {
+                    return Ok(format!("Aucun livre pour « {} ».", a.query.trim()));
+                }
+                let lines: Vec<_> = r
+                    .iter()
+                    .take(10)
+                    .map(|b| format!("- {} — media_type=book (ou audiobook) id={}", b.label(), b.bookid))
+                    .collect();
+                return Ok(format!("Livres :\n{}", lines.join("\n")));
+            }
+            Some(_) => return Err("kind : « video », « musique » ou « livre ».".to_string()),
         }
         let r = sv::seerr_search(&self.stack.seerr, a.query.trim()).await.map_err(|e| why("Seerr", &e))?;
         if r.is_empty() {
@@ -232,20 +304,59 @@ impl MediaServer {
     }
 
     #[tool(
-        description = "Demander une série ou un film (identifiant issu de `search`). Sans confirm : aperçu (saisons, épisodes), rien n'est fait. Avec confirm=true, seulement après accord explicite : la demande part et elle est suivie jusqu'à ce qu'elle soit regardable (VF ou ST FR) ; une notification signale la fin, l'échec ou le retard."
+        description = "Demander une série, un film, un artiste à suivre ou un livre (numérique ou audio), avec l'identifiant issu de `search`. Sans confirm : aperçu, rien n'est fait. Avec confirm=true, seulement après accord explicite : la demande part. Séries et films sont suivis jusqu'à être regardables (VF ou ST FR), avec notification de fin, d'échec ou de retard."
     )]
     async fn request(&self, Parameters(a): Parameters<RequestArgs>) -> Out {
         let s = &self.stack;
-        let mt = match a.media_type.as_str() {
-            "tv" | "movie" => a.media_type.as_str(),
-            _ => return Err("media_type doit valoir « tv » ou « movie ».".to_string()),
-        };
-        let d = sv::seerr_details(&s.seerr, mt, a.id).await.map_err(|e| why("Seerr", &e))?;
+        let confirm = a.confirm == Some(true);
+        match a.media_type.as_str() {
+            "artist" => {
+                let fid = a.id.text();
+                let found =
+                    sv::lidarr_lookup(&s.lidarr, &format!("lidarr:{fid}")).await.map_err(|e| why("Lidarr", &e))?;
+                let x = found
+                    .into_iter()
+                    .find(|x| x.foreign_artist_id == fid)
+                    .ok_or("Artiste introuvable : refais `search`.")?;
+                if x.id > 0 {
+                    return Err(format!("{} est déjà suivi.", x.artist_name));
+                }
+                let disco = a.discography == Some(true);
+                let what = if disco {
+                    format!("suivre l'artiste {} et télécharger toute sa discographie", x.artist_name)
+                } else {
+                    format!("suivre l'artiste {} (albums à venir seulement)", x.artist_name)
+                };
+                if !confirm {
+                    return preview(&format!("{what}."));
+                }
+                sv::lidarr_add_artist(&s.lidarr, &fid, disco).await.map_err(|e| why("Lidarr", &e))?;
+                return Ok(format!("Fait : {what}. Les nouveautés apparaîtront dans `music_updates`."));
+            }
+            "book" | "audiobook" => {
+                let id = a.id.text();
+                if id.is_empty() {
+                    return Err("Identifiant de livre vide : refais `search` kind=livre.".to_string());
+                }
+                let audio = a.media_type == "audiobook";
+                let what = format!("demander le livre {id} en version {}", if audio { "audio" } else { "numérique" });
+                if !confirm {
+                    return preview(&format!("{what}."));
+                }
+                sv::ll_request_book(&s.lazylibrarian, &id, audio).await.map_err(|e| why("LazyLibrarian", &e))?;
+                return Ok(format!("Fait : {what}. L'avancement se voit dans `reading_updates`."));
+            }
+            "tv" | "movie" => {}
+            _ => return Err("media_type : « tv », « movie », « artist », « book » ou « audiobook ».".to_string()),
+        }
+        let mt = a.media_type.as_str();
+        let id = a.id.num().ok_or("Identifiant numérique attendu pour une série ou un film.")?;
+        let d = sv::seerr_details(&s.seerr, mt, id).await.map_err(|e| why("Seerr", &e))?;
         let label = d.label();
         if d.media_info.as_ref().is_some_and(|m| m.status == 5) {
             return Err(format!("{label} est déjà disponible."));
         }
-        if self.store.open_for(mt, a.id).map_err(|e| e.to_string())?.is_some() {
+        if self.store.open_for(mt, id).map_err(|e| e.to_string())?.is_some() {
             return Err(format!("{label} est déjà demandé et suivi."));
         }
         let wanted: Vec<i64> = a.seasons.clone().unwrap_or_default();
@@ -272,12 +383,10 @@ impl MediaServer {
         if a.confirm != Some(true) {
             return preview(&format!("{what}."));
         }
-        let r = sv::seerr_request(&s.seerr, mt, a.id, &wanted).await.map_err(|e| why("Seerr", &e))?;
+        let r = sv::seerr_request(&s.seerr, mt, id, &wanted).await.map_err(|e| why("Seerr", &e))?;
         let tvdb = d.external_ids.and_then(|e| e.tvdb_id);
         let title = d.name.or(d.title).unwrap_or_else(|| label.clone());
-        self.store
-            .add(mt, a.id, tvdb, &title, &wanted, Some(r.id), Utc::now().timestamp())
-            .map_err(|e| e.to_string())?;
+        self.store.add(mt, id, tvdb, &title, &wanted, Some(r.id), Utc::now().timestamp()).map_err(|e| e.to_string())?;
         let note = if s.notifier.is_some() {
             "Je préviens dès que c'est regardable, en cas d'échec ou de retard."
         } else {

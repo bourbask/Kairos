@@ -431,6 +431,14 @@ pub struct Torrent {
     pub eta: i64,
     pub category: String,
     pub size: i64,
+    pub ratio: f64,
+    /// Limite de ratio effective ; ≤ 0 = aucune.
+    pub max_ratio: f64,
+    /// Secondes de partage écoulées.
+    pub seeding_time: i64,
+    /// Limite de partage effective, en minutes ; ≤ 0 = aucune.
+    pub max_seeding_time: i64,
+    pub private: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -772,6 +780,309 @@ pub async fn nzbget_pause(s: &Opt, pause: bool) -> R<()> {
     let path = if pause { "/jsonrpc/pausedownload" } else { "/jsonrpc/resumedownload" };
     let r: RpcResult<bool> = need(s)?.get(path, &[]).await?;
     if r.result { Ok(()) } else { Err(SvcError::Unavailable) }
+}
+
+// ---------------------------------------------------------------- Historique du lecteur
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Viewed {
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub title: String,
+    pub grandparent_title: Option<String>,
+    pub grandparent_rating_key: Option<String>,
+    pub rating_key: String,
+    pub viewed_at: i64,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct ViewedContainer {
+    #[serde(rename = "Metadata")]
+    pub items: Vec<Viewed>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ViewedEnvelope {
+    #[serde(rename = "MediaContainer", default)]
+    pub mc: ViewedContainer,
+}
+
+/// Visionnages depuis `since` (horodatage), du plus récent au plus ancien.
+pub async fn plex_history(p: &Opt, since: i64) -> R<Vec<Viewed>> {
+    let s = need(p)?;
+    let mut out = Vec::new();
+    for page in 0..20 {
+        let req = s
+            .raw()
+            .get(s.url("/status/sessions/history/all"))
+            .query(&[("sort", "viewedAt:desc"), ("viewedAt>", &since.to_string())])
+            .header("X-Plex-Container-Start", (page * 200).to_string())
+            .header("X-Plex-Container-Size", "200");
+        let items = s.send::<ViewedEnvelope>(req).await?.mc.items;
+        let n = items.len();
+        out.extend(items.into_iter().filter(|v| v.viewed_at >= since));
+        if n < 200 {
+            break;
+        }
+    }
+    Ok(out)
+}
+
+// ---------------------------------------------------------------- Lidarr (musique)
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Artist {
+    pub id: i64,
+    pub artist_name: String,
+    pub foreign_artist_id: String,
+    pub disambiguation: Option<String>,
+    pub monitored: bool,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Album {
+    pub title: String,
+    pub release_date: Option<String>,
+    pub monitored: bool,
+    pub album_type: Option<String>,
+    pub artist: Option<Artist>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Profile {
+    pub id: i64,
+    pub name: String,
+}
+
+pub async fn lidarr_artists(s: &Opt) -> R<Vec<Artist>> {
+    need(s)?.get("/api/v1/artist", &[]).await
+}
+
+pub async fn lidarr_calendar(s: &Opt, start: &str, end: &str) -> R<Vec<Album>> {
+    let q = [("start", start.to_string()), ("end", end.to_string()), ("includeArtist", "true".into())];
+    need(s)?.get("/api/v1/calendar", &q).await
+}
+
+pub async fn lidarr_lookup(s: &Opt, term: &str) -> R<Vec<Artist>> {
+    let s = need(s)?;
+    let url = format!("{}?term={}", s.url("/api/v1/artist/lookup"), encode_component(term));
+    s.send(s.raw().get(url).timeout(std::time::Duration::from_secs(45))).await
+}
+
+/// Ajoute un artiste suivi : albums futurs seulement, ou toute la discographie (recherchée).
+pub async fn lidarr_add_artist(s: &Opt, foreign_id: &str, discography: bool) -> R<Artist> {
+    let svc = need(s)?;
+    let roots: Vec<RootFolder> = svc.get("/api/v1/rootfolder", &[]).await?;
+    let quality: Vec<Profile> = svc.get("/api/v1/qualityprofile", &[]).await?;
+    let meta: Vec<Profile> = svc.get("/api/v1/metadataprofile", &[]).await?;
+    let found = lidarr_lookup(s, &format!("lidarr:{foreign_id}")).await?;
+    let a = found.into_iter().find(|a| a.foreign_artist_id == foreign_id).ok_or(SvcError::Unavailable)?;
+    let (Some(root), Some(q), Some(m)) =
+        (roots.first(), quality.first(), meta.iter().find(|m| m.name != "None").or(meta.first()))
+    else {
+        return Err(SvcError::Unavailable);
+    };
+    let body = serde_json::json!({
+        "artistName": a.artist_name,
+        "foreignArtistId": a.foreign_artist_id,
+        "qualityProfileId": q.id,
+        "metadataProfileId": m.id,
+        "rootFolderPath": root.path,
+        "monitored": true,
+        "addOptions": {
+            "monitor": if discography { "all" } else { "future" },
+            "searchForMissingAlbums": discography
+        }
+    });
+    svc.post("/api/v1/artist", &body).await
+}
+
+// ---------------------------------------------------------------- LazyLibrarian (livres)
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct Book {
+    pub authorname: String,
+    pub bookid: String,
+    pub bookname: String,
+    pub bookpub: Option<serde_json::Value>,
+}
+
+impl Book {
+    pub fn label(&self) -> String {
+        let year = match &self.bookpub {
+            Some(serde_json::Value::Number(n)) => format!(" ({n})"),
+            Some(serde_json::Value::String(s)) if !s.is_empty() => format!(" ({s})"),
+            _ => String::new(),
+        };
+        format!("{} — {}{year}", self.bookname, self.authorname)
+    }
+}
+
+async fn ll_cmd<T: serde::de::DeserializeOwned>(s: &Opt, cmd: &str, args: &[(&str, &str)]) -> R<T> {
+    let s = need(s)?;
+    let mut q: Vec<(&str, String)> = vec![("cmd", cmd.to_string())];
+    q.extend(args.iter().map(|(k, v)| (*k, v.to_string())));
+    s.send(s.raw().get(s.url("/api")).query(&q).timeout(std::time::Duration::from_secs(60))).await
+}
+
+pub async fn ll_find_book(s: &Opt, name: &str) -> R<Vec<Book>> {
+    ll_cmd(s, "findBook", &[("name", name)]).await
+}
+
+/// Ajoute un livre (identifiant de `ll_find_book`), le marque voulu et lance sa recherche.
+/// Ces commandes répondent en texte : seul le statut HTTP compte.
+pub async fn ll_request_book(s: &Opt, id: &str, audio: bool) -> R<()> {
+    let svc = need(s)?;
+    let kind = if audio { "AudioBook" } else { "eBook" };
+    for (cmd, extra) in [("addBook", ("wait", "1")), ("queueBook", ("type", kind)), ("searchBook", ("type", kind))] {
+        let req = svc
+            .raw()
+            .get(svc.url("/api"))
+            .query(&[("cmd", cmd), ("id", id), extra])
+            .timeout(std::time::Duration::from_secs(90));
+        svc.send_unit(req).await?;
+    }
+    Ok(())
+}
+
+pub async fn ll_wanted(s: &Opt) -> R<Vec<serde_json::Value>> {
+    ll_cmd(s, "getWanted", &[]).await
+}
+
+pub async fn ll_snatched(s: &Opt) -> R<Vec<serde_json::Value>> {
+    ll_cmd(s, "getSnatched", &[]).await
+}
+
+// ---------------------------------------------------------------- Kavita (lecture)
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct KavitaSeries {
+    pub id: i64,
+    pub name: String,
+    pub pages_read: i64,
+    pub pages: i64,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct KavitaRecent {
+    pub series_name: String,
+    pub title: String,
+    pub created: Option<String>,
+    pub count: i64,
+}
+
+/// Kavita : la clé d'API s'échange contre un jeton de session, gardé jusqu'au refus.
+pub struct Kavita {
+    pub svc: Svc,
+    pub key: String,
+    pub jwt: tokio::sync::Mutex<Option<String>>,
+}
+
+impl Kavita {
+    pub fn new(svc: Svc, key: String) -> Kavita {
+        Kavita { svc, key, jwt: tokio::sync::Mutex::new(None) }
+    }
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+struct KavitaAuth {
+    token: String,
+}
+
+async fn kavita_post<T: serde::de::DeserializeOwned>(k: &Option<Kavita>, path: &str) -> R<T> {
+    let k = k.as_ref().ok_or(SvcError::NotConfigured)?;
+    let mut jwt = k.jwt.lock().await;
+    for attempt in 0..2 {
+        let token = match jwt.as_ref() {
+            Some(t) => t.clone(),
+            None => {
+                let req = k
+                    .svc
+                    .raw()
+                    .post(k.svc.url("/api/Plugin/authenticate"))
+                    .query(&[("apiKey", k.key.as_str()), ("pluginName", "Kairos")]);
+                let a: KavitaAuth = k.svc.send(req).await?;
+                *jwt = Some(a.token.clone());
+                a.token
+            }
+        };
+        let req = k.svc.raw().post(k.svc.url(path)).bearer_auth(token).json(&serde_json::json!({}));
+        match k.svc.send(req).await {
+            Err(SvcError::Denied) if attempt == 0 => *jwt = None,
+            r => return r,
+        }
+    }
+    Err(SvcError::Denied)
+}
+
+pub async fn kavita_on_deck(k: &Option<Kavita>) -> R<Vec<KavitaSeries>> {
+    kavita_post(k, "/api/Series/on-deck?PageNumber=1&PageSize=10").await
+}
+
+pub async fn kavita_recent(k: &Option<Kavita>) -> R<Vec<KavitaRecent>> {
+    kavita_post(k, "/api/Series/recently-updated-series").await
+}
+
+// ---------------------------------------------------------------- Audiobookshelf (livres audio)
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AbsMetadata {
+    pub title: String,
+    pub author_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AbsMedia {
+    pub metadata: AbsMetadata,
+    /// Secondes.
+    pub duration: f64,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AbsItem {
+    pub id: String,
+    pub media: AbsMedia,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AbsInProgress {
+    pub library_items: Vec<AbsItem>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AbsProgress {
+    pub library_item_id: String,
+    /// 0 à 1.
+    pub progress: f64,
+    pub current_time: f64,
+    pub duration: f64,
+    pub is_finished: bool,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AbsMe {
+    pub media_progress: Vec<AbsProgress>,
+}
+
+pub async fn abs_in_progress(s: &Opt) -> R<(Vec<AbsItem>, Vec<AbsProgress>)> {
+    let s = need(s)?;
+    let (a, b) = tokio::join!(s.get::<AbsInProgress>("/api/me/items-in-progress", &[]), s.get::<AbsMe>("/api/me", &[]));
+    Ok((a?.library_items, b?.media_progress))
 }
 
 #[cfg(test)]

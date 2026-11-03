@@ -218,6 +218,8 @@ async fn lists_tools_and_writes_require_confirmation() {
     assert_eq!(
         names,
         [
+            "abandoned",
+            "audiobooks",
             "blocklist_release",
             "brief_section",
             "continue_watching",
@@ -227,14 +229,18 @@ async fn lists_tools_and_writes_require_confirmation() {
             "library_health",
             "mark_watched",
             "media_status",
+            "music_updates",
+            "reading_updates",
             "ready_to_watch",
             "request",
             "requests",
             "retry",
             "search",
+            "seeding_obligations",
             "stack_health",
             "unfollow",
-            "upcoming"
+            "upcoming",
+            "watch_stats"
         ]
     );
     let writes = ["blocklist_release", "downloads_control", "follow", "mark_watched", "request", "retry", "unfollow"];

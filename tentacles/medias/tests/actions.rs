@@ -349,7 +349,7 @@ async fn request_previews_then_sends_and_tracks() {
         text(&call(&e.url, "request", json!({"media_type": "movie", "id": 1, "confirm": true})).await)
             .contains("déjà disponible")
     );
-    assert!(is_err(&call(&e.url, "request", json!({"media_type": "book", "id": 1})).await));
+    assert!(is_err(&call(&e.url, "request", json!({"media_type": "jeu", "id": 1})).await));
     let t = text(&call(&e.url, "requests", json!({})).await);
     assert!(t.contains("- Série Delta (série) — en attente"), "{t}");
 }
