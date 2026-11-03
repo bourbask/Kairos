@@ -2,6 +2,7 @@
 
 use chrono_tz::Tz;
 
+use crate::caldav::CalDav;
 use crate::http::{Auth, Opt, Svc, client};
 use crate::notify::Notifier;
 use crate::render::tz_or_paris;
@@ -31,6 +32,10 @@ pub struct Stack {
     pub drop_days: i64,
     /// Période du suivi des demandes, en minutes.
     pub track_minutes: u64,
+    /// Calendrier des sorties ; absent, rien n'est poussé.
+    pub caldav: Option<CalDav>,
+    /// Période de synchronisation du calendrier, en minutes.
+    pub caldav_minutes: u64,
     series_cache: tokio::sync::Mutex<Option<(std::time::Instant, Vec<Series>)>>,
 }
 
@@ -117,6 +122,8 @@ impl Stack {
             late_hours: get("MEDIAS_LATE_HOURS").and_then(|v| v.parse().ok()).unwrap_or(72),
             drop_days: get("MEDIAS_DROP_DAYS").and_then(|v| v.parse().ok()).unwrap_or(60),
             series_cache: Default::default(),
+            caldav: basic("CALDAV", "caldav")?.map(|(u, user, pass, _)| CalDav::new(&u, user, pass)),
+            caldav_minutes: get("MEDIAS_CALDAV_MINUTES").and_then(|v| v.parse().ok()).filter(|m| *m > 0).unwrap_or(60),
             track_minutes: get("MEDIAS_TRACK_MINUTES").and_then(|v| v.parse().ok()).filter(|m| *m > 0).unwrap_or(10),
         })
     }

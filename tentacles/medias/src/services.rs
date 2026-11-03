@@ -171,6 +171,9 @@ pub struct CalendarEpisode {
     pub air_date_utc: Option<String>,
     pub has_file: bool,
     pub monitored: bool,
+    /// Minutes.
+    pub runtime: Option<i64>,
+    pub finale_type: Option<String>,
     pub series: Option<Titled>,
 }
 
