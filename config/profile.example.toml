@@ -20,7 +20,7 @@ countries = ["FR", "BE", "CH"]
 languages = ["français", "anglais"]
 onsite_cities = []       # villes acceptées en présentiel/hybride (ex. ["Ville"]) ; vide = full-remote strict
 min_score = 0.60         # seuil 0-1 : offres sous ce score exclues du briefing (tunable sans rebuild)
-# location_keywords = ["Toulouse", "31", "Haute-Garonne"]   # optionnel : vide = aucune contrainte géo (profil remote international)
+# location_keywords = ["Ville", "Département"]   # optionnel : vide = aucune contrainte géo (profil remote international)
 
 [skills]
 skills = ["Node.js", "Python", "React", "Vue.js", "PostgreSQL", "SQLite", "Docker"]   # adapter à ton domaine
