@@ -1,10 +1,14 @@
-# Tentacule médias : tourne sur la machine qui héberge la stack média, dans
-# son réseau Docker, pour joindre les services par leur nom interne.
+# Tentacules hébergés sur le poste de travail, à côté de leurs données :
+# - medias : dans le réseau Docker de la stack média (services joints par leur nom) ;
+# - documents : dossier de documents synchronisé localement, monté en lecture seule ;
+# - documents-backup : copie quotidienne de ce dossier, sans jamais rien effacer
+#   (fichiers modifiés ou supprimés rangés dans archives/<date>).
 #
-#   cp medias.env.example medias.env   # puis remplir (hors dépôt)
-#   MEDIAS_NETWORK=<réseau de la stack> docker compose up -d --build
+#   cp medias.env.example medias.env ; cp documents.env.example documents.env   # puis remplir (hors dépôt)
+#   .env : MEDIAS_NETWORK, DOCUMENTS_SOURCE_DIR, DOCUMENTS_BACKUP_DIR
+#   docker compose up -d --build
 #
-# Publié sur la boucle locale seulement ; l'accès MCP exige le jeton porteur.
+# Publiés sur la boucle locale seulement ; l'accès MCP exige le jeton porteur.
 name: kairos-pc
 
 services:
@@ -12,7 +16,7 @@ services:
     build:
       context: ../..
       dockerfile: deploy/pc/Dockerfile
-    image: kairos-medias:local
+    image: kairos-pc:local
     restart: unless-stopped
     mem_limit: 64m
     env_file:
@@ -28,8 +32,45 @@ services:
     networks:
       - media
 
+  documents:
+    build:
+      context: ../..
+      dockerfile: deploy/pc/Dockerfile
+    image: kairos-pc:local
+    restart: unless-stopped
+    mem_limit: 256m
+    entrypoint: ["/app/kairos-documents"]
+    env_file:
+      - path: documents.env
+        required: true
+    environment:
+      DOCUMENTS_BIND: 0.0.0.0:8096
+      DOCUMENTS_ROOT: /docs
+      DOCUMENTS_DB: /data/documents.db
+    volumes:
+      - "${DOCUMENTS_SOURCE_DIR:?dossier des documents}:/docs:ro"
+      - documents-data:/data
+    ports:
+      - "${DOCUMENTS_BIND_ADDR:-127.0.0.1}:${DOCUMENTS_BIND_PORT:-8097}:8096"
+
+  documents-backup:
+    image: rclone/rclone:1.68.2
+    restart: unless-stopped
+    mem_limit: 128m
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        while true; do
+          rclone sync /source /backup/courant --backup-dir "/backup/archives/$$(date +%F)" --log-level NOTICE
+          sleep 86400
+        done
+    volumes:
+      - "${DOCUMENTS_SOURCE_DIR:?dossier des documents}:/source:ro"
+      - "${DOCUMENTS_BACKUP_DIR:?dossier de sauvegarde}:/backup"
+
 volumes:
   medias-data: {}
+  documents-data: {}
 
 networks:
   media:
