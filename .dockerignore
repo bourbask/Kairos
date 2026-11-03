@@ -6,3 +6,11 @@ briefings/
 logs/
 **/*.db
 private/
+# Secrets et fichiers locaux : jamais dans le contexte de build (ils finiraient
+# dans le cache de l'étape de compilation via `COPY . .`).
+**/.env
+**/*.env
+**/docker-compose.override.yml
+deploy/docker/radicale/config/
+CLAUDE.local.md
+.claude/
