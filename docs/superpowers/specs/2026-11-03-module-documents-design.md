@@ -25,7 +25,8 @@ et, plus tard, ajouter, déplacer ou classer des documents.
   technique (kilométrage, diagnostic embarqué) ne viendra que sur besoin réel.
 - **Source de vérité : le drive cloud de l'utilisateur**, synchronisé sur le
   poste par son client officiel (l'accès WebDAV n'est pas disponible avec son
-  offre). Le tentacule lit ce dossier **en lecture seule**.
+  offre). Le tentacule lit ce dossier ; il n'y écrit que si les écritures sont
+  explicitement autorisées sur le poste (étape 3).
 - **Sauvegarde locale séparée**, quotidienne : la synchronisation étant
   bidirectionnelle, une suppression locale se propagerait au cloud. Une copie
   datée (`rclone sync --backup-dir archives/<date>`) conserve tout fichier
@@ -74,8 +75,30 @@ et, plus tard, ajouter, déplacer ou classer des documents.
   paramètres tient dans la mémoire disponible ; un 9B ne se charge pas à côté
   de la stack du poste.
 
-## Étape suivante
+## Étape 3 — écritures et pièces attendues (livrée)
 
-3. **Écritures** en deux temps (aperçu, puis `confirm=true`) dans le dossier
-   synchronisé ; « supprimer » = déplacer vers une corbeille ;
-   `missing_documents` (pièces attendues par nature).
+- **Écritures en deux temps** : chaque outil rend d'abord un aperçu (rien ne
+  bouge) ; `confirm=true` applique. Désactivées tant que `DOCUMENTS_WRITE=1`
+  n'est pas posé sur le poste.
+- **Jamais d'écrasement ni d'effacement** : « supprimer » range le fichier dans
+  `_Corbeille/<date>/<chemin d'origine>`, dossier visible et restaurable depuis
+  le drive, jamais indexé. Les dossiers vidés par un déplacement sont retirés.
+- **Chemins contrôlés** : relatifs à la racine, ni `..`, ni segment caché, ni
+  caractère interdit sous Windows.
+- **Natures privées** : leurs pièces ne sont ni déplacées, ni renommées, ni
+  mises à la corbeille, et ne servent pas de destination.
+- L'index **suit** les déplacements : texte et faits conservés, rien n'est relu
+  ni réextrait.
+- Outils :
+  - `doc_move` : déplacements et renommages par lot ;
+  - `doc_delete` : corbeille ;
+  - `duplicates` : doublons exacts (même taille puis mêmes octets). L'exemplaire
+    gardé est celui demandé, sinon la copie d'une nature privée, sinon le moins
+    profond ; les autres vont à la corbeille ;
+  - `rename_plan` : nom normalisé `AAAA-MM-JJ_type_organisme.ext` tiré des faits
+    extraits, dans le même dossier, sans collision ;
+  - `missing_documents` : liste de contrôle par domaine (véhicule, logement,
+    énergie, télécom, santé, impôts, emploi, identité, banque). Reconnaissance
+    par mots-clés en début de mot ; pièce trop ancienne signalée (avis
+    d'imposition, bulletin de salaire) ; contrôle technique « pas encore
+    requis » avant le premier ; pièce peut-être présente mais illisible.

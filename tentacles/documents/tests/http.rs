@@ -33,6 +33,7 @@ async fn start() -> (String, PathBuf) {
         private: vec!["identite".into()],
         tz: chrono_tz::Europe::Paris,
         model: None,
+        write: true,
     });
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}/mcp", listener.local_addr().unwrap());
@@ -114,6 +115,7 @@ async fn deadlines_and_facts_respect_private_natures() {
         private: vec!["identite".into()],
         tz: chrono_tz::Europe::Paris,
         model: Some("m".into()),
+        write: false,
     });
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}/mcp", listener.local_addr().unwrap());
@@ -137,5 +139,117 @@ async fn deadlines_and_facts_respect_private_natures() {
     assert!(t.starts_with("Documents — échéances proches :") && t.contains("document privé"), "{t}");
     let (t, _) = call(&url, "docs_overview", json!({})).await;
     assert!(t.contains("Faits extraits : 2 document(s)"), "{t}");
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+async fn serve(root: &std::path::Path, index: Arc<Index>, write: bool) -> String {
+    let settings = Arc::new(Settings {
+        root: root.to_path_buf(),
+        private: vec!["identite".into()],
+        tz: chrono_tz::Europe::Paris,
+        model: Some("m".into()),
+        write,
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/mcp", listener.local_addr().unwrap());
+    tokio::spawn(tentacle_common::serve_listener(listener, "t".into(), move || {
+        DocServer::new(index.clone(), settings.clone())
+    }));
+    url
+}
+
+#[tokio::test]
+async fn writes_are_previewed_then_applied_without_overwriting() {
+    let root = tree();
+    std::fs::create_dir_all(root.join("Dossier/Copies")).unwrap();
+    std::fs::write(root.join("Dossier/Copies/auto-copie.md"), std::fs::read(root.join("Assurances/auto.md")).unwrap())
+        .unwrap();
+    std::fs::write(root.join("Dossier/carte.md"), std::fs::read(root.join("Identité/carte.md")).unwrap()).unwrap();
+    let index = Arc::new(Index::memory());
+    index.scan(&root, 1).unwrap();
+    let facts = json!({"type_document": "Contrat d'assurance auto", "organisme": "Assureur Oméga", "reference": null,
+        "resume": "", "dates": [{"type": "emission", "date": "2026-01-10", "libelle": ""}], "montants": []});
+    index.set_facts("Assurances/auto.md", "m", Some(&facts.to_string()), 1).unwrap();
+
+    // Écritures coupées : seuls les aperçus de doublons et de noms restent possibles.
+    let ro = serve(&root, index.clone(), false).await;
+    let (t, err) = call(&ro, "doc_move", json!({"moves": [{"from": "Assurances/auto.md", "to": "X/"}]})).await;
+    assert!(err && t.contains("DOCUMENTS_WRITE"), "{t}");
+    let (t, err) = call(&ro, "duplicates", json!({})).await;
+    assert!(!err && t.contains("Aperçu"), "{t}");
+
+    let url = serve(&root, index.clone(), true).await;
+    // Doublons : l'original le moins profond est gardé ; la copie d'une pièce privée garde la pièce privée.
+    let (t, _) = call(&url, "duplicates", json!({})).await;
+    assert!(t.starts_with("2 copie(s) en trop dans 2 groupe(s)"), "{t}");
+    assert!(t.contains("- garder : Assurances/auto.md\n    corbeille : Dossier/Copies/auto-copie.md"), "{t}");
+    assert!(t.contains("- garder : document privé\n    corbeille : Dossier/carte.md"), "{t}");
+    assert!(!t.contains("Identité/"), "{t}");
+    assert!(root.join("Dossier/Copies/auto-copie.md").exists(), "aperçu : rien ne bouge");
+
+    // Pièces privées intouchables, chemins hors racine refusés, jamais d'écrasement.
+    for (args, msg) in [
+        (json!({"moves": [{"from": "Identité/carte.md", "to": "X/"}]}), "n'est pas exposée"),
+        (json!({"moves": [{"from": "Assurances/auto.md", "to": "../evasion.md"}]}), "Chemin refusé"),
+        (json!({"moves": [{"from": "Assurances/auto.md", "to": "Assurances/scan.jpg"}]}), "existe déjà"),
+        (json!({"moves": [{"from": "Assurances/auto.md", "to": "Identité/"}]}), "non exposée"),
+    ] {
+        let (t, err) = call(&url, "doc_move", args).await;
+        assert!(err && t.contains(msg), "{msg} : {t}");
+    }
+
+    let (t, _) = call(&url, "duplicates", json!({"confirm": true})).await;
+    assert!(t.contains("2 fait(s), 0 en échec"), "{t}");
+    assert!(!root.join("Dossier").exists(), "dossiers vidés retirés");
+    let trash: Vec<_> = std::fs::read_dir(root.join("_Corbeille")).unwrap().flatten().collect();
+    assert_eq!(trash.len(), 1, "un dossier daté");
+    assert!(trash[0].path().join("Dossier/Copies/auto-copie.md").exists());
+
+    // Nom normalisé tiré des faits, puis déplacement d'un dossier à l'autre.
+    let (t, _) = call(&url, "rename_plan", json!({})).await;
+    assert!(t.contains("Assurances/auto.md → Assurances/2026-01-10_contrat-d-assurance-auto_assureur-omega.md"), "{t}");
+    let (t, _) = call(&url, "rename_plan", json!({"confirm": true})).await;
+    assert!(t.contains("1 fait(s)"), "{t}");
+    let new = "Assurances/2026-01-10_contrat-d-assurance-auto_assureur-omega.md";
+    let (t, _) = call(&url, "doc_move", json!({"moves": [{"from": new, "to": "Véhicule/"}], "confirm": true})).await;
+    assert!(t.contains("1 fait(s)"), "{t}");
+    let moved = "Véhicule/2026-01-10_contrat-d-assurance-auto_assureur-omega.md";
+    assert!(root.join(moved).exists());
+    // L'index suit : texte et faits conservés.
+    let (t, _) = call(&url, "doc_excerpt", json!({"path": moved, "query": "franchise"})).await;
+    assert!(t.contains("franchise de 150 euros"), "{t}");
+    let (t, _) = call(&url, "contract_facts", json!({"query": "omega"})).await;
+    assert!(t.contains(moved), "{t}");
+
+    // Corbeille en deux temps ; le scan suivant ne la réindexe pas.
+    let (t, _) = call(&url, "doc_delete", json!({"paths": ["Assurances/scan.jpg"]})).await;
+    assert!(t.contains("Aperçu") && root.join("Assurances/scan.jpg").exists(), "{t}");
+    let (t, _) = call(&url, "doc_delete", json!({"paths": ["Assurances/scan.jpg"], "confirm": true})).await;
+    assert!(t.contains("1 fait(s)") && !root.join("Assurances").exists(), "{t}");
+    let r = index.scan(&root, 2).unwrap();
+    assert_eq!((r.added, r.removed), (0, 0), "{r:?}");
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+#[tokio::test]
+async fn missing_documents_checklist() {
+    let root = tree();
+    let index = Arc::new(Index::memory());
+    index.scan(&root, 1).unwrap();
+    let auto = json!({"type_document": "Attestation d'assurance automobile", "organisme": "Assureur", "reference": null,
+        "resume": "", "dates": [], "montants": []});
+    let id = json!({"type_document": "carte nationale d'identité", "organisme": "Préfecture Secrète", "reference": null,
+        "resume": "", "dates": [], "montants": []});
+    index.set_facts("Assurances/auto.md", "m", Some(&auto.to_string()), 1).unwrap();
+    index.set_facts("Identité/carte.md", "m", Some(&id.to_string()), 1).unwrap();
+    let url = serve(&root, index, false).await;
+    let (t, _) = call(&url, "missing_documents", json!({})).await;
+    assert!(t.contains("✓ Attestation d'assurance auto — Assurances/auto.md"), "{t}");
+    assert!(t.contains("✓ Carte d'identité — document privé") && !t.contains("Préfecture"), "{t}");
+    assert!(t.contains("✗ Assurance habitation — manquant"), "{t}");
+    let (t, _) = call(&url, "missing_documents", json!({"domain": "vehicule"})).await;
+    assert!(t.starts_with("Pièces attendues — 1 présente(s), 4 à trouver") && !t.contains("Logement"), "{t}");
+    let (t, err) = call(&url, "missing_documents", json!({"domain": "jardin"})).await;
+    assert!(err && t.contains("Domaines :"), "{t}");
     std::fs::remove_dir_all(&root).unwrap();
 }

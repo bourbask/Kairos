@@ -1,6 +1,7 @@
 # Tentacules hébergés sur le poste de travail, à côté de leurs données :
 # - medias : dans le réseau Docker de la stack média (services joints par leur nom) ;
-# - documents : dossier de documents synchronisé localement, monté en lecture seule ;
+# - documents : dossier de documents synchronisé localement ; écritures (déplacer,
+#   renommer, corbeille) seulement si DOCUMENTS_WRITE=1, jamais d'écrasement ;
 # - documents-backup : copie quotidienne de ce dossier, sans jamais rien effacer
 #   (fichiers modifiés ou supprimés rangés dans archives/<date>) ;
 # - ollama : modèle local sur le GPU du poste (extraction des faits), non publié.
@@ -50,7 +51,8 @@ services:
       DOCUMENTS_DB: /data/documents.db
       DOCUMENTS_OLLAMA_URL: http://ollama:11434
     volumes:
-      - "${DOCUMENTS_SOURCE_DIR:?dossier des documents}:/docs:ro"
+      # Lecture-écriture : sans DOCUMENTS_WRITE=1, le tentacule n'écrit rien.
+      - "${DOCUMENTS_SOURCE_DIR:?dossier des documents}:/docs"
       - documents-data:/data
     ports:
       - "${DOCUMENTS_BIND_ADDR:-127.0.0.1}:${DOCUMENTS_BIND_PORT:-8097}:8096"

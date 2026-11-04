@@ -1,4 +1,4 @@
-//! Outils MCP du tentacule documents (lecture seule).
+//! Outils MCP de lecture du tentacule documents (écritures : `write.rs`, liste de contrôle : `missing.rs`).
 //!
 //! Les natures « privées » (pièces d'identité, signatures…) sont comptées mais
 //! jamais exposées : ni liste de fichiers, ni recherche, ni extrait.
@@ -15,7 +15,7 @@ use rmcp::{
 };
 use serde::Deserialize;
 
-use crate::facts::{self, Deadline, Facts};
+use crate::facts::{self, Deadline, Facts, fold};
 use crate::index::Index;
 
 type Out = Result<String, String>;
@@ -31,6 +31,8 @@ pub struct Settings {
     pub tz: chrono_tz::Tz,
     /// Modèle d'extraction des faits ; absent = extraction désactivée.
     pub model: Option<String>,
+    /// Écritures (déplacer, renommer, corbeille) autorisées.
+    pub write: bool,
 }
 
 /// Échéances de tous les documents. Natures privées : type et date seulement,
@@ -56,24 +58,9 @@ pub fn all_deadlines(index: &Index, settings: &Settings, today: chrono::NaiveDat
 
 #[derive(Clone)]
 pub struct DocServer {
-    index: Arc<Index>,
-    settings: Arc<Settings>,
+    pub(crate) index: Arc<Index>,
+    pub(crate) settings: Arc<Settings>,
     tool_router: ToolRouter<Self>,
-}
-
-fn fold(s: &str) -> String {
-    s.to_lowercase()
-        .chars()
-        .map(|c| match c {
-            'à' | 'â' | 'ä' => 'a',
-            'é' | 'è' | 'ê' | 'ë' => 'e',
-            'î' | 'ï' => 'i',
-            'ô' | 'ö' => 'o',
-            'ù' | 'û' | 'ü' => 'u',
-            'ç' => 'c',
-            c => c,
-        })
-        .collect()
 }
 
 /// Passages du texte autour des mots de la requête (insensible aux accents et à la casse).
@@ -168,10 +155,10 @@ struct ExcerptArgs {
 
 impl DocServer {
     pub fn new(index: Arc<Index>, settings: Arc<Settings>) -> Self {
-        Self { index, settings, tool_router: Self::tool_router() }
+        Self { index, settings, tool_router: Self::tool_router() + Self::write_router() + Self::missing_router() }
     }
 
-    fn is_private(&self, nature: &str) -> bool {
+    pub(crate) fn is_private(&self, nature: &str) -> bool {
         self.settings.private.iter().any(|p| fold(p) == fold(nature))
     }
 
@@ -202,7 +189,7 @@ impl DocServer {
     }
 
     /// Nature réelle (casse et accents tolérés).
-    fn nature(&self, asked: &str) -> Result<String, String> {
+    pub(crate) fn nature(&self, asked: &str) -> Result<String, String> {
         let all = self.index.natures().map_err(|e| e.to_string())?;
         all.iter().map(|n| n.0.clone()).find(|n| fold(n) == fold(asked.trim())).ok_or_else(|| {
             let names: Vec<_> = all.iter().map(|n| n.0.clone()).collect();
