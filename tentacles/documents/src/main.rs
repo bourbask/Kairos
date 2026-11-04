@@ -41,8 +41,13 @@ async fn main() -> anyhow::Result<()> {
         }
         _ => None,
     };
-    let settings =
-        Arc::new(Settings { root: root.clone(), private, tz, model: ollama.as_ref().map(|o| o.model.clone()) });
+    let settings = Arc::new(Settings {
+        root: root.clone(),
+        private,
+        tz,
+        model: ollama.as_ref().map(|o| o.model.clone()),
+        write: var("DOCUMENTS_WRITE").as_deref() == Some("1"),
+    });
     let minutes: u64 = var("DOCUMENTS_SCAN_MINUTES").and_then(|v| v.parse().ok()).filter(|m| *m > 0).unwrap_or(15);
 
     // Tâche de fond : inventaire (extraction de texte bloquante, hors du moteur

@@ -146,7 +146,7 @@ impl Ollama {
 }
 
 /// Minuscules sans accents, pour comparer des libellés.
-fn fold(s: &str) -> String {
+pub fn fold(s: &str) -> String {
     s.to_lowercase()
         .chars()
         .map(|c| match c {
@@ -285,10 +285,10 @@ mod tests {
         let cg = |dates| Facts { type_document: "certificat d'immatriculation".into(), dates, ..Default::default() };
         let got = deadlines("cg.pdf", &cg(vec![d("premiere_immatriculation", "2023-06-15")]), today);
         assert_eq!(got[0].date.to_string(), "2027-06-15");
-        let got = deadlines("cg.jpg", &cg(vec![d("emission", "21/03/2023")]), today);
+        let got = deadlines("cg.jpg", &cg(vec![d("emission", "17/04/2023")]), today);
         assert_eq!(
             (got[0].date.to_string(), got[0].label.as_str()),
-            ("2027-03-21".into(), "premier contrôle technique"),
+            ("2027-04-17".into(), "premier contrôle technique"),
             "date B typée « emission » par le modèle"
         );
         assert!(deadlines("cg.pdf", &cg(vec![d("premiere_immatriculation", "2010-06-15")]), today).is_empty());
@@ -305,7 +305,7 @@ mod tests {
         assert!(parse("2026-13-01").is_none());
         assert!(parse("1900-01-01").is_none());
         assert_eq!(parse(" 2026-02-28 ").unwrap().to_string(), "2026-02-28");
-        assert_eq!(parse("25/07/2026").unwrap().to_string(), "2026-07-25");
+        assert_eq!(parse("28/07/2026").unwrap().to_string(), "2026-07-28");
         assert_eq!(parse("05.12.2025").unwrap().to_string(), "2025-12-05");
         assert!(parse("07-2026").is_none() && parse("null").is_none() && parse("").is_none());
     }
