@@ -62,10 +62,28 @@ pub fn slug(s: &str, max: usize) -> String {
         return out.to_string();
     }
     let cut: String = out.chars().take(max).collect();
-    match cut.rfind('-') {
+    let mut cut = match cut.rfind('-') {
         Some(i) if i > max / 2 => cut[..i].to_string(),
         _ => cut,
+    };
+    // Pas de nom coupé sur un mot vide (« garantie-panne-et », « produit-d »).
+    while let Some((head, last)) = cut.rsplit_once('-') {
+        if !STOP.contains(&last) {
+            break;
+        }
+        cut = head.to_string();
     }
+    cut
+}
+
+const STOP: [&str; 12] = ["a", "au", "d", "de", "des", "du", "en", "et", "l", "la", "le", "les"];
+
+/// Nom déjà normalisé (minuscules, chiffres, tirets, soulignés) : posé à la main
+/// ou par un passage précédent, il n'est plus reproposé.
+pub fn is_normalised(stem: &str) -> bool {
+    !stem.is_empty()
+        && stem.contains(['-', '_'])
+        && stem.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
 }
 
 /// Documents au-delà desquels une même date est jugée personnelle (naissance,
@@ -146,6 +164,9 @@ pub fn proposed_name(current: &str, f: &Facts, common: &HashSet<NaiveDate>) -> O
     let org = f.organisme.as_deref().map(|o| slug(&o.split_whitespace().take(3).collect::<Vec<_>>().join(" "), 24));
     let mut parts = Vec::new();
     let stem = Path::new(current).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    if is_normalised(&stem) && name_date(&stem).is_none_or(|d| stem != d) {
+        return None;
+    }
     if let Some(d) = name_date(&stem).or_else(|| doc_date(f, common).map(|d| d.format("%Y-%m-%d").to_string())) {
         parts.push(d);
     }
@@ -539,6 +560,15 @@ mod tests {
         let none = HashSet::new();
         assert_eq!(slug("Attestation d'assurance AUTOMOBILE", 40), "attestation-d-assurance-automobile");
         assert_eq!(slug("procès-verbal de contrôle technique périodique", 30), "proces-verbal-de-controle");
+        assert_eq!(slug("garantie Panne Mécanique et Électronique Automobile", 30), "garantie-panne-mecanique");
+        assert_eq!(
+            slug("document d'information sur le produit d'assurance", 40),
+            "document-d-information-sur-le-produit"
+        );
+        assert!(is_normalised("carte-grise_recto") && is_normalised("2024-07-19_revision_garage"));
+        assert!(!is_normalised("Notice HPA") && !is_normalised("RIB") && !is_normalised("cv"));
+        let any = Facts { type_document: "contrat".into(), ..Default::default() };
+        assert_eq!(proposed_name("carte-grise_recto.jpg", &any, &HashSet::new()), None, "nom posé à la main");
         let f = Facts {
             type_document: "Attestation d'assurance automobile".into(),
             organisme: Some("Assureur Mutuel de l'Ouest".into()),
