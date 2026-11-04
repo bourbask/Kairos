@@ -47,6 +47,9 @@ async fn main() -> anyhow::Result<()> {
         tz,
         model: ollama.as_ref().map(|o| o.model.clone()),
         write: var("DOCUMENTS_WRITE").as_deref() == Some("1"),
+        not_applicable: var("DOCUMENTS_NOT_APPLICABLE")
+            .map(|v| v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
+            .unwrap_or_default(),
     });
     let minutes: u64 = var("DOCUMENTS_SCAN_MINUTES").and_then(|v| v.parse().ok()).filter(|m| *m > 0).unwrap_or(15);
 

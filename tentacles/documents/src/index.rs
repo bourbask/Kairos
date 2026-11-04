@@ -123,11 +123,20 @@ const COLS: &str = "path, nature, name, kind, size, mtime, has_text";
 /// Version de l'extraction : quand elle change, les documents sans texte sont relus une fois.
 pub const EXTRACT_VERSION: &str = "2-ocr";
 
+/// Version de la lecture des faits : quand elle change, les faits sont réextraits.
+pub const FACTS_VERSION: &str = "2-dates";
+
 fn upgrade(c: &Connection) -> rusqlite::Result<()> {
     let v: Option<String> = c.query_row("SELECT v FROM meta WHERE k = 'extract_v'", [], |r| r.get(0)).optional()?;
     if v.as_deref() != Some(EXTRACT_VERSION) {
         c.execute("UPDATE files SET mtime = -1 WHERE has_text = 0", [])?;
         c.execute("INSERT OR REPLACE INTO meta (k, v) VALUES ('extract_v', ?1)", [EXTRACT_VERSION])?;
+    }
+    // Quand la lecture des faits change (ex. dates inversées corrigées), tout est réextrait une fois.
+    let f: Option<String> = c.query_row("SELECT v FROM meta WHERE k = 'facts_v'", [], |r| r.get(0)).optional()?;
+    if f.as_deref() != Some(FACTS_VERSION) {
+        c.execute("DELETE FROM facts", [])?;
+        c.execute("INSERT OR REPLACE INTO meta (k, v) VALUES ('facts_v', ?1)", [FACTS_VERSION])?;
     }
     Ok(())
 }

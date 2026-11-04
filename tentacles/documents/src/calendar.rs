@@ -158,6 +158,8 @@ mod tests {
             date: NaiveDate::from_ymd_opt(2027, 1, 10).unwrap(),
             label: "Assurance, auto : échéance".into(),
             path: "a.pdf".into(),
+            org: None,
+            rolled: false,
         };
         let (uid, ics) = event(&d);
         assert_eq!(uid, event(&d).0);

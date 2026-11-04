@@ -102,3 +102,14 @@ et, plus tard, ajouter, déplacer ou classer des documents.
     par mots-clés en début de mot ; pièce trop ancienne signalée (avis
     d'imposition, bulletin de salaire) ; contrôle technique « pas encore
     requis » avant le premier ; pièce peut-être présente mais illisible.
+
+## Ajustements
+
+- **Tacite reconduction** : un renouvellement passé d'un contrat qui se
+  reconduit (assurance, abonnement, énergie, accès internet…) est reporté
+  d'année en année ; il s'efface devant une échéance réelle du même organisme.
+- **Dates inversées** : une date du modèle absente du texte, dont la version
+  jour/mois inversée y figure, est remise à l'endroit. Version des faits
+  incrémentée : réextraction complète, une fois.
+- **Pièces sans objet** : `DOCUMENTS_NOT_APPLICABLE` retire des pièces de la
+  liste de contrôle.
