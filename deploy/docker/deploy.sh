@@ -13,7 +13,7 @@ set -euo pipefail
 VPS_HOST="${VPS_HOST:?export VPS_HOST=user@hote}"
 KAIROS_DIR="${KAIROS_DIR:-kairos}"                                   # dossier distant (relatif au home)
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-BASE_SERVICES="ollama scheduler memoire agenda finances"
+BASE_SERVICES="ollama scheduler memoire agenda finances alimentation"
 
 if [ -n "${KAIROS_SERVICES:-}" ]; then
     # Interpolée dans une commande distante : noms de services uniquement.
