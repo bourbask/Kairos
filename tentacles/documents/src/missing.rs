@@ -158,7 +158,9 @@ impl DocServer {
         let mut out: Vec<String> = Vec::new();
         let mut current = "";
         for it in CHECKLIST {
-            if wanted.as_deref().is_some_and(|w| fold(it.domain) != w.trim()) {
+            if wanted.as_deref().is_some_and(|w| fold(it.domain) != w.trim())
+                || self.settings.not_applicable.iter().any(|n| !n.is_empty() && fold(it.label).contains(&fold(n)))
+            {
                 continue;
             }
             let mut found: Vec<Found> = facts

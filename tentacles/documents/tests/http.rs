@@ -34,6 +34,7 @@ async fn start() -> (String, PathBuf) {
         tz: chrono_tz::Europe::Paris,
         model: None,
         write: true,
+        not_applicable: Vec::new(),
     });
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}/mcp", listener.local_addr().unwrap());
@@ -116,6 +117,7 @@ async fn deadlines_and_facts_respect_private_natures() {
         tz: chrono_tz::Europe::Paris,
         model: Some("m".into()),
         write: false,
+        not_applicable: Vec::new(),
     });
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}/mcp", listener.local_addr().unwrap());
@@ -149,6 +151,7 @@ async fn serve(root: &std::path::Path, index: Arc<Index>, write: bool) -> String
         tz: chrono_tz::Europe::Paris,
         model: Some("m".into()),
         write,
+        not_applicable: vec!["passeport".into()],
     });
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}/mcp", listener.local_addr().unwrap());
@@ -247,6 +250,7 @@ async fn missing_documents_checklist() {
     assert!(t.contains("✓ Attestation d'assurance auto — Assurances/auto.md"), "{t}");
     assert!(t.contains("✓ Carte d'identité — document privé") && !t.contains("Préfecture"), "{t}");
     assert!(t.contains("✗ Assurance habitation — manquant"), "{t}");
+    assert!(!t.contains("Passeport"), "pièce sans objet omise : {t}");
     let (t, _) = call(&url, "missing_documents", json!({"domain": "vehicule"})).await;
     assert!(t.starts_with("Pièces attendues — 1 présente(s), 4 à trouver") && !t.contains("Logement"), "{t}");
     let (t, err) = call(&url, "missing_documents", json!({"domain": "jardin"})).await;

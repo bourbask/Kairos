@@ -141,9 +141,44 @@ impl Ollama {
         let g: GenResponse = r.json().await.map_err(|_| "réponse illisible".to_string())?;
         let mut f: Facts = serde_json::from_str(&g.response).map_err(|_| "JSON hors schéma".to_string())?;
         f.dates.retain(|d| parse(&d.date).is_some() && DATE_KINDS.contains(&d.kind.as_str()));
+        fix_swapped_dates(&mut f, text);
         Ok(f)
     }
 }
+
+/// Le modèle convertit parfois « 01/08/2026 » en 2026-01-08 : une date absente du texte
+/// dont la version jour/mois inversée y figure est remise à l'endroit.
+pub fn fix_swapped_dates(f: &mut Facts, text: &str) {
+    let written = |d: NaiveDate| {
+        [d.format("%d/%m/%Y").to_string(), d.format("%d-%m-%Y").to_string(), d.format("%d.%m.%Y").to_string()]
+            .iter()
+            .any(|x| text.contains(x.as_str()))
+            || text.contains(&d.format("%Y-%m-%d").to_string())
+    };
+    for x in &mut f.dates {
+        let Some(d) = parse(&x.date) else { continue };
+        if written(d) {
+            continue;
+        }
+        if let Some(sw) = NaiveDate::from_ymd_opt(d.year(), d.day(), d.month()).filter(|sw| written(*sw)) {
+            x.date = sw.format("%Y-%m-%d").to_string();
+        }
+    }
+}
+
+/// Natures de documents qui se reconduisent tacitement.
+const RENEWABLE: [&str; 10] = [
+    "assurance",
+    "abonnement",
+    "conditions particulieres",
+    "mutuelle",
+    "fourniture",
+    "internet",
+    "box",
+    "telephon",
+    "electricite",
+    "gaz",
+];
 
 /// Minuscules sans accents, pour comparer des libellés.
 pub fn fold(s: &str) -> String {
@@ -176,6 +211,10 @@ pub struct Deadline {
     pub label: String,
     /// Document d'origine.
     pub path: String,
+    /// Organisme (sans casse ni accents), pour rapprocher les pièces d'un même contrat.
+    pub org: Option<String>,
+    /// Renouvellement tacite passé, reporté d'année en année.
+    pub rolled: bool,
 }
 
 /// Échéances d'un document. `today` borne les rappels déjà passés de plus de 30 jours.
@@ -204,7 +243,13 @@ pub fn deadlines(path: &str, f: &Facts, today: NaiveDate) -> Vec<Deadline> {
     if let Some(date) = first_reg {
         let when = date.checked_add_months(Months::new(48)).unwrap_or(date);
         if when >= today - chrono::Duration::days(30) {
-            out.push(Deadline { date: when, label: "premier contrôle technique".to_string(), path: path.to_string() });
+            out.push(Deadline {
+                date: when,
+                label: "premier contrôle technique".to_string(),
+                path: path.to_string(),
+                org: None,
+                rolled: false,
+            });
         }
     }
     for d in &f.dates {
@@ -219,6 +264,26 @@ pub fn deadlines(path: &str, f: &Facts, today: NaiveDate) -> Vec<Deadline> {
                     "expiration" => "expiration",
                     _ => "date limite de résiliation",
                 };
+                // Tacite reconduction : un renouvellement passé revient chaque année.
+                if d.kind == "renouvellement" && date < today {
+                    let kind = fold(&what);
+                    if !RENEWABLE.iter().any(|k| kind.contains(k)) || kind.contains("travail") {
+                        continue;
+                    }
+                    let mut next = date;
+                    while next < today {
+                        next = next.checked_add_months(Months::new(12)).unwrap_or(today);
+                    }
+                    let org = f.organisme.as_deref().map(fold).filter(|o| !o.is_empty());
+                    out.push(Deadline {
+                        date: next,
+                        label: format!("{what}{who} : renouvellement (tacite)"),
+                        path: path.to_string(),
+                        org,
+                        rolled: true,
+                    });
+                    continue;
+                }
                 (date, format!("{what}{who} : {l}"))
             }
             "controle_technique" if Some(&date) == ct.iter().max() => {
@@ -227,7 +292,8 @@ pub fn deadlines(path: &str, f: &Facts, today: NaiveDate) -> Vec<Deadline> {
             _ => continue,
         };
         if when >= today - chrono::Duration::days(30) {
-            out.push(Deadline { date: when, label, path: path.to_string() });
+            let org = f.organisme.as_deref().map(fold).filter(|o| !o.is_empty());
+            out.push(Deadline { date: when, label, path: path.to_string(), org, rolled: false });
         }
     }
     out
@@ -266,6 +332,44 @@ mod tests {
                 ),
             ]
         );
+    }
+
+    #[test]
+    fn past_tacit_renewals_roll_forward_yearly() {
+        let today = NaiveDate::from_ymd_opt(2026, 11, 4).unwrap();
+        let f = Facts {
+            type_document: "conditions particulières assurance habitation".into(),
+            organisme: Some("Assureur".into()),
+            dates: vec![d("renouvellement", "2023-08-01"), d("debut", "2023-01-24")],
+            ..Default::default()
+        };
+        let got = deadlines("cp.pdf", &f, today);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].date.to_string(), "2027-08-01");
+        assert!(got[0].rolled && got[0].label.ends_with("renouvellement (tacite)"));
+        assert_eq!(got[0].org.as_deref(), Some("assureur"));
+    }
+
+    #[test]
+    fn non_contracts_never_roll() {
+        let today = NaiveDate::from_ymd_opt(2026, 11, 4).unwrap();
+        for t in ["diplôme", "diagnostic de performance énergétique", "contrat de travail"] {
+            let f =
+                Facts { type_document: t.into(), dates: vec![d("renouvellement", "2020-01-27")], ..Default::default() };
+            assert!(deadlines("x.pdf", &f, today).is_empty(), "{t}");
+        }
+    }
+
+    #[test]
+    fn swapped_day_and_month_are_fixed_against_the_text() {
+        let mut f =
+            Facts { dates: vec![d("renouvellement", "2026-01-08"), d("debut", "2026-06-09")], ..Default::default() };
+        fix_swapped_dates(&mut f, "se renouvelle le : 01/08/2026 ; effet le 09/06/2026");
+        assert_eq!(f.dates[0].date, "2026-08-01");
+        assert_eq!(f.dates[1].date, "2026-06-09", "date juste laissée telle quelle");
+        let mut g = Facts { dates: vec![d("echeance", "2026-01-08")], ..Default::default() };
+        fix_swapped_dates(&mut g, "aucune date lisible");
+        assert_eq!(g.dates[0].date, "2026-01-08", "rien à quoi se fier : inchangé");
     }
 
     #[test]
