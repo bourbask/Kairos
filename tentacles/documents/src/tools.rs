@@ -33,6 +33,8 @@ pub struct Settings {
     pub model: Option<String>,
     /// Écritures (déplacer, renommer, corbeille) autorisées.
     pub write: bool,
+    /// Pièces de la liste de contrôle sans objet (libellé, sans casse ni accents).
+    pub not_applicable: Vec<String>,
 }
 
 /// Échéances de tous les documents. Natures privées : type et date seulement,
@@ -53,6 +55,16 @@ pub fn all_deadlines(index: &Index, settings: &Settings, today: chrono::NaiveDat
     }
     out.sort_by(|a, b| a.0.date.cmp(&b.0.date).then(a.0.label.cmp(&b.0.label)));
     out.dedup_by(|a, b| a.0.date == b.0.date && a.0.label == b.0.label);
+    // Un renouvellement reporté s'efface devant une échéance réelle du même organisme à ±1 mois,
+    // et devant un autre report du même organisme le même jour.
+    let real: Vec<(chrono::NaiveDate, String)> =
+        out.iter().filter(|(d, _)| !d.rolled).filter_map(|(d, _)| d.org.clone().map(|o| (d.date, o))).collect();
+    let mut seen = std::collections::HashSet::new();
+    out.retain(|(d, _)| {
+        let Some(o) = d.org.as_deref().filter(|_| d.rolled) else { return true };
+        !real.iter().any(|(rd, ro)| ro == o && (*rd - d.date).num_days().abs() <= 31)
+            && seen.insert((d.date, o.to_string()))
+    });
     out
 }
 
