@@ -105,6 +105,23 @@ services:
     ports:
       - "${TENTACLES_BIND_ADDR:-127.0.0.1}:${FINANCES_BIND_PORT:-8094}:8094"
 
+  alimentation:
+    image: kairos:local
+    restart: unless-stopped
+    user: "1001:1001"
+    mem_limit: 64m
+    entrypoint: ["/app/kairos-alimentation"]
+    environment:
+      ALIMENTATION_BIND: 0.0.0.0:8098
+      ALIMENTATION_DB: /app/alimentation/alimentation.db
+    env_file:
+      - path: kairos.env
+        required: false
+    volumes:
+      - alimentation-data:/app/alimentation
+    ports:
+      - "${TENTACLES_BIND_ADDR:-127.0.0.1}:${ALIMENTATION_BIND_PORT:-8098}:8098"
+
   # Tête : boucle principale (conversation, briefs, suggestions) ; joint les tentacules par nom de service.
   tete:
     <<: *kairos-common
@@ -175,3 +192,4 @@ volumes:
   ollama-models:
   radicale-data:
   memoire-data:
+  alimentation-data:
