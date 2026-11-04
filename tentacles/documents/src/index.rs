@@ -14,6 +14,9 @@ use crate::extract::{self, Kind};
 /// Nature des fichiers posés à la racine.
 pub const ROOT_NATURE: &str = "(racine)";
 
+/// Dossier de premier niveau où « supprimer » range les fichiers ; jamais indexé.
+pub const TRASH: &str = "_Corbeille";
+
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS files (
     path TEXT PRIMARY KEY,
@@ -89,6 +92,9 @@ fn walk(root: &Path) -> Vec<PathBuf> {
                 continue;
             }
             let Ok(ft) = e.file_type() else { continue };
+            if ft.is_dir() && dir == root && name == TRASH {
+                continue;
+            }
             if ft.is_dir() {
                 stack.push(e.path());
             } else if ft.is_file() {
@@ -302,6 +308,55 @@ impl Index {
         st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?.collect()
     }
 
+    /// Tous les documents.
+    pub fn all(&self) -> rusqlite::Result<Vec<Doc>> {
+        let db = self.db.lock().unwrap();
+        let mut st = db.prepare(&format!("SELECT {COLS} FROM files ORDER BY path"))?;
+        st.query_map([], row)?.collect()
+    }
+
+    /// Suit un fichier déplacé : texte et faits sont conservés, rien n'est relu.
+    pub fn rename(&self, from: &str, to: &str) -> rusqlite::Result<bool> {
+        let mut db = self.db.lock().unwrap();
+        let tx = db.transaction()?;
+        let body: Option<Option<String>> =
+            tx.query_row("SELECT body FROM files WHERE path = ?1", [from], |r| r.get(0)).optional()?;
+        let Some(body) = body else { return Ok(false) };
+        let name = to.rsplit('/').next().unwrap_or(to).to_string();
+        tx.execute(
+            "UPDATE files SET path = ?2, nature = ?3, name = ?4 WHERE path = ?1",
+            params![from, to, nature_of(to), name],
+        )?;
+        tx.execute("DELETE FROM fts WHERE path = ?1", [from])?;
+        tx.execute(
+            "INSERT INTO fts (path, name, body) VALUES (?1, ?2, ?3)",
+            params![to, name, body.unwrap_or_default()],
+        )?;
+        tx.execute("UPDATE facts SET path = ?2 WHERE path = ?1", [from, to])?;
+        tx.commit()?;
+        Ok(true)
+    }
+
+    /// Retire un document de l'index (mis à la corbeille).
+    pub fn forget(&self, path: &str) -> rusqlite::Result<()> {
+        let db = self.db.lock().unwrap();
+        for t in ["files", "fts", "facts"] {
+            db.execute(&format!("DELETE FROM {t} WHERE path = ?1"), [path])?;
+        }
+        Ok(())
+    }
+
+    /// Faits d'un document.
+    pub fn facts_of(&self, path: &str) -> Option<String> {
+        self.db
+            .lock()
+            .unwrap()
+            .query_row("SELECT json FROM facts WHERE path = ?1 AND status = 'ok'", [path], |r| r.get(0))
+            .optional()
+            .ok()
+            .flatten()
+    }
+
     pub fn list(&self, nature: &str) -> rusqlite::Result<Vec<Doc>> {
         let db = self.db.lock().unwrap();
         let mut st = db.prepare(&format!("SELECT {COLS} FROM files WHERE nature = ?1 ORDER BY path"))?;
@@ -421,6 +476,21 @@ mod tests {
         assert_eq!((r.updated, r.removed, r.unchanged), (1, 1, 2));
         assert!(ix.search("trois mois", None, &[], 10).unwrap()[0].1.contains("«trois»"));
         assert!(ix.get("photo.jpg").unwrap().is_none());
+
+        // Corbeille jamais indexée ; un déplacement garde texte et faits.
+        std::fs::create_dir_all(root.join(TRASH)).unwrap();
+        std::fs::write(root.join(TRASH).join("vieux.md"), "préavis oublié").unwrap();
+        ix.set_facts("Logement/bail.txt", "m", Some("{}"), 4).unwrap();
+        std::fs::create_dir_all(root.join("Archives")).unwrap();
+        std::fs::rename(root.join("Logement/bail.txt"), root.join("Archives/bail-2024.txt")).unwrap();
+        assert!(ix.rename("Logement/bail.txt", "Archives/bail-2024.txt").unwrap());
+        assert!(!ix.rename("absent.txt", "x.txt").unwrap());
+        let r = ix.scan(&root, 4).unwrap();
+        assert_eq!((r.added, r.removed, r.unchanged), (0, 0, 3), "{r:?}");
+        assert_eq!(ix.facts_of("Archives/bail-2024.txt").as_deref(), Some("{}"));
+        assert_eq!(ix.search("trois mois", None, &[], 10).unwrap()[0].0.nature, "Archives");
+        ix.forget("Archives/bail-2024.txt").unwrap();
+        assert!(ix.get("Archives/bail-2024.txt").unwrap().is_none());
         std::fs::remove_dir_all(&root).unwrap();
     }
 }
