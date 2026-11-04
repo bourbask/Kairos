@@ -235,10 +235,10 @@ impl DocServer {
             .collect();
         let when = self.index.last_scan().map(|t| format!(" (index à jour du {})", self.date(t))).unwrap_or_default();
         let mut out = format!("{total} documents{when} :\n{}", lines.join("\n"));
-        if let Some(m) = &self.settings.model {
-            if let Ok((ok, ko, todo)) = self.index.facts_status(m) {
-                out.push_str(&format!("\nFaits extraits : {ok} document(s), {todo} en attente, {ko} en échec."));
-            }
+        if let Some(m) = &self.settings.model
+            && let Ok((ok, ko, todo)) = self.index.facts_status(m)
+        {
+            out.push_str(&format!("\nFaits extraits : {ok} document(s), {todo} en attente, {ko} en échec."));
         }
         Ok(out)
     }

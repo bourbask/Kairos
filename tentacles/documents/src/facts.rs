@@ -89,7 +89,8 @@ pub fn prompt(name: &str, text: &str) -> String {
         "Tu lis un document administratif français (fichier « {name} »). Extrais uniquement ce qui y figure, \
          sans rien inventer ; mets null ou une liste vide si l'information est absente.\n\
          - type_document : nature précise en français (ex. « bulletin de salaire », « contrat d'assurance auto », \
-         « procès-verbal de contrôle technique », « certificat d'immatriculation », « bail d'habitation », « facture »).\n\
+         « procès-verbal de contrôle technique », « certificat d'immatriculation », « bail d'habitation », « facture d'entretien »). Une facture ou un ordre \
+         de réparation de garage n'est pas un contrôle technique.\n\
          - organisme : émetteur ou contrepartie principale.\n\
          - reference : numéro de contrat, de dossier ou de client.\n\
          - resume : une phrase.\n\
@@ -144,6 +145,22 @@ impl Ollama {
     }
 }
 
+/// Minuscules sans accents, pour comparer des libellés.
+fn fold(s: &str) -> String {
+    s.to_lowercase()
+        .chars()
+        .map(|c| match c {
+            'à' | 'â' | 'ä' => 'a',
+            'é' | 'è' | 'ê' | 'ë' => 'e',
+            'î' | 'ï' => 'i',
+            'ô' | 'ö' => 'o',
+            'ù' | 'û' | 'ü' => 'u',
+            'ç' => 'c',
+            c => c,
+        })
+        .collect()
+}
+
 /// Date complète : ISO, ou formats français (jour/mois/année). Partielle ou vide : rejetée.
 pub fn parse(d: &str) -> Option<NaiveDate> {
     let d = d.trim();
@@ -166,8 +183,30 @@ pub fn deadlines(path: &str, f: &Facts, today: NaiveDate) -> Vec<Deadline> {
     let mut out = Vec::new();
     let who = f.organisme.as_deref().filter(|o| !o.is_empty()).map(|o| format!(" — {o}")).unwrap_or_default();
     let what = if f.type_document.is_empty() { "document".to_string() } else { f.type_document.clone() };
-    let ct: Vec<NaiveDate> =
-        f.dates.iter().filter(|d| d.kind == "controle_technique").filter_map(|d| parse(&d.date)).collect();
+    // Les dates propres au véhicule ne valent que sur la pièce qui les porte :
+    // un modèle lit volontiers un « contrôle » dans une facture d'entretien.
+    let kind_of = fold(&f.type_document);
+    let is_ct = kind_of.contains("controle technique");
+    let is_cg = kind_of.contains("immatriculation") || kind_of.contains("carte grise");
+    let ct: Vec<NaiveDate> = if is_ct {
+        f.dates.iter().filter(|d| d.kind == "controle_technique").filter_map(|d| parse(&d.date)).collect()
+    } else {
+        Vec::new()
+    };
+    // Carte grise : la date B (1re immatriculation) est la plus ancienne du
+    // recto ; le modèle la type souvent « emission ».
+    let first_reg = is_cg
+        .then(|| {
+            let typed = f.dates.iter().filter(|d| d.kind == "premiere_immatriculation").filter_map(|d| parse(&d.date));
+            typed.min().or_else(|| f.dates.iter().filter_map(|d| parse(&d.date)).min())
+        })
+        .flatten();
+    if let Some(date) = first_reg {
+        let when = date.checked_add_months(Months::new(48)).unwrap_or(date);
+        if when >= today - chrono::Duration::days(30) {
+            out.push(Deadline { date: when, label: "premier contrôle technique".to_string(), path: path.to_string() });
+        }
+    }
     for d in &f.dates {
         let Some(date) = parse(&d.date) else { continue };
         let (when, label) = match d.kind.as_str() {
@@ -184,9 +223,6 @@ pub fn deadlines(path: &str, f: &Facts, today: NaiveDate) -> Vec<Deadline> {
             }
             "controle_technique" if Some(&date) == ct.iter().max() => {
                 (date.checked_add_months(Months::new(24)).unwrap_or(date), "contrôle technique à repasser".to_string())
-            }
-            "premiere_immatriculation" if ct.is_empty() => {
-                (date.checked_add_months(Months::new(48)).unwrap_or(date), "premier contrôle technique".to_string())
             }
             _ => continue,
         };
@@ -236,6 +272,7 @@ mod tests {
     fn technical_inspection_rules() {
         let today = NaiveDate::from_ymd_opt(2026, 11, 3).unwrap();
         let pv = Facts {
+            type_document: "procès-verbal de contrôle technique".into(),
             dates: vec![d("controle_technique", "2024-03-01"), d("controle_technique", "2025-12-05")],
             ..Default::default()
         };
@@ -245,10 +282,22 @@ mod tests {
             (got[0].date.to_string(), got[0].label.as_str()),
             ("2027-12-05".into(), "contrôle technique à repasser")
         );
-        let cg = Facts { dates: vec![d("premiere_immatriculation", "2023-06-15")], ..Default::default() };
-        assert_eq!(deadlines("cg.pdf", &cg, today)[0].date.to_string(), "2027-06-15");
-        let old = Facts { dates: vec![d("premiere_immatriculation", "2010-06-15")], ..Default::default() };
-        assert!(deadlines("cg.pdf", &old, today).is_empty(), "rappel trop ancien ignoré");
+        let cg = |dates| Facts { type_document: "certificat d'immatriculation".into(), dates, ..Default::default() };
+        let got = deadlines("cg.pdf", &cg(vec![d("premiere_immatriculation", "2023-06-15")]), today);
+        assert_eq!(got[0].date.to_string(), "2027-06-15");
+        let got = deadlines("cg.jpg", &cg(vec![d("emission", "21/03/2023")]), today);
+        assert_eq!(
+            (got[0].date.to_string(), got[0].label.as_str()),
+            ("2027-03-21".into(), "premier contrôle technique"),
+            "date B typée « emission » par le modèle"
+        );
+        assert!(deadlines("cg.pdf", &cg(vec![d("premiere_immatriculation", "2010-06-15")]), today).is_empty());
+        let invoice = Facts {
+            type_document: "facture d'entretien".into(),
+            dates: vec![d("controle_technique", "2025-08-04"), d("premiere_immatriculation", "2026-08-01")],
+            ..Default::default()
+        };
+        assert!(deadlines("entretien.jpg", &invoice, today).is_empty(), "facture d'entretien : pas de CT");
     }
 
     #[test]
