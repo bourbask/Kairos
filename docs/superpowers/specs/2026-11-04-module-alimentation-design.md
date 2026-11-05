@@ -89,3 +89,24 @@ surveillé couvre le même besoin avec un seul geste : enregistrer le PDF.
 
 Plus tard : récupération entièrement automatique (mail de confirmation, puis
 navigateur piloté sur le poste), avec l'étape panier.
+
+## Dates de conservation
+
+La date imprimée dépend du lot fabriqué : ni le bon de commande ni les bases
+produits ne la donnent. Plutôt que de la demander produit par produit :
+
+- **Tout lot a une date.** Celle de l'emballage quand on la donne, sinon une
+  durée type selon le produit et l'emplacement (`shelf.rs` : viande fraîche
+  3 j, yaourts 21 j, courges 60 j, surgelés 180 j, placard 365 j…), marquée
+  « estimée ». La nature de la date est gardée : DLC (au-delà, on jette) ou
+  DDM (« de préférence avant » : au-delà, on vérifie).
+- **Une seule règle de priorité pour tout le stock** : un produit remonte
+  quand sa date entre dans l'horizon demandé, ou quand il ne lui reste qu'un
+  sixième de sa durée de conservation. Une conserve d'un an remonte deux mois
+  avant sa date : les oublis au fond du placard ne finissent plus à la
+  poubelle.
+- **Événements de vie** : la première ouverture raccourcit la date des produits
+  concernés (lait, crème, lait de coco, jus, sauces, charcuterie) ; congeler
+  sans date donnée l'estime à 3 mois, décongeler la ramène à 2 jours au plus.
+- Les vraies DLC comptent surtout pour le frais animal : une photo des
+  étiquettes au retrait suffit à remplacer les estimations.
