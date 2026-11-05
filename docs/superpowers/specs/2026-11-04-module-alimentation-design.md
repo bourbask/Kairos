@@ -73,10 +73,12 @@ retrait, total, et une ligne par article rangée sous son rayon.
   frigo, épicerie → placard, avec quelques exceptions par mot-clé), articles non
   alimentaires écartés. Une référence déjà enregistrée est refusée : l'import
   peut être rejoué sans doublon.
-- **`kairos-alimentation-depot`** (poste de travail) surveille un dossier, en
-  pratique les téléchargements. Chaque nouveau PDF est lu sur place ; seul un
-  texte reconnu comme bon de commande est envoyé au module, confirmé d'office.
-  Les autres PDF ne quittent pas la machine. Sondage périodique plutôt que
+- **`kairos-alimentation-depot`** (poste de travail) surveille un dossier dédié,
+  réservé aux bons de commande : il ne voit que ce qu'on y dépose, jamais les
+  autres fichiers personnels. Chaque nouveau PDF est lu sur place ; seul un
+  texte reconnu comme bon de commande (numéro, date de retrait, total, rayons)
+  est envoyé au module, confirmé d'office. Un autre PDF déposé par erreur ne
+  quitte pas la machine. Sondage périodique plutôt que
   notifications du système de fichiers, peu fiables sur un dossier Windows monté
   dans un conteneur.
 

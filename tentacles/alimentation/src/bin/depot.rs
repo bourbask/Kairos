@@ -1,8 +1,8 @@
-//! Dépôt de bons de commande : surveille un dossier (par exemple les
-//! téléchargements), extrait le texte de chaque nouveau PDF avec `pdftotext`
-//! et, s'il s'agit d'un bon de commande, l'envoie au module alimentation
-//! (`order_import`, confirmé). Les autres PDF sont lus localement puis ignorés :
-//! rien n'en sort de la machine.
+//! Dépôt de bons de commande : surveille un dossier dédié (réservé aux bons,
+//! pour ne jamais parcourir d'autres fichiers personnels), extrait le texte de
+//! chaque nouveau PDF avec `pdftotext` et, s'il s'agit d'un bon de commande,
+//! l'envoie au module alimentation (`order_import`, confirmé). Un autre PDF
+//! déposé par erreur est lu localement puis ignoré : rien n'en sort.
 //!
 //! Variables : DEPOT_DIR (dossier surveillé), DEPOT_STATE (fichiers déjà vus),
 //! DEPOT_INTERVAL (secondes entre deux passages), ALIMENTATION_URL (point MCP),
@@ -130,7 +130,7 @@ async fn main() -> anyhow::Result<()> {
         let mut changed = false;
         for p in pdfs(&dir) {
             let Some((k, modified)) = key(&p) else { continue };
-            // Téléchargement peut-être en cours : attendre que le fichier se stabilise.
+            // Copie peut-être en cours : attendre que le fichier se stabilise.
             if seen.contains(&k) || modified.elapsed().unwrap_or_default() < Duration::from_secs(10) {
                 continue;
             }
