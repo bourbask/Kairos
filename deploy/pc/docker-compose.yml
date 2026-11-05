@@ -4,9 +4,9 @@
 #   renommer, corbeille) seulement si DOCUMENTS_WRITE=1, jamais d'écrasement ;
 # - documents-backup : copie quotidienne de ce dossier, sans jamais rien effacer
 #   (fichiers modifiés ou supprimés rangés dans archives/<date>) ;
-# - alimentation-depot : surveille un dossier (les téléchargements) et envoie
-#   chaque bon de commande PDF au module alimentation ; les autres PDF sont lus
-#   sur place puis ignorés ;
+# - alimentation-depot : surveille un dossier dédié, réservé aux bons de commande,
+#   et envoie chaque bon PDF au module alimentation ; un autre PDF déposé par
+#   erreur est lu sur place puis ignoré ;
 # - ollama : modèle local sur le GPU du poste (extraction des faits), non publié.
 #
 #   cp medias.env.example medias.env ; cp documents.env.example documents.env
@@ -107,7 +107,7 @@ services:
       DEPOT_DIR: /depot
       DEPOT_STATE: /data/depot.json
     volumes:
-      - "${DEPOT_SOURCE_DIR:?dossier surveillé (téléchargements)}:/depot:ro"
+      - "${DEPOT_SOURCE_DIR:?dossier dédié aux bons de commande}:/depot:ro"
       - depot-data:/data
 
 volumes:
