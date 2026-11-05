@@ -62,6 +62,16 @@ struct OrderArgs {
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
+struct ImportArgs {
+    /// Texte du bon de commande.
+    text: String,
+    /// Enseigne (« drive » par défaut).
+    store: Option<String>,
+    /// false (défaut) : aperçu ; true : enregistrer.
+    confirm: Option<bool>,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
 struct ReceiveArgs {
     /// Commande à réceptionner ; absente = la plus récente à retirer.
     order_id: Option<i64>,
@@ -236,6 +246,34 @@ impl FoodServer {
             .add_order(a.store.trim(), a.reference.as_deref(), pickup.as_deref(), a.total, &lines)
             .map_err(|e| e.to_string())?;
         Ok(format!("{head} : enregistrée (commande {id}), à réceptionner au retrait.\n{}", shown.join("\n")))
+    }
+
+    #[tool(
+        description = "Importer un bon de commande de drive à partir de son texte (PDF passé par pdftotext -layout, ou page copiée) : référence, retrait, total, lignes et rangement déduit du rayon. Les articles non alimentaires sont écartés. Une commande déjà enregistrée sous la même référence est refusée. En deux temps : aperçu, puis confirm=true."
+    )]
+    async fn order_import(&self, Parameters(a): Parameters<ImportArgs>) -> Out {
+        let b = crate::bon::parse(&a.text)?;
+        if let Some(r) = b.reference.as_deref()
+            && let Some(id) = self.store.order_by_reference(r).map_err(|e| e.to_string())?
+        {
+            return Ok(format!("Commande n° {r} déjà enregistrée (commande {id}) : rien à faire."));
+        }
+        let skipped = if b.skipped.is_empty() {
+            String::new()
+        } else {
+            format!("\nÉcartés (non alimentaires) : {}.", b.skipped.join(" ; "))
+        };
+        let out = self
+            .order_record(Parameters(OrderArgs {
+                store: a.store.unwrap_or_else(|| "drive".to_string()),
+                reference: b.reference,
+                pickup: b.pickup,
+                total: b.total,
+                items: b.lines,
+                confirm: a.confirm,
+            }))
+            .await?;
+        Ok(format!("{out}{skipped}"))
     }
 
     #[tool(description = "Lister les commandes de courses (à retirer d'abord) avec leur contenu.")]
