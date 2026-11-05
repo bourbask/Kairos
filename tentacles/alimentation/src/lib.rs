@@ -4,6 +4,7 @@
 
 pub mod bon;
 pub mod off;
+pub mod shelf;
 pub mod store;
 pub mod tools;
 pub mod units;

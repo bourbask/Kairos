@@ -16,6 +16,7 @@ use rmcp::{
 use serde::Deserialize;
 
 use crate::off::Off;
+use crate::shelf::Kind;
 use crate::store::{Line, Lot, Store, date};
 use crate::units::show;
 
@@ -148,6 +149,16 @@ struct BriefArgs {
     period: tentacle_common::BriefPeriod,
 }
 
+/// Date dans l'horizon, ou dernier sixième de la durée de conservation entamé.
+fn pressing(expiry: chrono::NaiveDate, added: chrono::NaiveDate, today: chrono::NaiveDate, days: i64) -> bool {
+    let window = days.max((expiry - added).num_days() / 6);
+    (expiry - today).num_days() <= window
+}
+
+fn expiry(l: &Lot) -> Option<chrono::NaiveDate> {
+    l.expiry.as_deref().and_then(|e| chrono::NaiveDate::parse_from_str(e, "%Y-%m-%d").ok())
+}
+
 impl FoodServer {
     pub fn new(store: Arc<Store>, off: Arc<Off>, settings: Arc<Settings>) -> Self {
         Self { store, off, settings, tool_router: Self::tool_router() }
@@ -158,8 +169,10 @@ impl FoodServer {
     }
 
     fn lot_line(&self, l: &Lot) -> String {
-        let when = match l.expiry.as_deref().and_then(|e| chrono::NaiveDate::parse_from_str(e, "%Y-%m-%d").ok()) {
+        let ddm = l.kind == Some(Kind::Ddm);
+        let when = match expiry(l) {
             Some(d) => match (d - self.today()).num_days() {
+                n if n < 0 && ddm => format!(", date dépassée depuis {} j (souvent encore bon : vérifier)", -n),
                 n if n < 0 => format!(", périmé depuis {} j", -n),
                 0 => ", à finir aujourd'hui".to_string(),
                 1 => ", à finir demain".to_string(),
@@ -167,23 +180,28 @@ impl FoodServer {
             },
             None => String::new(),
         };
-        format!("- {} : {}{}{}", l.product, l.show(), if l.opened { ", entamé" } else { "" }, when)
+        let est = if l.estimated && l.expiry.is_some() { ", date estimée" } else { "" };
+        format!("- {} : {}{}{when}{est}", l.product, l.show(), if l.opened { ", entamé" } else { "" })
     }
 
+    /// Lots à consommer en priorité, les plus pressés d'abord. Même règle pour
+    /// tout le stock : la date tombe dans l'horizon, ou il reste moins d'un
+    /// sixième de la durée de conservation (une conserve d'un an remonte deux
+    /// mois avant sa date, un produit de six mois un mois avant).
     fn urgent(&self, days: i64) -> Result<Vec<Lot>, String> {
-        let limit = self.today() + chrono::Duration::days(days);
-        Ok(self
+        let today = self.today();
+        let mut lots: Vec<Lot> = self
             .store
             .lots(None, None)
             .map_err(|e| e.to_string())?
             .into_iter()
             .filter(|l| {
-                l.expiry
-                    .as_deref()
-                    .and_then(|e| chrono::NaiveDate::parse_from_str(e, "%Y-%m-%d").ok())
-                    .is_some_and(|d| d <= limit)
+                let added = chrono::DateTime::from_timestamp(l.added_at, 0).map(|t| t.date_naive()).unwrap_or(today);
+                expiry(l).is_some_and(|d| pressing(d, added, today, days))
             })
-            .collect())
+            .collect();
+        lots.sort_by(|a, b| expiry(a).cmp(&expiry(b)).then_with(|| a.product.cmp(&b.product)));
+        Ok(lots)
     }
 
     /// Complète une ligne depuis la base produits quand seul le code-barres est connu.
@@ -374,7 +392,9 @@ impl FoodServer {
         Ok(done.join("\n"))
     }
 
-    #[tool(description = "Déplacer un produit (ex. viande au congélateur) et fixer sa nouvelle date limite.")]
+    #[tool(
+        description = "Déplacer un produit (ex. viande au congélateur). Sans date donnée : congeler l'estime à 3 mois, décongeler la ramène à 2 jours au plus."
+    )]
     async fn stock_move(&self, Parameters(a): Parameters<MoveArgs>) -> Out {
         self.store.relocate(&a.name, &a.to, a.expiry.as_deref())
     }
@@ -401,7 +421,7 @@ impl FoodServer {
     }
 
     #[tool(
-        description = "Produits à consommer en priorité : date limite dans l'horizon donné ou dépassée. À utiliser pour ordonner les repas et éviter le gaspillage."
+        description = "Produits à consommer en priorité, du frais au placard : date (réelle ou estimée) dans l'horizon donné ou dépassée, ou produit de longue conservation dans le dernier sixième de sa durée (oubli au fond du placard). À utiliser pour ordonner les repas et éviter le gaspillage."
     )]
     async fn use_first(&self, Parameters(a): Parameters<UseFirstArgs>) -> Out {
         let days = a.days.unwrap_or(4).clamp(0, 30);
@@ -559,5 +579,29 @@ impl FoodServer {
 impl ServerHandler for FoodServer {
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::pressing;
+    use chrono::NaiveDate;
+
+    fn d(s: &str) -> NaiveDate {
+        NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap()
+    }
+
+    #[test]
+    fn long_keeping_products_surface_before_they_are_forgotten() {
+        let today = d("2027-06-01");
+        // Yaourt : seul l'horizon compte.
+        assert!(pressing(d("2027-06-04"), d("2027-05-20"), today, 4));
+        assert!(!pressing(d("2027-06-08"), d("2027-05-20"), today, 4));
+        // Conserve d'un an achetée il y a dix mois : à deux mois de sa date, elle remonte.
+        assert!(pressing(d("2027-07-31"), d("2026-07-31"), today, 4));
+        // Même conserve achetée le mois dernier : rien à signaler.
+        assert!(!pressing(d("2028-05-01"), d("2027-05-01"), today, 4));
+        // Date dépassée : toujours remonté.
+        assert!(pressing(d("2027-05-01"), d("2026-05-01"), today, 0));
     }
 }
