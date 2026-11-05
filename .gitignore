@@ -26,6 +26,7 @@ CLAUDE.local.md
 deploy/docker/docker-compose.override.yml
 deploy/pc/medias.env
 deploy/pc/documents.env
+deploy/pc/alimentation-depot.env
 
 # Config et base locales de la tête
 config/tete.toml

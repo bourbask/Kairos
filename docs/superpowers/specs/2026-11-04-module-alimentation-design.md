@@ -60,3 +60,30 @@ mangé, pour :
    téléphone), points réguliers sur la forme et la charge de travail (agenda) ;
    portions, fréquence et choix d'aliments orientés par les objectifs, y compris
    la limitation de certains contaminants alimentaires.
+
+## Import des bons de commande
+
+Saisir une commande ligne à ligne est le point de friction. Le bon de commande
+en PDF que le drive met à disposition contient tout : référence, date de
+retrait, total, et une ligne par article rangée sous son rayon.
+
+- **`order_import`** (module, VPS) lit ce texte (`pdftotext -layout`) : quantité
+  déduite de la désignation (500g, 1.5kg, 6x1L, x12, 1p, poids de viande en fin
+  de libellé), emplacement déduit du rayon (surgelés → congélateur, frais →
+  frigo, épicerie → placard, avec quelques exceptions par mot-clé), articles non
+  alimentaires écartés. Une référence déjà enregistrée est refusée : l'import
+  peut être rejoué sans doublon.
+- **`kairos-alimentation-depot`** (poste de travail) surveille un dossier, en
+  pratique les téléchargements. Chaque nouveau PDF est lu sur place ; seul un
+  texte reconnu comme bon de commande est envoyé au module, confirmé d'office.
+  Les autres PDF ne quittent pas la machine. Sondage périodique plutôt que
+  notifications du système de fichiers, peu fiables sur un dossier Windows monté
+  dans un conteneur.
+
+Écarté : un favori (bookmarklet) qui enverrait la page du drive au module. Une
+page HTTPS ne peut pas appeler un service en HTTP simple (contenu mixte bloqué
+par les navigateurs), et le bon de commande est un PDF, pas une page. Le dossier
+surveillé couvre le même besoin avec un seul geste : enregistrer le PDF.
+
+Plus tard : récupération entièrement automatique (mail de confirmation, puis
+navigateur piloté sur le poste), avec l'étape panier.

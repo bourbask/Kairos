@@ -4,10 +4,14 @@
 #   renommer, corbeille) seulement si DOCUMENTS_WRITE=1, jamais d'écrasement ;
 # - documents-backup : copie quotidienne de ce dossier, sans jamais rien effacer
 #   (fichiers modifiés ou supprimés rangés dans archives/<date>) ;
+# - alimentation-depot : surveille un dossier (les téléchargements) et envoie
+#   chaque bon de commande PDF au module alimentation ; les autres PDF sont lus
+#   sur place puis ignorés ;
 # - ollama : modèle local sur le GPU du poste (extraction des faits), non publié.
 #
-#   cp medias.env.example medias.env ; cp documents.env.example documents.env   # puis remplir (hors dépôt)
-#   .env : MEDIAS_NETWORK, DOCUMENTS_SOURCE_DIR, DOCUMENTS_BACKUP_DIR
+#   cp medias.env.example medias.env ; cp documents.env.example documents.env
+#   cp alimentation-depot.env.example alimentation-depot.env   # puis remplir (hors dépôt)
+#   .env : MEDIAS_NETWORK, MEDIAS_IP, DOCUMENTS_SOURCE_DIR, DOCUMENTS_BACKUP_DIR, DEPOT_SOURCE_DIR
 #   docker compose up -d --build
 #
 # Publiés sur la boucle locale seulement ; l'accès MCP exige le jeton porteur.
@@ -32,7 +36,10 @@ services:
     ports:
       - "${MEDIAS_BIND_ADDR:-127.0.0.1}:${MEDIAS_BIND_PORT:-8095}:8095"
     networks:
-      - media
+      media:
+        # Adresse fixe : sans elle, Docker attribue la première libre du réseau
+        # et peut prendre au démarrage une adresse réservée par la stack média.
+        ipv4_address: ${MEDIAS_IP:?adresse IP fixe sur le réseau de la stack média}
 
   documents:
     build:
@@ -88,9 +95,25 @@ services:
       - "${DOCUMENTS_SOURCE_DIR:?dossier des documents}:/source:ro"
       - "${DOCUMENTS_BACKUP_DIR:?dossier de sauvegarde}:/backup"
 
+  alimentation-depot:
+    image: kairos-pc:local
+    restart: unless-stopped
+    mem_limit: 64m
+    entrypoint: ["/app/kairos-alimentation-depot"]
+    env_file:
+      - path: alimentation-depot.env
+        required: true
+    environment:
+      DEPOT_DIR: /depot
+      DEPOT_STATE: /data/depot.json
+    volumes:
+      - "${DEPOT_SOURCE_DIR:?dossier surveillé (téléchargements)}:/depot:ro"
+      - depot-data:/data
+
 volumes:
   medias-data: {}
   documents-data: {}
+  depot-data: {}
   ollama-models:
     # Nom fixe : les modèles téléchargés survivent à un renommage du projet.
     name: kairos-ollama

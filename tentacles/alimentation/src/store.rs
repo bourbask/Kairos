@@ -511,6 +511,13 @@ impl Store {
         Ok(db.last_insert_rowid())
     }
 
+    /// Commande déjà enregistrée sous cette référence, s'il y en a une.
+    pub fn order_by_reference(&self, reference: &str) -> rusqlite::Result<Option<i64>> {
+        let db = self.db.lock().unwrap();
+        db.query_row("SELECT id FROM orders WHERE reference = ?1 ORDER BY id LIMIT 1", [reference], |r| r.get(0))
+            .optional()
+    }
+
     pub fn orders(&self, only_pending: bool) -> rusqlite::Result<Vec<Order>> {
         let db = self.db.lock().unwrap();
         let mut st = db.prepare(&format!(

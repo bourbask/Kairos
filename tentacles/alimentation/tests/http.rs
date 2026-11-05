@@ -161,3 +161,31 @@ async fn prefs_lookup_and_validation() {
         assert!(err && t.contains(msg), "{msg} : {t}");
     }
 }
+
+#[tokio::test]
+async fn order_import_reads_a_bon_once() {
+    let url = start().await;
+    let text = "Retrait le 14/03/27 à 18H30
+Détail de votre commande n°555 du 12/03/2027 à 10h05 (3 produits)
+Désignation                                    Quantité   Prix unitaire TTC   Total TTC
+FRUITS LÉGUMES (1 produit)
+  Carottes - Sachet 2kg                                1                1.99        1.99
+SURGELÉS (1 produit)
+  Epinards hachés - 600g                               1                1.89        1.89
+ENTRETIEN NETTOYAGE (1 produit)
+  Liquide vaisselle - 500ml                            1                0.67        0.67
+                                 Total de la commande :       4.55
+";
+    let (t, _) = call(&url, "order_import", json!({"text": text})).await;
+    assert!(t.contains("Commande drive n° 555, retrait le 2027-03-14, 4,55 € — 2 ligne(s). Aperçu"), "{t}");
+    assert!(
+        t.contains("Carottes : 2 kg → frigo, 1,99 €") && t.contains("Écartés (non alimentaires) : Liquide vaisselle"),
+        "{t}"
+    );
+    let (t, _) = call(&url, "order_import", json!({"text": text, "confirm": true})).await;
+    assert!(t.contains("enregistrée (commande 1)"), "{t}");
+    let (t, _) = call(&url, "order_import", json!({"text": text, "confirm": true})).await;
+    assert_eq!(t, "Commande n° 555 déjà enregistrée (commande 1) : rien à faire.");
+    let (t, err) = call(&url, "order_import", json!({"text": "Une facture quelconque"})).await;
+    assert!(err && t.contains("ne ressemble pas"), "{t}");
+}
