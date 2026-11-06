@@ -298,3 +298,20 @@ async fn use_first_splits_urgent_and_stale() {
     assert_eq!(stale.lines().filter(|l| l.starts_with("- ")).count(), 5, "{out}");
     assert!(stale.find("Bouillon").unwrap() < stale.find("Condiment").unwrap(), "plus anciens d'abord\n{out}");
 }
+
+#[tokio::test]
+async fn recipe_book_round_trip() {
+    let url = start().await;
+    let r = json!({"name": "Dhal de lentilles corail", "portions": 4,
+        "ingredients": ["lentilles corail", "lait de coco"], "steps": "1. Rincer.\n2. Cuire 20 min."});
+    let (out, err) = call(&url, "recipe_set", r).await;
+    assert!(!err, "{out}");
+    let (out, _) = call(&url, "recipes", json!({"name": "dhal"})).await;
+    assert!(out.contains("4 portions") && out.contains("lentilles corail") && out.contains("2. Cuire"), "{out}");
+    call(&url, "recipe_set", json!({"name": "dhal de lentilles corail", "portions": 3, "ingredients": [], "steps": "Corrigé."})).await;
+    let (out, _) = call(&url, "recipes", json!({})).await;
+    assert_eq!(out.matches("Dhal").count() + out.matches("dhal").count(), 1, "correction, pas doublon : {out}");
+    assert!(out.contains("3 portions"), "{out}");
+    let (out, err) = call(&url, "recipes", json!({"name": "licorne"})).await;
+    assert!(err, "{out}");
+}

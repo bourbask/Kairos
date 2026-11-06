@@ -140,6 +140,25 @@ struct CookArgs {
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
+struct RecipeArgs {
+    /// Nom du plat (« Dhal de lentilles corail ») ; un nom existant est remplacé.
+    name: String,
+    /// Portions produites (2 par défaut).
+    portions: Option<u32>,
+    /// Ingrédients principaux, un par ligne (« lentilles corail », « lait de coco »).
+    #[serde(default)]
+    ingredients: Vec<String>,
+    /// Étapes numérotées, quantités comprises.
+    steps: String,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+struct RecipesArgs {
+    /// Recette à lire ; absent : liste du carnet.
+    name: Option<String>,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
 struct NatureArgs {
     /// Produit à corriger ; absent avec `nature` absente : liste des produits à qualifier.
     name: Option<String>,
@@ -640,6 +659,50 @@ impl FoodServer {
         } else {
             format!("Préférence « {k} » enregistrée.")
         })
+    }
+
+    #[tool(
+        description = "Ajouter ou corriger une recette du carnet (nom, portions, ingrédients principaux, étapes numérotées). Le carnet sert au plan de la semaine : une recette écrite une fois est réutilisée."
+    )]
+    async fn recipe_set(&self, Parameters(a): Parameters<RecipeArgs>) -> Out {
+        if a.name.trim().is_empty() || a.steps.trim().is_empty() {
+            return Err("Nom et étapes requis.".into());
+        }
+        let r = crate::store::Recipe {
+            title: a.name.trim().to_string(),
+            portions: a.portions.unwrap_or(2).clamp(1, 12),
+            ingredients: a.ingredients.into_iter().map(|i| i.trim().to_string()).filter(|i| !i.is_empty()).collect(),
+            steps: a.steps.trim().to_string(),
+        };
+        self.store.set_recipe(&r).map_err(|e| e.to_string())?;
+        Ok(format!("Recette enregistrée : {} ({} portions).", r.title, r.portions))
+    }
+
+    #[tool(description = "Carnet de recettes : sans nom, la liste ; avec un nom, la recette complète.")]
+    async fn recipes(&self, Parameters(a): Parameters<RecipesArgs>) -> Out {
+        match a.name.filter(|n| !n.trim().is_empty()) {
+            Some(n) => {
+                let r = self.store.recipe(&n).map_err(|e| e.to_string())?.ok_or_else(|| format!("Aucune recette « {n} » au carnet."))?;
+                Ok(format!(
+                    "{} ({} portions)\nIngrédients : {}\n{}",
+                    r.title,
+                    r.portions,
+                    if r.ingredients.is_empty() { "—".to_string() } else { r.ingredients.join(", ") },
+                    r.steps
+                ))
+            }
+            None => {
+                let all = self.store.recipes().map_err(|e| e.to_string())?;
+                if all.is_empty() {
+                    return Ok("Carnet vide.".to_string());
+                }
+                Ok(format!(
+                    "Carnet ({}) :\n{}",
+                    all.len(),
+                    all.iter().map(|r| format!("- {} ({} portions)", r.title, r.portions)).collect::<Vec<_>>().join("\n")
+                ))
+            }
+        }
     }
 
     #[tool(
