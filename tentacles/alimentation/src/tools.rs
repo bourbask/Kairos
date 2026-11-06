@@ -25,6 +25,8 @@ type Out = Result<String, String>;
 
 pub struct Settings {
     pub tz: chrono_tz::Tz,
+    /// Calendrier des repas ; absent : le plan est seulement enregistré.
+    pub caldav: Option<Arc<crate::caldav::CalDav>>,
 }
 
 #[derive(Clone)]
@@ -140,6 +142,36 @@ struct CookArgs {
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
+struct PlanItem {
+    /// AAAA-MM-JJ.
+    day: String,
+    /// midi ou soir.
+    slot: String,
+    /// Plat cuisiné ce jour-là (nom de la recette du carnet de préférence).
+    dish: String,
+    /// Portions cuisinées (1 par défaut) : les suivantes deviennent des restes.
+    portions: Option<u32>,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+struct PlanArgs {
+    /// Premier jour du plan (AAAA-MM-JJ).
+    start: String,
+    /// Durée en jours (7 par défaut, 14 au plus).
+    days: Option<u32>,
+    /// Plats cuisinés seulement ; les restes sont placés automatiquement.
+    meals: Vec<PlanItem>,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+struct PlanReadArgs {
+    /// Premier jour (AAAA-MM-JJ) ; aujourd'hui par défaut.
+    day: Option<String>,
+    /// Nombre de jours (7 par défaut).
+    days: Option<u32>,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
 struct RecipeArgs {
     /// Nom du plat (« Dhal de lentilles corail ») ; un nom existant est remplacé.
     name: String,
@@ -209,6 +241,24 @@ fn perishable(l: &Lot) -> bool {
         matches!((expiry(l), added), (Some(e), Some(a)) if (e - a).num_days() <= FRESH_SPAN_DAYS)
     };
     l.kind != Some(Kind::Ddm) || l.location == "frigo" || (l.estimated && short())
+}
+
+/// « - lun. 09/11 midi : Farfalle (boîte) ».
+fn plan_line(m: &crate::plan::Meal) -> String {
+    use crate::plan::MealKind;
+    const DAYS: [&str; 7] = ["lun.", "mar.", "mer.", "jeu.", "ven.", "sam.", "dim."];
+    let suffix = match m.kind {
+        MealKind::Cook => "",
+        MealKind::Leftover => " (reste)",
+        MealKind::Box => " (boîte)",
+    };
+    format!(
+        "- {} {} {} : {}{suffix}",
+        DAYS[m.day.weekday().num_days_from_monday() as usize],
+        m.day.format("%d/%m"),
+        m.slot.as_str(),
+        m.dish
+    )
 }
 
 const STALE_MAX: usize = 5;
@@ -659,6 +709,100 @@ impl FoodServer {
         } else {
             format!("Préférence « {k} » enregistrée.")
         })
+    }
+
+    #[tool(
+        description = "Enregistrer le plan de repas d'une période (7 jours par défaut) et l'écrire dans l'agenda, recette pas à pas pour chaque plat cuisiné. Pour « planifie la semaine » : lire cook_options (midi et soir) et le carnet (recipes), choisir les plats en finissant d'abord les produits urgents, cuisiner en plusieurs portions pour couvrir les midis ; ne donner que les plats cuisinés, les restes et les boîtes des jours de bureau sont placés automatiquement. Signale les plats sans recette et les ingrédients absents du stock."
+    )]
+    async fn meal_plan_set(&self, Parameters(a): Parameters<PlanArgs>) -> Out {
+        use crate::nature::Slot;
+        use crate::plan::{Cook, MealKind, build, event, office_days};
+        let parse_day = |s: &str| -> Result<chrono::NaiveDate, String> {
+            chrono::NaiveDate::parse_from_str(&date(s)?, "%Y-%m-%d").map_err(|e| e.to_string())
+        };
+        let start = parse_day(&a.start)?;
+        let days = a.days.unwrap_or(7).clamp(1, 14);
+        let mut cooks = Vec::new();
+        for m in &a.meals {
+            let slot = match Slot::parse(&m.slot) {
+                Some(s @ (Slot::Midi | Slot::Soir)) => s,
+                _ => return Err(format!("Créneau « {} » : midi ou soir.", m.slot)),
+            };
+            cooks.push(Cook { day: parse_day(&m.day)?, slot, dish: m.dish.trim().to_string(), portions: m.portions.unwrap_or(1).clamp(1, 12) });
+        }
+        let prefs = self.store.prefs().map_err(|e| e.to_string())?;
+        let office = prefs.iter().find(|(k, _)| crate::units::fold(k.trim()) == "bureau").map(|(_, v)| office_days(v)).unwrap_or_default();
+        let (meals, mut warnings) = build(start, days, &cooks, &office)?;
+
+        let mut recipes = std::collections::HashMap::new();
+        for c in &cooks {
+            match self.store.recipe(&c.dish).map_err(|e| e.to_string())? {
+                None => warnings.push(format!("{} : pas de recette au carnet (recipe_set).", c.dish)),
+                Some(r) => {
+                    let missing: Vec<&str> = r
+                        .ingredients
+                        .iter()
+                        .filter(|i| self.store.lots(None, Some(i)).map(|l| l.is_empty()).unwrap_or(true))
+                        .map(String::as_str)
+                        .collect();
+                    if !missing.is_empty() {
+                        warnings.push(format!("{} : manque {}.", c.dish, missing.join(", ")));
+                    }
+                    recipes.insert(c.dish.clone(), r);
+                }
+            }
+        }
+        let end = start + chrono::Duration::days(i64::from(days) - 1);
+        self.store.replace_plan(&start.to_string(), &end.to_string(), &meals).map_err(|e| e.to_string())?;
+
+        let calendar = match &self.settings.caldav {
+            None => "Agenda non configuré : plan enregistré seulement.".to_string(),
+            Some(cal) => {
+                let (mut ok, mut failed) = (0, None);
+                for i in 0..days {
+                    let day = start + chrono::Duration::days(i64::from(i));
+                    for slot in [Slot::Midi, Slot::Soir] {
+                        let res = match meals.iter().find(|m| m.day == day && m.slot == slot) {
+                            Some(m) => {
+                                let r = if m.kind == MealKind::Cook { recipes.get(&m.dish) } else { None };
+                                let (uid, ics) = event(m, r, self.settings.tz);
+                                cal.put(&uid, &ics).await
+                            }
+                            None => cal.delete(&format!("kairos-repas-{}-{}", day.format("%Y%m%d"), slot.as_str())).await,
+                        };
+                        match res {
+                            Ok(()) => ok += 1,
+                            Err(e) => failed = Some(e),
+                        }
+                    }
+                }
+                match failed {
+                    None => format!("Agenda mis à jour ({ok} créneaux)."),
+                    Some(e) => format!("Agenda incomplet : {e} ({ok} créneaux à jour)."),
+                }
+            }
+        };
+        let mut out = vec![format!("Plan du {} au {} :", start.format("%d/%m"), end.format("%d/%m"))];
+        out.extend(meals.iter().map(plan_line));
+        if !warnings.is_empty() {
+            out.push(format!("À noter :\n{}", warnings.iter().map(|w| format!("- {w}")).collect::<Vec<_>>().join("\n")));
+        }
+        out.push(calendar);
+        Ok(out.join("\n"))
+    }
+
+    #[tool(description = "Plan de repas enregistré, à partir d'un jour (aujourd'hui par défaut).")]
+    async fn meal_plan(&self, Parameters(a): Parameters<PlanReadArgs>) -> Out {
+        let from = match a.day.as_deref().filter(|d| !d.trim().is_empty()) {
+            Some(d) => chrono::NaiveDate::parse_from_str(&date(d)?, "%Y-%m-%d").map_err(|e| e.to_string())?,
+            None => self.today(),
+        };
+        let to = from + chrono::Duration::days(i64::from(a.days.unwrap_or(7).clamp(1, 14)) - 1);
+        let meals = self.store.plan(&from.to_string(), &to.to_string()).map_err(|e| e.to_string())?;
+        if meals.is_empty() {
+            return Ok("Aucun repas planifié sur cette période.".to_string());
+        }
+        Ok(meals.iter().map(plan_line).collect::<Vec<_>>().join("\n"))
     }
 
     #[tool(

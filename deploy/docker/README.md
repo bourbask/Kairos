@@ -103,6 +103,8 @@ compose : l'adresse vient uniquement de la configuration. Port publié : `FINANC
 Module alimentation : stock du logement, commandes de courses, repas, préférences. Base SQLite dans le volume
 nommé `alimentation-data` ; fiches produits lues dans la base ouverte Open Food Facts (sortie HTTPS). Variable de
 `kairos.env` : `ALIMENTATION_TOKEN` (obligatoire, `openssl rand -hex 32`). Port publié : `ALIMENTATION_BIND_PORT` (8098).
+Calendrier des repas (optionnel, les trois ou aucune) : `ALIMENTATION_CALDAV_URL` (adresse de la collection CalDAV),
+`ALIMENTATION_CALDAV_USER`, `ALIMENTATION_CALDAV_PASS`. Absentes : le plan de la semaine est enregistré sans agenda.
 
 Module marchés : veille de marchés de prédiction en lecture seule. Base SQLite dans le volume `marches-data`. Variables de `kairos.env` : `MARCHES_TOKEN` (obligatoire, `openssl rand -hex 32`), `MARCHES_API_URL` (obligatoire, adresse de la source), `MARCHES_KEYWORDS` (liste séparée par des virgules), `MARCHES_POLL_MINUTES` (optionnel, 30 par défaut). Port publié : `MARCHES_BIND_PORT` (8099).
 

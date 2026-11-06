@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use kairos_alimentation::{
+    caldav::CalDav,
     off::Off,
     store::Store,
     tools::{FoodServer, Settings},
@@ -37,9 +38,13 @@ async fn fake_off() -> String {
 }
 
 async fn start() -> String {
+    start_with(None).await
+}
+
+async fn start_with(caldav: Option<CalDav>) -> String {
     let store = Arc::new(Store::memory());
     let off = Arc::new(Off::new(&fake_off().await));
-    let settings = Arc::new(Settings { tz: chrono_tz::Europe::Paris });
+    let settings = Arc::new(Settings { tz: chrono_tz::Europe::Paris, caldav: caldav.map(Arc::new) });
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}/mcp", listener.local_addr().unwrap());
     tokio::spawn(tentacle_common::serve_listener(listener, "t".into(), move || {
@@ -313,5 +318,88 @@ async fn recipe_book_round_trip() {
     assert_eq!(out.matches("Dhal").count() + out.matches("dhal").count(), 1, "correction, pas doublon : {out}");
     assert!(out.contains("3 portions"), "{out}");
     let (out, err) = call(&url, "recipes", json!({"name": "licorne"})).await;
+    assert!(err, "{out}");
+}
+
+/// Faux agenda : note « MÉTHODE chemin » de chaque requête et l'accepte.
+async fn fake_caldav() -> (String, Arc<std::sync::Mutex<Vec<String>>>) {
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/cal/repas/", l.local_addr().unwrap());
+    let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen = log.clone();
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut s, _)) = l.accept().await else { break };
+            let seen = seen.clone();
+            tokio::spawn(async move {
+                let mut buf = Vec::new();
+                let mut chunk = [0u8; 4096];
+                loop {
+                    let n = s.read(&mut chunk).await.unwrap_or(0);
+                    if n == 0 {
+                        break;
+                    }
+                    buf.extend_from_slice(&chunk[..n]);
+                    let text = String::from_utf8_lossy(&buf).to_string();
+                    if let Some(h) = text.find("\r\n\r\n") {
+                        let len = text[..h]
+                            .lines()
+                            .find_map(|l| l.to_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse::<usize>().unwrap_or(0)))
+                            .unwrap_or(0);
+                        if buf.len() >= h + 4 + len {
+                            break;
+                        }
+                    }
+                }
+                let text = String::from_utf8_lossy(&buf).to_string();
+                let first = text.lines().next().unwrap_or("").to_string();
+                let mut parts = first.split_whitespace();
+                seen.lock().unwrap().push(format!("{} {}", parts.next().unwrap_or(""), parts.next().unwrap_or("")));
+                let _ = s.write_all(b"HTTP/1.1 201 Created\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await;
+            });
+        }
+    });
+    (url, log)
+}
+
+#[tokio::test]
+async fn meal_plan_set_writes_calendar() {
+    let (cal, log) = fake_caldav().await;
+    let url = start_with(Some(CalDav::new(&cal, "u".into(), "p".into()))).await;
+    call(&url, "pref_set", json!({"key": "bureau", "value": "lundi"})).await;
+    call(&url, "recipe_set", json!({"name": "Farfalle", "portions": 2, "ingredients": ["farfalle"], "steps": "1. Cuire."})).await;
+    let plan = json!({"start": "2026-11-08", "days": 2, "meals": [
+        {"day": "2026-11-08", "slot": "soir", "dish": "Farfalle", "portions": 2},
+        {"day": "2026-11-09", "slot": "soir", "dish": "Riz"}
+    ]});
+    let (out, err) = call(&url, "meal_plan_set", plan).await;
+    assert!(!err, "{out}");
+    assert!(out.contains("Farfalle (boîte)"), "{out}");
+    assert!(out.contains("Riz : pas de recette"), "{out}");
+    assert!(out.contains("manque farfalle"), "{out}");
+    assert!(out.contains("Agenda mis à jour"), "{out}");
+    let mut seen = log.lock().unwrap().clone();
+    seen.sort();
+    assert_eq!(
+        seen,
+        [
+            "DELETE /cal/repas/kairos-repas-20261108-midi.ics",
+            "PUT /cal/repas/kairos-repas-20261108-soir.ics",
+            "PUT /cal/repas/kairos-repas-20261109-midi.ics",
+            "PUT /cal/repas/kairos-repas-20261109-soir.ics",
+        ]
+    );
+}
+
+#[tokio::test]
+async fn meal_plan_set_without_calendar() {
+    let url = start().await;
+    let plan = json!({"start": "2026-11-08", "days": 1, "meals": [{"day": "2026-11-08", "slot": "midi", "dish": "Omelette"}]});
+    let (out, err) = call(&url, "meal_plan_set", plan).await;
+    assert!(!err && out.contains("Agenda non configuré"), "{out}");
+    let (out, _) = call(&url, "meal_plan", json!({"day": "2026-11-08"})).await;
+    assert!(out.contains("Omelette"), "{out}");
+    let bad = json!({"start": "2026-11-08", "days": 1, "meals": [{"day": "2026-11-08", "slot": "gouter", "dish": "X"}]});
+    let (out, err) = call(&url, "meal_plan_set", bad).await;
     assert!(err, "{out}");
 }
