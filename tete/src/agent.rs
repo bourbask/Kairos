@@ -17,7 +17,8 @@ pub const MAX_TOOL_ROUNDS: usize = 8;
 const MAX_TURNS: usize = 40;
 const MAX_PENDING: usize = 20;
 const TS: &str = "%Y-%m-%d %H:%M";
-const INTERACTIVE_TIMEOUT: Duration = Duration::from_secs(180);
+// Large : sur un petit serveur, lire les outils prend plusieurs minutes.
+const INTERACTIVE_TIMEOUT: Duration = Duration::from_secs(600);
 const DEFERRED_TIMEOUT: Duration = Duration::from_secs(600);
 /// Délai imposé par les tests, en millisecondes ; 0 = délais normaux.
 static TIMEOUT_OVERRIDE_MS: AtomicU64 = AtomicU64::new(0);
@@ -55,11 +56,11 @@ pub fn override_llm_timeout(d: Duration) {
 
 /// Client du moteur de `usage`. Un usage non déclaré compte comme absent
 /// (`NoEngine`) : aucun repli implicite vers une voie par défaut.
-pub fn engine(router: &LlmRouter, usage: &str, urgency: Urgency) -> anyhow::Result<LlmClient> {
+pub async fn engine(router: &LlmRouter, usage: &str, urgency: Urgency) -> anyhow::Result<LlmClient> {
     if !router.has_usage(usage) {
         return Err(anyhow::Error::msg(NoEngine));
     }
-    router.client(usage, Sensitivity::Strategic, urgency).context(NoEngine)
+    router.client_live(usage, Sensitivity::Strategic, urgency).await.context(NoEngine)
 }
 
 /// Appel au moteur borné dans le temps : un moteur muet ne bloque pas la boucle.
@@ -222,9 +223,23 @@ pub async fn run_tools_loop(
     tentacles: &Tentacles,
     state: &State,
 ) -> anyhow::Result<String> {
-    let client = engine(router, usage, urgency)?;
+    let client = engine(router, usage, urgency).await?;
     let mut tools = tentacles.tool_specs();
     tools.extend(builtin_specs());
+    if let Some(max) = client.max_tools() {
+        // Les deux derniers messages : une relance (« et le poulet ? ») garde son sujet.
+        let hint = turns
+            .iter()
+            .rev()
+            .filter_map(|t| match t {
+                ChatTurn::User(u) => Some(u.as_str()),
+                _ => None,
+            })
+            .take(2)
+            .collect::<Vec<_>>()
+            .join(" ");
+        tools = pick_tools(tools, &hint, max, |t| tentacles.keywords_of(t));
+    }
 
     // `MAX_TOOL_ROUNDS` tours d'outils, puis une dernière chance de répondre.
     for round in 0..=MAX_TOOL_ROUNDS {
@@ -293,6 +308,38 @@ fn set_work_day(args: &Value, state: &State) -> anyhow::Result<String> {
     state.set_work_day(*weekday, parsed)?;
     // Reformulé pour que le modèle annonce un changement durable.
     Ok(format!("désormais chaque {day} : {mode}"))
+}
+
+/// Garde au plus `max` outils, les plus proches du message : un petit moteur
+/// lit chaque schéma à chaque message, le coût suit le nombre d'outils.
+/// Score = mots du message (racine de 5 lettres) trouvés dans l'outil, plus un
+/// fort bonus si un mot-clé de son tentacule figure dans le message.
+/// Aucun outil pertinent : aucun outil, le moteur répond sans.
+// ponytail: recouvrement lexical ; un tri par plongements si les choix déçoivent.
+pub fn pick_tools<'a>(
+    tools: Vec<ToolSpec>,
+    hint: &str,
+    max: usize,
+    keywords: impl Fn(&str) -> &'a [String],
+) -> Vec<ToolSpec> {
+    let hint = hint.to_lowercase();
+    let roots: Vec<String> = hint
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| w.chars().count() >= 5)
+        .map(|w| w.chars().take(5).collect())
+        .collect();
+    let mut scored: Vec<(usize, ToolSpec)> = tools
+        .into_iter()
+        .map(|t| {
+            let text = format!("{} {} {}", t.name, t.description, t.input_schema).to_lowercase();
+            let lexical = roots.iter().filter(|r| text.contains(r.as_str())).count();
+            let named = keywords(&t.name).iter().any(|k| hint.contains(&k.to_lowercase()));
+            (lexical + if named { 10 } else { 0 }, t)
+        })
+        .filter(|(s, _)| *s > 0)
+        .collect();
+    scored.sort_by_key(|s| std::cmp::Reverse(s.0)); // stable : l'ordre de configuration départage
+    scored.into_iter().take(max).map(|(_, t)| t).collect()
 }
 
 fn builtin_specs() -> Vec<ToolSpec> {
@@ -366,6 +413,28 @@ fn trim(history: &mut Vec<ChatTurn>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn spec(name: &str, description: &str) -> ToolSpec {
+        ToolSpec { name: name.into(), description: description.into(), input_schema: json!({}) }
+    }
+
+    #[test]
+    fn pick_tools_ranks_by_keyword_then_words() {
+        let kw = vec!["frigo".to_string()];
+        let tools = vec![
+            spec("fin__balance", "Solde du mois."),
+            spec("ali__stock", "Stock par emplacement."),
+            spec("ali__use_first", "Produits à finir en premier."),
+        ];
+        let keywords = |t: &str| if t.starts_with("ali__") { kw.as_slice() } else { &[] };
+        let names: Vec<_> = pick_tools(tools.clone(), "je dois finir quoi au frigo ?", 1, keywords)
+            .into_iter()
+            .map(|t| t.name)
+            .collect();
+        assert_eq!(names, ["ali__use_first"]);
+        // aucun mot reconnu : aucun outil
+        assert!(pick_tools(tools, "salut", 5, keywords).is_empty());
+    }
 
     #[test]
     fn trim_starts_on_user_turn() {

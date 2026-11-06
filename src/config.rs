@@ -197,6 +197,12 @@ pub struct EngineConfig {
     pub placement: Placement,
     #[serde(default)]
     pub daily_token_cap: Option<u64>,
+    /// Moteur pris à la place quand celui-ci ne répond pas (machine éteinte).
+    #[serde(default)]
+    pub fallback: Option<String>,
+    /// Nombre maximal d'outils proposés par appel ; absent : tous.
+    #[serde(default)]
+    pub max_tools: Option<usize>,
 }
 
 impl LlmRoutingConfig {

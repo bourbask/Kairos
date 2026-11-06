@@ -23,6 +23,7 @@ struct Tentacle {
     url: String,
     token_env: String,
     private: bool,
+    keywords: Vec<String>,
     link: Option<(Client, Vec<Tool>)>,
 }
 
@@ -65,7 +66,7 @@ impl Tentacles {
     pub async fn connect(entries: &[TentacleEntry]) -> Tentacles {
         let mut list: Vec<Tentacle> = entries
             .iter()
-            .map(|e| Tentacle { name: e.name.clone(), url: e.url.clone(), token_env: e.token_env.clone(), private: e.private, link: None })
+            .map(|e| Tentacle { name: e.name.clone(), url: e.url.clone(), token_env: e.token_env.clone(), private: e.private, keywords: e.keywords.clone(), link: None })
             .collect();
         for t in &mut list {
             t.connect().await;
@@ -99,6 +100,14 @@ impl Tentacles {
                 })
             })
             .collect()
+    }
+
+    /// Mots-clés déclarés du tentacule qui préfixe `tool` (`nom__outil`).
+    pub fn keywords_of(&self, tool: &str) -> &[String] {
+        self.list
+            .iter()
+            .find(|t| tool.strip_prefix(t.name.as_str()).is_some_and(|r| r.starts_with("__")))
+            .map_or(&[], |t| t.keywords.as_slice())
     }
 
     pub fn private_names(&self) -> Vec<String> {
@@ -189,7 +198,8 @@ fn truncate(s: String, max_chars: usize) -> String {
 /// Remplace les sous-schémas booléens (`true` = « toute valeur ») par `{}` :
 /// même sens, mais certains moteurs n'acceptent que des objets comme schéma
 /// de paramètre. Les mots-clés booléens légitimes (`additionalProperties`…)
-/// sont conservés.
+/// sont conservés. Retire aussi ce qui coûte des jetons sans guider le
+/// moteur : `$schema`, `format`, `default: null`.
 pub fn plain_schema(v: serde_json::Value) -> serde_json::Value {
     use serde_json::Value;
     fn schema(v: Value) -> Value {
@@ -197,6 +207,7 @@ pub fn plain_schema(v: serde_json::Value) -> serde_json::Value {
             Value::Bool(_) => Value::Object(Default::default()),
             Value::Object(m) => Value::Object(
                 m.into_iter()
+                    .filter(|(k, v)| !matches!(k.as_str(), "$schema" | "format") && !(k == "default" && v.is_null()))
                     .map(|(k, v)| {
                         let v = match (k.as_str(), v) {
                             ("properties" | "$defs" | "definitions", Value::Object(p)) => {
@@ -237,6 +248,18 @@ mod tests {
         // mot-clé booléen légitime : conservé
         assert_eq!(out["properties"]["nested"]["additionalProperties"], json!(false));
         assert_eq!(out["$defs"]["X"], json!({}));
+    }
+
+    #[test]
+    fn token_heavy_keywords_dropped() {
+        let s = json!({"$schema": "x", "type": "object", "properties": {
+            "p": {"type": ["number", "null"], "format": "double", "default": null},
+            "d": {"type": "integer", "default": 3}
+        }});
+        let out = plain_schema(s);
+        assert!(out.get("$schema").is_none());
+        assert_eq!(out["properties"]["p"], json!({"type": ["number", "null"]}));
+        assert_eq!(out["properties"]["d"]["default"], json!(3));
     }
 
     #[test]

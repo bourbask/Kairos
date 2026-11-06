@@ -14,6 +14,9 @@ use tete::tentacles::Tentacles;
 
 const LLM_ROUTING_PATH: &str = "config/llm.toml";
 const REFRESH_EVERY: Duration = Duration::from_secs(300);
+/// Au-delà, l'utilisateur est prévenu que la réponse arrive.
+const ACK_AFTER: Duration = Duration::from_secs(20);
+const ACK_MSG: &str = "Je regarde, ça peut prendre quelques minutes…";
 
 fn now() -> NaiveDateTime {
     Utc::now().with_timezone(&USER_TZ).naive_local()
@@ -51,7 +54,19 @@ async fn main() -> anyhow::Result<()> {
                 let answer = match direct {
                     Some(Ok(cmd)) => commands::run(cmd, &ctx.tentacles, &ctx.cfg.commands_tentacle).await,
                     Some(Err(usage)) => usage.to_string(),
-                    None => ctx.agent.reply(&msg, now(), &ctx.tentacles, &ctx.state).await,
+                    None => {
+                        let reply = ctx.agent.reply(&msg, now(), &ctx.tentacles, &ctx.state);
+                        tokio::pin!(reply);
+                        tokio::select! {
+                            a = &mut reply => a,
+                            _ = tokio::time::sleep(ACK_AFTER) => {
+                                if let Err(e) = ctx.outbound.send(ACK_MSG).await {
+                                    tracing::warn!("accusé de lecture non envoyé : {e}");
+                                }
+                                reply.await
+                            }
+                        }
+                    }
                 };
                 if let Err(e) = ctx.outbound.send(&answer).await {
                     tracing::warn!("réponse non envoyée, mise en attente : {e}");

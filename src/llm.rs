@@ -36,6 +36,7 @@ pub struct RouteChoice<'a> {
     pub engine: Engine,
     pub engine_name: String,
     pub daily_token_cap: Option<u64>,
+    pub max_tools: Option<usize>,
 }
 
 /// Applique les deux voies déclarées en configuration. Une génération
@@ -95,6 +96,11 @@ impl LlmRouter {
         let Some(name) = self.config.usages.get(usage) else {
             return self.route_legacy(usage, sensitivity);
         };
+        self.route_named(usage, name, sensitivity)
+    }
+
+    fn route_named(&self, usage: &str, name: &str, sensitivity: Sensitivity) -> anyhow::Result<RouteChoice<'_>> {
+        let name = &name.to_string();
         let engine = self
             .config
             .engines
@@ -110,12 +116,14 @@ impl LlmRouter {
                 engine: Engine::SelfHosted,
                 engine_name: name.clone(),
                 daily_token_cap: engine.daily_token_cap,
+                max_tools: engine.max_tools,
             }),
             (Placement::External, Sensitivity::Common) => Ok(RouteChoice {
                 config: &engine.llm,
                 engine: Engine::External,
                 engine_name: name.clone(),
                 daily_token_cap: engine.daily_token_cap,
+                max_tools: engine.max_tools,
             }),
             (Placement::External, Sensitivity::Strategic) => {
                 if self.conceded(usage) {
@@ -128,6 +136,7 @@ impl LlmRouter {
                         engine: Engine::External,
                         engine_name: name.clone(),
                         daily_token_cap: engine.daily_token_cap,
+                        max_tools: engine.max_tools,
                     });
                 }
                 self.self_hosted_strategic(usage)
@@ -146,6 +155,7 @@ impl LlmRouter {
                 engine: Engine::SelfHosted,
                 engine_name: "self_hosted".into(),
                 daily_token_cap: None,
+                max_tools: None,
             })
             .ok_or_else(|| {
                 anyhow::anyhow!(
@@ -174,6 +184,7 @@ impl LlmRouter {
                         engine: Engine::External,
                         engine_name: "external".into(),
                         daily_token_cap: None,
+                        max_tools: None,
                     });
                 }
                 self.self_hosted_strategic(usage)
@@ -184,6 +195,7 @@ impl LlmRouter {
                     engine: Engine::External,
                     engine_name: "external".into(),
                     daily_token_cap: None,
+                    max_tools: None,
                 })
                 .or_else(|| {
                     Self::usable(&self.config.self_hosted).map(|config| RouteChoice {
@@ -191,6 +203,7 @@ impl LlmRouter {
                         engine: Engine::SelfHosted,
                         engine_name: "self_hosted".into(),
                         daily_token_cap: None,
+                        max_tools: None,
                     })
                 })
                 .ok_or_else(|| anyhow::anyhow!("usage {usage} : aucun moteur configuré")),
@@ -203,7 +216,41 @@ impl LlmRouter {
         sensitivity: Sensitivity,
         urgency: Urgency,
     ) -> anyhow::Result<LlmClient> {
-        let choice = self.route(usage, sensitivity)?;
+        self.client_from(usage, self.route(usage, sensitivity)?, sensitivity, urgency)
+    }
+
+    /// Comme `client`, en suivant les replis déclarés tant que le moteur
+    /// choisi ne répond pas. Les règles de placement s'appliquent au moteur
+    /// finalement retenu : un repli ne fait jamais sortir une donnée stratégique.
+    pub async fn client_live(
+        &self,
+        usage: &str,
+        sensitivity: Sensitivity,
+        urgency: Urgency,
+    ) -> anyhow::Result<LlmClient> {
+        let Some(mut name) = self.config.usages.get(usage).cloned() else {
+            return self.client(usage, sensitivity, urgency);
+        };
+        // Borné : une boucle de replis mal déclarée ne bloque pas l'appel.
+        for _ in 0..4 {
+            let Some(engine) = self.config.engines.get(&name) else { break };
+            let Some(next) = engine.fallback.clone() else { break };
+            if reachable(&engine.llm.endpoint).await {
+                break;
+            }
+            tracing::info!("moteur {name} injoignable, repli sur {next}");
+            name = next;
+        }
+        self.client_from(usage, self.route_named(usage, &name, sensitivity)?, sensitivity, urgency)
+    }
+
+    fn client_from(
+        &self,
+        usage: &str,
+        choice: RouteChoice<'_>,
+        sensitivity: Sensitivity,
+        urgency: Urgency,
+    ) -> anyhow::Result<LlmClient> {
         tracing::info!(
             "routage {usage} : {sensitivity:?}/{urgency:?} → {:?} ({})",
             choice.engine,
@@ -212,11 +259,21 @@ impl LlmRouter {
         // Le masquage n'est branché que sur la voie externe.
         let redactor = (choice.engine == Engine::External).then(|| self.redactor.clone());
         let mut client = LlmClient::from_config(choice.config).with_redactor(redactor);
+        client.max_tools = choice.max_tools;
         if let Some(db_path) = &self.db_path {
             let guard = SpendGuard { db_path: db_path.clone() };
             client = client.with_spend_guard(guard, &choice.engine_name, usage, choice.daily_token_cap);
         }
         Ok(client)
+    }
+}
+
+/// Toute réponse HTTP en moins de 3 s suffit : on teste la présence, pas la santé.
+async fn reachable(endpoint: &str) -> bool {
+    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(3)).build();
+    match client {
+        Ok(c) => c.get(endpoint).send().await.is_ok(),
+        Err(_) => false,
     }
 }
 
@@ -398,6 +455,7 @@ pub struct LlmClient {
     headers: Vec<(String, String)>,
     redactor: Option<std::sync::Arc<Redactor>>,
     spend: Option<Spend>,
+    max_tools: Option<usize>,
     client: reqwest::Client,
 }
 
@@ -412,8 +470,14 @@ impl LlmClient {
             headers: config.headers.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
             redactor: None,
             spend: None,
+            max_tools: None,
             client: reqwest::Client::new(),
         }
+    }
+
+    /// Plafond d'outils par appel déclaré pour ce moteur ; `None` : tous.
+    pub fn max_tools(&self) -> Option<usize> {
+        self.max_tools
     }
 
     /// Masquage appliqué à tout texte sortant ; `None` = envoi tel quel.
@@ -1131,6 +1195,8 @@ mod tests {
             llm: voie(endpoint),
             placement,
             daily_token_cap: None,
+            fallback: None,
+            max_tools: None,
         }
     }
 
