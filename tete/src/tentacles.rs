@@ -95,7 +95,7 @@ impl Tentacles {
                 tools.iter().map(|tool| ToolSpec {
                     name: format!("{}__{}", t.name, tool.name),
                     description: tool.description.as_deref().unwrap_or_default().to_string(),
-                    input_schema: serde_json::Value::Object((*tool.input_schema).clone()),
+                    input_schema: plain_schema(serde_json::Value::Object((*tool.input_schema).clone())),
                 })
             })
             .collect()
@@ -183,5 +183,65 @@ fn truncate(s: String, max_chars: usize) -> String {
     match s.char_indices().nth(max_chars) {
         Some((i, _)) => format!("{}{TRUNCATED}", &s[..i]),
         None => s,
+    }
+}
+
+/// Remplace les sous-schémas booléens (`true` = « toute valeur ») par `{}` :
+/// même sens, mais certains moteurs n'acceptent que des objets comme schéma
+/// de paramètre. Les mots-clés booléens légitimes (`additionalProperties`…)
+/// sont conservés.
+pub fn plain_schema(v: serde_json::Value) -> serde_json::Value {
+    use serde_json::Value;
+    fn schema(v: Value) -> Value {
+        match v {
+            Value::Bool(_) => Value::Object(Default::default()),
+            Value::Object(m) => Value::Object(
+                m.into_iter()
+                    .map(|(k, v)| {
+                        let v = match (k.as_str(), v) {
+                            ("properties" | "$defs" | "definitions", Value::Object(p)) => {
+                                Value::Object(p.into_iter().map(|(n, s)| (n, schema(s))).collect())
+                            }
+                            ("items" | "not", s) => schema(s),
+                            ("anyOf" | "oneOf" | "allOf", Value::Array(a)) => Value::Array(a.into_iter().map(schema).collect()),
+                            (_, v) => v,
+                        };
+                        (k, v)
+                    })
+                    .collect(),
+            ),
+            other => other,
+        }
+    }
+    schema(v)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::plain_schema;
+    use serde_json::json;
+
+    #[test]
+    fn boolean_subschemas_become_empty_objects() {
+        let s = json!({"type": "object", "properties": {
+            "any": true,
+            "list": {"type": "array", "items": true},
+            "opt": {"anyOf": [true, {"type": "null"}]},
+            "nested": {"type": "object", "properties": {"deep": true}, "additionalProperties": false}
+        }, "$defs": {"X": true}});
+        let out = plain_schema(s);
+        assert_eq!(out["properties"]["any"], json!({}));
+        assert_eq!(out["properties"]["list"]["items"], json!({}));
+        assert_eq!(out["properties"]["opt"]["anyOf"][0], json!({}));
+        assert_eq!(out["properties"]["nested"]["properties"]["deep"], json!({}));
+        // mot-clé booléen légitime : conservé
+        assert_eq!(out["properties"]["nested"]["additionalProperties"], json!(false));
+        assert_eq!(out["$defs"]["X"], json!({}));
+    }
+
+    #[test]
+    fn ordinary_schema_unchanged() {
+        let s = json!({"type": "object", "properties": {"n": {"type": ["integer", "null"]}}, "required": ["n"]});
+        assert_eq!(plain_schema(s.clone()), s);
     }
 }
