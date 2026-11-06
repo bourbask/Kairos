@@ -185,7 +185,7 @@ const OPENED: &[(&[&str], i64)] = &[
 pub const THAWED_DAYS: i64 = 2;
 
 /// Le nom contient ce mot (ou cette suite de mots) en début de mot.
-fn has(name: &str, word: &str) -> bool {
+pub(crate) fn has(name: &str, word: &str) -> bool {
     let w = fold(word);
     name.match_indices(w.as_str()).any(|(i, _)| i == 0 || name[..i].ends_with([' ', '-', '\'', '(']))
 }
@@ -200,6 +200,7 @@ pub fn estimate(name: &str, location: &str) -> (i64, Kind) {
     match location {
         "congelateur" => (180, Ddm),
         "frigo" => first(FRIDGE, &n).unwrap_or((7, Dlc)),
+        _ if crate::nature::is_pantry(&n) => (365, Ddm),
         "corbeille" => first(SHELF, &n).unwrap_or((7, Ddm)),
         _ => first(SHELF, &n).unwrap_or((365, Ddm)),
     }
@@ -214,6 +215,13 @@ pub fn after_opening(name: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pantry_goods_are_not_fresh() {
+        assert_eq!(estimate("Farine pain multi-céréales", "placard"), (365, Ddm));
+        assert_eq!(estimate("Tomates entières pelées", "placard"), (365, Ddm));
+        assert_eq!(estimate("Baguette tradition", "placard"), (3, Ddm));
+    }
 
     #[test]
     fn estimates_by_location_and_name() {
