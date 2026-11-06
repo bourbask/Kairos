@@ -323,6 +323,10 @@ async fn recipe_book_round_trip() {
 
 /// Faux agenda : note « MÉTHODE chemin » de chaque requête et l'accepte.
 async fn fake_caldav() -> (String, Arc<std::sync::Mutex<Vec<String>>>) {
+    fake_caldav_status("201 Created").await
+}
+
+async fn fake_caldav_status(status: &'static str) -> (String, Arc<std::sync::Mutex<Vec<String>>>) {
     let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}/cal/repas/", l.local_addr().unwrap());
     let log = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -355,7 +359,8 @@ async fn fake_caldav() -> (String, Arc<std::sync::Mutex<Vec<String>>>) {
                 let first = text.lines().next().unwrap_or("").to_string();
                 let mut parts = first.split_whitespace();
                 seen.lock().unwrap().push(format!("{} {}", parts.next().unwrap_or(""), parts.next().unwrap_or("")));
-                let _ = s.write_all(b"HTTP/1.1 201 Created\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await;
+                let resp = format!("HTTP/1.1 {status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                let _ = s.write_all(resp.as_bytes()).await;
             });
         }
     });
@@ -402,4 +407,49 @@ async fn meal_plan_set_without_calendar() {
     let bad = json!({"start": "2026-11-08", "days": 1, "meals": [{"day": "2026-11-08", "slot": "gouter", "dish": "X"}]});
     let (out, err) = call(&url, "meal_plan_set", bad).await;
     assert!(err, "{out}");
+}
+
+#[tokio::test]
+async fn recipe_lookup_matches_whole_words() {
+    let url = start().await;
+    call(&url, "recipe_set", json!({"name": "Pâtes au chorizo", "steps": "1. Cuire."})).await;
+    let (out, err) = call(&url, "recipes", json!({"name": "riz"})).await;
+    assert!(err, "« riz » n'est pas « chorizo » : {out}");
+    let (out, err) = call(&url, "recipes", json!({"name": "chorizo"})).await;
+    assert!(!err, "{out}");
+}
+
+#[tokio::test]
+async fn meal_plan_set_calendar_down() {
+    let (cal, log) = fake_caldav_status("500 Internal Server Error").await;
+    let url = start_with(Some(CalDav::new(&cal, "u".into(), "secret".into()))).await;
+    let plan = json!({"start": "2026-11-08", "days": 7, "meals": [{"day": "2026-11-08", "slot": "soir", "dish": "Soupe", "portions": 4}]});
+    let (out, err) = call(&url, "meal_plan_set", plan).await;
+    assert!(!err && out.contains("Agenda incomplet"), "{out}");
+    assert!(!out.contains("127.0.0.1") && !out.contains("secret"), "{out}");
+    assert_eq!(log.lock().unwrap().len(), 1, "arrêt à la première erreur");
+    let (out, _) = call(&url, "meal_plan", json!({"day": "2026-11-08"})).await;
+    assert!(out.contains("Soupe"), "{out}");
+}
+
+#[tokio::test]
+async fn overlapping_plan_clears_orphans() {
+    let (cal, log) = fake_caldav().await;
+    let url = start_with(Some(CalDav::new(&cal, "u".into(), "p".into()))).await;
+    call(&url, "pref_set", json!({"key": "bureau", "value": "lundi"})).await;
+    // Plan 1 : dim. 15 soir ×2 → boîte lun. 16 midi, rappel dim. soir ; dhal ×4 mar. 17 soir.
+    let p1 = json!({"start": "2026-11-15", "days": 5, "meals": [
+        {"day": "2026-11-15", "slot": "soir", "dish": "Gratin", "portions": 2},
+        {"day": "2026-11-17", "slot": "soir", "dish": "Dhal", "portions": 4}
+    ]});
+    call(&url, "meal_plan_set", p1).await;
+    // Plan 2 : lun. 16 et mar. 17, sans dhal ni boîte → restes du dhal (18, 19) orphelins.
+    log.lock().unwrap().clear();
+    let p2 = json!({"start": "2026-11-16", "days": 2, "meals": [{"day": "2026-11-16", "slot": "soir", "dish": "Omelette"}]});
+    let (out, _) = call(&url, "meal_plan_set", p2).await;
+    let (plan, _) = call(&url, "meal_plan", json!({"day": "2026-11-15", "days": 5})).await;
+    assert!(!plan.contains("Dhal"), "restes orphelins : {plan}");
+    let seen = log.lock().unwrap().clone();
+    assert!(seen.iter().any(|l| l == "PUT /cal/repas/kairos-repas-20261115-soir.ics"), "rappel de la veille retiré : {seen:?}\n{out}");
+    assert!(seen.iter().any(|l| l == "DELETE /cal/repas/kairos-repas-20261118-midi.ics"), "événement orphelin retiré : {seen:?}");
 }

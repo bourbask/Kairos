@@ -753,32 +753,70 @@ impl FoodServer {
             }
         }
         let end = start + chrono::Duration::days(i64::from(days) - 1);
-        self.store.replace_plan(&start.to_string(), &end.to_string(), &meals).map_err(|e| e.to_string())?;
+        let orphans =
+            self.store.replace_plan(&start.to_string(), &end.to_string(), &meals).map_err(|e| e.to_string())?;
+        // Rappel de boîte sur la veille du premier jour, hors période : à remettre d'accord.
+        let eve = start - chrono::Duration::days(1);
+        let wants_note = meals.iter().any(|m| m.day == start && m.slot == Slot::Midi && m.kind == MealKind::Box);
+        let mut eve_meal = self
+            .store
+            .plan(&eve.to_string(), &eve.to_string())
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .find(|m| m.slot == Slot::Soir)
+            .filter(|m| (m.note.as_deref() == Some(crate::plan::BOX_NOTE)) != wants_note);
+        if let Some(m) = &mut eve_meal {
+            m.note = wants_note.then(|| crate::plan::BOX_NOTE.to_string());
+            self.store.set_plan_note(&eve.to_string(), "soir", m.note.as_deref()).map_err(|e| e.to_string())?;
+        }
 
         let calendar = match &self.settings.caldav {
             None => "Agenda non configuré : plan enregistré seulement.".to_string(),
             Some(cal) => {
-                let (mut ok, mut failed) = (0, None);
+                let uid = |day: chrono::NaiveDate, slot: &str| format!("kairos-repas-{}-{slot}", day.format("%Y%m%d"));
+                // Écritures dans l'ordre ; arrêt à la première erreur (agenda en panne : pas d'attente en série).
+                let mut ops: Vec<(String, Option<String>)> = Vec::new();
                 for i in 0..days {
                     let day = start + chrono::Duration::days(i64::from(i));
                     for slot in [Slot::Midi, Slot::Soir] {
-                        let res = match meals.iter().find(|m| m.day == day && m.slot == slot) {
+                        match meals.iter().find(|m| m.day == day && m.slot == slot) {
                             Some(m) => {
                                 let r = if m.kind == MealKind::Cook { recipes.get(&m.dish) } else { None };
-                                let (uid, ics) = event(m, r, self.settings.tz);
-                                cal.put(&uid, &ics).await
+                                let (id, ics) = event(m, r, self.settings.tz);
+                                ops.push((id, Some(ics)));
                             }
-                            None => cal.delete(&format!("kairos-repas-{}-{}", day.format("%Y%m%d"), slot.as_str())).await,
-                        };
-                        match res {
-                            Ok(()) => ok += 1,
-                            Err(e) => failed = Some(e),
+                            None => ops.push((uid(day, slot.as_str()), None)),
+                        }
+                    }
+                }
+                for (day, slot) in &orphans {
+                    if let Ok(d) = chrono::NaiveDate::parse_from_str(day, "%Y-%m-%d") {
+                        ops.push((uid(d, slot), None));
+                    }
+                }
+                if let Some(m) = &eve_meal {
+                    let r = if m.kind == MealKind::Cook { self.store.recipe(&m.dish).ok().flatten() } else { None };
+                    let (id, ics) = event(m, r.as_ref(), self.settings.tz);
+                    ops.push((id, Some(ics)));
+                }
+                let mut done = 0;
+                let mut failed = None;
+                for (id, ics) in &ops {
+                    let res = match ics {
+                        Some(ics) => cal.put(id, ics).await,
+                        None => cal.delete(id).await,
+                    };
+                    match res {
+                        Ok(()) => done += 1,
+                        Err(e) => {
+                            failed = Some(e);
+                            break;
                         }
                     }
                 }
                 match failed {
-                    None => format!("Agenda mis à jour ({ok} créneaux)."),
-                    Some(e) => format!("Agenda incomplet : {e} ({ok} créneaux à jour)."),
+                    None => format!("Agenda mis à jour ({done} créneaux)."),
+                    Some(e) => format!("Agenda incomplet : {e} ({done}/{} créneaux à jour) ; relancer le plan plus tard.", ops.len()),
                 }
             }
         };

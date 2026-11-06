@@ -736,23 +736,46 @@ impl Store {
         if let Some(r) = all.iter().find(|r| fold(&r.title) == q) {
             return Ok(Some(r.clone()));
         }
-        let words: Vec<&str> = q.split_whitespace().collect();
-        let hits: Vec<&Recipe> = all.iter().filter(|r| words.iter().all(|w| fold(&r.title).contains(w))).collect();
+        // Mots entiers : « riz » ne doit pas trouver « chorizo ».
+        let split = |s: &str| s.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).map(str::to_string).collect::<Vec<_>>();
+        let words = split(&q);
+        let hits: Vec<&Recipe> =
+            all.iter().filter(|r| { let t = split(&fold(&r.title)); words.iter().all(|w| t.contains(w)) }).collect();
         Ok(if hits.len() == 1 { Some(hits[0].clone()) } else { None })
     }
 
-    /// Remplace le plan de la période [from, to].
-    pub fn replace_plan(&self, from: &str, to: &str, meals: &[crate::plan::Meal]) -> rusqlite::Result<()> {
+    /// Remplace le plan de la période [from, to]. Les restes hors période d'un
+    /// plat cuisiné dans la période disparaissent avec lui : renvoyés (jour,
+    /// créneau) pour retirer leurs événements.
+    pub fn replace_plan(&self, from: &str, to: &str, meals: &[crate::plan::Meal]) -> rusqlite::Result<Vec<(String, String)>> {
         let mut db = self.db.lock().unwrap();
         let tx = db.transaction()?;
-        tx.execute("DELETE FROM meal_plan WHERE day >= ?1 AND day <= ?2", params![from, to])?;
+        let orphans: Vec<(String, String)> = {
+            let mut st = tx.prepare(
+                "SELECT day, slot FROM meal_plan WHERE cooked >= ?1 AND cooked <= ?2 AND (day < ?1 OR day > ?2)",
+            )?;
+            st.query_map(params![from, to], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?
+        };
+        tx.execute(
+            "DELETE FROM meal_plan WHERE (day >= ?1 AND day <= ?2) OR (cooked >= ?1 AND cooked <= ?2)",
+            params![from, to],
+        )?;
         for m in meals {
             tx.execute(
                 "INSERT INTO meal_plan (day, slot, dish, kind, cooked, note) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                 params![m.day.to_string(), m.slot.as_str(), m.dish, m.kind.as_str(), m.from.to_string(), m.note],
             )?;
         }
-        tx.commit()
+        tx.commit()?;
+        Ok(orphans)
+    }
+
+    pub fn set_plan_note(&self, day: &str, slot: &str, note: Option<&str>) -> rusqlite::Result<()> {
+        self.db.lock().unwrap().execute(
+            "UPDATE meal_plan SET note = ?3 WHERE day = ?1 AND slot = ?2",
+            params![day, slot, note],
+        )?;
+        Ok(())
     }
 
     /// Plan enregistré sur [from, to], dans l'ordre.
