@@ -25,6 +25,8 @@ type Out = Result<String, String>;
 
 pub struct Settings {
     pub tz: chrono_tz::Tz,
+    /// Calendrier des repas ; absent : le plan est seulement enregistré.
+    pub caldav: Option<Arc<crate::caldav::CalDav>>,
 }
 
 #[derive(Clone)]
@@ -140,6 +142,59 @@ struct CookArgs {
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
+struct PlanItem {
+    /// AAAA-MM-JJ.
+    day: String,
+    /// midi ou soir.
+    slot: String,
+    /// Plat cuisiné ce jour-là (nom de la recette du carnet de préférence).
+    dish: String,
+    /// Portions cuisinées (1 par défaut) : les suivantes deviennent des restes.
+    portions: Option<u32>,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+struct PlanArgs {
+    /// Premier jour du plan (AAAA-MM-JJ).
+    start: String,
+    /// Durée en jours (7 par défaut, 14 au plus).
+    days: Option<u32>,
+    /// Plats cuisinés seulement ; les restes sont placés automatiquement.
+    meals: Vec<PlanItem>,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+struct PlanReadArgs {
+    /// Premier jour (AAAA-MM-JJ) ; aujourd'hui par défaut.
+    day: Option<String>,
+    /// Nombre de jours (7 par défaut).
+    days: Option<u32>,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+struct RecipeArgs {
+    /// Nom du plat (« Dhal de lentilles corail ») ; un nom existant est remplacé.
+    name: String,
+    /// Portions produites (2 par défaut).
+    portions: Option<u32>,
+    /// Préparation, en minutes.
+    prep_minutes: Option<u32>,
+    /// Cuisson, en minutes.
+    cook_minutes: Option<u32>,
+    /// Ingrédients pesés : nom tel qu'en stock, quantité, unité.
+    #[serde(default)]
+    ingredients: Vec<crate::store::Ingredient>,
+    /// Étapes, une par élément, dans l'ordre (sans numéro).
+    steps: Vec<String>,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+struct RecipesArgs {
+    /// Recette à lire ; absent : liste du carnet.
+    name: Option<String>,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
 struct NatureArgs {
     /// Produit à corriger ; absent avec `nature` absente : liste des produits à qualifier.
     name: Option<String>,
@@ -190,6 +245,24 @@ fn perishable(l: &Lot) -> bool {
         matches!((expiry(l), added), (Some(e), Some(a)) if (e - a).num_days() <= FRESH_SPAN_DAYS)
     };
     l.kind != Some(Kind::Ddm) || l.location == "frigo" || (l.estimated && short())
+}
+
+/// « - lun. 09/11 midi : Farfalle (boîte) ».
+fn plan_line(m: &crate::plan::Meal) -> String {
+    use crate::plan::MealKind;
+    const DAYS: [&str; 7] = ["lun.", "mar.", "mer.", "jeu.", "ven.", "sam.", "dim."];
+    let suffix = match m.kind {
+        MealKind::Cook => "",
+        MealKind::Leftover => " (reste)",
+        MealKind::Box => " (boîte)",
+    };
+    format!(
+        "- {} {} {} : {}{suffix}",
+        DAYS[m.day.weekday().num_days_from_monday() as usize],
+        m.day.format("%d/%m"),
+        m.slot.as_str(),
+        m.dish
+    )
 }
 
 const STALE_MAX: usize = 5;
@@ -640,6 +713,181 @@ impl FoodServer {
         } else {
             format!("Préférence « {k} » enregistrée.")
         })
+    }
+
+    #[tool(
+        description = "Enregistrer le plan de repas d'une période (7 jours par défaut) et l'écrire dans l'agenda, recette pas à pas pour chaque plat cuisiné. Pour « planifie la semaine » : lire cook_options (midi et soir) et le carnet (recipes), choisir les plats en finissant d'abord les produits urgents, cuisiner en plusieurs portions pour couvrir les midis ; ne donner que les plats cuisinés, les restes et les boîtes des jours de bureau sont placés automatiquement. Signale les plats sans recette et les ingrédients absents du stock."
+    )]
+    async fn meal_plan_set(&self, Parameters(a): Parameters<PlanArgs>) -> Out {
+        use crate::nature::Slot;
+        use crate::plan::{Cook, MealKind, build, event, office_days};
+        let parse_day = |s: &str| -> Result<chrono::NaiveDate, String> {
+            chrono::NaiveDate::parse_from_str(&date(s)?, "%Y-%m-%d").map_err(|e| e.to_string())
+        };
+        let start = parse_day(&a.start)?;
+        let days = a.days.unwrap_or(7).clamp(1, 14);
+        let mut cooks = Vec::new();
+        for m in &a.meals {
+            let slot = match Slot::parse(&m.slot) {
+                Some(s @ (Slot::Midi | Slot::Soir)) => s,
+                _ => return Err(format!("Créneau « {} » : midi ou soir.", m.slot)),
+            };
+            cooks.push(Cook { day: parse_day(&m.day)?, slot, dish: m.dish.trim().to_string(), portions: m.portions.unwrap_or(1).clamp(1, 12) });
+        }
+        let prefs = self.store.prefs().map_err(|e| e.to_string())?;
+        let office = prefs.iter().find(|(k, _)| crate::units::fold(k.trim()) == "bureau").map(|(_, v)| office_days(v)).unwrap_or_default();
+        let (meals, mut warnings) = build(start, days, &cooks, &office)?;
+
+        let mut recipes = std::collections::HashMap::new();
+        for c in &cooks {
+            match self.store.recipe(&c.dish).map_err(|e| e.to_string())? {
+                None => warnings.push(format!("{} : pas de recette au carnet (recipe_set).", c.dish)),
+                Some(r) => {
+                    let missing: Vec<&str> = r
+                        .ingredients
+                        .iter()
+                        .filter(|i| self.store.lots(None, Some(&i.name)).map(|l| l.is_empty()).unwrap_or(true))
+                        .map(|i| i.name.as_str())
+                        .collect();
+                    if !missing.is_empty() {
+                        warnings.push(format!("{} : manque {}.", c.dish, missing.join(", ")));
+                    }
+                    recipes.insert(c.dish.clone(), r);
+                }
+            }
+        }
+        let end = start + chrono::Duration::days(i64::from(days) - 1);
+        let orphans =
+            self.store.replace_plan(&start.to_string(), &end.to_string(), &meals).map_err(|e| e.to_string())?;
+        // Rappel de boîte sur la veille du premier jour, hors période : à remettre d'accord.
+        let eve = start - chrono::Duration::days(1);
+        let wants_note = meals.iter().any(|m| m.day == start && m.slot == Slot::Midi && m.kind == MealKind::Box);
+        let mut eve_meal = self
+            .store
+            .plan(&eve.to_string(), &eve.to_string())
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .find(|m| m.slot == Slot::Soir)
+            .filter(|m| (m.note.as_deref() == Some(crate::plan::BOX_NOTE)) != wants_note);
+        if let Some(m) = &mut eve_meal {
+            m.note = wants_note.then(|| crate::plan::BOX_NOTE.to_string());
+            self.store.set_plan_note(&eve.to_string(), "soir", m.note.as_deref()).map_err(|e| e.to_string())?;
+        }
+
+        let calendar = match &self.settings.caldav {
+            None => "Agenda non configuré : plan enregistré seulement.".to_string(),
+            Some(cal) => {
+                let uid = |day: chrono::NaiveDate, slot: &str| format!("kairos-repas-{}-{slot}", day.format("%Y%m%d"));
+                // Écritures dans l'ordre ; arrêt à la première erreur (agenda en panne : pas d'attente en série).
+                let mut ops: Vec<(String, Option<String>)> = Vec::new();
+                for i in 0..days {
+                    let day = start + chrono::Duration::days(i64::from(i));
+                    for slot in [Slot::Midi, Slot::Soir] {
+                        match meals.iter().find(|m| m.day == day && m.slot == slot) {
+                            Some(m) => {
+                                let r = if m.kind == MealKind::Cook { recipes.get(&m.dish) } else { None };
+                                let after: Vec<&crate::plan::Meal> =
+                                    meals.iter().filter(|o| o.kind != MealKind::Cook && o.from == m.day && o.dish == m.dish).collect();
+                                let (id, ics) = event(m, r, &after, self.settings.tz);
+                                ops.push((id, Some(ics)));
+                            }
+                            None => ops.push((uid(day, slot.as_str()), None)),
+                        }
+                    }
+                }
+                for (day, slot) in &orphans {
+                    if let Ok(d) = chrono::NaiveDate::parse_from_str(day, "%Y-%m-%d") {
+                        ops.push((uid(d, slot), None));
+                    }
+                }
+                if let Some(m) = &eve_meal {
+                    let r = if m.kind == MealKind::Cook { self.store.recipe(&m.dish).ok().flatten() } else { None };
+                    let (id, ics) = event(m, r.as_ref(), &[], self.settings.tz);
+                    ops.push((id, Some(ics)));
+                }
+                let mut done = 0;
+                let mut failed = None;
+                for (id, ics) in &ops {
+                    let res = match ics {
+                        Some(ics) => cal.put(id, ics).await,
+                        None => cal.delete(id).await,
+                    };
+                    match res {
+                        Ok(()) => done += 1,
+                        Err(e) => {
+                            failed = Some(e);
+                            break;
+                        }
+                    }
+                }
+                match failed {
+                    None => format!("Agenda mis à jour ({done} créneaux)."),
+                    Some(e) => format!("Agenda incomplet : {e} ({done}/{} créneaux à jour) ; relancer le plan plus tard.", ops.len()),
+                }
+            }
+        };
+        let mut out = vec![format!("Plan du {} au {} :", start.format("%d/%m"), end.format("%d/%m"))];
+        out.extend(meals.iter().map(plan_line));
+        if !warnings.is_empty() {
+            out.push(format!("À noter :\n{}", warnings.iter().map(|w| format!("- {w}")).collect::<Vec<_>>().join("\n")));
+        }
+        out.push(calendar);
+        Ok(out.join("\n"))
+    }
+
+    #[tool(description = "Plan de repas enregistré, à partir d'un jour (aujourd'hui par défaut).")]
+    async fn meal_plan(&self, Parameters(a): Parameters<PlanReadArgs>) -> Out {
+        let from = match a.day.as_deref().filter(|d| !d.trim().is_empty()) {
+            Some(d) => chrono::NaiveDate::parse_from_str(&date(d)?, "%Y-%m-%d").map_err(|e| e.to_string())?,
+            None => self.today(),
+        };
+        let to = from + chrono::Duration::days(i64::from(a.days.unwrap_or(7).clamp(1, 14)) - 1);
+        let meals = self.store.plan(&from.to_string(), &to.to_string()).map_err(|e| e.to_string())?;
+        if meals.is_empty() {
+            return Ok("Aucun repas planifié sur cette période.".to_string());
+        }
+        Ok(meals.iter().map(plan_line).collect::<Vec<_>>().join("\n"))
+    }
+
+    #[tool(
+        description = "Ajouter ou corriger une recette du carnet (nom, portions, ingrédients principaux, étapes numérotées). Le carnet sert au plan de la semaine : une recette écrite une fois est réutilisée."
+    )]
+    async fn recipe_set(&self, Parameters(a): Parameters<RecipeArgs>) -> Out {
+        let steps: Vec<String> = a.steps.into_iter().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+        if a.name.trim().is_empty() || steps.is_empty() {
+            return Err("Nom et étapes requis.".into());
+        }
+        let r = crate::store::Recipe {
+            title: a.name.trim().to_string(),
+            portions: a.portions.unwrap_or(2).clamp(1, 12),
+            prep_minutes: a.prep_minutes,
+            cook_minutes: a.cook_minutes,
+            ingredients: a.ingredients.into_iter().filter(|i| !i.name.trim().is_empty()).collect(),
+            steps,
+        };
+        self.store.set_recipe(&r).map_err(|e| e.to_string())?;
+        Ok(format!("Recette enregistrée : {} ({} portions).", r.title, r.portions))
+    }
+
+    #[tool(description = "Carnet de recettes : sans nom, la liste ; avec un nom, la recette complète.")]
+    async fn recipes(&self, Parameters(a): Parameters<RecipesArgs>) -> Out {
+        match a.name.filter(|n| !n.trim().is_empty()) {
+            Some(n) => {
+                let r = self.store.recipe(&n).map_err(|e| e.to_string())?.ok_or_else(|| format!("Aucune recette « {n} » au carnet."))?;
+                Ok(format!("{}\n{}", r.title, crate::plan::recipe_text(&r, None)))
+            }
+            None => {
+                let all = self.store.recipes().map_err(|e| e.to_string())?;
+                if all.is_empty() {
+                    return Ok("Carnet vide.".to_string());
+                }
+                Ok(format!(
+                    "Carnet ({}) :\n{}",
+                    all.len(),
+                    all.iter().map(|r| format!("- {} ({} portions)", r.title, r.portions)).collect::<Vec<_>>().join("\n")
+                ))
+            }
+        }
     }
 
     #[tool(
