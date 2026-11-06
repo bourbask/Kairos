@@ -3,6 +3,7 @@
 //! partir de ce qui reste réellement.
 
 pub mod bon;
+pub mod nature;
 pub mod off;
 pub mod shelf;
 pub mod store;

@@ -65,7 +65,7 @@ pub enum WorkMode {
     Off,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct WorkRhythm {
     pub start: NaiveTime,

@@ -31,7 +31,7 @@ async fn main() -> anyhow::Result<()> {
     let state = State::open(Path::new(&db))?;
     let tentacles = Tentacles::connect(&cfg.tentacles).await;
     let router = LlmRouter::load(LLM_ROUTING_PATH);
-    let agent = Agent::new(router, Duration::from_secs(u64::from(cfg.session_idle_minutes) * 60));
+    let agent = Agent::new(router, Duration::from_secs(u64::from(cfg.session_idle_minutes) * 60)).with_rhythm(cfg.work.clone());
     let outbound = Outbound::new(&cfg.gateway);
 
     let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(16);
