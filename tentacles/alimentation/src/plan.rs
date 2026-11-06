@@ -145,7 +145,34 @@ fn fold_line(line: &str) -> String {
 
 /// Événement du repas : (uid, ics). Heure locale convertie en UTC (changements
 /// d'heure compris).
-pub fn event(m: &Meal, recipe: Option<&crate::store::Recipe>, tz: chrono_tz::Tz) -> (String, String) {
+/// Fiche lisible d'une recette : INFOS, INGRÉDIENTS, ÉTAPES. `portions`
+/// remplace la ligne de portions (restes prévus) quand elle est connue.
+pub fn recipe_text(r: &crate::store::Recipe, portions: Option<String>) -> String {
+    let mut infos = Vec::new();
+    if let Some(t) = r.timing() {
+        infos.push(t);
+    }
+    infos.push(portions.unwrap_or_else(|| format!("Portions : {}", r.portions)));
+    let mut out = format!("INFOS\n{}", infos.join("\n"));
+    if !r.ingredients.is_empty() {
+        out.push_str(&format!("\n\nINGRÉDIENTS\n{}", r.ingredients_list()));
+    }
+    out.push_str(&format!("\n\nÉTAPES\n{}", r.steps_list()));
+    out
+}
+
+/// « 12/11 midi en boîte », « 12/11 soir ».
+fn follower(m: &Meal) -> String {
+    let base = format!("{} {}", m.day.format("%d/%m"), m.slot.as_str());
+    if m.kind == MealKind::Box { format!("{base} en boîte") } else { base }
+}
+
+pub fn event(
+    m: &Meal,
+    recipe: Option<&crate::store::Recipe>,
+    after: &[&Meal],
+    tz: chrono_tz::Tz,
+) -> (String, String) {
     use chrono::TimeZone;
     let (h, min, dur) = match m.slot {
         Slot::Midi => (12, 15, 45),
@@ -161,25 +188,32 @@ pub fn event(m: &Meal, recipe: Option<&crate::store::Recipe>, tz: chrono_tz::Tz)
         MealKind::Cook => (
             format!("{head} : {}", m.dish),
             match recipe {
-                Some(r) => format!(
-                    "Pour {} portions.\nIngrédients : {}\n\n{}",
-                    r.portions,
-                    if r.ingredients.is_empty() { "—".to_string() } else { r.ingredients.join(", ") },
-                    r.steps
-                ),
+                Some(r) => {
+                    let portions = (!after.is_empty()).then(|| {
+                        format!(
+                            "Portions : {} (ce repas + {})",
+                            r.portions,
+                            after.iter().map(|f| follower(f)).collect::<Vec<_>>().join(", ")
+                        )
+                    });
+                    recipe_text(r, portions)
+                }
                 None => "Recette absente du carnet.".to_string(),
             },
         ),
-        MealKind::Leftover => {
-            (format!("{head} : {} (reste)", m.dish), format!("Reste du plat cuisiné le {cooked}. Réchauffer 3 min."))
-        }
+        MealKind::Leftover => (
+            format!("{head} : {} (reste)", m.dish),
+            format!("INFOS\nReste du plat cuisiné le {cooked}.\n\nÉTAPES\n1. Réchauffer 3 min (micro-ondes ou casserole)."),
+        ),
         MealKind::Box => (
             format!("{head} : {} (boîte)", m.dish),
-            format!("Boîte préparée la veille au soir (plat du {cooked}) : à prendre en partant, réchauffer 2-3 min."),
+            format!(
+                "INFOS\nBoîte préparée la veille au soir (plat du {cooked}).\n\nÉTAPES\n1. Prendre la boîte en partant.\n2. Réchauffer 2-3 min au micro-ondes."
+            ),
         ),
     };
     if let Some(n) = &m.note {
-        desc.push_str(&format!("\n\n→ {n}"));
+        desc.push_str(&format!("\n\nÀ FAIRE CE SOIR\n- {n}"));
     }
     let ts = |t: chrono::DateTime<chrono::Utc>| t.format("%Y%m%dT%H%M%SZ").to_string();
     let lines = [
@@ -279,15 +313,36 @@ mod tests {
     fn event_times_follow_local_time() {
         let tz = chrono_tz::Europe::Paris;
         let m = |day: NaiveDate, kind| Meal { day, slot: Slot::Midi, dish: "Dhal".into(), kind, from: day, note: None };
-        let (uid, ics) = event(&m(d(9), MealKind::Box), None, tz);
+        let (uid, ics) = event(&m(d(9), MealKind::Box), None, &[], tz);
         assert_eq!(uid, "kairos-repas-20261109-midi");
         assert!(ics.contains("DTSTART:20261109T111500Z"), "{ics}");
         assert!(ics.contains("SUMMARY:Midi : Dhal (boîte)"), "{ics}");
         let summer = NaiveDate::from_ymd_opt(2026, 7, 6).unwrap();
-        assert!(event(&m(summer, MealKind::Cook), None, tz).1.contains("DTSTART:20260706T101500Z"));
-        let r = crate::store::Recipe { title: "Dhal".into(), portions: 4, ingredients: vec!["lentilles".into()], steps: "1. Cuire, puis servir.".into() };
-        let ics = event(&m(d(9), MealKind::Cook), Some(&r), tz).1;
-        assert!(ics.replace("\r\n ", "").contains("1. Cuire\\, puis servir."), "{ics}");
+        assert!(event(&m(summer, MealKind::Cook), None, &[], tz).1.contains("DTSTART:20260706T101500Z"));
+        let r = crate::store::Recipe {
+            title: "Dhal".into(),
+            portions: 4,
+            prep_minutes: Some(10),
+            cook_minutes: Some(25),
+            ingredients: vec![
+                crate::store::Ingredient { name: "lentilles corail".into(), qty: Some(300.0), unit: Some("g".into()) },
+                crate::store::Ingredient { name: "lait de coco".into(), qty: Some(0.4), unit: Some("l".into()) },
+                crate::store::Ingredient { name: "sel".into(), qty: None, unit: None },
+            ],
+            steps: vec!["Rincer.".into(), "Cuire, puis servir.".into()],
+        };
+        let cook = m(d(11), MealKind::Cook);
+        let rest = Meal { day: d(12), slot: Slot::Midi, dish: "Dhal".into(), kind: MealKind::Box, from: d(11), note: None };
+        let ics = event(&cook, Some(&r), &[&rest], tz).1;
+        let text = ics.replace("\r\n ", "").replace("\\n", "\n").replace("\\,", ",");
+        let infos = text.find("INFOS").expect(&text);
+        let ing = text.find("INGRÉDIENTS").expect(&text);
+        let steps = text.find("ÉTAPES").expect(&text);
+        assert!(infos < ing && ing < steps, "{text}");
+        assert!(text.contains("Préparation : 10 min · cuisson : 25 min"), "{text}");
+        assert!(text.contains("Portions : 4 (ce repas + 12/11 midi en boîte)"), "{text}");
+        assert!(text.contains("- 300 g lentilles corail\n- 0,4 l lait de coco\n- sel"), "{text}");
+        assert!(text.contains("1. Rincer.\n2. Cuire, puis servir."), "{text}");
         assert!(ics.lines().all(|l| l.len() <= 75), "lignes pliées");
     }
 

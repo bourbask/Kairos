@@ -11,8 +11,11 @@ réutilisées.
 
 ## Objectifs
 
-1. Carnet de recettes : titre, portions, ingrédients, étapes. Création,
-   correction, lecture.
+1. Carnet de recettes : titre, portions, durées de préparation et de
+   cuisson, ingrédients pesés (nom, quantité, unité), étapes ordonnées.
+   Création, correction, lecture. Description d'événement en trois
+   sections : INFOS (durées, portions et restes prévus), INGRÉDIENTS (liste
+   pesée, pour vérifier le stock d'un coup d'œil), ÉTAPES (numérotées).
 2. `meal_plan_set` : reçoit les plats **cuisinés** (jour, créneau, plat,
    portions) sur une période (7 jours par défaut, 14 max) ; le module :
    - remplit les créneaux suivants avec les restes (portions − 1) ;

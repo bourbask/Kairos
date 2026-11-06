@@ -74,10 +74,7 @@ CREATE TABLE IF NOT EXISTS orders (
 );
 CREATE TABLE IF NOT EXISTS recipes (
     name TEXT PRIMARY KEY,
-    title TEXT NOT NULL,
-    portions INTEGER NOT NULL,
-    ingredients TEXT NOT NULL,
-    steps TEXT NOT NULL,
+    data TEXT NOT NULL,
     updated_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS meal_plan (
@@ -177,13 +174,70 @@ pub struct Order {
     pub lines: Vec<Line>,
 }
 
+/// Ingrédient pesé : quantité et unité facultatives (« sel », « 1 pincée »).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct Ingredient {
+    /// Nom tel qu'en stock (« lentilles corail »).
+    pub name: String,
+    #[serde(default)]
+    pub qty: Option<f64>,
+    /// g, kg, ml, l, pièce, c. à soupe, c. à café, pincée…
+    #[serde(default)]
+    pub unit: Option<String>,
+}
+
+impl Ingredient {
+    /// « 300 g lentilles corail », « 0,4 l lait de coco », « sel ».
+    pub fn show(&self) -> String {
+        let qty = self.qty.map(|q| {
+            let s = if q.fract() == 0.0 { format!("{q:.0}") } else { format!("{q}") };
+            s.replace('.', ",")
+        });
+        match (qty, self.unit.as_deref().filter(|u| !u.trim().is_empty())) {
+            (Some(q), Some(u)) => format!("{q} {u} {}", self.name),
+            (Some(q), None) => format!("{q} {}", self.name),
+            (None, _) => self.name.clone(),
+        }
+    }
+}
+
 /// Recette du carnet : écrite une fois, réutilisée à chaque plan.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Recipe {
     pub title: String,
     pub portions: u32,
-    pub ingredients: Vec<String>,
-    pub steps: String,
+    #[serde(default)]
+    pub prep_minutes: Option<u32>,
+    #[serde(default)]
+    pub cook_minutes: Option<u32>,
+    #[serde(default)]
+    pub ingredients: Vec<Ingredient>,
+    pub steps: Vec<String>,
+}
+
+impl Recipe {
+    /// « Préparation : 10 min · cuisson : 25 min ».
+    pub fn timing(&self) -> Option<String> {
+        let parts: Vec<String> = [("Préparation", self.prep_minutes), ("cuisson", self.cook_minutes)]
+            .into_iter()
+            .filter_map(|(k, m)| m.map(|m| format!("{k} : {m} min")))
+            .collect();
+        (!parts.is_empty()).then(|| {
+            let mut t = parts.join(" · ");
+            if let Some(f) = t.get_mut(0..1) {
+                f.make_ascii_uppercase();
+            }
+            t
+        })
+    }
+
+    pub fn ingredients_list(&self) -> String {
+        self.ingredients.iter().map(|i| format!("- {}", i.show())).collect::<Vec<_>>().join("\n")
+    }
+
+    pub fn steps_list(&self) -> String {
+        self.steps.iter().enumerate().map(|(i, s)| format!("{}. {}", i + 1, s.trim())).collect::<Vec<_>>().join("\n")
+    }
 }
 
 pub struct Store {
@@ -705,28 +759,21 @@ impl Store {
 
     /// Crée ou remplace une recette (même nom, accents et casse ignorés).
     pub fn set_recipe(&self, r: &Recipe) -> rusqlite::Result<()> {
-        let ingredients = serde_json::to_string(&r.ingredients).unwrap_or_else(|_| "[]".into());
+        let data = serde_json::to_string(r).expect("recette sérialisable");
         self.db.lock().unwrap().execute(
-            "INSERT INTO recipes (name, title, portions, ingredients, steps, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-             ON CONFLICT(name) DO UPDATE SET title = ?2, portions = ?3, ingredients = ?4, steps = ?5, updated_at = ?6",
-            params![fold(r.title.trim()), r.title.trim(), r.portions, ingredients, r.steps, now()],
+            "INSERT INTO recipes (name, data, updated_at) VALUES (?1, ?2, ?3)
+             ON CONFLICT(name) DO UPDATE SET data = ?2, updated_at = ?3",
+            params![fold(r.title.trim()), data, now()],
         )?;
         Ok(())
     }
 
     pub fn recipes(&self) -> rusqlite::Result<Vec<Recipe>> {
         let db = self.db.lock().unwrap();
-        let mut st = db.prepare("SELECT title, portions, ingredients, steps FROM recipes ORDER BY name")?;
-        let rows = st.query_map([], |r| {
-            let ing: String = r.get(2)?;
-            Ok(Recipe {
-                title: r.get(0)?,
-                portions: r.get(1)?,
-                ingredients: serde_json::from_str(&ing).unwrap_or_default(),
-                steps: r.get(3)?,
-            })
-        })?;
-        rows.collect()
+        let mut st = db.prepare("SELECT data FROM recipes ORDER BY name")?;
+        let rows = st.query_map([], |r| r.get::<_, String>(0))?;
+        // Une ligne illisible est ignorée plutôt que de bloquer tout le carnet.
+        Ok(rows.filter_map(|d| d.ok().and_then(|d| serde_json::from_str(&d).ok())).collect())
     }
 
     /// Nom exact, sinon seule recette contenant tous les mots demandés.

@@ -307,13 +307,14 @@ async fn use_first_splits_urgent_and_stale() {
 #[tokio::test]
 async fn recipe_book_round_trip() {
     let url = start().await;
-    let r = json!({"name": "Dhal de lentilles corail", "portions": 4,
-        "ingredients": ["lentilles corail", "lait de coco"], "steps": "1. Rincer.\n2. Cuire 20 min."});
+    let r = json!({"name": "Dhal de lentilles corail", "portions": 4, "prep_minutes": 10, "cook_minutes": 25,
+        "ingredients": [{"name": "lentilles corail", "qty": 300, "unit": "g"}, {"name": "lait de coco", "qty": 400, "unit": "ml"}],
+        "steps": ["Rincer.", "Cuire 20 min."]});
     let (out, err) = call(&url, "recipe_set", r).await;
     assert!(!err, "{out}");
     let (out, _) = call(&url, "recipes", json!({"name": "dhal"})).await;
-    assert!(out.contains("4 portions") && out.contains("lentilles corail") && out.contains("2. Cuire"), "{out}");
-    call(&url, "recipe_set", json!({"name": "dhal de lentilles corail", "portions": 3, "ingredients": [], "steps": "Corrigé."})).await;
+    assert!(out.contains("Portions : 4") && out.contains("- 300 g lentilles corail") && out.contains("2. Cuire 20 min."), "{out}");
+    call(&url, "recipe_set", json!({"name": "dhal de lentilles corail", "portions": 3, "steps": ["Corrigé."]})).await;
     let (out, _) = call(&url, "recipes", json!({})).await;
     assert_eq!(out.matches("Dhal").count() + out.matches("dhal").count(), 1, "correction, pas doublon : {out}");
     assert!(out.contains("3 portions"), "{out}");
@@ -372,7 +373,7 @@ async fn meal_plan_set_writes_calendar() {
     let (cal, log) = fake_caldav().await;
     let url = start_with(Some(CalDav::new(&cal, "u".into(), "p".into()))).await;
     call(&url, "pref_set", json!({"key": "bureau", "value": "lundi"})).await;
-    call(&url, "recipe_set", json!({"name": "Farfalle", "portions": 2, "ingredients": ["farfalle"], "steps": "1. Cuire."})).await;
+    call(&url, "recipe_set", json!({"name": "Farfalle", "portions": 2, "ingredients": [{"name": "farfalle", "qty": 200, "unit": "g"}], "steps": ["Cuire."]})).await;
     let plan = json!({"start": "2026-11-08", "days": 2, "meals": [
         {"day": "2026-11-08", "slot": "soir", "dish": "Farfalle", "portions": 2},
         {"day": "2026-11-09", "slot": "soir", "dish": "Riz"}
@@ -412,7 +413,7 @@ async fn meal_plan_set_without_calendar() {
 #[tokio::test]
 async fn recipe_lookup_matches_whole_words() {
     let url = start().await;
-    call(&url, "recipe_set", json!({"name": "Pâtes au chorizo", "steps": "1. Cuire."})).await;
+    call(&url, "recipe_set", json!({"name": "Pâtes au chorizo", "steps": ["Cuire."]})).await;
     let (out, err) = call(&url, "recipes", json!({"name": "riz"})).await;
     assert!(err, "« riz » n'est pas « chorizo » : {out}");
     let (out, err) = call(&url, "recipes", json!({"name": "chorizo"})).await;

@@ -177,11 +177,15 @@ struct RecipeArgs {
     name: String,
     /// Portions produites (2 par défaut).
     portions: Option<u32>,
-    /// Ingrédients principaux, un par ligne (« lentilles corail », « lait de coco »).
+    /// Préparation, en minutes.
+    prep_minutes: Option<u32>,
+    /// Cuisson, en minutes.
+    cook_minutes: Option<u32>,
+    /// Ingrédients pesés : nom tel qu'en stock, quantité, unité.
     #[serde(default)]
-    ingredients: Vec<String>,
-    /// Étapes numérotées, quantités comprises.
-    steps: String,
+    ingredients: Vec<crate::store::Ingredient>,
+    /// Étapes, une par élément, dans l'ordre (sans numéro).
+    steps: Vec<String>,
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
@@ -742,8 +746,8 @@ impl FoodServer {
                     let missing: Vec<&str> = r
                         .ingredients
                         .iter()
-                        .filter(|i| self.store.lots(None, Some(i)).map(|l| l.is_empty()).unwrap_or(true))
-                        .map(String::as_str)
+                        .filter(|i| self.store.lots(None, Some(&i.name)).map(|l| l.is_empty()).unwrap_or(true))
+                        .map(|i| i.name.as_str())
                         .collect();
                     if !missing.is_empty() {
                         warnings.push(format!("{} : manque {}.", c.dish, missing.join(", ")));
@@ -782,7 +786,9 @@ impl FoodServer {
                         match meals.iter().find(|m| m.day == day && m.slot == slot) {
                             Some(m) => {
                                 let r = if m.kind == MealKind::Cook { recipes.get(&m.dish) } else { None };
-                                let (id, ics) = event(m, r, self.settings.tz);
+                                let after: Vec<&crate::plan::Meal> =
+                                    meals.iter().filter(|o| o.kind != MealKind::Cook && o.from == m.day && o.dish == m.dish).collect();
+                                let (id, ics) = event(m, r, &after, self.settings.tz);
                                 ops.push((id, Some(ics)));
                             }
                             None => ops.push((uid(day, slot.as_str()), None)),
@@ -796,7 +802,7 @@ impl FoodServer {
                 }
                 if let Some(m) = &eve_meal {
                     let r = if m.kind == MealKind::Cook { self.store.recipe(&m.dish).ok().flatten() } else { None };
-                    let (id, ics) = event(m, r.as_ref(), self.settings.tz);
+                    let (id, ics) = event(m, r.as_ref(), &[], self.settings.tz);
                     ops.push((id, Some(ics)));
                 }
                 let mut done = 0;
@@ -847,14 +853,17 @@ impl FoodServer {
         description = "Ajouter ou corriger une recette du carnet (nom, portions, ingrédients principaux, étapes numérotées). Le carnet sert au plan de la semaine : une recette écrite une fois est réutilisée."
     )]
     async fn recipe_set(&self, Parameters(a): Parameters<RecipeArgs>) -> Out {
-        if a.name.trim().is_empty() || a.steps.trim().is_empty() {
+        let steps: Vec<String> = a.steps.into_iter().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+        if a.name.trim().is_empty() || steps.is_empty() {
             return Err("Nom et étapes requis.".into());
         }
         let r = crate::store::Recipe {
             title: a.name.trim().to_string(),
             portions: a.portions.unwrap_or(2).clamp(1, 12),
-            ingredients: a.ingredients.into_iter().map(|i| i.trim().to_string()).filter(|i| !i.is_empty()).collect(),
-            steps: a.steps.trim().to_string(),
+            prep_minutes: a.prep_minutes,
+            cook_minutes: a.cook_minutes,
+            ingredients: a.ingredients.into_iter().filter(|i| !i.name.trim().is_empty()).collect(),
+            steps,
         };
         self.store.set_recipe(&r).map_err(|e| e.to_string())?;
         Ok(format!("Recette enregistrée : {} ({} portions).", r.title, r.portions))
@@ -865,13 +874,7 @@ impl FoodServer {
         match a.name.filter(|n| !n.trim().is_empty()) {
             Some(n) => {
                 let r = self.store.recipe(&n).map_err(|e| e.to_string())?.ok_or_else(|| format!("Aucune recette « {n} » au carnet."))?;
-                Ok(format!(
-                    "{} ({} portions)\nIngrédients : {}\n{}",
-                    r.title,
-                    r.portions,
-                    if r.ingredients.is_empty() { "—".to_string() } else { r.ingredients.join(", ") },
-                    r.steps
-                ))
+                Ok(format!("{}\n{}", r.title, crate::plan::recipe_text(&r, None)))
             }
             None => {
                 let all = self.store.recipes().map_err(|e| e.to_string())?;
