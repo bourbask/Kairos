@@ -86,6 +86,10 @@ impl ServerHandler for Fake {
 }
 
 async fn tentacle(env: &str) -> (Tentacles, Arc<Rec>) {
+    tentacle_with(env, false).await
+}
+
+async fn tentacle_with(env: &str, private: bool) -> (Tentacles, Arc<Rec>) {
     unsafe { std::env::set_var(env, "secret") };
     let ingested = Arc::new(Rec::default());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -95,7 +99,7 @@ async fn tentacle(env: &str) -> (Tentacles, Arc<Rec>) {
         rec: rec.clone(),
         tool_router: Fake::tool_router(),
     }));
-    let t = Tentacles::connect(&[TentacleEntry { name: "t".into(), url, token_env: env.into() }]).await;
+    let t = Tentacles::connect(&[TentacleEntry { name: "t".into(), url, token_env: env.into(), private }]).await;
     (t, ingested)
 }
 
@@ -195,6 +199,22 @@ async fn simple_text_reply_with_persona_and_tools() {
     assert!(names.contains(&"t__echo"));
     assert!(names.contains(&"quiet"));
     assert!(names.contains(&"set_work_day"));
+}
+
+#[tokio::test]
+async fn private_tentacle_tool_refused_in_conversation() {
+    let (t, _) = tentacle_with("AG_P1", true).await;
+    let (router, shared) = llm(vec![call("c1", "t__echo", json!({"text": "x"})), text("fini")]).await;
+    let state = State::open_in_memory().unwrap();
+    let mut agent = Agent::new(router, IDLE);
+    assert_eq!(agent.reply("écho x", at(9, 0), &t, &state).await, "fini");
+
+    let s = shared.lock().unwrap();
+    let names: Vec<&str> =
+        s.requests[0]["tools"].as_array().unwrap().iter().map(|t| t["function"]["name"].as_str().unwrap()).collect();
+    assert!(!names.contains(&"t__echo"));
+    let tools = tool_messages(&s.requests[1]);
+    assert_ne!(tools[0]["content"], "écho:x");
 }
 
 #[tokio::test]

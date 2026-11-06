@@ -5,6 +5,7 @@ use chrono::{NaiveDateTime, Utc};
 use kairos::calendar::USER_TZ;
 use kairos::llm::LlmRouter;
 use tete::agent::Agent;
+use tete::commands;
 use tete::config::HeadConfig;
 use tete::gateway::{Outbound, inbound_router};
 use tete::jobs::{Ctx, due, run};
@@ -44,7 +45,14 @@ async fn main() -> anyhow::Result<()> {
     loop {
         tokio::select! {
             Some(msg) = rx.recv() => {
-                let answer = ctx.agent.reply(&msg, now(), &ctx.tentacles, &ctx.state).await;
+                // Commande directe : traitée sans moteur, si son tentacule est privé et configuré.
+                let direct = commands::parse(&msg)
+                    .filter(|_| ctx.tentacles.private_names().contains(&ctx.cfg.commands_tentacle));
+                let answer = match direct {
+                    Some(Ok(cmd)) => commands::run(cmd, &ctx.tentacles, &ctx.cfg.commands_tentacle).await,
+                    Some(Err(usage)) => usage.to_string(),
+                    None => ctx.agent.reply(&msg, now(), &ctx.tentacles, &ctx.state).await,
+                };
                 if let Err(e) = ctx.outbound.send(&answer).await {
                     tracing::warn!("réponse non envoyée, mise en attente : {e}");
                     // Renvoyée par le vidage de la file, donc soumise à la politique de sortie.

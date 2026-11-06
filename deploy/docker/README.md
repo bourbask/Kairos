@@ -104,6 +104,8 @@ Module alimentation : stock du logement, commandes de courses, repas, préféren
 nommé `alimentation-data` ; fiches produits lues dans la base ouverte Open Food Facts (sortie HTTPS). Variable de
 `kairos.env` : `ALIMENTATION_TOKEN` (obligatoire, `openssl rand -hex 32`). Port publié : `ALIMENTATION_BIND_PORT` (8098).
 
+Module marchés : veille de marchés de prédiction en lecture seule. Base SQLite dans le volume `marches-data`. Variables de `kairos.env` : `MARCHES_TOKEN` (obligatoire, `openssl rand -hex 32`), `MARCHES_API_URL` (obligatoire, adresse de la source), `MARCHES_KEYWORDS` (liste séparée par des virgules), `MARCHES_POLL_MINUTES` (optionnel, 30 par défaut). Port publié : `MARCHES_BIND_PORT` (8099).
+
 Déclarer ensuite le tentacule dans `config/tete.toml` (modèle : `config/tete.example.toml`). L'image `kairos:local`
 doit exister :
 

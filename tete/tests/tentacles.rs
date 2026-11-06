@@ -63,7 +63,7 @@ async fn spawn(label: &'static str, token: &str) -> String {
 }
 
 fn entry(name: &str, url: &str, env: &str) -> TentacleEntry {
-    TentacleEntry { name: name.into(), url: url.into(), token_env: env.into() }
+    TentacleEntry { name: name.into(), url: url.into(), token_env: env.into(), private: false }
 }
 
 fn set(env: &str, v: &str) {
@@ -136,4 +136,17 @@ async fn big_result_is_truncated() {
     let out = t.call("a__big", json!({})).await.unwrap();
     assert!(out.ends_with("… [tronqué]"));
     assert!(out.chars().count() <= TOOL_RESULT_MAX_CHARS + "… [tronqué]".chars().count());
+}
+
+#[tokio::test]
+async fn private_tentacle_tools_hidden_but_callable() {
+    set("TT_PRIV", "secret");
+    let (ua, ub) = (spawn("a", "secret").await, spawn("p", "secret").await);
+    let p = TentacleEntry { private: true, ..entry("p", &ub, "TT_PRIV") };
+    let t = Tentacles::connect(&[entry("a", &ua, "TT_PRIV"), p]).await;
+    let names: Vec<_> = t.tool_specs().into_iter().map(|s| s.name).collect();
+    assert!(names.contains(&"a__echo".to_string()));
+    assert!(!names.iter().any(|n| n.starts_with("p__")), "{names:?}");
+    assert_eq!(t.private_names(), vec!["p".to_string()]);
+    assert_eq!(t.call("p__echo", json!({"x": 2})).await.unwrap(), "p:2");
 }

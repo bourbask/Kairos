@@ -20,6 +20,10 @@ pub struct TentacleEntry {
     pub url: String,
     /// Nom de la variable d'environnement portant le jeton.
     pub token_env: String,
+    /// Données tenues hors de tout moteur : outils absents de la conversation,
+    /// section de brief jointe telle quelle.
+    #[serde(default)]
+    pub private: bool,
 }
 
 fn t(h: u32, m: u32) -> NaiveTime {
@@ -88,6 +92,8 @@ pub struct HeadConfig {
     pub interruptions_per_day: u32,
     pub suggestion_every_minutes: u32,
     pub session_idle_minutes: u32,
+    /// Tentacule qui reçoit les commandes directes ; toujours traité comme privé.
+    pub commands_tentacle: String,
     #[serde(skip, default = "no_gateway")]
     pub gateway: GatewayEnv,
 }
@@ -122,6 +128,7 @@ impl Default for HeadConfig {
             interruptions_per_day: 2,
             suggestion_every_minutes: 120,
             session_idle_minutes: 30,
+            commands_tentacle: "marches".into(),
             gateway: no_gateway(),
         }
     }
@@ -157,6 +164,10 @@ impl HeadConfig {
             if !seen.insert(n) {
                 bail!("nom de tentacule en double : « {n} »");
             }
+        }
+        // Le destinataire des commandes directes reste hors de tout moteur, déclaré privé ou non.
+        for e in &mut cfg.tentacles {
+            e.private |= e.name == cfg.commands_tentacle;
         }
         for e in &cfg.tentacles {
             required(&env, &e.token_env)
@@ -251,6 +262,17 @@ mod tests {
         }
         let twice = format!("{}{}", one("a"), one("a"));
         assert!(HeadConfig::from_parts(&twice, env_of(&env)).is_err());
+    }
+
+    #[test]
+    fn commands_tentacle_is_private() {
+        let toml = "commands_tentacle = \"m\"\n\
+                    [[tentacles]]\nname = \"m\"\nurl = \"http://a.invalid\"\ntoken_env = \"A_TOKEN\"\n\
+                    [[tentacles]]\nname = \"o\"\nurl = \"http://b.invalid\"\ntoken_env = \"A_TOKEN\"\n";
+        let env = [GATEWAY[0], GATEWAY[1], GATEWAY[2], ("A_TOKEN", "a")];
+        let c = HeadConfig::from_parts(toml, env_of(&env)).unwrap();
+        assert!(c.tentacles[0].private);
+        assert!(!c.tentacles[1].private);
     }
 
     #[test]
