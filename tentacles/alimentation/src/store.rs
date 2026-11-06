@@ -72,6 +72,20 @@ CREATE TABLE IF NOT EXISTS orders (
     created_at INTEGER NOT NULL,
     received_at INTEGER
 );
+CREATE TABLE IF NOT EXISTS recipes (
+    name TEXT PRIMARY KEY,
+    data TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS meal_plan (
+    day TEXT NOT NULL,
+    slot TEXT NOT NULL,
+    dish TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    cooked TEXT NOT NULL,
+    note TEXT,
+    PRIMARY KEY (day, slot)
+);
 CREATE TABLE IF NOT EXISTS prefs (k TEXT PRIMARY KEY, v TEXT NOT NULL, updated_at INTEGER NOT NULL);
 ";
 
@@ -158,6 +172,72 @@ pub struct Order {
     pub total: Option<f64>,
     pub status: String,
     pub lines: Vec<Line>,
+}
+
+/// Ingrédient pesé : quantité et unité facultatives (« sel », « 1 pincée »).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct Ingredient {
+    /// Nom tel qu'en stock (« lentilles corail »).
+    pub name: String,
+    #[serde(default)]
+    pub qty: Option<f64>,
+    /// g, kg, ml, l, pièce, c. à soupe, c. à café, pincée…
+    #[serde(default)]
+    pub unit: Option<String>,
+}
+
+impl Ingredient {
+    /// « 300 g lentilles corail », « 0,4 l lait de coco », « sel ».
+    pub fn show(&self) -> String {
+        let qty = self.qty.map(|q| {
+            let s = if q.fract() == 0.0 { format!("{q:.0}") } else { format!("{q}") };
+            s.replace('.', ",")
+        });
+        match (qty, self.unit.as_deref().filter(|u| !u.trim().is_empty())) {
+            (Some(q), Some(u)) => format!("{q} {u} {}", self.name),
+            (Some(q), None) => format!("{q} {}", self.name),
+            (None, _) => self.name.clone(),
+        }
+    }
+}
+
+/// Recette du carnet : écrite une fois, réutilisée à chaque plan.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Recipe {
+    pub title: String,
+    pub portions: u32,
+    #[serde(default)]
+    pub prep_minutes: Option<u32>,
+    #[serde(default)]
+    pub cook_minutes: Option<u32>,
+    #[serde(default)]
+    pub ingredients: Vec<Ingredient>,
+    pub steps: Vec<String>,
+}
+
+impl Recipe {
+    /// « Préparation : 10 min · cuisson : 25 min ».
+    pub fn timing(&self) -> Option<String> {
+        let parts: Vec<String> = [("Préparation", self.prep_minutes), ("cuisson", self.cook_minutes)]
+            .into_iter()
+            .filter_map(|(k, m)| m.map(|m| format!("{k} : {m} min")))
+            .collect();
+        (!parts.is_empty()).then(|| {
+            let mut t = parts.join(" · ");
+            if let Some(f) = t.get_mut(0..1) {
+                f.make_ascii_uppercase();
+            }
+            t
+        })
+    }
+
+    pub fn ingredients_list(&self) -> String {
+        self.ingredients.iter().map(|i| format!("- {}", i.show())).collect::<Vec<_>>().join("\n")
+    }
+
+    pub fn steps_list(&self) -> String {
+        self.steps.iter().enumerate().map(|(i, s)| format!("{}. {}", i + 1, s.trim())).collect::<Vec<_>>().join("\n")
+    }
 }
 
 pub struct Store {
@@ -675,6 +755,97 @@ impl Store {
             .unwrap()
             .execute("UPDATE orders SET status = 'retiree', received_at = ?2 WHERE id = ?1", params![id, now()])?;
         Ok(())
+    }
+
+    /// Crée ou remplace une recette (même nom, accents et casse ignorés).
+    pub fn set_recipe(&self, r: &Recipe) -> rusqlite::Result<()> {
+        let data = serde_json::to_string(r).expect("recette sérialisable");
+        self.db.lock().unwrap().execute(
+            "INSERT INTO recipes (name, data, updated_at) VALUES (?1, ?2, ?3)
+             ON CONFLICT(name) DO UPDATE SET data = ?2, updated_at = ?3",
+            params![fold(r.title.trim()), data, now()],
+        )?;
+        Ok(())
+    }
+
+    pub fn recipes(&self) -> rusqlite::Result<Vec<Recipe>> {
+        let db = self.db.lock().unwrap();
+        let mut st = db.prepare("SELECT data FROM recipes ORDER BY name")?;
+        let rows = st.query_map([], |r| r.get::<_, String>(0))?;
+        // Une ligne illisible est ignorée plutôt que de bloquer tout le carnet.
+        Ok(rows.filter_map(|d| d.ok().and_then(|d| serde_json::from_str(&d).ok())).collect())
+    }
+
+    /// Nom exact, sinon seule recette contenant tous les mots demandés.
+    pub fn recipe(&self, query: &str) -> rusqlite::Result<Option<Recipe>> {
+        let q = fold(query.trim());
+        let all = self.recipes()?;
+        if let Some(r) = all.iter().find(|r| fold(&r.title) == q) {
+            return Ok(Some(r.clone()));
+        }
+        // Mots entiers : « riz » ne doit pas trouver « chorizo ».
+        let split = |s: &str| s.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).map(str::to_string).collect::<Vec<_>>();
+        let words = split(&q);
+        let hits: Vec<&Recipe> =
+            all.iter().filter(|r| { let t = split(&fold(&r.title)); words.iter().all(|w| t.contains(w)) }).collect();
+        Ok(if hits.len() == 1 { Some(hits[0].clone()) } else { None })
+    }
+
+    /// Remplace le plan de la période [from, to]. Les restes hors période d'un
+    /// plat cuisiné dans la période disparaissent avec lui : renvoyés (jour,
+    /// créneau) pour retirer leurs événements.
+    pub fn replace_plan(&self, from: &str, to: &str, meals: &[crate::plan::Meal]) -> rusqlite::Result<Vec<(String, String)>> {
+        let mut db = self.db.lock().unwrap();
+        let tx = db.transaction()?;
+        let orphans: Vec<(String, String)> = {
+            let mut st = tx.prepare(
+                "SELECT day, slot FROM meal_plan WHERE cooked >= ?1 AND cooked <= ?2 AND (day < ?1 OR day > ?2)",
+            )?;
+            st.query_map(params![from, to], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?
+        };
+        tx.execute(
+            "DELETE FROM meal_plan WHERE (day >= ?1 AND day <= ?2) OR (cooked >= ?1 AND cooked <= ?2)",
+            params![from, to],
+        )?;
+        for m in meals {
+            tx.execute(
+                "INSERT INTO meal_plan (day, slot, dish, kind, cooked, note) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![m.day.to_string(), m.slot.as_str(), m.dish, m.kind.as_str(), m.from.to_string(), m.note],
+            )?;
+        }
+        tx.commit()?;
+        Ok(orphans)
+    }
+
+    pub fn set_plan_note(&self, day: &str, slot: &str, note: Option<&str>) -> rusqlite::Result<()> {
+        self.db.lock().unwrap().execute(
+            "UPDATE meal_plan SET note = ?3 WHERE day = ?1 AND slot = ?2",
+            params![day, slot, note],
+        )?;
+        Ok(())
+    }
+
+    /// Plan enregistré sur [from, to], dans l'ordre.
+    pub fn plan(&self, from: &str, to: &str) -> rusqlite::Result<Vec<crate::plan::Meal>> {
+        use crate::nature::Slot;
+        use crate::plan::{Meal, MealKind};
+        let db = self.db.lock().unwrap();
+        let mut st = db.prepare(
+            "SELECT day, slot, dish, kind, cooked, note FROM meal_plan WHERE day >= ?1 AND day <= ?2
+             ORDER BY day, CASE slot WHEN 'midi' THEN 0 ELSE 1 END",
+        )?;
+        let d = |s: String| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").unwrap_or_default();
+        let rows = st.query_map(params![from, to], |r| {
+            Ok(Meal {
+                day: d(r.get(0)?),
+                slot: Slot::parse(&r.get::<_, String>(1)?).unwrap_or(Slot::Soir),
+                dish: r.get(2)?,
+                kind: MealKind::parse(&r.get::<_, String>(3)?).unwrap_or(MealKind::Cook),
+                from: d(r.get(4)?),
+                note: r.get(5)?,
+            })
+        })?;
+        rows.collect()
     }
 
     pub fn set_pref(&self, k: &str, v: &str) -> rusqlite::Result<()> {

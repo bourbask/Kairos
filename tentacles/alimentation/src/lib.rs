@@ -3,8 +3,10 @@
 //! partir de ce qui reste réellement.
 
 pub mod bon;
+pub mod caldav;
 pub mod nature;
 pub mod off;
+pub mod plan;
 pub mod shelf;
 pub mod store;
 pub mod tools;
