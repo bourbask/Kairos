@@ -189,3 +189,32 @@ ENTRETIEN NETTOYAGE (1 produit)
     let (t, err) = call(&url, "order_import", json!({"text": "Une facture quelconque"})).await;
     assert!(err && t.contains("ne ressemble pas"), "{t}");
 }
+
+#[tokio::test]
+async fn product_set_qualifies_and_lists_unknowns() {
+    let url = start().await;
+    call(
+        &url,
+        "stock_add",
+        json!({"items": [
+            {"name": "Objet mystère", "qty": 1, "location": "placard"},
+            {"name": "Carottes", "qty": 1, "unit": "kg", "location": "frigo"}
+        ]}),
+    )
+    .await;
+    let (out, err) = call(&url, "product_set", json!({})).await;
+    assert!(!err && out.contains("Objet mystère") && !out.contains("Carottes"), "{out}");
+    let (out, err) = call(&url, "product_set", json!({"name": "objet mystère", "nature": "plat"})).await;
+    assert!(!err, "{out}");
+    let (out, _) = call(&url, "product_set", json!({})).await;
+    assert!(!out.contains("Objet mystère"), "{out}");
+    let (out, err) = call(&url, "product_set", json!({"name": "carottes", "nature": "légume-racine"})).await;
+    assert!(err && out.contains("proteine"), "{out}");
+}
+
+#[tokio::test]
+async fn product_set_unknown_product() {
+    let url = start().await;
+    let (out, err) = call(&url, "product_set", json!({"name": "licorne", "nature": "plat"})).await;
+    assert!(err, "{out}");
+}

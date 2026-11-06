@@ -15,6 +15,7 @@ use rmcp::{
 };
 use serde::Deserialize;
 
+use crate::nature::Nature;
 use crate::off::Off;
 use crate::shelf::Kind;
 use crate::store::{Line, Lot, Store, date};
@@ -126,6 +127,14 @@ struct MealArgs {
 struct MealsArgs {
     /// Nombre de jours en arrière (7 par défaut, 60 au plus).
     days: Option<i64>,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+struct NatureArgs {
+    /// Produit à corriger ; absent avec `nature` absente : liste des produits à qualifier.
+    name: Option<String>,
+    /// proteine, legume, fruit, feculent, laitier, sucre, condiment, epice, boisson, base ou plat.
+    nature: Option<String>,
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
@@ -511,6 +520,27 @@ impl FoodServer {
         } else {
             format!("Préférence « {k} » enregistrée.")
         })
+    }
+
+    #[tool(
+        description = "Corriger la nature d'un produit (protéine, légume…) quand une proposition de repas le classe mal ; sans argument, liste les produits en stock à qualifier."
+    )]
+    async fn product_set(&self, Parameters(a): Parameters<NatureArgs>) -> Out {
+        match (a.name.filter(|n| !n.trim().is_empty()), a.nature) {
+            (None, None) => {
+                let names = self.store.unqualified().map_err(|e| e.to_string())?;
+                if names.is_empty() {
+                    return Ok("Tous les produits en stock ont une nature.".to_string());
+                }
+                Ok(format!("À qualifier : {}.", names.join(", ")))
+            }
+            (Some(name), Some(n)) => {
+                let all = || crate::nature::ALL.map(|n| n.as_str()).join(", ");
+                let n = Nature::parse(&n).ok_or_else(|| format!("Nature inconnue « {n} » : {}.", all()))?;
+                self.store.set_nature(&name, n)
+            }
+            _ => Err("Donner à la fois le produit et sa nature, ou rien pour lister les produits à qualifier.".into()),
+        }
     }
 
     #[tool(
