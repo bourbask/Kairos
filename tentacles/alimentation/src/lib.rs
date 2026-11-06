@@ -5,6 +5,7 @@
 pub mod bon;
 pub mod nature;
 pub mod off;
+pub mod plan;
 pub mod shelf;
 pub mod store;
 pub mod tools;
