@@ -179,7 +179,7 @@ module : c'est le moteur qui traduit « sur site » en `context = boulot` pour
 
 ## 6. Tests de référence
 
-Sur un inventaire de test reprenant l'inventaire réel du 2026-11-06 (poulet DLC
+Sur un inventaire de test représentatif (poulet DLC
 J+7, champignons, carottes, patates douces, potimarron, navets, pains au
 chocolat, sauce soja DDM J+4, condiments DDM dépassées, lait ouvert) :
 
@@ -215,6 +215,6 @@ au premier démarrage.
 ## Laissé au constructeur
 
 - Liste exacte des mots-clés par nature (partir des produits de l'inventaire
-  réel et des règles de `shelf.rs`).
+  de test et des règles de `shelf.rs`).
 - Correspondance des catégories OFF.
 - Libellés exacts des sections de sortie, dans le style des outils existants.
