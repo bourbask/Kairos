@@ -249,6 +249,10 @@ pub async fn run_tools_loop(
 async fn execute(call: &ToolCall, tentacles: &Tentacles, state: &State) -> Result<String, String> {
     // Les outils des tentacules sont toujours préfixés `<tentacule>__`.
     if call.name.contains("__") {
+        // Un outil privé n'est jamais proposé au moteur : un appel deviné est refusé.
+        if tentacles.private_names().iter().any(|n| call.name.strip_prefix(n.as_str()).is_some_and(|r| r.starts_with("__"))) {
+            return Err(format!("outil inconnu : {}", call.name));
+        }
         return tentacles.call(&call.name, call.arguments.clone()).await;
     }
     let res = match call.name.as_str() {
