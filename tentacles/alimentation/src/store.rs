@@ -15,6 +15,7 @@ use std::sync::Mutex;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
+use crate::nature::Nature;
 use crate::shelf::{self, Kind};
 use crate::units::{Family, fold, parse_unit, show};
 
@@ -138,6 +139,8 @@ pub struct Lot {
     pub opened: bool,
     /// Entrée en stock (horodatage).
     pub added_at: i64,
+    /// Nature culinaire ; `None` = à qualifier.
+    pub nature: Option<Nature>,
 }
 
 impl Lot {
@@ -177,6 +180,12 @@ fn in_days(n: i64) -> String {
 fn migrate(c: &Connection) -> rusqlite::Result<()> {
     let cols: Vec<String> =
         c.prepare("PRAGMA table_info(lots)")?.query_map([], |r| r.get(1))?.collect::<rusqlite::Result<_>>()?;
+    let pcols: Vec<String> =
+        c.prepare("PRAGMA table_info(products)")?.query_map([], |r| r.get(1))?.collect::<rusqlite::Result<_>>()?;
+    if !pcols.iter().any(|c| c == "nature") {
+        // Correction manuelle seulement : sinon la nature est déduite à la lecture.
+        c.execute_batch("ALTER TABLE products ADD COLUMN nature TEXT;")?;
+    }
     if !cols.iter().any(|c| c == "expiry_kind") {
         c.execute_batch(
             "ALTER TABLE lots ADD COLUMN expiry_kind TEXT;
@@ -281,6 +290,24 @@ impl Store {
                 Err(format!("« {} » est ambigu : {}.", query.trim(), names.join(", ")))
             }
         }
+    }
+
+    /// Fixe la nature d'un produit existant, prioritaire sur toute déduction.
+    pub fn set_nature(&self, query: &str, n: Nature) -> Result<String, String> {
+        let p = self.resolve(query)?;
+        let db = self.db.lock().unwrap();
+        db.execute("UPDATE products SET nature = ?2 WHERE id = ?1", params![p.id, n.as_str()])
+            .map_err(|e| e.to_string())?;
+        Ok(format!("Nature de {} : {}.", p.name, n.as_str()))
+    }
+
+    /// Produits en stock dont la nature reste inconnue, par nom.
+    pub fn unqualified(&self) -> rusqlite::Result<Vec<String>> {
+        let mut names: Vec<String> =
+            self.lots(None, None)?.into_iter().filter(|l| l.nature.is_none()).map(|l| l.product).collect();
+        names.sort();
+        names.dedup();
+        Ok(names)
     }
 
     /// Produit existant (code-barres, sinon nom exact), ou créé.
@@ -533,7 +560,7 @@ impl Store {
         let db = self.db.lock().unwrap();
         let mut st = db.prepare(
             "SELECT l.id, p.name, p.family, l.qty, l.location, l.expiry, l.opened, p.folded,
-                    l.expiry_kind, l.expiry_estimated, l.added_at
+                    l.expiry_kind, l.expiry_estimated, l.added_at, p.nature, p.category
              FROM lots l JOIN products p ON p.id = l.product_id WHERE l.qty > 0
              ORDER BY l.location, l.expiry IS NULL, l.expiry, p.name",
         )?;
@@ -552,6 +579,11 @@ impl Store {
                     estimated: r.get::<_, i64>(9)? != 0,
                     opened: r.get::<_, i64>(6)? != 0,
                     added_at: r.get(10)?,
+                    nature: crate::nature::resolve(
+                        r.get::<_, Option<String>>(11)?.as_deref().and_then(Nature::parse),
+                        r.get::<_, Option<String>>(12)?.as_deref(),
+                        &r.get::<_, String>(1)?,
+                    ),
                 },
                 r.get::<_, String>(7)?,
             ))
