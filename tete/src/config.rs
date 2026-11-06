@@ -24,6 +24,10 @@ pub struct TentacleEntry {
     /// section de brief jointe telle quelle.
     #[serde(default)]
     pub private: bool,
+    /// Mots qui, présents dans le message, désignent ce tentacule : ses outils
+    /// passent en tête quand le moteur limite le nombre d'outils par appel.
+    #[serde(default)]
+    pub keywords: Vec<String>,
 }
 
 fn t(h: u32, m: u32) -> NaiveTime {
