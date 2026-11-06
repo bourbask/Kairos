@@ -130,6 +130,16 @@ struct MealsArgs {
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
+struct CookArgs {
+    /// petit-dejeuner, midi, gouter ou soir.
+    slot: String,
+    /// maison (défaut), boulot ou rando.
+    context: Option<String>,
+    /// Jour du repas (AAAA-MM-JJ) ; aujourd'hui par défaut.
+    day: Option<String>,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
 struct NatureArgs {
     /// Produit à corriger ; absent avec `nature` absente : liste des produits à qualifier.
     name: Option<String>,
@@ -168,6 +178,16 @@ fn expiry(l: &Lot) -> Option<chrono::NaiveDate> {
     l.expiry.as_deref().and_then(|e| chrono::NaiveDate::parse_from_str(e, "%Y-%m-%d").ok())
 }
 
+/// Se gâte vraiment : DLC, date estimée (frais sans date lue), produit gardé
+/// au frais (œufs, beurre) ou nature de date inconnue (prudence). Une DDM
+/// imprimée hors du frigo n'est jamais urgente.
+fn perishable(l: &Lot) -> bool {
+    l.kind != Some(Kind::Ddm) || l.estimated || l.location == "frigo"
+}
+
+const STALE_MAX: usize = 5;
+const PER_GROUP: usize = 8;
+
 impl FoodServer {
     pub fn new(store: Arc<Store>, off: Arc<Off>, settings: Arc<Settings>) -> Self {
         Self { store, off, settings, tool_router: Self::tool_router() }
@@ -178,9 +198,14 @@ impl FoodServer {
     }
 
     fn lot_line(&self, l: &Lot) -> String {
+        self.lot_line_at(l, self.today())
+    }
+
+    /// Ligne d'un lot, échéance comptée depuis `day`.
+    fn lot_line_at(&self, l: &Lot, day: chrono::NaiveDate) -> String {
         let ddm = l.kind == Some(Kind::Ddm);
         let when = match expiry(l) {
-            Some(d) => match (d - self.today()).num_days() {
+            Some(d) => match (d - day).num_days() {
                 n if n < 0 && ddm => format!(", date dépassée depuis {} j (souvent encore bon : vérifier)", -n),
                 n if n < 0 => format!(", périmé depuis {} j", -n),
                 0 => ", à finir aujourd'hui".to_string(),
@@ -204,12 +229,28 @@ impl FoodServer {
             .lots(None, None)
             .map_err(|e| e.to_string())?
             .into_iter()
+            .filter(perishable)
             .filter(|l| {
                 let added = chrono::DateTime::from_timestamp(l.added_at, 0).map(|t| t.date_naive()).unwrap_or(today);
                 expiry(l).is_some_and(|d| pressing(d, added, today, days))
             })
             .collect();
         lots.sort_by(|a, b| expiry(a).cmp(&expiry(b)).then_with(|| a.product.cmp(&b.product)));
+        Ok(lots)
+    }
+
+    /// DDM imprimées dépassées, les plus anciennes d'abord : à vérifier, pas à jeter.
+    fn stale(&self) -> Result<Vec<Lot>, String> {
+        let today = self.today();
+        let mut lots: Vec<Lot> = self
+            .store
+            .lots(None, None)
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .filter(|l| !perishable(l) && expiry(l).is_some_and(|d| d < today))
+            .collect();
+        lots.sort_by(|a, b| expiry(a).cmp(&expiry(b)).then_with(|| a.product.cmp(&b.product)));
+        lots.truncate(STALE_MAX);
         Ok(lots)
     }
 
@@ -430,18 +471,90 @@ impl FoodServer {
     }
 
     #[tool(
-        description = "Produits à consommer en priorité, du frais au placard : date (réelle ou estimée) dans l'horizon donné ou dépassée, ou produit de longue conservation dans le dernier sixième de sa durée (oubli au fond du placard). À utiliser pour ordonner les repas et éviter le gaspillage."
+        description = "Produits qui se gâtent bientôt (date limite ou frais, dans l'horizon donné ou dépassée), puis produits à date indicative dépassée, à vérifier. Pour une idée de repas, préférer cook_options."
     )]
     async fn use_first(&self, Parameters(a): Parameters<UseFirstArgs>) -> Out {
         let days = a.days.unwrap_or(4).clamp(0, 30);
         let lots = self.urgent(days)?;
-        if lots.is_empty() {
+        let stale = self.stale()?;
+        if lots.is_empty() && stale.is_empty() {
             return Ok(format!("Rien à finir dans les {days} prochains jours."));
         }
-        Ok(format!(
-            "À consommer en priorité :\n{}",
-            lots.iter().map(|l| self.lot_line(l)).collect::<Vec<_>>().join("\n")
-        ))
+        let lines = |ls: &[Lot]| ls.iter().map(|l| self.lot_line(l)).collect::<Vec<_>>().join("\n");
+        let mut out = Vec::new();
+        if !lots.is_empty() {
+            out.push(format!("À consommer :\n{}", lines(&lots)));
+        }
+        if !stale.is_empty() {
+            out.push(format!("Vieux, à vérifier :\n{}", lines(&stale)));
+        }
+        Ok(out.join("\n"))
+    }
+
+    #[tool(
+        description = "Ingrédients du stock utilisables pour un repas, triés par urgence, restes d'abord. À appeler pour toute question de repas (« on mange quoi », menu, idée de plat). slot : petit-dejeuner, midi, gouter ou soir. context : maison (défaut), boulot (midi au travail : plat à préparer la veille), rando (à emporter, mangeable froid) ; le déduire du message, sinon du rythme du jour donné en consigne (sur site → boulot pour midi). day : AAAA-MM-JJ, aujourd'hui par défaut. Répondre ensuite par 2 propositions au plus : nom du plat, ingrédients du stock utilisés (⚠ sur les urgents), temps approximatif, ce qui manque ; 6 lignes maximum, jamais la liste de l'inventaire. Pour boulot : un plat à préparer ce soir. Pour rando : une liste à emporter."
+    )]
+    async fn cook_options(&self, Parameters(a): Parameters<CookArgs>) -> Out {
+        use crate::nature::{Context, Slot, attrs, fits, groups};
+        let slot = Slot::parse(&a.slot)
+            .ok_or_else(|| format!("Créneau « {} » inconnu : petit-dejeuner, midi, gouter ou soir.", a.slot))?;
+        let ctx = match a.context.as_deref().filter(|c| !c.trim().is_empty()) {
+            Some(c) => Context::parse(c).ok_or_else(|| format!("Contexte « {c} » inconnu : maison, boulot ou rando."))?,
+            None => Context::Maison,
+        };
+        let day = match a.day.as_deref().filter(|d| !d.trim().is_empty()) {
+            Some(d) => chrono::NaiveDate::parse_from_str(&date(d)?, "%Y-%m-%d").map_err(|e| e.to_string())?,
+            None => self.today(),
+        };
+        let lots = self.store.lots(None, None).map_err(|e| e.to_string())?;
+        // Périssables par date, puis DDM imprimées, puis sans date.
+        let rank = |l: &Lot| (expiry(l).is_none(), !perishable(l), expiry(l));
+        let mut sections = Vec::new();
+        for &n in groups(slot, ctx) {
+            let mut here: Vec<&Lot> = lots
+                .iter()
+                .filter(|l| l.nature == Some(n) && fits(slot, ctx, n, attrs(n, &l.product)))
+                .filter(|l| !(perishable(l) && expiry(l).is_some_and(|d| d < day)))
+                .collect();
+            if here.is_empty() {
+                continue;
+            }
+            here.sort_by_key(|l| rank(l));
+            here.truncate(PER_GROUP);
+            let lines: Vec<String> = here
+                .iter()
+                .map(|l| {
+                    let line = self.lot_line_at(l, day);
+                    let soon = perishable(l) && expiry(l).is_some_and(|d| (d - day).num_days() <= 2);
+                    if soon { line.replacen("- ", "- ⚠ ", 1) } else { line }
+                })
+                .collect();
+            sections.push(format!("{} :\n{}", n.label(), lines.join("\n")));
+        }
+        if sections.is_empty() {
+            return Ok(format!("Rien d'utilisable dans le stock pour {} ({}).", slot.label(), ctx.as_str()));
+        }
+        let ahead = if slot == Slot::Midi && ctx == Context::Boulot { ", à préparer la veille au soir" } else { "" };
+        let mut out = vec![format!("Pour {} ({}{ahead}), le {} :", slot.label(), ctx.as_str(), day.format("%d/%m"))];
+        out.extend(sections);
+        let mut extras: Vec<&str> = lots
+            .iter()
+            .filter(|l| matches!(l.nature, Some(Nature::Condiment | Nature::Epice)))
+            .map(|l| l.product.as_str())
+            .collect();
+        extras.sort();
+        extras.dedup();
+        if !extras.is_empty() {
+            out.push(format!("Dans le placard aussi : {}.", extras.join(", ")));
+        }
+        let prefs = self.store.prefs().map_err(|e| e.to_string())?;
+        if !prefs.is_empty() {
+            out.push(format!(
+                "Préférences : {}.",
+                prefs.iter().map(|(k, v)| format!("{k} : {v}")).collect::<Vec<_>>().join(" ; ")
+            ));
+        }
+        Ok(out.join("\n"))
     }
 
     #[tool(
@@ -614,7 +727,35 @@ impl ServerHandler for FoodServer {
 
 #[cfg(test)]
 mod tests {
-    use super::pressing;
+    use super::{perishable, pressing};
+    use crate::shelf::Kind;
+    use crate::store::Lot;
+    use crate::units::Family;
+
+    fn lot(kind: Option<Kind>, estimated: bool, location: &str) -> Lot {
+        Lot {
+            id: 1,
+            product: "x".into(),
+            family: Family::Piece,
+            qty: 1.0,
+            location: location.into(),
+            expiry: Some("2027-01-01".into()),
+            kind,
+            estimated,
+            opened: false,
+            added_at: 0,
+            nature: None,
+        }
+    }
+
+    #[test]
+    fn legacy_lot_without_kind_counts_as_urgent() {
+        assert!(perishable(&lot(None, false, "placard")));
+        assert!(perishable(&lot(Some(Kind::Dlc), false, "placard")));
+        assert!(perishable(&lot(Some(Kind::Ddm), true, "placard")));
+        assert!(perishable(&lot(Some(Kind::Ddm), false, "frigo")), "œufs, beurre");
+        assert!(!perishable(&lot(Some(Kind::Ddm), false, "placard")));
+    }
     use chrono::NaiveDate;
 
     fn d(s: &str) -> NaiveDate {

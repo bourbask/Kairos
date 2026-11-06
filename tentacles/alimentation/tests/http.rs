@@ -218,3 +218,83 @@ async fn product_set_unknown_product() {
     let (out, err) = call(&url, "product_set", json!({"name": "licorne", "nature": "plat"})).await;
     assert!(err, "{out}");
 }
+
+/// Inventaire de référence : frais à cuisiner, viennoiseries, condiments très anciens.
+async fn stocked() -> String {
+    let url = start().await;
+    let items = json!([
+        {"name": "Poulet fermier jaune", "qty": 1.25, "unit": "kg", "location": "frigo", "expiry": in_days(7)},
+        {"name": "Champignons de Paris bruns", "qty": 250, "unit": "g", "location": "frigo"},
+        {"name": "Carottes", "qty": 1.5, "unit": "kg", "location": "frigo"},
+        {"name": "Patates douces", "qty": 1, "unit": "kg", "location": "frigo"},
+        {"name": "Pains au chocolat", "qty": 2, "location": "placard", "expiry": in_days(3)},
+        {"name": "Sauce soja sucrée", "qty": 1, "location": "placard", "expiry": in_days(4)},
+        {"name": "Condiment balsamique blanc", "qty": 350, "unit": "ml", "location": "placard", "expiry": in_days(-695)},
+        {"name": "Bouillon pot-au-feu", "qty": 1, "location": "placard", "expiry": in_days(-770)},
+        {"name": "Vinaigre balsamique", "qty": 400, "unit": "ml", "location": "placard", "expiry": in_days(-285)},
+        {"name": "Tartinade marocaine", "qty": 1, "location": "placard", "expiry": in_days(-675)},
+        {"name": "Dosettes café", "qty": 1, "location": "placard", "expiry": in_days(-236)},
+        {"name": "Olivade verte", "qty": 1, "location": "placard", "expiry": in_days(-98)},
+        {"name": "Lait demi-écrémé", "qty": 1, "unit": "l", "location": "frigo", "expiry": in_days(1)}
+    ]);
+    let (out, err) = call(&url, "stock_add", json!({"items": items})).await;
+    assert!(!err, "{out}");
+    url
+}
+
+#[tokio::test]
+async fn cook_options_dinner_proposes_real_food() {
+    let url = stocked().await;
+    let (out, err) = call(&url, "cook_options", json!({"slot": "soir"})).await;
+    assert!(!err, "{out}");
+    assert!(out.contains("Poulet") && out.contains("Carottes"), "{out}");
+    assert!(!out.contains("Pains au chocolat"), "{out}");
+    let head = out.split("Dans le placard aussi").next().unwrap();
+    assert!(!head.contains("Sauce soja"), "{out}");
+    assert!(out.contains("Dans le placard aussi") && out.contains("Sauce soja"), "{out}");
+    assert!(out.find("Légumes").unwrap() < out.find("Protéines").unwrap(), "soir : légumes d'abord\n{out}");
+}
+
+#[tokio::test]
+async fn cook_options_breakfast_and_hike() {
+    let url = stocked().await;
+    let (out, _) = call(&url, "cook_options", json!({"slot": "petit-dejeuner"})).await;
+    assert!(out.contains("Pains au chocolat") && !out.contains("Poulet"), "{out}");
+    let (out, _) = call(&url, "cook_options", json!({"slot": "midi", "context": "rando"})).await;
+    assert!(!out.contains("Poulet") && !out.contains("Patates"), "{out}");
+    let (out, _) = call(&url, "cook_options", json!({"slot": "midi", "context": "boulot"})).await;
+    assert!(out.contains("à préparer la veille"), "{out}");
+}
+
+#[tokio::test]
+async fn cook_options_day_excludes_expired_by_then() {
+    let url = stocked().await;
+    let (out, _) = call(&url, "cook_options", json!({"slot": "soir"})).await;
+    assert!(out.contains("Lait"), "{out}");
+    let (out, _) = call(&url, "cook_options", json!({"slot": "soir", "day": in_days(3)})).await;
+    assert!(!out.contains("Lait"), "{out}");
+}
+
+#[tokio::test]
+async fn cook_options_rejects_bad_day() {
+    let url = stocked().await;
+    let (out, err) = call(&url, "cook_options", json!({"slot": "soir", "day": "demain"})).await;
+    assert!(err && out.contains("AAAA-MM-JJ"), "{out}");
+}
+
+#[tokio::test]
+async fn cook_options_empty_stock() {
+    let url = start().await;
+    let (out, err) = call(&url, "cook_options", json!({"slot": "soir"})).await;
+    assert!(!err && out.starts_with("Rien d'utilisable"), "{out}");
+}
+
+#[tokio::test]
+async fn use_first_splits_urgent_and_stale() {
+    let url = stocked().await;
+    let (out, _) = call(&url, "use_first", json!({"days": 4})).await;
+    let (urgent, stale) = out.split_once("Vieux, à vérifier").expect(&out);
+    assert!(urgent.contains("Lait") && !urgent.contains("Sauce soja"), "{out}");
+    assert_eq!(stale.lines().filter(|l| l.starts_with("- ")).count(), 5, "{out}");
+    assert!(stale.find("Bouillon").unwrap() < stale.find("Condiment").unwrap(), "plus anciens d'abord\n{out}");
+}

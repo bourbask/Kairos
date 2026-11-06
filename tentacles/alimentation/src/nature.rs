@@ -89,16 +89,16 @@ const RULES: &[(&[&str], Nature)] = &[
     ),
     (
         &[
-            "sucre", "cacao", "poudre", "amande", "noix", "noisette", "graine", "graines", "fruits secs",
-        ],
-        Base,
-    ),
-    (
-        &[
             "sauce", "vinaigre", "vinaigrette", "condiment", "huile", "moutarde", "bouillon", "pesto", "olivade",
             "tartinade", "tapenade", "ketchup", "mayonnaise",
         ],
         Condiment,
+    ),
+    (
+        &[
+            "sucre", "cacao", "poudre", "amande", "noix", "noisette", "graine", "graines", "fruits secs",
+        ],
+        Base,
     ),
     (
         &[
@@ -343,6 +343,7 @@ mod tests {
         assert_eq!(from_name("Patates douces"), Some(Nature::Feculent));
         assert_eq!(from_name("Reste de lasagnes"), Some(Nature::Plat));
         assert_eq!(from_name("Paprika fumé"), Some(Nature::Epice));
+        assert_eq!(from_name("Sauce soja sucrée"), Some(Nature::Condiment));
         assert_eq!(from_name("Objet mystère"), None);
     }
 
