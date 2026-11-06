@@ -124,7 +124,7 @@ const RULES: &[(&[&str], Nature)] = &[
     ),
     (
         &[
-            "hache", "steak", "boeuf", "veau", "porc", "poulet", "dinde", "canard", "agneau", "escalope", "saucisse",
+            "hache", "steak", "boeuf", "veau", "porc", "poulet", "dinde", "canard", "agneau", "coq", "escalope", "saucisse",
             "merguez", "viande", "cuisse", "roti", "volaille", "jambon", "lardon", "bacon", "saucisson", "chorizo",
             "foie gras", "blanc de", "poisson", "saumon", "cabillaud", "colin", "merlu", "truite", "thon", "sardine",
             "maquereau", "crevette", "moule", "fruits de mer", "oeuf", "tofu", "lentille", "lentilles", "pois chiche",
@@ -173,18 +173,83 @@ const CATEGORY_TAGS: &[(&[&str], Nature)] = &[
     (&["meals", "prepared"], Plat),
 ];
 
-fn first(rules: &[(&[&str], Nature)], folded: &str) -> Option<Nature> {
-    rules.iter().find(|(words, _)| words.iter().any(|w| has(folded, w))).map(|&(_, n)| n)
+/// Expressions dont le sens diffère de leurs mots : lues avant tout le reste.
+const PHRASES: &[(&str, Nature)] = &[
+    ("lait de coco", Base),
+    ("creme de coco", Base),
+    ("coconut milk", Base),
+    ("fruits secs", Base),
+    ("pain au chocolat", Sucre),
+    ("pains au chocolat", Sucre),
+    ("pain au lait", Sucre),
+    ("pains au lait", Sucre),
+    ("sirop d'erable", Sucre),
+    ("pate a tartiner", Sucre),
+    ("creme dessert", Sucre),
+    ("fruits de mer", Proteine),
+    ("noix de saint", Proteine),
+    ("plat de cote", Proteine),
+    ("plat de cotes", Proteine),
+    ("foie gras", Proteine),
+    ("pois chiche", Proteine),
+    ("pois chiches", Proteine),
+    ("feuilles de lasagne", Feculent),
+    ("pomme de terre", Feculent),
+    ("pommes de terre", Feculent),
+    ("petits pois", Legume),
+    ("haricot vert", Legume),
+    ("haricots verts", Legume),
+];
+
+/// Position du mot dans le nom, en début de mot. Un mot court (« sel »,
+/// « vin », « eau ») doit être entier, au pluriel près : « selle » n'est pas
+/// du sel, « vinaigre » n'est pas du vin.
+fn position(name: &str, word: &str) -> Option<usize> {
+    let w = fold(word);
+    name.match_indices(w.as_str())
+        .map(|(i, _)| i)
+        .filter(|&i| i == 0 || name[..i].ends_with([' ', '-', '\'', '(']))
+        .find(|&i| {
+            if w.chars().count() > 4 {
+                return true;
+            }
+            let rest = &name[i + w.len()..];
+            let rest = rest.strip_prefix('s').unwrap_or(rest);
+            rest.chars().next().is_none_or(|c| !c.is_alphanumeric())
+        })
+}
+
+/// L'aliment principal vient en tête du nom (« thon à l'huile », « beurre
+/// demi-sel ») : le mot reconnu le plus tôt l'emporte ; à égalité, l'ordre
+/// des règles.
+fn earliest(rules: &[(&[&str], Nature)], folded: &str) -> Option<Nature> {
+    let mut best: Option<(usize, Nature)> = None;
+    for &(words, n) in rules {
+        for w in words {
+            if let Some(p) = position(folded, w)
+                && best.is_none_or(|(b, _)| p < b)
+            {
+                best = Some((p, n));
+            }
+        }
+    }
+    best.map(|(_, n)| n)
+}
+
+fn phrase(folded: &str) -> Option<Nature> {
+    PHRASES.iter().find(|(p, _)| has(folded, p)).map(|&(_, n)| n)
 }
 
 pub fn from_name(name: &str) -> Option<Nature> {
-    first(RULES, &fold(name))
+    let f = fold(name);
+    phrase(&f).or_else(|| earliest(RULES, &f))
 }
 
-/// `None` si la catégorie n'est pas reconnue : elle ne masque alors pas le nom.
+/// Lue comme une étiquette de catégorie, pas comme un nom. `None` si elle
+/// n'est pas reconnue : elle ne masque alors pas le nom.
 pub fn from_category(cat: &str) -> Option<Nature> {
     let f = fold(cat);
-    first(RULES, &f).or_else(|| first(CATEGORY_TAGS, &f))
+    phrase(&f).or_else(|| earliest(CATEGORY_TAGS, &f))
 }
 
 /// Correction manuelle, sinon catégorie reconnue, sinon nom.
@@ -345,6 +410,46 @@ mod tests {
         assert_eq!(from_name("Paprika fumé"), Some(Nature::Epice));
         assert_eq!(from_name("Sauce soja sucrée"), Some(Nature::Condiment));
         assert_eq!(from_name("Objet mystère"), None);
+    }
+
+    #[test]
+    fn main_food_beats_its_seasoning() {
+        for (name, n) in [
+            ("Beurre demi-sel", Nature::Laitier),
+            ("Yaourt vanille", Nature::Laitier),
+            ("Fromage frais ail et fines herbes", Nature::Laitier),
+            ("Saucisson au poivre", Nature::Proteine),
+            ("Poulet curry", Nature::Proteine),
+            ("Selle d'agneau", Nature::Proteine),
+            ("Thon à l'huile d'olive", Nature::Proteine),
+            ("Sardines à l'huile", Nature::Proteine),
+            ("Raviolis sauce tomate", Nature::Feculent),
+            ("Pêches au sirop", Nature::Fruit),
+            ("Coq au vin", Nature::Proteine),
+            ("Jambon au miel", Nature::Proteine),
+            ("Pain aux céréales", Nature::Feculent),
+            ("Noix de Saint-Jacques", Nature::Proteine),
+            ("Yaourts nature sucrés", Nature::Laitier),
+            ("Jus d'orange sans sucres ajoutés", Nature::Boisson),
+            ("Eau plate", Nature::Boisson),
+            ("Sauce chili douce", Nature::Condiment),
+            ("Emmental râpé spécial gratin", Nature::Laitier),
+            ("Feuilles de lasagne", Nature::Feculent),
+            ("Plat de côtes", Nature::Proteine),
+            ("Vinaigre balsamique", Nature::Condiment),
+            ("Mélange fruits secs", Nature::Base),
+        ] {
+            assert_eq!(from_name(name), Some(n), "{name}");
+        }
+    }
+
+    #[test]
+    fn category_tags_are_read_as_categories() {
+        assert_eq!(resolve(None, Some("coconut milks"), "Lait de coco"), Some(Nature::Base));
+        assert_eq!(resolve(None, Some("orange juices"), "Jus"), Some(Nature::Boisson));
+        assert_eq!(resolve(None, Some("fruit yogurts"), "Yaourt"), Some(Nature::Laitier));
+        assert_eq!(resolve(None, Some("balsamic vinegars"), "X"), Some(Nature::Condiment));
+        assert_eq!(resolve(None, Some("sweet chili sauces"), "X"), Some(Nature::Condiment));
     }
 
     #[test]

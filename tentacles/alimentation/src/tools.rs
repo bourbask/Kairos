@@ -178,11 +178,18 @@ fn expiry(l: &Lot) -> Option<chrono::NaiveDate> {
     l.expiry.as_deref().and_then(|e| chrono::NaiveDate::parse_from_str(e, "%Y-%m-%d").ok())
 }
 
-/// Se gâte vraiment : DLC, date estimée (frais sans date lue), produit gardé
-/// au frais (œufs, beurre) ou nature de date inconnue (prudence). Une DDM
-/// imprimée hors du frigo n'est jamais urgente.
+/// Au-delà, une durée estimée décrit de l'épicerie sèche, pas du frais.
+const FRESH_SPAN_DAYS: i64 = 30;
+
+/// Se gâte vraiment : DLC, produit gardé au frais (œufs, beurre), frais sans
+/// date lue (estimation courte) ou nature de date inconnue (prudence). Une DDM
+/// imprimée hors du frigo, ou estimée à long terme (riz, pâtes), n'est jamais urgente.
 fn perishable(l: &Lot) -> bool {
-    l.kind != Some(Kind::Ddm) || l.estimated || l.location == "frigo"
+    let short = || {
+        let added = chrono::DateTime::from_timestamp(l.added_at, 0).map(|t| t.date_naive());
+        matches!((expiry(l), added), (Some(e), Some(a)) if (e - a).num_days() <= FRESH_SPAN_DAYS)
+    };
+    l.kind != Some(Kind::Ddm) || l.location == "frigo" || (l.estimated && short())
 }
 
 const STALE_MAX: usize = 5;
@@ -732,7 +739,8 @@ mod tests {
     use crate::store::Lot;
     use crate::units::Family;
 
-    fn lot(kind: Option<Kind>, estimated: bool, location: &str) -> Lot {
+    /// Lot dont la date tombe `span` jours après son entrée en stock.
+    fn lot(kind: Option<Kind>, estimated: bool, location: &str, span: i64) -> Lot {
         Lot {
             id: 1,
             product: "x".into(),
@@ -743,18 +751,28 @@ mod tests {
             kind,
             estimated,
             opened: false,
-            added_at: 0,
+            added_at: (chrono::NaiveDate::from_ymd_opt(2027, 1, 1).unwrap() - chrono::Duration::days(span))
+                .and_hms_opt(12, 0, 0)
+                .unwrap()
+                .and_utc()
+                .timestamp(),
             nature: None,
         }
     }
 
     #[test]
     fn legacy_lot_without_kind_counts_as_urgent() {
-        assert!(perishable(&lot(None, false, "placard")));
-        assert!(perishable(&lot(Some(Kind::Dlc), false, "placard")));
-        assert!(perishable(&lot(Some(Kind::Ddm), true, "placard")));
-        assert!(perishable(&lot(Some(Kind::Ddm), false, "frigo")), "œufs, beurre");
-        assert!(!perishable(&lot(Some(Kind::Ddm), false, "placard")));
+        assert!(perishable(&lot(None, false, "placard", 365)));
+        assert!(perishable(&lot(Some(Kind::Dlc), false, "placard", 365)));
+        assert!(perishable(&lot(Some(Kind::Ddm), true, "corbeille", 7)), "fruits sans date lue");
+        assert!(perishable(&lot(Some(Kind::Ddm), false, "frigo", 28)), "œufs, beurre");
+        assert!(!perishable(&lot(Some(Kind::Ddm), false, "placard", 365)));
+    }
+
+    #[test]
+    fn dry_goods_with_estimated_date_are_not_urgent() {
+        // Riz sans date lue : estimé à un an, ce n'est pas du frais.
+        assert!(!perishable(&lot(Some(Kind::Ddm), true, "placard", 365)));
     }
     use chrono::NaiveDate;
 
