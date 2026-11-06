@@ -22,6 +22,7 @@ struct Tentacle {
     name: String,
     url: String,
     token_env: String,
+    private: bool,
     link: Option<(Client, Vec<Tool>)>,
 }
 
@@ -64,7 +65,7 @@ impl Tentacles {
     pub async fn connect(entries: &[TentacleEntry]) -> Tentacles {
         let mut list: Vec<Tentacle> = entries
             .iter()
-            .map(|e| Tentacle { name: e.name.clone(), url: e.url.clone(), token_env: e.token_env.clone(), link: None })
+            .map(|e| Tentacle { name: e.name.clone(), url: e.url.clone(), token_env: e.token_env.clone(), private: e.private, link: None })
             .collect();
         for t in &mut list {
             t.connect().await;
@@ -88,6 +89,7 @@ impl Tentacles {
     pub fn tool_specs(&self) -> Vec<ToolSpec> {
         self.list
             .iter()
+            .filter(|t| !t.private)
             .filter_map(|t| t.link.as_ref().map(|(_, tools)| (t, tools)))
             .flat_map(|(t, tools)| {
                 tools.iter().map(|tool| ToolSpec {
@@ -97,6 +99,10 @@ impl Tentacles {
                 })
             })
             .collect()
+    }
+
+    pub fn private_names(&self) -> Vec<String> {
+        self.list.iter().filter(|t| t.private).map(|t| t.name.clone()).collect()
     }
 
     pub async fn call(&self, prefixed: &str, args: serde_json::Value) -> Result<String, String> {
@@ -122,6 +128,11 @@ impl Tentacles {
         self.call_conventional_limited(tool, args, TOOL_RESULT_MAX_CHARS).await
     }
 
+    /// Comme `call_conventional`, tentacules privés exclus : rien ne leur est demandé.
+    pub async fn call_conventional_public(&self, tool: &str, args: serde_json::Value) -> Vec<(String, Result<String, String>)> {
+        self.call_each(tool, args, TOOL_RESULT_MAX_CHARS, false).await
+    }
+
     /// Comme `call_conventional`, avec une borne de résultat explicite (voir `call_limited`).
     pub async fn call_conventional_limited(
         &self,
@@ -129,8 +140,18 @@ impl Tentacles {
         args: serde_json::Value,
         max_chars: usize,
     ) -> Vec<(String, Result<String, String>)> {
+        self.call_each(tool, args, max_chars, true).await
+    }
+
+    async fn call_each(
+        &self,
+        tool: &str,
+        args: serde_json::Value,
+        max_chars: usize,
+        include_private: bool,
+    ) -> Vec<(String, Result<String, String>)> {
         let mut out = Vec::new();
-        for t in self.list.iter().filter(|t| t.exposes(tool)) {
+        for t in self.list.iter().filter(|t| t.exposes(tool) && (include_private || !t.private)) {
             out.push((t.name.clone(), call_on(t, tool, args.clone(), max_chars).await));
         }
         out

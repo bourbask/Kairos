@@ -164,12 +164,23 @@ async fn brief(key: &str, period: &str, title: &str, now: NaiveDateTime, ctx: &C
     send_brief(period, title, now, ctx).await
 }
 
-/// Sections non vides, dans l'ordre de la configuration.
-async fn brief_sections(period: &str, ctx: &Ctx) -> Vec<String> {
-    let mut sections = Vec::new();
-    for (name, res) in ctx.tentacles.call_conventional("brief_section", json!({"period": period})).await {
+/// Sections non vides, dans l'ordre de la configuration : celles des tentacules
+/// non privés, puis celles des privés, qui ne doivent atteindre aucun moteur.
+/// Sans `include_private`, les privés ne sont pas appelés : lire leur section
+/// la consomme.
+async fn brief_sections(period: &str, include_private: bool, ctx: &Ctx) -> (Vec<String>, Vec<String>) {
+    let private = ctx.tentacles.private_names();
+    let mut sections = (Vec::new(), Vec::new());
+    let args = json!({"period": period});
+    let all = if include_private {
+        ctx.tentacles.call_conventional("brief_section", args).await
+    } else {
+        ctx.tentacles.call_conventional_public("brief_section", args).await
+    };
+    for (name, res) in all {
+        let side = if private.contains(&name) { &mut sections.1 } else { &mut sections.0 };
         match res {
-            Ok(s) if !s.trim().is_empty() => sections.push(s.trim().to_string()),
+            Ok(s) if !s.trim().is_empty() => side.push(s.trim().to_string()),
             Ok(_) => {}
             Err(e) => tracing::warn!(tentacule = %name, erreur = %e, "section de brief indisponible"),
         }
@@ -178,16 +189,22 @@ async fn brief_sections(period: &str, ctx: &Ctx) -> Vec<String> {
 }
 
 async fn send_brief(period: &str, title: &str, now: NaiveDateTime, ctx: &Ctx) -> anyhow::Result<()> {
-    let sections = brief_sections(period, ctx).await;
-    if sections.is_empty() {
-        return Ok(());
-    }
+    // Sortie décidée d'abord : une section lue est consommée, elle ne doit pas être jetée.
     let out = outlet(Spontaneous::Brief, now, ctx).await;
     if out == Outlet::Drop {
         return Ok(());
     }
-    let raw = format!("{title}\n\n{}", sections.join("\n\n"));
-    let text = reword(&raw, ctx).await.unwrap_or(raw);
+    let (sections, private) = brief_sections(period, true, ctx).await;
+    if sections.is_empty() && private.is_empty() {
+        return Ok(());
+    }
+    let text = if sections.is_empty() {
+        title.to_string()
+    } else {
+        let raw = format!("{title}\n\n{}", sections.join("\n\n"));
+        reword(&raw, ctx).await.unwrap_or(raw)
+    };
+    let text = [text].into_iter().chain(private).collect::<Vec<_>>().join("\n\n");
     if out == Outlet::Written {
         deliver(&text, now, ctx).await
     } else {
@@ -275,7 +292,7 @@ async fn suggestion(now: NaiveDateTime, ctx: &mut Ctx) -> anyhow::Result<()> {
     let context = format!(
         "Nous sommes le {}, heure locale.\n\n{}",
         now.format("%Y-%m-%d %H:%M"),
-        brief_sections(period, ctx).await.join("\n\n")
+        brief_sections(period, false, ctx).await.0.join("\n\n")
     );
     let text = match chat(&client, Urgency::Deferred, SUGGESTION_PROMPT, &[ChatTurn::User(context.clone())], &[]).await {
         Ok(r) => plain(&r.text.unwrap_or_default()),

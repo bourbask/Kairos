@@ -6,6 +6,9 @@
 # d'environnement. La passerelle se règle par TETE_BIND (optionnel),
 # TETE_INBOUND_TOKEN, TETE_OUTBOUND_URL et TETE_OUTBOUND_TOKEN.
 
+# Tentacule portant les commandes de sélection (défaut : "marches")
+# commands_tentacle = "marches"
+
 # Cadence des sorties spontanées
 interruptions_per_day = 2        # plafond d'interruptions hors briefs
 suggestion_every_minutes = 120   # délai minimal entre deux suggestions
@@ -36,3 +39,11 @@ end = "18:00"
 # name = "finances"
 # url = "http://finances:8094/mcp"
 # token_env = "FINANCES_TOKEN"
+#
+# Tentacule privé : `private = true` masque ses outils au moteur de conversation
+# et joint sa section de brief telle quelle, sans reformulation.
+# [[tentacles]]
+# name = "marches"
+# url = "http://marches:8099/mcp"
+# token_env = "MARCHES_TOKEN"
+# private = true

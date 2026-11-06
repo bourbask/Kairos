@@ -122,6 +122,23 @@ services:
     ports:
       - "${TENTACLES_BIND_ADDR:-127.0.0.1}:${ALIMENTATION_BIND_PORT:-8098}:8098"
 
+  marches:
+    image: kairos:local
+    restart: unless-stopped
+    user: "1001:1001"
+    mem_limit: 64m
+    entrypoint: ["/app/kairos-marches"]
+    environment:
+      MARCHES_BIND: 0.0.0.0:8099
+      MARCHES_DB: /app/marches/marches.db
+    env_file:
+      - path: kairos.env
+        required: false
+    volumes:
+      - marches-data:/app/marches
+    ports:
+      - "${TENTACLES_BIND_ADDR:-127.0.0.1}:${MARCHES_BIND_PORT:-8099}:8099"
+
   # Tête : boucle principale (conversation, briefs, suggestions) ; joint les tentacules par nom de service.
   tete:
     <<: *kairos-common
@@ -193,3 +210,4 @@ volumes:
   radicale-data:
   memoire-data:
   alimentation-data:
+  marches-data:

@@ -1330,6 +1330,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "kairos-marches"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "reqwest 0.12.28",
+ "rmcp",
+ "rusqlite",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tentacle-common",
+ "tokio",
+]
+
+[[package]]
 name = "kairos-medias"
 version = "0.1.0"
 dependencies = [

@@ -1,5 +1,5 @@
 use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -35,6 +35,8 @@ struct Rec {
     alerts: Mutex<String>,
     /// Section de brief imposée ; vide → section par défaut.
     brief: Mutex<String>,
+    /// Appels reçus par `brief_section`.
+    brief_calls: AtomicU32,
 }
 
 #[derive(Clone)]
@@ -76,6 +78,7 @@ struct SetSummary {
 impl Fake {
     #[tool(description = "Section de brief.")]
     fn brief_section(&self, Parameters(p): Parameters<Period>) -> Result<String, String> {
+        self.rec.brief_calls.fetch_add(1, Ordering::SeqCst);
         let fixed = self.rec.brief.lock().unwrap().clone();
         if !fixed.is_empty() {
             return Ok(fixed);
@@ -122,6 +125,12 @@ impl ServerHandler for Fake {
 }
 
 async fn tentacle(env: &str) -> (Tentacles, Arc<Rec>) {
+    let (url, rec) = spawn_fake(env).await;
+    let t = Tentacles::connect(&[TentacleEntry { name: "t".into(), url, token_env: env.into(), private: false }]).await;
+    (t, rec)
+}
+
+async fn spawn_fake(env: &str) -> (String, Arc<Rec>) {
     unsafe { std::env::set_var(env, "secret") };
     let rec = Arc::new(Rec::default());
     *rec.unsummarized.lock().unwrap() = "[]".into();
@@ -133,8 +142,7 @@ async fn tentacle(env: &str) -> (Tentacles, Arc<Rec>) {
         rec: r.clone(),
         tool_router: Fake::tool_router(),
     }));
-    let t = Tentacles::connect(&[TentacleEntry { name: "t".into(), url, token_env: env.into() }]).await;
-    (t, rec)
+    (url, rec)
 }
 
 // --- LLM factice ---
@@ -807,4 +815,75 @@ async fn long_alert_list_not_truncated() {
     run(Job::Alerts, at(7, 15, 0), &mut fx.ctx).await.unwrap();
     assert_eq!(sent(&fx.gw).len(), 1);
     assert!(fx.ctx.state.alert_seen("t:a9").unwrap());
+}
+
+// --- tentacule privé ---
+
+const PRIVATE: &str = "Suivi : 42 % sur le sujet confidentiel";
+
+/// Remplace les tentacules par « t » (public, sauf si `public` est faux) puis « p » (privé) ;
+/// renvoie l'enregistreur de « p ».
+async fn with_private(fx: &mut Fx, env: &str, public: bool) -> Arc<Rec> {
+    let (url_p, rec_p) = spawn_fake(env).await;
+    *rec_p.brief.lock().unwrap() = PRIVATE.into();
+    let (url_t, rec_t) = spawn_fake(env).await;
+    fx.rec = rec_t;
+    let mut entries = vec![TentacleEntry { name: "p".into(), url: url_p, token_env: env.into(), private: true }];
+    if public {
+        entries.insert(0, TentacleEntry { name: "t".into(), url: url_t, token_env: env.into(), private: false });
+    }
+    fx.ctx.tentacles = Tentacles::connect(&entries).await;
+    rec_p
+}
+
+fn requests_text(llm: &Shared) -> String {
+    llm.lock().unwrap().requests.iter().map(|r| r.to_string()).collect()
+}
+
+#[tokio::test]
+async fn private_section_never_reworded_and_appended_verbatim() {
+    let mut fx = fixture("JB_P1", &["brief"], vec![text("Un rendez-vous à 10:00.")]).await;
+    with_private(&mut fx, "JB_P1", true).await;
+    run(Job::MorningBrief, at(7, 7, 30), &mut fx.ctx).await.unwrap();
+    assert_eq!(fx.llm.lock().unwrap().requests.len(), 1);
+    assert!(!requests_text(&fx.llm).contains("confidentiel"));
+    assert_eq!(sent(&fx.gw), vec![format!("Un rendez-vous à 10:00.\n\n{PRIVATE}")]);
+}
+
+#[tokio::test]
+async fn only_private_sections_call_no_engine() {
+    let mut fx = fixture("JB_P2", &["brief"], vec![text("reformulé")]).await;
+    with_private(&mut fx, "JB_P2", false).await;
+    run(Job::MorningBrief, at(7, 7, 30), &mut fx.ctx).await.unwrap();
+    assert!(fx.llm.lock().unwrap().requests.is_empty());
+    assert_eq!(sent(&fx.gw), vec![format!("Brief du matin\n\n{PRIVATE}")]);
+}
+
+#[tokio::test]
+async fn private_section_kept_out_of_suggestion_context() {
+    let mut fx = fixture("JB_P3", &["suggestion"], vec![text("RIEN")]).await;
+    with_private(&mut fx, "JB_P3", true).await;
+    run(Job::Suggestion, at(7, 15, 0), &mut fx.ctx).await.unwrap();
+    let req = requests_text(&fx.llm);
+    assert!(req.contains("rendez-vous") && !req.contains("confidentiel"));
+}
+
+#[tokio::test]
+async fn suggestion_never_calls_private_brief_section() {
+    let mut fx = fixture("JB_P4", &["suggestion"], vec![text("RIEN")]).await;
+    let p = with_private(&mut fx, "JB_P4", true).await;
+    run(Job::Suggestion, at(7, 15, 0), &mut fx.ctx).await.unwrap();
+    assert_eq!(fx.rec.brief_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(p.brief_calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn muted_brief_reads_no_section() {
+    let mut fx = fixture("JB_P5", &[], vec![]).await;
+    let p = with_private(&mut fx, "JB_P5", true).await;
+    fx.ctx.state.add_quiet(at(7, 6, 0), at(7, 12, 0), QuietScope::Briefs).unwrap();
+    run(Job::MorningBrief, at(7, 7, 30), &mut fx.ctx).await.unwrap();
+    assert!(sent(&fx.gw).is_empty());
+    assert_eq!(p.brief_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(fx.rec.brief_calls.load(Ordering::SeqCst), 0);
 }
