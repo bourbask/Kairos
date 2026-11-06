@@ -126,7 +126,7 @@ impl ServerHandler for Fake {
 
 async fn tentacle(env: &str) -> (Tentacles, Arc<Rec>) {
     let (url, rec) = spawn_fake(env).await;
-    let t = Tentacles::connect(&[TentacleEntry { name: "t".into(), url, token_env: env.into(), private: false }]).await;
+    let t = Tentacles::connect(&[TentacleEntry { name: "t".into(), url, token_env: env.into(), private: false, keywords: vec![] }]).await;
     (t, rec)
 }
 
@@ -184,6 +184,8 @@ async fn llm(usages: &[&str], replies: Vec<Value>) -> (LlmRouter, Shared) {
         llm: LlmConfig { endpoint, model: "m".into(), protocol: LlmProtocol::OpenaiCompatible, ..Default::default() },
         placement: Placement::SelfHosted,
         daily_token_cap: None,
+        fallback: None,
+        max_tools: None,
     };
     let config = LlmRoutingConfig {
         // Voie auto-hébergée renseignée comme par l'environnement : un usage non déclaré ne doit pas la prendre.
@@ -828,9 +830,9 @@ async fn with_private(fx: &mut Fx, env: &str, public: bool) -> Arc<Rec> {
     *rec_p.brief.lock().unwrap() = PRIVATE.into();
     let (url_t, rec_t) = spawn_fake(env).await;
     fx.rec = rec_t;
-    let mut entries = vec![TentacleEntry { name: "p".into(), url: url_p, token_env: env.into(), private: true }];
+    let mut entries = vec![TentacleEntry { name: "p".into(), url: url_p, token_env: env.into(), private: true, keywords: vec![] }];
     if public {
-        entries.insert(0, TentacleEntry { name: "t".into(), url: url_t, token_env: env.into(), private: false });
+        entries.insert(0, TentacleEntry { name: "t".into(), url: url_t, token_env: env.into(), private: false, keywords: vec![] });
     }
     fx.ctx.tentacles = Tentacles::connect(&entries).await;
     rec_p

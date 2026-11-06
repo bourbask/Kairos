@@ -33,6 +33,7 @@ end = "18:00"
 # name = ""
 # url = ""         # point d'accès MCP
 # token_env = ""   # nom de la variable d'environnement portant le jeton
+# keywords = []    # mots du message qui désignent ce tentacule (moteur à max_tools)
 #
 # Exemple (tentacule finances ; port 8094 par défaut) :
 # [[tentacles]]

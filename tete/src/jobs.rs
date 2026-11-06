@@ -214,7 +214,7 @@ async fn send_brief(period: &str, title: &str, now: NaiveDateTime, ctx: &Ctx) ->
 
 /// Reformulation par le moteur `brief` ; absent ou en échec → `None` (texte brut).
 async fn reword(raw: &str, ctx: &Ctx) -> Option<String> {
-    let client = engine(ctx.agent.router(), "brief", Urgency::Deferred).ok()?;
+    let client = engine(ctx.agent.router(), "brief", Urgency::Deferred).await.ok()?;
     match chat(&client, Urgency::Deferred, BRIEF_PROMPT, &[ChatTurn::User(raw.to_string())], &[]).await {
         Ok(r) => r.text.map(|t| plain(&t)).filter(|t| !t.trim().is_empty()).filter(|t| {
             let kept = faithful(raw, t);
@@ -285,7 +285,7 @@ async fn suggestion(now: NaiveDateTime, ctx: &mut Ctx) -> anyhow::Result<()> {
     if outlet(Spontaneous::Suggestion, now, ctx).await != Outlet::Written {
         return Ok(());
     }
-    let Ok(client) = engine(ctx.agent.router(), "suggestion", Urgency::Deferred) else {
+    let Ok(client) = engine(ctx.agent.router(), "suggestion", Urgency::Deferred).await else {
         return Ok(());
     };
     let period = if now.time() < NaiveTime::from_hms_opt(14, 0, 0).expect("heure valide") { "matin" } else { "soir" };
@@ -433,7 +433,7 @@ struct Summary {
 /// Une conversation non résumée (lecture, moteur ou sortie en échec) reste
 /// pour la nuit suivante ; les autres sont traitées.
 async fn summaries(ctx: &Ctx) -> anyhow::Result<()> {
-    let Ok(client) = engine(ctx.agent.router(), "resume_conversation", Urgency::Deferred) else {
+    let Ok(client) = engine(ctx.agent.router(), "resume_conversation", Urgency::Deferred).await else {
         return Ok(());
     };
     let lists = ctx.tentacles.call_conventional("conversations_unsummarized", json!({"limit": SUMMARY_BATCH})).await;

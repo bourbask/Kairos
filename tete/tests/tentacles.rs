@@ -63,7 +63,7 @@ async fn spawn(label: &'static str, token: &str) -> String {
 }
 
 fn entry(name: &str, url: &str, env: &str) -> TentacleEntry {
-    TentacleEntry { name: name.into(), url: url.into(), token_env: env.into(), private: false }
+    TentacleEntry { name: name.into(), url: url.into(), token_env: env.into(), private: false, keywords: vec![] }
 }
 
 fn set(env: &str, v: &str) {

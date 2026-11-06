@@ -107,7 +107,7 @@ async fn run_calls_tentacle_tools() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}/mcp", listener.local_addr().unwrap());
     tokio::spawn(tentacle_common::serve_listener(listener, "secret".into(), || Fake { tool_router: Fake::tool_router() }));
-    let t = Tentacles::connect(&[TentacleEntry { name: "m".into(), url, token_env: "CMD_T1".into(), private: true }]).await;
+    let t = Tentacles::connect(&[TentacleEntry { name: "m".into(), url, token_env: "CMD_T1".into(), private: true, keywords: vec![] }]).await;
 
     let got = |s: String| serde_json::from_str::<Value>(&s).unwrap();
     assert_eq!(got(run(Command::Follow(vec![1, 3]), &t, "m").await), json!({"follow": {"numbers": [1, 3]}}));
