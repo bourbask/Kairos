@@ -231,6 +231,22 @@ async fn unreachable_engine_falls_back_with_capped_tools() {
 }
 
 #[tokio::test]
+async fn system_prompt_states_work_rhythm() {
+    let (t, _) = tentacle("AG_RY").await;
+    let (router, shared) = llm(vec![text("ok")]).await;
+    let state = State::open_in_memory().unwrap();
+    let rhythm = WorkRhythm {
+        days: HashMap::from([(Weekday::Mon, WorkMode::OnSite), (Weekday::Tue, WorkMode::Remote)]),
+        ..Default::default()
+    };
+    let mut agent = Agent::new(router, IDLE).with_rhythm(rhythm);
+    agent.reply("salut", at(9, 0), &t, &state).await; // 2026-11-02 = lundi
+    let s = shared.lock().unwrap();
+    let system = s.requests[0]["messages"][0]["content"].as_str().unwrap();
+    assert!(system.contains("Rythme : aujourd'hui sur site, demain télétravail."), "{system}");
+}
+
+#[tokio::test]
 async fn private_tentacle_tool_refused_in_conversation() {
     let (t, _) = tentacle_with("AG_P1", true).await;
     let (router, shared) = llm(vec![call("c1", "t__echo", json!({"text": "x"})), text("fini")]).await;
