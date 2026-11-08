@@ -1,0 +1,135 @@
+package app.kairos.mobile.ui.finances
+
+import app.kairos.mobile.data.ApiError
+import app.kairos.mobile.data.Envelope
+import app.kairos.mobile.data.FinanceCycle
+import app.kairos.mobile.data.FinanceWealth
+import app.kairos.mobile.data.FinancesSnapshot
+import app.kairos.mobile.data.Freshness
+import app.kairos.mobile.ui.kit.MASK
+import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.YearMonth
+import java.time.format.DateTimeFormatter
+import java.time.format.TextStyle
+import java.time.temporal.ChronoUnit
+import java.util.Locale
+
+/*
+ * Logique pure de l'espace Finances : saisie, tri, sections visibles, état
+ * hors ligne, libellés. Sans Compose ni réseau, testée sur la JVM.
+ */
+
+/** Plafond accepté par le module. */
+private const val AMOUNT_MAX = 1_000_000_000.0
+
+private val AMOUNT = Regex("""\d+([.,]\d{1,2})?""")
+
+/**
+ * Montant saisi (« 12,50 », « 1 200 », « 40 € ») en euros, ou null s'il n'est pas
+ * strictement positif, lisible et sous le plafond : rien ne part au serveur.
+ */
+fun parseAmount(input: String): Double? {
+    val s = input.filterNot { it.isWhitespace() || it == ' ' || it == ' ' }.removeSuffix("€")
+    if (!AMOUNT.matches(s)) return null
+    return s.replace(',', '.').toDoubleOrNull()?.takeIf { it > 0 && it <= AMOUNT_MAX }
+}
+
+/**
+ * Nouvel état après une actualisation : ce qui a répondu remplace l'ancien, le
+ * reste est gardé. Un échec marque l'état hors ligne, avec la raison quand le
+ * serveur a répondu sans le module.
+ */
+fun financesAfter(prev: FinancesSnapshot, cycle: Result<FinanceCycle>, wealth: Result<FinanceWealth>, now: String): FinancesSnapshot {
+    val error = (cycle.exceptionOrNull() ?: wealth.exceptionOrNull()) as? ApiError
+    val any = cycle.isSuccess || wealth.isSuccess
+    return FinancesSnapshot(
+        cycle = cycle.getOrNull() ?: prev.cycle,
+        wealth = wealth.getOrNull() ?: prev.wealth,
+        fetchedAt = if (any) now else prev.fetchedAt,
+        offline = cycle.isFailure || wealth.isFailure,
+        reason = (error as? ApiError.Server)?.let { if (it.outdated) ApiError.Server.OUTDATED else "Module indisponible" },
+    )
+}
+
+/** Part consommée ; prévu nul et dépense engagée = dépassement maximal. */
+private fun pressure(e: Envelope): Double = when {
+    e.planned > 0 -> e.spent / e.planned
+    e.spent > 0 -> Double.POSITIVE_INFINITY
+    else -> 0.0
+}
+
+/** Enveloppes les plus entamées d'abord, puis par nom. */
+fun envelopesByPressure(envelopes: List<Envelope>): List<Envelope> =
+    envelopes.sortedWith(compareByDescending<Envelope> { pressure(it) }.thenBy { it.poste })
+
+enum class CycleSection { Summary, Envelopes, Charges, Cushion, Alerts }
+
+enum class WealthSection { NetWorth, History, Loans, Portfolio }
+
+/** Sections du cycle à montrer : une source absente ou vide ne laisse pas de titre orphelin. */
+fun cycleSections(c: FinanceCycle): List<CycleSection> = listOfNotNull(
+    CycleSection.Summary.takeIf { c.available != null },
+    CycleSection.Envelopes.takeIf { c.envelopes.isNotEmpty() },
+    CycleSection.Charges.takeIf { c.charges.isNotEmpty() },
+    CycleSection.Cushion.takeIf { c.cushion != null },
+    CycleSection.Alerts.takeIf { !c.alerts.isNullOrEmpty() },
+)
+
+fun wealthSections(w: FinanceWealth): List<WealthSection> = listOfNotNull(
+    WealthSection.NetWorth.takeIf { w.netWorth != null },
+    WealthSection.History.takeIf { !w.history.isNullOrEmpty() },
+    WealthSection.Loans.takeIf { !w.loans.isNullOrEmpty() },
+    WealthSection.Portfolio.takeIf { w.portfolio?.let { it.buckets.isNotEmpty() || it.lines.isNotEmpty() } == true },
+)
+
+/** Libellé d'une catégorie de risque ; inconnue → son nom. */
+fun bucketLabel(name: String): String = when (name) {
+    "high" -> "Dynamique"
+    "mid" -> "Équilibré"
+    "low" -> "Prudent"
+    else -> name
+}
+
+/** Avancement du cycle à [today], de 0 (début) à 1 (fin) ; null si les dates manquent. */
+fun cycleProgress(start: String?, end: String?, today: LocalDate): Float? {
+    val s = date(start) ?: return null
+    val e = date(end) ?: return null
+    val total = ChronoUnit.DAYS.between(s, e)
+    if (total <= 0) return 1f
+    return (ChronoUnit.DAYS.between(s, today).toFloat() / total).coerceIn(0f, 1f)
+}
+
+private val DIGITS = Regex("""\d+([\s  .,/:]*\d+)*""")
+
+/**
+ * Texte libre du module (alertes, raisons) : masqué, tout nombre est remplacé.
+ * ponytail: dates et quantités sont masquées avec les montants, le texte ne dit pas lequel est lequel.
+ */
+fun maskDigits(text: String, masked: Boolean): String = if (masked) DIGITS.replace(text, MASK) else text
+
+private fun date(s: String?): LocalDate? = s?.let { runCatching { LocalDate.parse(it.take(10)) }.getOrNull() }
+
+private val DAY_MONTH = DateTimeFormatter.ofPattern("dd/MM")
+
+/** « 12/11 » pour une date AAAA-MM-JJ ; sinon le texte tel quel. */
+fun dayLabel(s: String?): String? = s?.let { date(it)?.format(DAY_MONTH) ?: it }
+
+/** « nov. 2026 » pour AAAA-MM ; sinon le texte tel quel. */
+fun monthLabel(s: String): String =
+    runCatching { YearMonth.parse(s.take(7)).let { "${it.month.getDisplayName(TextStyle.SHORT, Locale.FRENCH)} ${it.year}" } }.getOrDefault(s)
+
+/** Bandeau de fraîcheur bancaire (titre, détail), ou null si les données sont à jour. */
+fun freshnessBanner(f: Freshness?): Pair<String, String?>? {
+    f ?: return null
+    val title = when {
+        f.consentExpired -> "Accès bancaire à renouveler"
+        f.stale -> "Données bancaires à rafraîchir"
+        else -> return null
+    }
+    return title to f.lastSync?.let { "Dernière synchronisation : ${syncLabel(it)}" }
+}
+
+private fun syncLabel(s: String): String =
+    runCatching { LocalDateTime.parse(s.take(19)).format(DateTimeFormatter.ofPattern("dd/MM à HH:mm")) }.getOrNull()
+        ?: dayLabel(s) ?: s

@@ -35,6 +35,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -80,6 +81,8 @@ import app.kairos.mobile.ui.maison.UnpackState
 import app.kairos.mobile.ui.overlay.anchorTo
 import app.kairos.mobile.data.Order
 import app.kairos.mobile.ui.spaces.SpacesScreen
+import app.kairos.mobile.ui.finances.FinancesScreen
+import app.kairos.mobile.ui.kit.LocalAmountsMasked
 import app.kairos.mobile.ui.pairing.PairingScreen
 import app.kairos.mobile.ui.talk.ChatScreen
 import app.kairos.mobile.ui.talk.Conversation
@@ -125,7 +128,9 @@ class MainActivity : ComponentActivity() {
                 onDispose {}
             }
             KairosTheme(dark = dark) {
-                KairosRoot(model)
+                CompositionLocalProvider(LocalAmountsMasked provides model.amountsMasked) {
+                    KairosRoot(model)
+                }
             }
         }
     }
@@ -186,6 +191,10 @@ class AppModel(app: Application) : AndroidViewModel(app) {
     var speakReplies by mutableStateOf(false)
         private set
     var theme by mutableStateOf(ThemeMode.Clair)
+        private set
+
+    /** Montants masqués dans tous les espaces. */
+    var amountsMasked by mutableStateOf(false)
         private set
 
     private val processStarted: Boolean
@@ -328,6 +337,7 @@ class AppModel(app: Application) : AndroidViewModel(app) {
             val saved = runCatching { settings.load() }.getOrNull()
             speakReplies = saved?.speakReplies ?: false
             theme = saved?.theme ?: ThemeMode.Clair
+            amountsMasked = saved?.amountsMasked ?: false
             session = runCatching { store.load() }.getOrNull()?.let(::open)
             loaded = true
             checkUpdate()
@@ -379,6 +389,12 @@ class AppModel(app: Application) : AndroidViewModel(app) {
     fun changeTheme(mode: ThemeMode) {
         theme = mode
         viewModelScope.launch { settings.saveTheme(mode) }
+    }
+
+    fun toggleAmountsMasked() {
+        amountsMasked = !amountsMasked
+        val on = amountsMasked
+        viewModelScope.launch { settings.saveAmountsMasked(on) }
     }
 
     /** Efface le jeton et revient à l'appairage. */
@@ -470,6 +486,7 @@ private fun KairosRoot(model: AppModel) {
     var chatOpen by rememberSaveable { mutableStateOf(false) }
     var settingsOpen by rememberSaveable { mutableStateOf(false) }
     var maisonOpen by rememberSaveable { mutableStateOf(false) }
+    var financesOpen by rememberSaveable { mutableStateOf(false) }
     var unpackOrder by rememberSaveable { mutableStateOf<Long?>(null) }
     var adding by rememberSaveable { mutableStateOf(false) }
     var focusInput by remember { mutableStateOf(false) }
@@ -570,12 +587,17 @@ private fun KairosRoot(model: AppModel) {
             },
             spaces = { padding ->
                 val maison by session.repository.maison.collectAsState()
-                // Une actualisation à l'arrivée sur l'onglet : les chiffres de la carte Maison sont à jour.
+                val finances by session.repository.finances.collectAsState()
+                // Une actualisation à l'arrivée sur l'onglet : les chiffres des cartes sont à jour.
                 LaunchedEffect(Unit) {
-                    try {
-                        session.repository.refreshMaison()
-                    } catch (_: ApiError.Unauthorized) {
-                        model.unauthorized()
+                    for (refresh in listOf(session.repository::refreshMaison, session.repository::refreshFinances)) {
+                        launch {
+                            try {
+                                refresh()
+                            } catch (_: ApiError.Unauthorized) {
+                                model.unauthorized()
+                            }
+                        }
                     }
                 }
                 SpacesScreen(
@@ -584,6 +606,20 @@ private fun KairosRoot(model: AppModel) {
                     maisonOpen = maisonOpen,
                     onOpenMaison = { maisonOpen = true },
                     onCloseMaison = { maisonOpen = false },
+                    finances = finances,
+                    financesOpen = financesOpen,
+                    onOpenFinances = { financesOpen = true },
+                    onCloseFinances = { financesOpen = false },
+                    financesContent = {
+                        FinancesScreen(
+                            repository = session.repository,
+                            padding = padding,
+                            masked = model.amountsMasked,
+                            onToggleMasked = model::toggleAmountsMasked,
+                            onClose = { financesOpen = false },
+                            onUnauthorized = model::unauthorized,
+                        )
+                    },
                 ) {
                     MaisonScreen(
                         repository = session.repository,
