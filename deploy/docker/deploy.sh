@@ -8,6 +8,10 @@
 # espaces) ; sinon ollama, scheduler et les tentacules, plus la tête seulement
 # si sa configuration (config/tete.toml) existe sur l'hôte — sans elle, la tête
 # redémarrerait en boucle.
+#
+# APK de l'application : si `gh` est disponible et authentifié, l'APK de la
+# release v<version du Cargo.toml racine> est déposé dans <KAIROS_DIR>/apk sur
+# l'hôte (servi par la tête). Sinon l'étape est sautée, le déploiement continue.
 set -euo pipefail
 
 VPS_HOST="${VPS_HOST:?export VPS_HOST=user@hote}"
@@ -23,7 +27,7 @@ if [ -n "${KAIROS_SERVICES:-}" ]; then
     fi
 fi
 
-echo "==> [1/3] Envoi du working tree vers l'hôte"
+echo "==> [1/4] Envoi du working tree vers l'hôte"
 ssh "$VPS_HOST" "mkdir -p '$KAIROS_DIR'"
 # --exclude-vcs-ignores écarte tout ce que le dépôt ignore : configuration et
 # secrets propres à une machine restent sur leur hôte, les fichiers d'exemple
@@ -31,13 +35,43 @@ ssh "$VPS_HOST" "mkdir -p '$KAIROS_DIR'"
 # l'hôte cible à chaque envoi, y compris ses jetons.
 tar czf - -C "$ROOT" --exclude-vcs-ignores \
     --exclude=target --exclude=.git --exclude=data --exclude=briefings \
-    --exclude=logs --exclude=private . \
+    --exclude=logs --exclude=private --exclude=./apk . \
   | ssh "$VPS_HOST" "tar xzf - -C '$KAIROS_DIR'"
 
-echo "==> [2/3] Build de l'image"
+# Remplace l'APK de l'hôte par celui de la release ; tout échec est rapporté, jamais fatal.
+deploy_apk() {
+    local version tmp apk
+    version="$(sed -n 's/^version = "\(.*\)"$/\1/p' "$ROOT/Cargo.toml" | head -n1)"
+    if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        echo "    APK ignoré : version illisible dans Cargo.toml."; return 0
+    fi
+    if ! command -v gh >/dev/null 2>&1; then
+        echo "    APK ignoré : gh indisponible (l'application garde la version déjà déposée)."; return 0
+    fi
+    tmp="$(mktemp -d)"
+    if ! (cd "$ROOT" && gh release download "v$version" -p '*.apk' -D "$tmp") >/dev/null 2>&1; then
+        echo "    APK ignoré : release v$version sans APK, ou gh non authentifié."
+        rm -rf "$tmp"; return 0
+    fi
+    apk="$(find "$tmp" -maxdepth 1 -name '*.apk' | head -n1)"
+    # Dépôt sous un nom temporaire puis renommage : la tête ne sert jamais un fichier partiel.
+    if ssh "$VPS_HOST" "mkdir -p '$KAIROS_DIR/apk' && cd '$KAIROS_DIR/apk' \
+            && cat > .kairos-v$version.apk.part && mv .kairos-v$version.apk.part kairos-v$version.apk \
+            && find . -maxdepth 1 -name 'kairos-v*.apk' ! -name 'kairos-v$version.apk' -delete" < "$apk"; then
+        echo "    APK v$version déposé."
+    else
+        echo "    APK ignoré : dépôt sur l'hôte impossible."
+    fi
+    rm -rf "$tmp"
+}
+
+echo "==> [2/4] APK de l'application"
+deploy_apk || echo "    APK ignoré."
+
+echo "==> [3/4] Build de l'image"
 ssh "$VPS_HOST" "cd '$KAIROS_DIR/deploy/docker' && docker compose build"
 
-echo "==> [3/3] (Re)démarrage des services"
+echo "==> [4/4] (Re)démarrage des services"
 # Les services propres à l'hôte (docker-compose.override.yml, non versionné) sont démarrés par l'opérateur.
 if [ -n "${KAIROS_SERVICES:-}" ]; then
     SERVICES="$KAIROS_SERVICES"
