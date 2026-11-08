@@ -41,7 +41,7 @@ class InFlight {
 }
 
 /** « Remettre dans le fil » : pas pour une carte dont le module a déjà agi, l'effet ne se défait pas d'ici. */
-fun restorable(item: TimelineItem): Boolean = !(item.phase == Phase.Fait && item.card.done != null)
+fun restorable(item: TimelineItem): Boolean = !(item.phase == Phase.Fait && (item.card.done != null || item.card.state == "fait"))
 
 /** Un choix n'est demandé que s'il y a vraiment à choisir. */
 val CardDone.asks: Boolean get() = (choices?.options?.size ?: 0) > 1

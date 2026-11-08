@@ -118,5 +118,6 @@ class DoneTest {
         assertTrue(restorable(TimelineItem(meal, Phase.PlusTard)))
         // L'effet du module ne se défait pas depuis le fil.
         assertFalse(restorable(TimelineItem(meal, Phase.Fait)))
+        assertFalse(restorable(TimelineItem(Card(id = "m", title = "m", state = "fait"), Phase.Fait)))
     }
 }
