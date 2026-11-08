@@ -31,6 +31,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -350,9 +351,21 @@ private fun DayContent(
         timeline(today?.cards.orEmpty(), marks[todayKey].orEmpty(), now.toLocalTime(), pending)
     }
     var expanded by rememberSaveable { mutableStateOf<String?>(null) }
+    val listState = rememberLazyListState()
+    // À l'ouverture du jour : le fil est amené à l'élément en cours, une seule fois (jamais pendant un geste).
+    val leading = listOf(snapshot.offline, update != null, true, snapshot.decisions.isNotEmpty(), true).count { it }
+    var scrolledFor by rememberSaveable { mutableStateOf<String?>(null) }
+    LaunchedEffect(todayKey, items.isNotEmpty()) {
+        val at = currentIndex(items)
+        if (scrolledFor != todayKey && at > 0) {
+            listState.scrollToItem((leading + at - 1).coerceAtLeast(0))
+            scrolledFor = todayKey
+        }
+    }
 
     LazyColumn(
         Modifier.fillMaxSize(),
+        state = listState,
         contentPadding = PaddingValues(bottom = bottom + 16.dp),
     ) {
         if (snapshot.offline) item(key = "offline") { OfflineBanner(snapshot.fetchedAt, onRefresh) }
