@@ -85,4 +85,13 @@ class TimelineTest {
         assertEquals("Bon après-midi", greeting(LocalTime.of(14, 0)))
         assertEquals("Bonsoir", greeting(LocalTime.of(22, 41)))
     }
+
+    @Test
+    fun module_done_state_shows_done_without_local_mark() {
+        val midi = Card(id = "midi", title = "midi", time = "12:15", state = "fait")
+        val soir = card("soir", "19:00")
+        val items = timeline(listOf(midi, soir), emptyMap(), LocalTime.of(13, 0))
+        assertEquals(listOf(Phase.Fait, Phase.Maintenant), items.map { it.phase })
+        assertEquals(Mark.Fait, midi.markIn(emptyMap()))
+    }
 }

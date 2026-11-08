@@ -100,7 +100,7 @@ private fun DayBlock(day: Day, marks: Map<String, Mark>, expanded: String?, onTo
             // Ordre de la journée tel que servi (heures d'abord) ; les marques locales grisent.
             day.cards.forEachIndexed { i, card ->
                 if (i > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                val mark = marks[card.key]
+                val mark = card.markIn(marks)
                 val key = "${day.day}/${card.key}"
                 Column(
                     Modifier
