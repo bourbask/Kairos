@@ -24,7 +24,8 @@ CREATE TABLE IF NOT EXISTS snapshots (
 );
 CREATE INDEX IF NOT EXISTS snapshots_idx ON snapshots(market, outcome, at);
 CREATE TABLE IF NOT EXISTS proposals (
-    n INTEGER PRIMARY KEY, market TEXT NOT NULL, outcome TEXT NOT NULL, title TEXT NOT NULL
+    n INTEGER PRIMARY KEY, market TEXT NOT NULL, outcome TEXT NOT NULL, title TEXT NOT NULL,
+    prob REAL, volume REAL, end_at INTEGER
 );
 CREATE TABLE IF NOT EXISTS alerts (
     key TEXT PRIMARY KEY, at INTEGER NOT NULL, budgeted INTEGER NOT NULL,
@@ -70,6 +71,53 @@ pub struct Proposal {
     pub market: String,
     pub outcome: String,
     pub title: String,
+    /// Inconnus pour une liste antérieure à leur enregistrement.
+    pub prob: Option<f64>,
+    pub volume: Option<f64>,
+    pub end: Option<DateTime<Utc>>,
+}
+
+/// Dernier relevé d'un jour UTC.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Daily {
+    pub at: DateTime<Utc>,
+    pub prob: f64,
+    pub volume: f64,
+}
+
+/// Alerte enregistrée, émise ou non.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AlertRow {
+    pub key: String,
+    pub at: DateTime<Utc>,
+    pub text: String,
+}
+
+const PROPOSAL_COLS: &str = "n, market, outcome, title, prob, volume, end_at";
+
+fn proposal_row(r: &rusqlite::Row) -> rusqlite::Result<Proposal> {
+    Ok(Proposal {
+        n: r.get(0)?,
+        market: r.get(1)?,
+        outcome: r.get(2)?,
+        title: r.get(3)?,
+        prob: r.get(4)?,
+        volume: r.get(5)?,
+        end: r.get::<_, Option<i64>>(6)?.and_then(from_ts),
+    })
+}
+
+/// Colonnes ajoutées après la première version du schéma.
+fn migrate(c: &Connection) -> rusqlite::Result<()> {
+    let cols: Vec<String> =
+        c.prepare("PRAGMA table_info(proposals)")?.query_map([], |r| r.get(1))?.collect::<rusqlite::Result<_>>()?;
+    // Colonne par colonne : une migration interrompue se complète à l'ouverture suivante.
+    for (name, ty) in [("prob", "REAL"), ("volume", "REAL"), ("end_at", "INTEGER")] {
+        if !cols.iter().any(|c| c == name) {
+            c.execute_batch(&format!("ALTER TABLE proposals ADD COLUMN {name} {ty};"))?;
+        }
+    }
+    Ok(())
 }
 
 pub struct Store {
@@ -101,6 +149,7 @@ impl Store {
 
     fn init(conn: Connection) -> Result<Store> {
         conn.execute_batch(SCHEMA)?;
+        migrate(&conn)?;
         Ok(Store { conn: Mutex::new(conn) })
     }
 
@@ -227,6 +276,25 @@ impl Store {
         Ok(row.and_then(|(p, v, at)| Some((p, v, from_ts(at)?))))
     }
 
+    /// Dernier relevé de chaque jour UTC depuis `since`, du plus ancien au plus récent.
+    pub fn daily(&self, market: &str, outcome: &str, since: DateTime<Utc>) -> Result<Vec<Daily>> {
+        let c = self.db();
+        // MAX(at) en agrégat : SQLite rend prob et volume de la ligne retenue.
+        let mut st = c.prepare(
+            "SELECT MAX(at), prob, volume FROM snapshots WHERE market = ?1 AND outcome = ?2 AND at >= ?3
+             GROUP BY at / 86400 ORDER BY at / 86400",
+        )?;
+        let rows = st.query_map(params![market, outcome, ts(since)], |r| Ok((r.get::<_, i64>(0)?, r.get(1)?, r.get(2)?)))?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (at, prob, volume) = row?;
+            if let Some(at) = from_ts(at) {
+                out.push(Daily { at, prob, volume });
+            }
+        }
+        Ok(out)
+    }
+
     pub fn last_snapshot(&self) -> Result<Option<DateTime<Utc>>> {
         let t: Option<i64> =
             self.db().query_row("SELECT MAX(at) FROM snapshots", [], |r| r.get(0))?;
@@ -240,8 +308,8 @@ impl Store {
         tx.execute("DELETE FROM proposals", [])?;
         for p in list {
             tx.execute(
-                "INSERT INTO proposals(n, market, outcome, title) VALUES(?1, ?2, ?3, ?4)",
-                params![p.n, p.market, p.outcome, clean(&p.title)],
+                "INSERT INTO proposals(n, market, outcome, title, prob, volume, end_at) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![p.n, p.market, p.outcome, clean(&p.title), p.prob, p.volume, p.end.map(ts)],
             )?;
         }
         tx.commit()?;
@@ -254,8 +322,8 @@ impl Store {
             return Ok(vec![]);
         }
         let c = self.db();
-        let mut st = c.prepare("SELECT n, market, outcome, title FROM proposals ORDER BY n")?;
-        let rows = st.query_map([], |r| Ok(Proposal { n: r.get(0)?, market: r.get(1)?, outcome: r.get(2)?, title: r.get(3)? }))?;
+        let mut st = c.prepare(&format!("SELECT {PROPOSAL_COLS} FROM proposals ORDER BY n"))?;
+        let rows = st.query_map([], proposal_row)?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
@@ -275,13 +343,10 @@ impl Store {
     pub fn proposal(&self, n: u32) -> Result<Option<Proposal>> {
         Ok(self
             .db()
-            .query_row(
-                "SELECT n, market, outcome, title FROM proposals WHERE n = ?1",
-                [n],
-                |r| Ok(Proposal { n: r.get(0)?, market: r.get(1)?, outcome: r.get(2)?, title: r.get(3)? }),
-            )
+            .query_row(&format!("SELECT {PROPOSAL_COLS} FROM proposals WHERE n = ?1"), [n], proposal_row)
             .optional()?)
     }
+
 
     pub fn record_alert(&self, key: &str, at: DateTime<Utc>, budgeted: bool, text: &str) -> Result<()> {
         self.db().execute(
@@ -298,6 +363,21 @@ impl Store {
         let mut st = c.prepare("SELECT text FROM alerts WHERE at > ?1 ORDER BY at, rowid")?;
         let rows = st.query_map([ts(since)], |r| r.get(0))?;
         Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Alertes enregistrées depuis `since`, les plus récentes d'abord.
+    pub fn alert_rows_since(&self, since: DateTime<Utc>) -> Result<Vec<AlertRow>> {
+        let c = self.db();
+        let mut st = c.prepare("SELECT key, at, text FROM alerts WHERE at >= ?1 AND text <> '' ORDER BY at DESC, rowid DESC")?;
+        let rows = st.query_map([ts(since)], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, String>(2)?)))?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (key, at, text) = row?;
+            if let Some(at) = from_ts(at) {
+                out.push(AlertRow { key, at, text });
+            }
+        }
+        Ok(out)
     }
 
     pub fn alert_known(&self, key: &str) -> Result<bool> {
@@ -410,6 +490,30 @@ mod tests {
     }
 
     #[test]
+    fn migrates_old_proposals() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "CREATE TABLE proposals (n INTEGER PRIMARY KEY, market TEXT NOT NULL, outcome TEXT NOT NULL, title TEXT NOT NULL);
+             INSERT INTO proposals VALUES(1, 'm', 'Yes', 'T');",
+        )
+        .unwrap();
+        let s = Store::init(c).unwrap();
+        let p = s.proposal(1).unwrap().unwrap();
+        assert_eq!((p.prob, p.volume, p.end), (None, None, None));
+    }
+
+    #[test]
+    fn partial_migration_repaired() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch("CREATE TABLE proposals (n INTEGER PRIMARY KEY, market TEXT NOT NULL, outcome TEXT NOT NULL, title TEXT NOT NULL, prob REAL);")
+            .unwrap();
+        let s = Store::init(c).unwrap();
+        s.set_proposals(&[Proposal { n: 1, market: "m".into(), outcome: "Yes".into(), title: "T".into(), prob: Some(0.2), volume: Some(3.0), end: None }])
+            .unwrap();
+        assert_eq!(s.proposal(1).unwrap().unwrap().volume, Some(3.0));
+    }
+
+    #[test]
     fn follow_unfollow() {
         let s = Store::memory();
         s.follow("m1", "Oui", "Q").unwrap();
@@ -472,7 +576,7 @@ mod tests {
     #[test]
     fn proposals_and_brief() {
         let s = Store::memory();
-        let p = |n| Proposal { n, market: format!("m{n}"), outcome: "Oui".into(), title: "T".into() };
+        let p = |n| Proposal { n, market: format!("m{n}"), outcome: "Oui".into(), title: "T".into(), prob: Some(0.5), volume: None, end: None };
         s.set_proposals(&[p(1), p(2)]).unwrap();
         s.set_proposals(&[p(1)]).unwrap();
         assert_eq!(s.proposal(1).unwrap(), Some(p(1)));

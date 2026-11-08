@@ -9,7 +9,9 @@ import app.kairos.mobile.data.Freshness
 import app.kairos.mobile.ui.kit.MASK
 import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.OffsetDateTime
 import java.time.YearMonth
+import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.TextStyle
 import java.time.temporal.ChronoUnit
@@ -53,8 +55,13 @@ private fun <T> merged(prev: T?, prevAt: String?, next: Result<T>, now: String, 
     return if (partial) Source(out, prevAt, PARTIAL) else Source(out, now, null)
 }
 
-internal fun issueOf(e: Throwable): String =
-    (e as? ApiError.Server)?.let { if (it.outdated) ApiError.Server.OUTDATED else "Module indisponible" } ?: "Hors ligne"
+internal fun issueOf(e: Throwable): String = (e as? ApiError.Server)?.let {
+    when {
+        it.outdated -> ApiError.Server.OUTDATED
+        it.unreadable -> ApiError.Server.UNREADABLE
+        else -> "Module indisponible"
+    }
+} ?: "Hors ligne"
 
 /** [new] s'il est là ; sinon [old], en notant dans [used] qu'une section a été reprise. */
 private class Fallback {
@@ -150,12 +157,18 @@ private val DIGITS = Regex("""\p{Nd}+([\s  .,/:]*\p{Nd}+)*""")
  */
 fun maskDigits(text: String, masked: Boolean): String = if (masked) DIGITS.replace(text, MASK) else text
 
-private fun date(s: String?): LocalDate? = s?.let { runCatching { LocalDate.parse(it.take(10)) }.getOrNull() }
+/** Horodatage avec décalage (RFC 3339) ramené à l'heure de [zone] ; sans décalage, pris tel quel. */
+private fun localTime(s: String, zone: ZoneId): LocalDateTime? =
+    runCatching { OffsetDateTime.parse(s).atZoneSameInstant(zone).toLocalDateTime() }.getOrNull()
+        ?: runCatching { LocalDateTime.parse(s.take(19)) }.getOrNull()
+
+private fun date(s: String?, zone: ZoneId = ZoneId.systemDefault()): LocalDate? =
+    s?.let { localTime(it, zone)?.toLocalDate() ?: runCatching { LocalDate.parse(it.take(10)) }.getOrNull() }
 
 private val DAY_MONTH = DateTimeFormatter.ofPattern("dd/MM")
 
 /** « 12/11 » pour une date AAAA-MM-JJ ; sinon le texte tel quel. */
-fun dayLabel(s: String?): String? = s?.let { date(it)?.format(DAY_MONTH) ?: it }
+fun dayLabel(s: String?, zone: ZoneId = ZoneId.systemDefault()): String? = s?.let { date(it, zone)?.format(DAY_MONTH) ?: it }
 
 /** « nov. 2026 » pour AAAA-MM ; sinon le texte tel quel. */
 fun monthLabel(s: String): String =
@@ -172,6 +185,5 @@ fun freshnessBanner(f: Freshness?): Pair<String, String?>? {
     return title to f.lastSync?.let { "Dernière synchronisation : ${syncLabel(it)}" }
 }
 
-internal fun syncLabel(s: String): String =
-    runCatching { LocalDateTime.parse(s.take(19)).format(DateTimeFormatter.ofPattern("dd/MM à HH:mm")) }.getOrNull()
-        ?: dayLabel(s) ?: s
+internal fun syncLabel(s: String, zone: ZoneId = ZoneId.systemDefault()): String =
+    localTime(s, zone)?.format(DateTimeFormatter.ofPattern("dd/MM à HH:mm")) ?: dayLabel(s, zone) ?: s

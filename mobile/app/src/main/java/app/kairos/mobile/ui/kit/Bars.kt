@@ -66,3 +66,40 @@ fun Bar(
         }
     }
 }
+
+/**
+ * Colonnes d'une série (ex. un volume par jour), hauteur relative au maximum, sans axe
+ * chiffré. [startLabel] / [endLabel] bornent l'axe horizontal ; [format] sert à la
+ * description pour les lecteurs d'écran (total et maximum).
+ */
+@Composable
+fun Columns(
+    label: String,
+    values: List<Double>,
+    modifier: Modifier = Modifier,
+    height: androidx.compose.ui.unit.Dp = 64.dp,
+    startLabel: String? = null,
+    endLabel: String? = null,
+    format: (Double) -> String = { formatEuro(it, cents = false) },
+) {
+    val color = MaterialTheme.colorScheme.primary
+    val heights = columnHeights(values)
+    Column(modifier.fillMaxWidth().clearAndSetSemantics { contentDescription = describeColumns(label, values, format) }) {
+        Canvas(Modifier.fillMaxWidth().height(height)) {
+            if (heights.isEmpty()) return@Canvas
+            val slot = size.width / heights.size
+            val gap = (slot * 0.25f).coerceAtMost(4.dp.toPx())
+            val r = CornerRadius(2.dp.toPx())
+            heights.forEachIndexed { i, f ->
+                val h = maxOf(f * size.height, if (f > 0f) 2.dp.toPx() else 0f)
+                drawRoundRect(color, Offset(i * slot + gap / 2, size.height - h), Size(slot - gap, h), r)
+            }
+        }
+        if (startLabel != null || endLabel != null) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(startLabel.orEmpty(), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(endLabel.orEmpty(), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}

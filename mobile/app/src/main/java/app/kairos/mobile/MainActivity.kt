@@ -84,6 +84,7 @@ import app.kairos.mobile.ui.spaces.SpacesScreen
 import app.kairos.mobile.ui.agenda.AgendaScreen
 import java.time.LocalDate
 import app.kairos.mobile.ui.finances.FinancesScreen
+import app.kairos.mobile.ui.marches.MarchesScreen
 import app.kairos.mobile.ui.kit.LocalAmountsMasked
 import app.kairos.mobile.ui.pairing.PairingScreen
 import app.kairos.mobile.ui.talk.ChatScreen
@@ -490,6 +491,7 @@ private fun KairosRoot(model: AppModel) {
     var maisonOpen by rememberSaveable { mutableStateOf(false) }
     var financesOpen by rememberSaveable { mutableStateOf(false) }
     var agendaOpen by rememberSaveable { mutableStateOf(false) }
+    var marchesOpen by rememberSaveable { mutableStateOf(false) }
     var unpackOrder by rememberSaveable { mutableStateOf<Long?>(null) }
     var adding by rememberSaveable { mutableStateOf(false) }
     var focusInput by remember { mutableStateOf(false) }
@@ -592,12 +594,14 @@ private fun KairosRoot(model: AppModel) {
                 val maison by session.repository.maison.collectAsState()
                 val finances by session.repository.finances.collectAsState()
                 val agenda by session.repository.agenda.collectAsState()
+                val marches by session.repository.marches.collectAsState()
                 // Une actualisation à l'arrivée sur l'onglet : les chiffres des cartes sont à jour.
                 LaunchedEffect(Unit) {
                     val refreshes = listOf<suspend () -> Unit>(
                         { session.repository.refreshMaison() },
                         { session.repository.refreshFinances(force = false) },
                         { session.repository.refreshAgenda(LocalDate.now(), force = false) },
+                        { session.repository.refreshMarches(force = false) },
                     )
                     for (refresh in refreshes) {
                         launch {
@@ -639,6 +643,19 @@ private fun KairosRoot(model: AppModel) {
                             padding = padding,
                             appScope = model.viewModelScope,
                             onClose = { agendaOpen = false },
+                            onUnauthorized = model::unauthorized,
+                        )
+                    },
+                    marches = marches,
+                    marchesOpen = marchesOpen,
+                    onOpenMarches = { marchesOpen = true },
+                    onCloseMarches = { marchesOpen = false },
+                    marchesContent = {
+                        MarchesScreen(
+                            repository = session.repository,
+                            padding = padding,
+                            appScope = model.viewModelScope,
+                            onClose = { marchesOpen = false },
                             onUnauthorized = model::unauthorized,
                         )
                     },

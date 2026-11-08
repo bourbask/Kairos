@@ -124,8 +124,11 @@ pub async fn propose(
         .map(|(i, (m, outcome))| Proposal {
             n: i as u32 + 1,
             market: m.id.clone(),
+            prob: m.outcomes.iter().find(|o| o.label == outcome).map(|o| o.prob),
             outcome,
             title: m.question.clone(),
+            volume: Some(m.volume),
+            end: m.end,
         })
         .collect();
     store.set_proposals(&list)?;
