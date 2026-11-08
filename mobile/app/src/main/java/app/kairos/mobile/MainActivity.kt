@@ -208,9 +208,12 @@ class AppModel(app: Application) : AndroidViewModel(app) {
     var updateNotice by mutableStateOf<String?>(null)
         private set
 
+    /** Installation en attente de confirmation : remontrer l'écran du système ou abandonner. */
+    var installPending by mutableStateOf(false)
+
     private var checkedAt: Long? = null
-    private var pendingConfirm: Intent? = null
-    private val installer = SystemInstaller(app) { if (processStarted) showConfirm(it) else pendingConfirm = it }
+    // Hors du premier plan, l'écran attend le retour (onStart) : `installer.awaiting` le garde.
+    private val installer = SystemInstaller(app) { if (processStarted) showConfirm(it) }
     private val apkFile = File(app.cacheDir, "maj/kairos.apk")
 
     private fun showConfirm(intent: Intent) {
@@ -243,7 +246,11 @@ class AppModel(app: Application) : AndroidViewModel(app) {
     fun startUpdate() {
         val release = update ?: return
         val api = session?.api ?: return
-        if (updateProgress != null) return
+        if (updateProgress != null) {
+            // Bandeau à 100 % touché : la confirmation du système a été quittée sans réponse.
+            if (installer.awaiting != null) installPending = true
+            return
+        }
         updateProgress = 0f
         viewModelScope.launch {
             val out = try {
@@ -265,6 +272,16 @@ class AppModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun resumeInstall() {
+        installPending = false
+        installer.awaiting?.let(::showConfirm)
+    }
+
+    fun abandonInstall() {
+        installPending = false
+        installer.abandon()
+    }
+
     /** Retour de l'écran « Installer des applis inconnues » : on reprend si c'est autorisé. */
     fun installPermissionReturned() {
         if (installer.allowed()) startUpdate()
@@ -281,10 +298,13 @@ class AppModel(app: Application) : AndroidViewModel(app) {
             ReplyWatcher.stop(getApplication())
             session?.conversation?.foreground(true)
             checkUpdate()
-            // Confirmation d'installation arrivée hors du premier plan : montrée au retour.
-            pendingConfirm?.let {
-                pendingConfirm = null
-                showConfirm(it)
+            // Confirmation quittée (Accueil, récents) ou arrivée hors du premier plan : remontrée au retour.
+            // Délai : un « Annuler » sur l'écran du système ramène ici avant que son refus n'arrive.
+            if (installer.awaiting != null) {
+                viewModelScope.launch {
+                    delay(1_000)
+                    if (processStarted) installer.awaiting?.let(::showConfirm)
+                }
             }
         }
 
@@ -302,6 +322,8 @@ class AppModel(app: Application) : AndroidViewModel(app) {
 
     init {
         ProcessLifecycleOwner.get().lifecycle.addObserver(lifecycle)
+        // Reliquat d'une mise à jour interrompue (application tuée pendant le téléchargement).
+        apkFile.delete()
         viewModelScope.launch {
             val saved = runCatching { settings.load() }.getOrNull()
             speakReplies = saved?.speakReplies ?: false
@@ -703,6 +725,16 @@ private fun KairosRoot(model: AppModel) {
                 }) { Text("Ouvrir les réglages") }
             },
             dismissButton = { TextButton(onClick = { model.askInstallPermission = false }) { Text("Plus tard") } },
+        )
+    }
+
+    if (model.installPending) {
+        AlertDialog(
+            onDismissRequest = { model.installPending = false },
+            title = { Text("Installation en attente") },
+            text = { Text("Le téléphone attend ta confirmation pour installer la mise à jour.") },
+            confirmButton = { TextButton(onClick = model::resumeInstall) { Text("Confirmer") } },
+            dismissButton = { TextButton(onClick = model::abandonInstall) { Text("Abandonner") } },
         )
     }
 

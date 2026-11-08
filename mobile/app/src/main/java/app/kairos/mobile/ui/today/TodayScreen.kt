@@ -459,7 +459,11 @@ private fun UpdateBanner(version: String, progress: Float?, onUpdate: () -> Unit
                     style = MaterialTheme.typography.bodyMedium,
                     modifier = Modifier.weight(1f).padding(vertical = 12.dp),
                 )
-                if (progress == null) TextButton(onClick = onUpdate) { Text("Mettre à jour") }
+                // À 100 % : confirmation du système quittée sans réponse, à remontrer ou abandonner.
+                when {
+                    progress == null -> TextButton(onClick = onUpdate) { Text("Mettre à jour") }
+                    progress >= 1f -> TextButton(onClick = onUpdate) { Text("Reprendre") }
+                }
             }
             if (progress != null) {
                 LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth().padding(end = 10.dp, bottom = 10.dp))

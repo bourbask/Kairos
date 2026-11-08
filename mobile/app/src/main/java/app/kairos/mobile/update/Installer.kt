@@ -9,7 +9,11 @@ import android.content.pm.PackageInstaller
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
+
+/** Délai laissé à l'utilisateur pour confirmer ; au-delà, la session est abandonnée. */
+private const val CONFIRM_TIMEOUT_MS = 10 * 60 * 1000L
 
 /**
  * Installation par une session `PackageInstaller`. Toujours confirmée par l'utilisateur :
@@ -17,6 +21,24 @@ import java.io.File
  */
 class SystemInstaller(private val context: Context, private val confirm: (Intent) -> Unit) : Installer {
     private val action = "${context.packageName}.INSTALL_RESULT"
+
+    /** Écran de confirmation tant que la session l'attend (quitté par Accueil : à remontrer). */
+    @Volatile
+    var awaiting: Intent? = null
+        private set
+
+    @Volatile
+    private var results: Channel<Intent>? = null
+    @Volatile
+    private var sessionId = -1
+
+    /** Renonce à l'installation en attente : [install] rend [UpdateOutcome.Cancelled]. */
+    fun abandon() {
+        val id = sessionId.takeIf { it >= 0 } ?: return
+        awaiting = null
+        runCatching { context.packageManager.packageInstaller.abandonSession(id) }
+        results?.trySend(Intent().putExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE_ABORTED))
+    }
 
     override fun allowed(): Boolean = context.packageManager.canRequestPackageInstalls()
 
@@ -28,6 +50,8 @@ class SystemInstaller(private val context: Context, private val confirm: (Intent
         }
         val id = installer.createSession(params)
         val results = Channel<Intent>(Channel.UNLIMITED)
+        this@SystemInstaller.results = results
+        sessionId = id
         // Non exporté : seuls le système (par le PendingIntent) et Kairos peuvent y répondre.
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(c: Context, intent: Intent) {
@@ -49,32 +73,43 @@ class SystemInstaller(private val context: Context, private val confirm: (Intent
                 )
                 session.commit(callback.intentSender)
             }
-            var outcome: UpdateOutcome? = null
-            while (outcome == null) {
-                val result = results.receive()
-                outcome = when (val status = result.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)) {
-                    PackageInstaller.STATUS_PENDING_USER_ACTION -> {
-                        val screen = result.getParcelableExtra(Intent.EXTRA_INTENT, Intent::class.java)
-                        if (screen == null) {
-                            UpdateOutcome.Failed("Installation impossible : le téléphone n'a pas demandé de confirmation.")
-                        } else {
-                            withContext(Dispatchers.Main) { confirm(screen) }
-                            null
-                        }
-                    }
-                    PackageInstaller.STATUS_SUCCESS -> UpdateOutcome.Installed
-                    PackageInstaller.STATUS_FAILURE_ABORTED -> UpdateOutcome.Cancelled
-                    else -> UpdateOutcome.Failed(installFailure(status))
-                }
+            withTimeoutOrNull(CONFIRM_TIMEOUT_MS) { await(results) } ?: run {
+                runCatching { installer.abandonSession(id) }
+                UpdateOutcome.Failed("Installation non confirmée : mise à jour abandonnée.")
             }
-            outcome
         } catch (e: Exception) {
             runCatching { installer.abandonSession(id) }
             if (e is kotlinx.coroutines.CancellationException) throw e
             UpdateOutcome.Failed("Installation impossible : ${e.message ?: "erreur du téléphone"}.")
         } finally {
+            awaiting = null
+            this@SystemInstaller.results = null
+            sessionId = -1
             context.unregisterReceiver(receiver)
         }
+    }
+
+    private suspend fun await(results: Channel<Intent>): UpdateOutcome {
+        var outcome: UpdateOutcome? = null
+        while (outcome == null) {
+            val result = results.receive()
+            outcome = when (val status = result.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)) {
+                PackageInstaller.STATUS_PENDING_USER_ACTION -> {
+                    val screen = result.getParcelableExtra(Intent.EXTRA_INTENT, Intent::class.java)
+                    if (screen == null) {
+                        UpdateOutcome.Failed("Installation impossible : le téléphone n'a pas demandé de confirmation.")
+                    } else {
+                        awaiting = screen
+                        withContext(Dispatchers.Main) { confirm(screen) }
+                        null
+                    }
+                }
+                PackageInstaller.STATUS_SUCCESS -> UpdateOutcome.Installed
+                PackageInstaller.STATUS_FAILURE_ABORTED -> UpdateOutcome.Cancelled
+                else -> UpdateOutcome.Failed(installFailure(status))
+            }
+        }
+        return outcome
     }
 }
 

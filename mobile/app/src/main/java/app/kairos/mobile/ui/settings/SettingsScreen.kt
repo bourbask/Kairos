@@ -112,6 +112,7 @@ fun SettingsScreen(
             updateProgress != null -> {
                 Text(updateLabel(updateProgress), style = MaterialTheme.typography.bodyMedium)
                 LinearProgressIndicator(progress = { updateProgress }, modifier = Modifier.fillMaxWidth())
+                if (updateProgress >= 1f) TextButton(onClick = onUpdate) { Text("Reprendre l'installation") }
             }
             update != null -> Button(onClick = onUpdate) { Text("Mettre à jour vers ${update.version}") }
             else -> OutlinedButton(onClick = { onCheck(true) }) { Text("Vérifier les mises à jour") }
