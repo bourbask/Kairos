@@ -34,8 +34,14 @@ impl FinanceServer {
     /// Poste ramené au nom exact d'une enveloppe du cycle, sans tenir compte de la casse.
     async fn poste(&self, p: &str) -> Result<String, String> {
         let cycle = self.api.cycle().await.map_err(api_err)?;
-        cycle.envelopes.keys().find(|k| k.eq_ignore_ascii_case(p.trim())).cloned().ok_or_else(|| {
-            let valid = cycle.envelopes.keys().cloned().collect::<Vec<_>>().join(", ");
+        // Nom brut ou nettoyé (celui que montre l'application) ; la clé brute part au calcul.
+        let p = p.trim();
+        let found = cycle
+            .envelopes
+            .keys()
+            .find(|k| k.eq_ignore_ascii_case(p) || clean_text(k, SHORT).eq_ignore_ascii_case(p));
+        found.cloned().ok_or_else(|| {
+            let valid = cycle.envelopes.keys().map(|k| clean_text(k, SHORT)).collect::<Vec<_>>().join(", ");
             format!("Poste inconnu « {} ». Postes valides : {valid}.", clean_payee(p))
         })
     }
