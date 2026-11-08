@@ -79,7 +79,7 @@ async fn rise_alerts_once_with_matching_projection() {
 #[tokio::test]
 async fn follow_unfollow_and_validation() {
     let (url, st) = start().await;
-    let p = |n: u32| Proposal { n, market: format!("p{n}"), outcome: "Yes".into(), title: format!("Proposée {n}") };
+    let p = |n: u32| Proposal { n, market: format!("p{n}"), outcome: "Yes".into(), title: format!("Proposée {n}"), prob: None, volume: None, end: None };
     st.set_proposals(&[p(1), p(2)]).unwrap();
 
     let (t, err) = call(&url, "follow", json!({"numbers": [1, 9]})).await;
