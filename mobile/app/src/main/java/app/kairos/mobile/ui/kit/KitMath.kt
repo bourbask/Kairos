@@ -150,8 +150,11 @@ fun minuteFraction(minute: Int, startHour: Int, endHour: Int): Float {
  * Sépare les blocs « journée » et place les autres. Les blocs qui se chevauchent
  * (bornes qui se touchent exclues) forment un groupe partagé en colonnes côte à côte ;
  * chacun prend la première colonne libre. Un bloc hors de la plage est omis.
+ * Un bloc court occupe au moins [minMinutes] à l'écran : cette durée sert au calcul
+ * des chevauchements, la vraie fin reste son bas.
  */
-fun timelineLayout(blocks: List<TimeBlock>, startHour: Int, endHour: Int): TimelineLayout {
+fun timelineLayout(blocks: List<TimeBlock>, startHour: Int, endHour: Int, minMinutes: Int = 20): TimelineLayout {
+    fun effEnd(b: TimeBlock) = maxOf(b.end, b.start + minMinutes)
     val timed = blocks.withIndex()
         .filter { !it.value.allDay && minuteFraction(it.value.start, startHour, endHour) < minuteFraction(it.value.end, startHour, endHour) }
         .sortedWith(compareBy({ it.value.start }, { -it.value.end }))
@@ -178,9 +181,9 @@ fun timelineLayout(blocks: List<TimeBlock>, startHour: Int, endHour: Int): Timel
         if (b.value.start >= groupEnd) flush()
         val free = columnEnds.indexOfFirst { it <= b.value.start }
         val col = if (free >= 0) free else columnEnds.size.also { columnEnds += 0 }
-        columnEnds[col] = b.value.end
+        columnEnds[col] = effEnd(b.value)
         group += b to col
-        groupEnd = maxOf(groupEnd, b.value.end)
+        groupEnd = maxOf(groupEnd, effEnd(b.value))
     }
     flush()
     return TimelineLayout(blocks.filter { it.allDay }, placed.sortedBy { it.index })
@@ -192,6 +195,10 @@ fun nowFraction(day: LocalDate, now: LocalDateTime, startHour: Int, endHour: Int
     val minute = now.hour * 60 + now.minute
     return if (minute < startHour * 60 || minute > endHour * 60) null else minuteFraction(minute, startHour, endHour)
 }
+
+/** Attente jusqu'au début de la minute suivante, pour rafraîchir un affichage à la minute. */
+fun millisToNextMinute(now: LocalDateTime): Long =
+    60_000L - (now.second * 1000L + now.nano / 1_000_000)
 
 /** « 9 h », « 9 h 05 ». */
 fun clockText(minute: Int): String {
@@ -213,5 +220,10 @@ fun durationText(minutes: Int): String {
 
 fun describeBlock(b: TimeBlock): String {
     val time = if (b.allDay) "toute la journée" else "de ${clockText(b.start)} à ${clockText(b.end)}"
-    return listOfNotNull(b.title, time, b.subtitle).joinToString(", ")
+    val tone = when (b.tone) {
+        Tone.Neutral -> null
+        Tone.Attention -> "à surveiller"
+        Tone.Urgent -> "important"
+    }
+    return listOfNotNull(b.title, time, b.subtitle, tone).joinToString(", ")
 }

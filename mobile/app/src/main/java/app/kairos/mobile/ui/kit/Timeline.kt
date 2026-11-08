@@ -23,7 +23,15 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithCache
@@ -46,7 +54,8 @@ import java.time.LocalDateTime
  * plages mises en valeur [highlights] avec leur libellé, trait de l'heure si [day] est
  * aujourd'hui, blocs « journée » en ligne du haut. Défile verticalement dans une fenêtre
  * de [viewport] (hauteur bornée : s'insère dans un écran déjà défilant) et se place
- * à l'ouverture près de l'heure actuelle, sinon au premier bloc.
+ * à l'ouverture près de l'heure actuelle, sinon au premier bloc. Le trait suit l'horloge
+ * à la minute tant que l'écran est visible ; [now] fige l'heure (aperçus, tests).
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -58,18 +67,31 @@ fun Timeline(
     startHour: Int = 7,
     endHour: Int = 23,
     hourHeight: Dp = 56.dp,
-    viewport: Dp = 360.dp,
-    now: LocalDateTime = LocalDateTime.now(),
+    viewport: Dp = 320.dp,
+    minMinutes: Int = 20,
+    now: LocalDateTime? = null,
 ) {
-    val layout = remember(blocks, startHour, endHour) { timelineLayout(blocks, startHour, endHour) }
-    val nowAt = nowFraction(day, now, startHour, endHour)
+    val layout = remember(blocks, startHour, endHour, minMinutes) { timelineLayout(blocks, startHour, endHour, minMinutes) }
+    // Horloge interne rafraîchie à chaque minute, seulement écran visible ; [now] la remplace.
+    var clock by remember { mutableStateOf(LocalDateTime.now()) }
+    val owner = LocalLifecycleOwner.current
+    LaunchedEffect(owner, now) {
+        if (now != null) return@LaunchedEffect
+        owner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) {
+                clock = LocalDateTime.now()
+                delay(millisToNextMinute(clock))
+            }
+        }
+    }
+    val nowAt = nowFraction(day, now ?: clock, startHour, endHour)
     val total = hourHeight * (endHour - startHour)
-    val gutter = 40.dp
+    val gutter = 40.dp * LocalDensity.current.fontScale
     val scroll = rememberScrollState()
     val density = LocalDensity.current
     val reveal = remember { Animatable(0f) }
     LaunchedEffect(Unit) { reveal.animateTo(1f, Motion.enter()) }
-    LaunchedEffect(day, startHour, endHour) {
+    LaunchedEffect(day, startHour, endHour, layout.placed.isEmpty()) {
         // Une heure de contexte au-dessus de la cible.
         val target = nowAt ?: layout.placed.minOfOrNull { it.top } ?: return@LaunchedEffect
         val px = with(density) { (total * target - hourHeight).toPx() }.toInt().coerceAtLeast(0)
@@ -119,18 +141,6 @@ fun Timeline(
                         color = muted,
                     )
                 }
-                highlights.forEach { s ->
-                    val top = minuteFraction(s.start, startHour, endHour)
-                    val bottom = minuteFraction(s.end, startHour, endHour)
-                    if (bottom <= top) return@forEach
-                    Text(
-                        s.label,
-                        Modifier.offset(x = gutter + 8.dp, y = total * top + 4.dp).semantics(s),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = muted,
-                        maxLines = 1,
-                    )
-                }
                 val columnsWidth = maxWidth - gutter
                 layout.placed.forEach { p ->
                     val w = columnsWidth / p.columns
@@ -139,8 +149,21 @@ fun Timeline(
                         Modifier
                             .offset(x = gutter + w * p.column, y = total * p.top)
                             .width(w - 2.dp)
-                            .height((total * (p.bottom - p.top) - 2.dp).coerceAtLeast(18.dp))
+                            .height((total * (p.bottom - p.top) - 2.dp).coerceAtLeast(hourHeight * minMinutes / 60 - 2.dp))
                             .graphicsLayer { alpha = reveal.value },
+                    )
+                }
+                // Libellés des plages par-dessus les blocs, à droite.
+                highlights.forEach { s ->
+                    val top = minuteFraction(s.start, startHour, endHour)
+                    val bottom = minuteFraction(s.end, startHour, endHour)
+                    if (bottom <= top) return@forEach
+                    Text(
+                        s.label,
+                        Modifier.align(Alignment.TopEnd).offset(x = (-8).dp, y = total * top + 4.dp).spanSemantics(s),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = muted,
+                        maxLines = 1,
                     )
                 }
             }
@@ -148,7 +171,7 @@ fun Timeline(
     }
 }
 
-private fun Modifier.semantics(s: TimeSpan) =
+private fun Modifier.spanSemantics(s: TimeSpan) =
     clearAndSetSemantics { contentDescription = "${s.label}, de ${clockText(s.start)} à ${clockText(s.end)}" }
 
 /** Bloc : fond selon la famille, liseré selon le ton (lisible aussi sans couleur grâce au titre). */
