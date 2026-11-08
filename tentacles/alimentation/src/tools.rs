@@ -1336,10 +1336,14 @@ impl FoodServer {
         } else {
             let lots = self.dish_lots(&m.dish)?;
             let have: f64 = lots.iter().map(|l| l.qty).sum();
-            if lots.is_empty() {
-                return Err(format!("{} : aucune portion en stock, rien n'a été retiré.", m.dish));
-            }
             note(if m.kind == MealKind::Box { "bureau" } else { "maison" })?;
+            // Plat cuisiné avant tout suivi : le repas compte, rien à décompter.
+            if lots.is_empty() {
+                return message(format!(
+                    "Repas noté. Aucun plat « {} » en stock à décompter : ajoute-le à l'inventaire si tu veux suivre les portions.",
+                    m.dish
+                ));
+            }
             let mut want = f64::from(eaten);
             for l in lots {
                 if want <= 1e-9 {
@@ -1480,8 +1484,14 @@ impl FoodServer {
         .to_string())
     }
 
-    #[tool(description = "Application : ajouter au stock hors commande (comme stock_add).")]
+    #[tool(
+        description = "Application : ajouter au stock hors commande (comme stock_add). Unité « portions » : plat cuisiné, au frigo ou au congélateur."
+    )]
     async fn app_add(&self, Parameters(a): Parameters<AppAddArgs>) -> Out {
+        if a.unit.as_deref().is_some_and(|u| crate::units::fold(u.trim()).starts_with("portion")) {
+            let loc = crate::store::location(&a.location)?;
+            return message(self.store.add_dish_at(a.name.as_deref().unwrap_or_default(), a.qty, &loc, "ajout")?);
+        }
         let l = Line {
             name: a.name.unwrap_or_default(),
             qty: a.qty,
@@ -2175,10 +2185,31 @@ mod tests {
         let s = server();
         let day = "2026-11-08";
         s.store.replace_plan(day, day, &[meal(day, Slot::Midi, "Dhal", MealKind::Leftover, None)]).unwrap();
-        let e = done(&s, day, "midi", None).await.unwrap_err();
-        assert!(e.contains("Dhal"), "{e}");
-        assert!(s.store.meals_since(day).unwrap().is_empty());
-        assert!(s.store.lots(None, None).unwrap().is_empty());
+        let j = v(done(&s, day, "midi", Some(1)).await);
+        let m = j["message"].as_str().unwrap();
+        assert!(m.contains("Repas noté") && m.contains("Aucun plat « Dhal » en stock"), "{m}");
+        assert_eq!(s.store.meals_since(day).unwrap().len(), 1, "le repas est noté quand même");
+        assert!(s.store.lots(None, None).unwrap().is_empty(), "jamais de stock négatif");
+        assert!(done(&s, day, "midi", None).await.unwrap_err().contains("déjà"), "une seule fois par créneau");
+    }
+
+    #[tokio::test]
+    async fn app_add_cooked_dish() {
+        let s = server();
+        s.store.add(&item("Navets", 2.0, "pièce", "frigo", None), "achat", None).unwrap();
+        let a = serde_json::json!({"name": "Navets", "qty": 3, "unit": "portions", "location": "congelateur"});
+        v(s.app_add(Parameters(serde_json::from_value(a).unwrap())).await);
+        let plats = dish_lots(&s, "navets");
+        assert_eq!((plats.len(), plats[0].qty, plats[0].location.as_str()), (1, 3.0, "congelateur"));
+        let raw = s.store.lots(None, Some("navets")).unwrap();
+        assert!(raw.iter().any(|l| l.nature != Some(crate::nature::Nature::Plat) && l.qty == 2.0), "l'ingrédient n'est pas retagué");
+        let a = serde_json::json!({"name": "Navets", "qty": 1, "unit": "portion", "location": "placard"});
+        assert!(s.app_add(Parameters(serde_json::from_value(a).unwrap())).await.is_err(), "plat : frigo ou congélo");
+        // Le plat ajouté sert ensuite au « fait » d'un reste.
+        let day = "2026-11-08";
+        s.store.replace_plan(day, day, &[meal(day, Slot::Midi, "Navets", MealKind::Leftover, None)]).unwrap();
+        v(done(&s, day, "midi", Some(1)).await);
+        assert_eq!(dish_lots(&s, "navets")[0].qty, 2.0);
     }
 
     #[test]
@@ -2225,8 +2256,8 @@ mod tests {
         let day = "2026-11-08";
         s.store.replace_plan(day, day, &[meal(day, Slot::Midi, "Riz", MealKind::Leftover, None)]).unwrap();
         s.store.add_dish("Riz cantonais", 2.0).unwrap();
-        assert!(done(&s, day, "midi", None).await.is_err(), "« Riz » ne puise pas dans « Riz cantonais »");
-        assert_eq!(dish_lots(&s, "riz cantonais")[0].qty, 2.0);
+        v(done(&s, day, "midi", None).await);
+        assert_eq!(dish_lots(&s, "riz cantonais")[0].qty, 2.0, "« Riz » ne puise pas dans « Riz cantonais »");
     }
 
     #[tokio::test]
