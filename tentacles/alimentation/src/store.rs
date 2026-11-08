@@ -187,6 +187,21 @@ impl Lot {
     }
 }
 
+/// Produit dont la fiche reste à compléter (`Store::incomplete`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Incomplete {
+    pub id: i64,
+    pub name: String,
+    pub family: Family,
+    pub nature: Option<Nature>,
+    /// Contenance encore inconnue (compté en pièces faute de mieux).
+    pub size_unknown: bool,
+    /// En stock, dans l'unité de base.
+    pub stock: f64,
+    /// Dernière entrée en stock, sinon création (horodatage).
+    pub added_at: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Order {
     pub id: i64,
@@ -293,6 +308,10 @@ fn migrate(c: &Connection) -> rusqlite::Result<()> {
     if !pcols.iter().any(|c| c == "location") {
         // Dernier emplacement de rangement, gardé quand le stock est épuisé.
         c.execute_batch("ALTER TABLE products ADD COLUMN location TEXT;")?;
+    }
+    if !pcols.iter().any(|c| c == "size_unknown") {
+        // Créé en pièces sans fiche : la contenance reste à demander.
+        c.execute_batch("ALTER TABLE products ADD COLUMN size_unknown INTEGER NOT NULL DEFAULT 0;")?;
     }
     if !cols.iter().any(|c| c == "expiry_kind") {
         c.execute_batch(
@@ -407,6 +426,85 @@ impl Store {
         db.execute("UPDATE products SET nature = ?2 WHERE id = ?1", params![p.id, n.as_str()])
             .map_err(|e| e.to_string())?;
         Ok(format!("Nature de {} : {}.", p.name, n.as_str()))
+    }
+
+    /// Produits à compléter : en stock sans nature, ou en attente de contenance.
+    pub fn incomplete(&self) -> rusqlite::Result<Vec<Incomplete>> {
+        let db = self.db.lock().unwrap();
+        let mut st = db.prepare(
+            "SELECT p.id, p.name, p.family, p.nature, p.category, p.size_unknown,
+                    COALESCE((SELECT SUM(qty) FROM lots WHERE product_id = p.id AND qty > 0), 0),
+                    COALESCE((SELECT MAX(added_at) FROM lots WHERE product_id = p.id), p.created_at)
+             FROM products p ORDER BY p.id",
+        )?;
+        let rows = st.query_map([], |r| {
+            let name: String = r.get(1)?;
+            let manual = r.get::<_, Option<String>>(3)?.as_deref().and_then(Nature::parse);
+            Ok(Incomplete {
+                id: r.get(0)?,
+                family: Family::parse(&r.get::<_, String>(2)?).unwrap_or(Family::Piece),
+                nature: crate::nature::resolve(manual, r.get::<_, Option<String>>(4)?.as_deref(), &name),
+                name,
+                size_unknown: r.get::<_, i64>(5)? != 0,
+                stock: r.get(6)?,
+                added_at: r.get(7)?,
+            })
+        })?;
+        let all: Vec<Incomplete> = rows.collect::<rusqlite::Result<_>>()?;
+        Ok(all.into_iter().filter(|p| (p.nature.is_none() && p.stock > 0.0) || p.size_unknown).collect())
+    }
+
+    /// Nature d'un produit désigné par son identifiant.
+    pub fn set_nature_of(&self, id: i64, n: Nature) -> rusqlite::Result<()> {
+        self.db.lock().unwrap().execute("UPDATE products SET nature = ?2 WHERE id = ?1", params![id, n.as_str()])?;
+        Ok(())
+    }
+
+    /// Marque un produit compté en pièces : sa contenance sera demandée.
+    pub fn flag_size_unknown(&self, name: &str) -> rusqlite::Result<()> {
+        self.db.lock().unwrap().execute(
+            "UPDATE products SET size_unknown = 1 WHERE folded = ?1 AND family = 'piece'",
+            [fold(name.trim())],
+        )?;
+        Ok(())
+    }
+
+    /// Fixe la contenance d'un produit compté en pièces. `None` : il reste à
+    /// l'unité. Sinon il passe dans la famille de la contenance et ses lots et
+    /// mouvements sont convertis (n pièces → n × contenance), pour que le stock
+    /// ne change pas de sens.
+    pub fn set_size(&self, id: i64, size: Option<(Family, f64)>) -> Result<(), String> {
+        let mut db = self.db.lock().unwrap();
+        let tx = db.transaction().map_err(|e| e.to_string())?;
+        let (fam, folded): (String, String) = tx
+            .query_row("SELECT family, folded FROM products WHERE id = ?1 AND size_unknown = 1", [id], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .optional()
+            .map_err(|e| e.to_string())?
+            .ok_or("Contenance déjà connue.")?;
+        if let Some((f, k)) = size {
+            if fam != Family::Piece.as_str() || !(k.is_finite() && k > 0.0) {
+                return Err("Contenance impossible pour ce produit.".into());
+            }
+            let twin: bool = tx
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM products WHERE folded = ?1 AND family = ?2 AND id != ?3)",
+                    params![folded, f.as_str(), id],
+                    |r| r.get(0),
+                )
+                .map_err(|e| e.to_string())?;
+            if twin {
+                return Err(format!("Un produit du même nom est déjà compté en {}.", f.base()));
+            }
+            tx.execute("UPDATE lots SET qty = qty * ?2 WHERE product_id = ?1", params![id, k]).map_err(|e| e.to_string())?;
+            tx.execute("UPDATE movements SET delta = delta * ?2 WHERE product_id = ?1", params![id, k])
+                .map_err(|e| e.to_string())?;
+            tx.execute("UPDATE products SET family = ?2 WHERE id = ?1", params![id, f.as_str()])
+                .map_err(|e| e.to_string())?;
+        }
+        tx.execute("UPDATE products SET size_unknown = 0 WHERE id = ?1", [id]).map_err(|e| e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())
     }
 
     /// Produits en stock dont la nature reste inconnue, par nom.

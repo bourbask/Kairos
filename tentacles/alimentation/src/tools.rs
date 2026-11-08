@@ -276,6 +276,14 @@ struct AppAddArgs {
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
+struct DecideArgs {
+    /// Identifiant de la décision (`decisions`).
+    id: String,
+    /// Identifiant de l'option choisie.
+    choice: String,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
 struct CardsArgs {
     /// Jour (AAAA-MM-JJ) ; aujourd'hui par défaut.
     day: Option<String>,
@@ -351,6 +359,15 @@ fn fresh(name: &str, loc: &str, given: Option<String>) -> bool {
         added_at: chrono::Utc::now().timestamp(),
         nature: crate::nature::from_name(name),
     })
+}
+
+/// Contenances usuelles selon la nature : liquides en ml, le reste en g.
+fn sizes(n: Nature) -> &'static [&'static str] {
+    match n {
+        Nature::Boisson | Nature::Entretien | Nature::Hygiene => &["250ml", "500ml", "750ml", "1000ml", "1500ml"],
+        Nature::Condiment => &["250ml", "500ml", "250g", "500g"],
+        _ => &["125g", "250g", "500g", "1000g"],
+    }
 }
 
 fn message(m: String) -> Out {
@@ -529,6 +546,50 @@ impl FoodServer {
             Some(n) if n <= 3 => "attention",
             _ => "neutre",
         }
+    }
+
+    /// Décisions « produit à compléter » : nature d'abord, contenance ensuite.
+    fn product_decisions(&self) -> Result<Vec<serde_json::Value>, String> {
+        use crate::units::Family;
+        use serde_json::json;
+        let opt = |id: &str, label: &str| json!({"id": id, "label": label});
+        let mut out = Vec::new();
+        for p in self.store.incomplete().map_err(|e| e.to_string())? {
+            let added = chrono::DateTime::from_timestamp(p.added_at, 0).unwrap_or_default();
+            let expires = added.with_timezone(&self.settings.tz).date_naive() + chrono::Duration::days(30);
+            let stock = if p.stock > 0.0 { format!("{} en stock", show(p.stock, p.family)) } else { "épuisé".into() };
+            let (kind, question, alternatives) = match p.nature {
+                None => {
+                    let mut alts: Vec<_> = crate::nature::ALL
+                        .into_iter()
+                        .filter(|n| n.is_food())
+                        .map(|n| opt(&format!("alimentaire:{}", n.as_str()), &format!("Alimentaire · {}", n.label())))
+                        .collect();
+                    alts.extend([Nature::Entretien, Nature::Hygiene].map(|n| opt(n.as_str(), n.label())));
+                    ("nature", "c'est quoi ?", alts)
+                }
+                // Contenance demandée seulement pour un produit encore compté en pièces.
+                Some(n) if p.size_unknown && p.family == Family::Piece => {
+                    let mut alts: Vec<_> = sizes(n)
+                        .iter()
+                        .filter_map(|s| crate::units::pack(s).map(|(f, q)| opt(s, &show(q, f))))
+                        .collect();
+                    alts.push(opt("piece", "À l'unité"));
+                    ("contenance", "quelle contenance ?", alts)
+                }
+                Some(_) => continue,
+            };
+            out.push(json!({
+                "id": format!("produit-{}-{kind}", p.id),
+                "title": "Produit à compléter",
+                "headline": format!("{} : {question}", p.name),
+                "subtitle": stock,
+                "proposal": null,
+                "alternatives": alternatives,
+                "expires": expires.format("%Y-%m-%d").to_string(),
+            }));
+        }
+        Ok(out)
     }
 
     /// Complète une ligne depuis la base produits quand seul le code-barres est connu.
@@ -1423,15 +1484,52 @@ impl FoodServer {
             price: None,
         };
         let mut l = self.complete(l).await?;
+        let known = self.store.usual(&l.name, l.barcode.as_deref()).map_err(|e| e.to_string())?;
+        let new = known.is_none();
         // Produit déjà connu : le même, dans sa famille, jamais un doublon compté autrement.
-        if let Some(p) = self.store.usual(&l.name, l.barcode.as_deref()).map_err(|e| e.to_string())? {
+        if let Some(p) = known {
             let unit = l.unit.get_or_insert_with(|| p.family.base().to_string());
             if crate::units::parse_unit(unit).is_some_and(|(f, _)| f != p.family) {
                 return Err(format!("{} est compté en {} : quantité en {} attendue.", p.name, p.family.as_str(), p.family.base()));
             }
             l.name = p.name;
         }
-        message(self.store.add(&l, "ajout", None)?)
+        let m = self.store.add(&l, "ajout", None)?;
+        if new {
+            // Nouveau produit en pièces : sa contenance passera par la pile de décisions.
+            self.store.flag_size_unknown(&l.name).map_err(|e| e.to_string())?;
+        }
+        message(m)
+    }
+
+    #[tool(description = "Décisions en attente pour l'application : produits à compléter (nature, contenance), au format JSON.")]
+    async fn decisions(&self) -> Out {
+        serde_json::to_string(&self.product_decisions()?).map_err(|e| e.to_string())
+    }
+
+    #[tool(description = "Trancher une décision de l'application : id = décision, choice = option proposée.")]
+    async fn decide(&self, Parameters(a): Parameters<DecideArgs>) -> Out {
+        // Seule une décision encore en attente est acceptée : une fiche complétée
+        // entre-temps n'est jamais réécrite.
+        let pending = self.product_decisions()?;
+        let d = pending.iter().find(|d| d["id"] == a.id).ok_or("Décision inconnue ou déjà traitée.")?;
+        let alts = d["alternatives"].as_array().map(Vec::as_slice).unwrap_or_default();
+        let label = alts
+            .iter()
+            .find(|o| o["id"] == a.choice)
+            .and_then(|o| o["label"].as_str())
+            .ok_or_else(|| format!("Choix « {} » non proposé.", a.choice))?;
+        let mut parts = a.id.splitn(3, '-').skip(1);
+        let id: i64 = parts.next().and_then(|x| x.parse().ok()).ok_or("Décision inconnue ou déjà traitée.")?;
+        let name = d["headline"].as_str().unwrap_or_default().split(" : ").next().unwrap_or_default();
+        match parts.next() {
+            Some("nature") => {
+                let n = Nature::parse(a.choice.trim_start_matches("alimentaire:")).ok_or("Nature inconnue.")?;
+                self.store.set_nature_of(id, n).map_err(|e| e.to_string())?;
+            }
+            _ => self.store.set_size(id, crate::units::pack(&a.choice))?,
+        }
+        Ok(format!("{name} : {label}."))
     }
 
     #[tool(description = "Cartes JSON du jour pour l'application (repas, boîte, produits à finir).")]
@@ -2132,5 +2230,105 @@ mod tests {
         assert!(s.meal_log(Parameters(serde_json::from_value(a).unwrap())).await.is_err());
         assert_eq!(s.store.meals_since(day).unwrap().len(), 1);
         assert_eq!(s.store.lots(None, Some("lentilles")).unwrap()[0].qty, 700.0);
+    }
+
+    async fn add_by_name(s: &FoodServer, name: &str, qty: f64, unit: &str) {
+        let a = serde_json::json!({"name": name, "qty": qty, "unit": unit, "location": "placard"});
+        v(s.app_add(Parameters(serde_json::from_value(a).unwrap())).await);
+    }
+
+    async fn decisions(s: &FoodServer) -> Vec<serde_json::Value> {
+        serde_json::from_str(&s.decisions().await.unwrap()).unwrap()
+    }
+
+    async fn decide(s: &FoodServer, id: &str, choice: &str) -> Result<String, String> {
+        s.decide(Parameters(serde_json::from_value(serde_json::json!({"id": id, "choice": choice})).unwrap())).await
+    }
+
+    fn product_id(s: &FoodServer, name: &str) -> i64 {
+        s.store.find(name).unwrap()[0].id
+    }
+
+    #[tokio::test]
+    async fn unknown_product_asks_nature_then_size() {
+        let s = server();
+        add_by_name(&s, "Zorglub", 2.0, "pièce").await;
+        let id = product_id(&s, "Zorglub");
+        let d = decisions(&s).await;
+        assert_eq!(d.len(), 1, "la contenance attend la nature : {d:?}");
+        assert_eq!(d[0]["id"], format!("produit-{id}-nature"));
+        assert!(d[0]["headline"].as_str().unwrap().contains("Zorglub"));
+        assert!(d[0]["proposal"].is_null());
+        let alts: Vec<&str> = d[0]["alternatives"].as_array().unwrap().iter().map(|a| a["id"].as_str().unwrap()).collect();
+        assert!(alts.contains(&"alimentaire:legume") && alts.contains(&"entretien") && alts.contains(&"hygiene"), "{alts:?}");
+        assert!(!alts.contains(&"alimentaire:entretien"));
+        let exp = chrono::NaiveDate::parse_from_str(d[0]["expires"].as_str().unwrap(), "%Y-%m-%d").unwrap();
+        assert_eq!(exp, chrono::Utc::now().date_naive() + chrono::Duration::days(30));
+        decide(&s, &format!("produit-{id}-nature"), "entretien").await.unwrap();
+        let d = decisions(&s).await;
+        assert_eq!(d.len(), 1);
+        assert_eq!(d[0]["id"], format!("produit-{id}-contenance"));
+        let alts: Vec<&str> = d[0]["alternatives"].as_array().unwrap().iter().map(|a| a["id"].as_str().unwrap()).collect();
+        assert!(alts.contains(&"750ml") && alts.contains(&"piece"), "entretien : liquides + pièce {alts:?}");
+        // Produit déjà nommé par une fiche ou une unité connue : rien à demander.
+        s.store.add(&item("Riz basmati", 1.0, "kg", "placard", None), "achat", None).unwrap();
+        assert_eq!(decisions(&s).await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn decide_nature_updates_product() {
+        let s = server();
+        add_by_name(&s, "Zorglub", 1.0, "pièce").await;
+        let id = product_id(&s, "Zorglub");
+        decide(&s, &format!("produit-{id}-nature"), "alimentaire:legume").await.unwrap();
+        assert_eq!(s.store.lots(None, Some("zorglub")).unwrap()[0].nature, Some(crate::nature::Nature::Legume));
+        let e = decide(&s, &format!("produit-{id}-nature"), "alimentaire:pierre").await.unwrap_err();
+        assert!(e.contains("déjà"), "{e}");
+        add_by_name(&s, "Machin", 1.0, "pièce").await;
+        let m = product_id(&s, "Machin");
+        assert!(decide(&s, &format!("produit-{m}-nature"), "alimentaire:pierre").await.is_err());
+        assert!(decide(&s, &format!("produit-{m}-nature"), "alimentaire:entretien").await.is_err());
+        assert_eq!(s.store.lots(None, Some("machin")).unwrap()[0].nature, None);
+    }
+
+    #[tokio::test]
+    async fn decide_size_sets_unit() {
+        let s = server();
+        add_by_name(&s, "Zorglub", 2.0, "pièce").await;
+        let id = product_id(&s, "Zorglub");
+        decide(&s, &format!("produit-{id}-nature"), "hygiene").await.unwrap();
+        let size = format!("produit-{id}-contenance");
+        assert!(decide(&s, &size, "500g").await.is_err(), "hygiène : contenances liquides seulement");
+        decide(&s, &size, "250ml").await.unwrap();
+        let lots = s.store.lots(None, Some("zorglub")).unwrap();
+        assert_eq!((lots[0].family, lots[0].qty), (Family::Volume, 500.0), "2 pièces de 250 ml");
+        assert!(decisions(&s).await.is_empty());
+        // L'unité suit : un nouvel apport se compte en ml.
+        assert_eq!(v(s.app_product(product_args(serde_json::json!({"name": "Zorglub"}))).await)["unit"], "ml");
+        add_by_name(&s, "Bidule", 3.0, "pièce").await;
+        let b = product_id(&s, "Bidule");
+        decide(&s, &format!("produit-{b}-nature"), "alimentaire:fruit").await.unwrap();
+        decide(&s, &format!("produit-{b}-contenance"), "piece").await.unwrap();
+        let lots = s.store.lots(None, Some("bidule")).unwrap();
+        assert_eq!((lots[0].family, lots[0].qty), (Family::Piece, 3.0));
+        assert!(decisions(&s).await.is_empty(), "« à l'unité » est une réponse");
+    }
+
+    #[tokio::test]
+    async fn completion_skips_already_known() {
+        let s = server();
+        add_by_name(&s, "Zorglub", 2.0, "pièce").await;
+        let id = product_id(&s, "Zorglub");
+        // Complété par la conversation entre-temps.
+        let a = serde_json::json!({"name": "Zorglub", "nature": "boisson"});
+        s.product_set(Parameters(serde_json::from_value(a).unwrap())).await.unwrap();
+        let d = decisions(&s).await;
+        assert!(d.iter().all(|x| x["id"] != format!("produit-{id}-nature")), "{d:?}");
+        let e = decide(&s, &format!("produit-{id}-nature"), "entretien").await.unwrap_err();
+        assert!(e.contains("déjà"), "{e}");
+        assert_eq!(s.store.lots(None, Some("zorglub")).unwrap()[0].nature, Some(crate::nature::Nature::Boisson), "pas de régression");
+        decide(&s, &format!("produit-{id}-contenance"), "500ml").await.unwrap();
+        assert!(decide(&s, &format!("produit-{id}-contenance"), "250ml").await.is_err(), "pas de seconde conversion");
+        assert_eq!(s.store.lots(None, Some("zorglub")).unwrap()[0].qty, 1000.0);
     }
 }
