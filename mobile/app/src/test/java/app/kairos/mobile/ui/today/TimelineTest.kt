@@ -42,6 +42,19 @@ class TimelineTest {
     }
 
     @Test
+    fun card_in_flight_keeps_its_place() {
+        val cards = listOf(card("midi", "12:15"), card("soir", "19:00"), card("libre", null))
+        // Geste en cours (fenêtre d'annulation, envoi) : marquée, mais à sa place ; un refus ne fait rien bouger.
+        val items = timeline(cards, mapOf("/midi" to Mark.Fait), LocalTime.of(13, 0), pending = setOf("/midi"))
+        assertEquals(listOf("midi", "soir", "libre"), items.map { it.card.id })
+        assertEquals(listOf(Phase.Fait, Phase.Ensuite, Phase.Ensuite), items.map { it.phase })
+        val back = timeline(cards, emptyMap(), LocalTime.of(13, 0))
+        assertEquals(items.map { it.card.id }, back.map { it.card.id })
+        // Confirmé : rejoint les marquées, en bas.
+        assertEquals("midi", timeline(cards, mapOf("/midi" to Mark.Fait), LocalTime.of(13, 0)).last().card.id)
+    }
+
+    @Test
     fun greeting_follows_hour() {
         assertEquals("Bonjour", greeting(LocalTime.of(8, 0)))
         assertEquals("Bon après-midi", greeting(LocalTime.of(14, 0)))

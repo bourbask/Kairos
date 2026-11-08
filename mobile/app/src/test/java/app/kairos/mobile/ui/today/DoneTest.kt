@@ -86,6 +86,10 @@ class DoneTest {
         val out = completeCard(meal, null, off.mark, off.window, off.call) as DoneOutcome.Refused
         assertTrue(out.message.contains("rien n'a été enregistré"))
         assertEquals("mark null", off.log.last())
+        // Refus : la carte n'est plus en cours, elle reprend sa place sans bouger.
+        val busy = InFlight()
+        completeCard(meal, null, off.mark, { assertEquals(setOf(meal.key), busy.keys.value); false }, off.call, busy)
+        assertTrue(busy.keys.value.isEmpty())
     }
 
     @Test
@@ -102,7 +106,9 @@ class DoneTest {
         assertEquals(1, f.log.count { it.startsWith("call") })
         assertEquals(1, f.log.count { it == "mark Fait" })
         // Terminé (ou refusé) : la carte est de nouveau libre.
+        assertTrue(busy.keys.value.isEmpty())
         assertTrue(busy.claim(meal.key))
+        assertEquals(setOf(meal.key), busy.keys.value)
     }
 
     @Test
