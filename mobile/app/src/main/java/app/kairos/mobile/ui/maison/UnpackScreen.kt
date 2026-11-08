@@ -403,7 +403,7 @@ private fun LineCard(
                         style = MaterialTheme.typography.labelMedium,
                         color = colors.onPrimaryContainer,
                     )
-                    if (known) Text(zoneLabel(proposed), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    if (known) Text(zoneLabel(proposed), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = colors.onPrimaryContainer)
                 }
             }
             stamps()
