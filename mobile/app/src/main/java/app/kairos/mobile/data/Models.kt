@@ -269,3 +269,58 @@ data class FinancesSnapshot(
     val fetchedAt: String? get() = listOfNotNull(cycleAt, wealthAt).maxOrNull()
     val offline: Boolean get() = cycleIssue != null || wealthIssue != null
 }
+
+/* Espace Agenda : outils `app_agenda_day`, `app_agenda_week`, `app_agenda_sync`. Heures en HH:MM locales. */
+
+/** Événement vu depuis un jour : [start] / [end] absents quand ils tombent un autre jour. */
+@Serializable
+data class AgendaEvent(
+    val uid: String,
+    val title: String,
+    val start: String? = null,
+    val end: String? = null,
+    @SerialName("all_day") val allDay: Boolean = false,
+    val location: String? = null,
+    /** « perso » ou « travail ». */
+    val calendar: String = "perso",
+)
+
+@Serializable
+data class FreeSlot(val start: String, val end: String, val minutes: Int = 0)
+
+@Serializable
+data class AgendaTask(val id: Long, val title: String, val due: String? = null)
+
+@Serializable
+data class AgendaDay(
+    val day: String,
+    val events: List<AgendaEvent> = emptyList(),
+    val free: List<FreeSlot> = emptyList(),
+    val tasks: List<AgendaTask> = emptyList(),
+)
+
+@Serializable
+data class WeekDay(val day: String, val events: List<AgendaEvent> = emptyList(), @SerialName("busy_minutes") val busyMinutes: Int = 0)
+
+@Serializable
+data class Upcoming(val uid: String, val title: String, val day: String, val start: String? = null, val calendar: String = "perso")
+
+@Serializable
+data class AgendaWeek(val days: List<WeekDay> = emptyList(), val upcoming: List<Upcoming> = emptyList())
+
+/** Issue de la dernière synchronisation des calendriers ; [at] = dernière réussie. */
+@Serializable
+data class AgendaSync(val synced: Boolean = false, val at: String? = null)
+
+/**
+ * Dernier état connu de l'agenda : jours lus (par date), semaine, synchronisation.
+ * [fetchedAt] = dernière lecture réussie ; [issue] = pourquoi la dernière a échoué.
+ */
+@Serializable
+data class AgendaSnapshot(
+    val days: Map<String, AgendaDay> = emptyMap(),
+    val week: AgendaWeek? = null,
+    val sync: AgendaSync? = null,
+    val fetchedAt: String? = null,
+    val issue: String? = null,
+)

@@ -53,7 +53,7 @@ private fun <T> merged(prev: T?, prevAt: String?, next: Result<T>, now: String, 
     return if (partial) Source(out, prevAt, PARTIAL) else Source(out, now, null)
 }
 
-private fun issueOf(e: Throwable): String =
+internal fun issueOf(e: Throwable): String =
     (e as? ApiError.Server)?.let { if (it.outdated) ApiError.Server.OUTDATED else "Module indisponible" } ?: "Hors ligne"
 
 /** [new] s'il est là ; sinon [old], en notant dans [used] qu'une section a été reprise. */
@@ -172,6 +172,6 @@ fun freshnessBanner(f: Freshness?): Pair<String, String?>? {
     return title to f.lastSync?.let { "Dernière synchronisation : ${syncLabel(it)}" }
 }
 
-private fun syncLabel(s: String): String =
+internal fun syncLabel(s: String): String =
     runCatching { LocalDateTime.parse(s.take(19)).format(DateTimeFormatter.ofPattern("dd/MM à HH:mm")) }.getOrNull()
         ?: dayLabel(s) ?: s
