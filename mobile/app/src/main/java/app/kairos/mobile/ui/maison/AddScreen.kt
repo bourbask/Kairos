@@ -44,10 +44,12 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.kairos.mobile.data.ApiError
 import app.kairos.mobile.data.KairosApi
+import app.kairos.mobile.data.PIECE
 import app.kairos.mobile.data.Product
 import app.kairos.mobile.data.Repository
 import app.kairos.mobile.scan.BarcodeCamera
@@ -56,20 +58,59 @@ import java.time.LocalDate
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
-private enum class AddStep { Scan, Name, Zone, Date }
+private enum class AddStep { Scan, Name, Quantity, Zone, Date }
 
 /** Nom saisi ou dicté : borné, une seule ligne. */
 private const val NAME_MAX = 80
 private const val RETRY_MS = 3_000L
 
+internal const val LOOKUP_FAILED = "Recherche impossible, réessaie ou saisis le nom."
+
+/** La quantité ne se demande qu'en grammes ou millilitres ; les pièces s'ajoutent une à une. */
+internal fun needsQuantity(p: Product?): Boolean = p != null && p.unit != PIECE
+
+/** Quantité saisie : nombre positif, virgule acceptée. */
+internal fun parseQty(s: String): Double? =
+    s.trim().replace(',', '.').toDoubleOrNull()?.takeIf { it > 0 && it.isFinite() }
+
+internal fun qtyText(q: Double): String = if (q % 1.0 == 0.0) q.toLong().toString() else q.toString()
+
+/** Arguments de `app_add` : quantité et unité du produit, une pièce sinon. */
+internal fun addArgs(name: String, barcode: String?, product: Product?, qty: Double?, zone: String, expiry: LocalDate?): JsonObject =
+    buildJsonObject {
+        name.trim().takeIf { it.isNotEmpty() }?.let { put("name", it) }
+        barcode?.let { put("barcode", it) }
+        val counted = product?.takeIf(::needsQuantity)
+        put("qty", if (counted != null) qty ?: counted.qty else 1.0)
+        put("unit", counted?.unit ?: PIECE)
+        put("location", zone)
+        expiry?.let { put("expiry", it.toString()) }
+    }
+
+/**
+ * Message d'un échec ; null = appareil à réappairer. [lookupFailed] : message d'une recherche
+ * impossible (le produit n'est pas dit inconnu) ; absent = un ajout, qui n'est pas idempotent.
+ */
+internal fun addFailure(e: ApiError, lookupFailed: String? = null): String? = when (e) {
+    ApiError.Unauthorized -> null
+    ApiError.Offline -> "Serveur injoignable : rien n'a été enregistré."
+    ApiError.NoReply -> lookupFailed ?: "Peut-être pas enregistré — vérifie avant de réessayer."
+    is ApiError.Server -> when {
+        e.code != 422 -> "${e.unavailable()}."
+        else -> lookupFailed ?: e.message ?: "Refusé."
+    }
+}
+
 /**
  * Ajouter hors commande (marché, boulangerie…) : scan continu du code-barres,
- * produit retrouvé (`app_product`), zone, date si frais, puis `app_add` ; un
- * produit inconnu ou sans code-barres se nomme au clavier ou à la voix.
- * Après chaque ajout, retour au scan pour le suivant. Quantité : 1.
+ * produit retrouvé (`app_product`), quantité s'il se compte en g ou ml, zone,
+ * date si frais, puis `app_add` ; un produit inconnu ou sans code-barres se
+ * nomme au clavier ou à la voix, et un nom déjà connu reprend ce produit.
+ * Après chaque ajout, retour au scan pour le suivant.
  */
 @Composable
 fun AddScreen(
@@ -88,6 +129,7 @@ fun AddScreen(
     var barcode by remember { mutableStateOf<String?>(null) }
     var product by remember { mutableStateOf<Product?>(null) }
     var name by remember { mutableStateOf("") }
+    var qty by remember { mutableStateOf("") }
     var zone by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     var note by remember { mutableStateOf<String?>(null) }
@@ -100,17 +142,45 @@ fun AddScreen(
         barcode = null
         product = null
         name = ""
+        qty = ""
         zone = null
         step = AddStep.Scan
     }
 
-    fun failure(e: ApiError): String? = when (e) {
-        ApiError.Unauthorized -> {
-            unauthorized()
-            null
+    fun failure(e: ApiError, lookupFailed: String? = null): String? =
+        addFailure(e, lookupFailed) ?: null.also { unauthorized() }
+
+    /** Produit retrouvé : son nom, sa quantité proposée, puis la question suivante. */
+    fun found(p: Product) {
+        product = p
+        name = p.name.take(NAME_MAX)
+        qty = qtyText(p.qty)
+        note = null
+        step = if (needsQuantity(p)) AddStep.Quantity else AddStep.Zone
+    }
+
+    /** Nom saisi : un produit de ce nom existe peut-être déjà, il est repris tel quel. */
+    fun named() {
+        if (busy || offline || name.isBlank()) return
+        busy = true
+        scope.launch {
+            try {
+                val p = api.tool("alimentation", "app_product", Product.serializer(), buildJsonObject { put("name", name.trim()) })
+                if (p.known) {
+                    found(p)
+                } else {
+                    product = null
+                    note = null
+                    step = AddStep.Zone
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: ApiError) {
+                note = failure(e, "Recherche impossible, réessaie.")
+            } finally {
+                busy = false
+            }
         }
-        ApiError.Offline -> "Serveur injoignable : rien n'a été enregistré."
-        is ApiError.Server -> if (e.code == 422) e.message else "Module indisponible, réessaie plus tard."
     }
 
     fun lookup(code: String) {
@@ -126,19 +196,17 @@ fun AddScreen(
         scope.launch {
             try {
                 val p = api.tool("alimentation", "app_product", Product.serializer(), buildJsonObject { put("barcode", code) })
-                product = p
-                name = p.name.take(NAME_MAX)
-                note = null
-                step = AddStep.Zone
+                if (p.known) {
+                    found(p)
+                } else {
+                    note = "Code-barres inconnu : donne son nom."
+                    step = AddStep.Name
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: ApiError) {
-                if (e is ApiError.Server && e.code == 422) {
-                    note = "Code-barres inconnu : donne son nom."
-                    step = AddStep.Name
-                } else {
-                    note = failure(e)
-                }
+                // Base produits ou réseau en défaut : le produit n'est pas inconnu pour autant.
+                note = failure(e, LOOKUP_FAILED)
             } finally {
                 busy = false
                 retryAt = SystemClock.uptimeMillis() + RETRY_MS
@@ -150,13 +218,7 @@ fun AddScreen(
         val at = zone ?: return
         if (busy || offline) return
         busy = true
-        val args = buildJsonObject {
-            name.trim().takeIf { it.isNotEmpty() }?.let { put("name", it) }
-            barcode?.let { put("barcode", it) }
-            put("qty", 1)
-            put("location", at)
-            expiry?.let { put("expiry", it.toString()) }
-        }
+        val args = addArgs(name, barcode, product, parseQty(qty), at, expiry)
         // Depuis appScope : un ajout parti n'est pas abandonné si le panneau se ferme.
         appScope.launch {
             try {
@@ -217,9 +279,17 @@ fun AddScreen(
                 AddStep.Name -> NameStep(
                     name = name,
                     onName = { name = it.take(NAME_MAX) },
-                    onNext = { if (name.isNotBlank()) step = AddStep.Zone },
+                    onNext = ::named,
                     onBack = ::restart,
                     onNote = { note = it },
+                )
+                AddStep.Quantity -> QuantityStep(
+                    name = name,
+                    unit = product?.unit ?: PIECE,
+                    qty = qty,
+                    onQty = { qty = it.take(8) },
+                    onNext = { if (parseQty(qty) != null) step = AddStep.Zone },
+                    onBack = ::restart,
                 )
                 AddStep.Zone -> Column(Modifier.fillMaxSize()) {
                     Column(Modifier.weight(1f).fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.Center) {
@@ -255,6 +325,31 @@ private fun Note(text: String, error: Boolean = false) {
         overflow = TextOverflow.Ellipsis,
         modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp),
     )
+}
+
+/** Quantité dans l'unité du produit, pré-remplie avec la quantité proposée. */
+@Composable
+private fun QuantityStep(name: String, unit: String, qty: String, onQty: (String) -> Unit, onNext: () -> Unit, onBack: () -> Unit) {
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { focus.requestFocus() }
+    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        TextButton(onClick = onBack) { Text("← Autre") }
+        Text("Combien ?", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(name, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold, maxLines = 3, overflow = TextOverflow.Ellipsis)
+        OutlinedTextField(
+            value = qty,
+            onValueChange = onQty,
+            label = { Text("Quantité") },
+            suffix = { Text(unit) },
+            singleLine = true,
+            isError = parseQty(qty) == null,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Next),
+            keyboardActions = KeyboardActions(onNext = { onNext() }),
+            modifier = Modifier.fillMaxWidth().focusRequester(focus),
+        )
+        Spacer(Modifier.weight(1f))
+        BigTile("Suivant →", Modifier.fillMaxWidth().padding(bottom = 8.dp), enabled = parseQty(qty) != null, highlighted = true, onClick = onNext)
+    }
 }
 
 /** Nom du produit au clavier, ou dicté par la reconnaissance vocale du téléphone. */

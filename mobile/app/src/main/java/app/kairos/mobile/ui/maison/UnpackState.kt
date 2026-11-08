@@ -131,6 +131,12 @@ class UnpackState(order: Order) {
     }
 
     companion object {
+        /** Commande à ranger après [current], par identifiant, en boucle ; null s'il n'y en a pas d'autre. */
+        fun nextOrder(orders: List<Order>, current: Long): Order? {
+            val pending = orders.filter { o -> o.id != current && o.lines.any { !it.done } }.sortedBy { it.id }
+            return pending.firstOrNull { it.id > current } ?: pending.firstOrNull()
+        }
+
         /** Refus de `app_order_line` qui signifie « déjà fait » (double envoi, autre appareil, commande close). */
         fun alreadyHandled(reason: String): Boolean =
             reason.trimEnd().endsWith("déjà traité.") || reason.trimEnd().endsWith("pas à ranger.")

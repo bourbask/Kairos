@@ -91,6 +91,16 @@ class RepositoryTest {
     }
 
     @Test
+    fun maison_outdated_server_says_so() = runBlocking {
+        val server = MockWebServer().apply { start() }
+        server.enqueue(MockResponse.Builder().code(404).build())
+        val repo = Repository(KairosApi(server.url("/").toString(), "t", OkHttpClient()), tmp.newFolder()) { today }
+        repo.refreshMaison()
+        assertEquals("Serveur à mettre à jour", repo.maison.value.reason)
+        server.close()
+    }
+
+    @Test
     fun maison_refreshes_never_go_back_in_time() = runBlocking {
         val server = MockWebServer().apply { start() }
         val inventories = AtomicInteger()

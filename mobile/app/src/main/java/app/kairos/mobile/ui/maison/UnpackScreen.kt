@@ -113,6 +113,8 @@ fun UnpackScreen(
     onUnauthorized: () -> Unit,
     onNotice: (String) -> Unit,
     onClose: () -> Unit,
+    others: Int = 0,
+    onOther: () -> Unit = {},
 ) {
     val state = remember(order.id) { UnpackState(order) }
     val scope = rememberCoroutineScope()
@@ -143,7 +145,9 @@ fun UnpackScreen(
             when (e) {
                 ApiError.Unauthorized -> return unauthorized()
                 ApiError.Offline -> fail("serveur injoignable, rien n'a été enregistré.")
-                is ApiError.Server -> fail(if (e.code == 422) e.message ?: "refusé." else "module indisponible, réessaie plus tard.")
+                // Ligne réservée côté serveur : la renvoyer ne la range jamais deux fois.
+                ApiError.NoReply -> fail("pas de réponse du serveur, réessaie.")
+                is ApiError.Server -> fail(if (e.code == 422) e.message ?: "refusé." else "${e.unavailable()}.")
             }
         } finally {
             // Le serveur fait foi : Maison se met à jour derrière le panneau, une fois.
@@ -210,7 +214,13 @@ fun UnpackScreen(
             .background(MaterialTheme.colorScheme.background)
             .systemBarsPadding(),
     ) {
-        TopBar("Ranger la commande", order.store, state.done, state.total, onClose)
+        TopBar("Ranger la commande", listOfNotNull(order.store.trim().takeIf { it.isNotEmpty() }, pickupLabel(order.pickup)).joinToString(" · "), state.done, state.total, onClose)
+        // Les autres commandes à ranger restent à portée, une à la fois.
+        if (others > 0) {
+            TextButton(onClick = onOther, modifier = Modifier.padding(horizontal = 8.dp)) {
+                Text("Commande suivante (${others} autre${if (others > 1) "s" else ""}) ›")
+            }
+        }
         if (offline) {
             Text(
                 "Hors ligne : rien ne part pour l'instant.",

@@ -141,6 +141,16 @@ pub struct Line {
 /// Produit déjà vu : nom, nature, emplacement habituel.
 pub type Known = (String, Option<Nature>, Option<String>);
 
+/// Produit déjà connu, vu par l'application (`Store::usual`).
+pub struct Usual {
+    pub name: String,
+    pub family: Family,
+    pub nature: Option<Nature>,
+    pub location: Option<String>,
+    /// Dernier apport, dans l'unité de base.
+    pub pack: Option<f64>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Product {
     pub id: i64,
@@ -902,6 +912,32 @@ impl Store {
                 let manual = r.get::<_, Option<String>>(1)?.as_deref().and_then(Nature::parse);
                 let n = crate::nature::resolve(manual, r.get::<_, Option<String>>(2)?.as_deref(), &name);
                 Ok((name, n, r.get(3)?))
+            },
+        )
+        .optional()
+    }
+
+    /// Produit déjà connu (code-barres, sinon nom exact, le plus récent) : sa famille,
+    /// sa zone habituelle et son dernier apport, pour proposer la même quantité.
+    pub fn usual(&self, name: &str, barcode: Option<&str>) -> rusqlite::Result<Option<Usual>> {
+        let db = self.db.lock().unwrap();
+        db.query_row(
+            "SELECT p.name, p.family, p.nature, p.category, COALESCE(p.location,
+                (SELECT location FROM lots WHERE product_id = p.id ORDER BY added_at DESC LIMIT 1)),
+                (SELECT delta FROM movements WHERE product_id = p.id AND delta > 0 ORDER BY at DESC, id DESC LIMIT 1)
+             FROM products p WHERE p.barcode = ?2 OR p.folded = ?1 ORDER BY p.barcode = ?2 DESC, p.id DESC LIMIT 1",
+            params![fold(name.trim()), barcode],
+            |r| {
+                let name: String = r.get(0)?;
+                let manual = r.get::<_, Option<String>>(2)?.as_deref().and_then(Nature::parse);
+                let nature = crate::nature::resolve(manual, r.get::<_, Option<String>>(3)?.as_deref(), &name);
+                Ok(Usual {
+                    family: Family::parse(&r.get::<_, String>(1)?).unwrap_or(Family::Piece),
+                    name,
+                    nature,
+                    location: r.get(4)?,
+                    pack: r.get(5)?,
+                })
             },
         )
         .optional()

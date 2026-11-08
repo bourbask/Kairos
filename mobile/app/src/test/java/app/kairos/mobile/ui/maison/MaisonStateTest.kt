@@ -51,6 +51,19 @@ class MaisonStateTest {
     }
 
     @Test
+    fun banner_shows_latest_order() {
+        fun order(id: Long, pickup: String?) = Order(id, "drive", pickup, listOf(OrderLine(0, "Pain")))
+        val s = MaisonState(snapshot().copy(orders = listOf(order(4, "2026-11-10"), order(9, "2026-11-08"), order(6, "2026-11-10"))))
+        // Retrait le plus tardif, puis la dernière enregistrée ; les autres en nombre.
+        assertEquals(6L, s.banner?.id)
+        assertEquals(2, s.orders.size - 1)
+        assertEquals("retrait 10/11", pickupLabel("2026-11-10"))
+        assertNull(pickupLabel(null))
+        assertNull(pickupLabel("bientôt"))
+        assertNull(MaisonState(snapshot().copy(orders = emptyList())).banner)
+    }
+
+    @Test
     fun swipe_left_consumes_after_undo_window() {
         val s = MaisonState(snapshot())
         val use = s.consume(champignons)!!

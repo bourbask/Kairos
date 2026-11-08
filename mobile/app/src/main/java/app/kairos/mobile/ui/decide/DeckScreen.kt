@@ -122,6 +122,7 @@ fun DeckScreen(
             when (e) {
                 ApiError.Unauthorized -> return unauthorized()
                 ApiError.Offline -> fail("Serveur injoignable : rien n'a été enregistré.")
+                ApiError.NoReply -> fail("Pas de réponse du serveur : réessaie.")
                 is ApiError.Server -> when (e.code) {
                     404 -> notice("Cette question n'existe plus.")
                     503 -> fail("Module indisponible, réessaie plus tard.")

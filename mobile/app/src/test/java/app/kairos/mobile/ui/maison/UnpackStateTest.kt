@@ -19,6 +19,14 @@ class UnpackStateTest {
     private val order = Order(7, "drive", lines = listOf(lait, riz, yaourts, pain))
 
     @Test
+    fun next_order_cycles_through_pending() {
+        fun o(id: Long, done: Boolean = false) = Order(id, lines = listOf(OrderLine(0, "Pain", done = done)))
+        val all = listOf(o(9), o(4), o(6), o(5, done = true))
+        assertEquals(listOf(6L, 9L, 4L), listOf(4L, 6L, 9L).map { UnpackState.nextOrder(all, it)?.id })
+        assertNull(UnpackState.nextOrder(listOf(o(4)), 4))
+    }
+
+    @Test
     fun proposed_zone_first() {
         val s = UnpackState(order)
         // Les lignes déjà traitées ne reviennent pas ; la zone habituelle est proposée.

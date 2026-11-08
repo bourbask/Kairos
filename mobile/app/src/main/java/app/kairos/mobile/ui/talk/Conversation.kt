@@ -119,6 +119,7 @@ class Conversation(
                 notice = when (e) {
                     ApiError.Unauthorized -> null.also { onUnauthorized() }
                     ApiError.Offline -> "Serveur injoignable : message gardé dans la saisie."
+                    ApiError.NoReply -> "Pas de réponse : le message est peut-être parti, vérifie avant de le renvoyer."
                     is ApiError.Server ->
                         if (e.code == 503) "Kairos a trop à faire, réessaie dans un moment." else e.message
                 }
@@ -201,7 +202,7 @@ class Conversation(
         } catch (e: ApiError) {
             when (e) {
                 ApiError.Unauthorized -> onUnauthorized()
-                ApiError.Offline -> offline = true
+                ApiError.Offline, ApiError.NoReply -> offline = true
                 is ApiError.Server -> Unit
             }
         }

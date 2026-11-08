@@ -118,9 +118,22 @@ data class OrderLine(
 @Serializable
 data class Order(val id: Long, val store: String = "", val pickup: String? = null, val lines: List<OrderLine> = emptyList())
 
-/** Produit retrouvé par son code-barres ; [location] = zone habituelle. */
+/**
+ * Produit retrouvé (code-barres ou nom) ; [known] = false s'il est inconnu. [location] = zone
+ * habituelle, [unit] = unité du produit (g, ml, pièce), [qty] = quantité proposée dans cette unité.
+ */
 @Serializable
-data class Product(val name: String, val nature: String? = null, val fresh: Boolean = false, val location: String = "")
+data class Product(
+    val known: Boolean = true,
+    val name: String = "",
+    val nature: String? = null,
+    val fresh: Boolean = false,
+    val location: String = "",
+    val unit: String = PIECE,
+    val qty: Double = 1.0,
+)
+
+const val PIECE = "pièce"
 
 /** Réponse d'un outil d'écriture. */
 @Serializable

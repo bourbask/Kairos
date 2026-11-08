@@ -16,13 +16,29 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.coroutines.executeAsync
 import java.io.IOException
+import java.io.InterruptedIOException
 import java.time.LocalDate
 
 sealed class ApiError(message: String) : Exception(message) {
     /** Jeton refusé : l'appareil doit être appairé à nouveau. */
     data object Unauthorized : ApiError("Appareil non autorisé")
     data object Offline : ApiError("Serveur injoignable")
-    class Server(val code: Int, message: String) : ApiError(message)
+
+    /** Requête partie sans réponse à temps : elle a pu être appliquée. */
+    data object NoReply : ApiError("Pas de réponse du serveur")
+
+    /** [bare] : réponse sans raison (`message`) lisible. */
+    class Server(val code: Int, message: String, val bare: Boolean = false) : ApiError(message) {
+        /** 404 nu : la tête ne connaît pas la route, elle précède cette version de l'application. */
+        val outdated: Boolean get() = code == 404 && bare
+
+        /** Module hors d'atteinte, ou tête à mettre à jour. */
+        fun unavailable(): String = if (outdated) OUTDATED else "Module indisponible, réessaie plus tard"
+
+        companion object {
+            const val OUTDATED = "Serveur à mettre à jour"
+        }
+    }
 }
 
 /** Client de l'API de l'application (`/app/v1`). Le jeton n'est jamais journalisé. */
@@ -82,12 +98,15 @@ class KairosApi(baseUrl: String, private val token: String, private val client: 
         val (code, text) = try {
             // Annulée avec la coroutine appelante (écran quitté, actualisation abandonnée).
             client.newCall(request).executeAsync().use { it.code to it.body.string() }
+        } catch (_: InterruptedIOException) {
+            // Délai dépassé : la requête a pu partir.
+            throw ApiError.NoReply
         } catch (_: IOException) {
             throw ApiError.Offline
         }
         when {
             code == 401 -> throw ApiError.Unauthorized
-            code !in 200..299 -> throw ApiError.Server(code, message(text) ?: "Erreur du serveur ($code)")
+            code !in 200..299 -> throw message(text).let { ApiError.Server(code, it ?: "Erreur du serveur ($code)", bare = it == null) }
             else -> try {
                 parse(text)
             } catch (e: IllegalArgumentException) {

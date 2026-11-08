@@ -19,6 +19,10 @@ import kotlin.math.roundToLong
 /** Zones du plan, dans l'ordre d'affichage : identifiant stocké → libellé. */
 val ZONES = listOf("frigo" to "Frigo", "congelateur" to "Congélo", "placard" to "Placard", "etagere" to "Étagère", "corbeille" to "Table")
 
+/** « retrait 10/11 » pour une date AAAA-MM-JJ ; rien si absente ou illisible. */
+fun pickupLabel(pickup: String?): String? =
+    runCatching { LocalDate.parse(pickup) }.getOrNull()?.let { "retrait ${it.format(DAY_MONTH)}" }
+
 data class ZoneView(val id: String, val label: String, val count: Int, val urgent: Int)
 
 /** Action sur un lot, pas encore confirmée par le serveur. Comparée par identité. */
@@ -69,6 +73,9 @@ class MaisonState(snapshot: MaisonSnapshot = MaisonSnapshot()) {
 
     /** Commandes qui ont encore des lignes à ranger. */
     val orders: List<Order> get() = base.orders.filter { o -> o.lines.any { !it.done } }
+
+    /** Commande du bandeau : retrait le plus tardif, puis la dernière enregistrée. */
+    val banner: Order? get() = orders.maxWithOrNull(compareBy<Order>({ it.pickup.orEmpty() }, { it.id }))
 
     val zones: List<ZoneView>
         get() {

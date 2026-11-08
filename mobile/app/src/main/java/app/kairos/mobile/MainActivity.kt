@@ -66,6 +66,7 @@ import app.kairos.mobile.ui.maison.MaisonActionCorner
 import app.kairos.mobile.ui.maison.MaisonScreen
 import app.kairos.mobile.ui.maison.AddScreen
 import app.kairos.mobile.ui.maison.UnpackScreen
+import app.kairos.mobile.ui.maison.UnpackState
 import app.kairos.mobile.ui.overlay.anchorTo
 import app.kairos.mobile.data.Order
 import app.kairos.mobile.ui.spaces.SpacesScreen
@@ -302,6 +303,7 @@ class AppModel(app: Application) : AndroidViewModel(app) {
         when (e) {
             ApiError.Unauthorized -> "Code refusé par le serveur. Génère-en un nouveau."
             ApiError.Offline -> "Serveur injoignable. Le téléphone est-il sur le bon réseau ?"
+            ApiError.NoReply -> "Le serveur ne répond pas, réessaie."
             is ApiError.Server -> "Le serveur a répondu : ${e.message}"
         }
     } catch (_: Exception) {
@@ -505,6 +507,8 @@ private fun KairosRoot(model: AppModel) {
                     onUnauthorized = model::unauthorized,
                     onNotice = { scope.launch { snackbar.showSnackbar(it) } },
                     onClose = { unpackOrder = null },
+                    others = maison.orders.count { o -> o.id != shown.id && o.lines.any { !it.done } },
+                    onOther = { UnpackState.nextOrder(maison.orders, shown.id)?.let { unpackOrder = it.id } },
                 )
             }
         }

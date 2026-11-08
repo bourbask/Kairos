@@ -180,10 +180,9 @@ fun MaisonScreen(
                     return unauthorized()
                 }
                 ApiError.Offline -> state.refused(a, "Serveur injoignable : rien n'a été enregistré.")
-                is ApiError.Server -> state.refused(
-                    a,
-                    if (e.code == 422) e.message ?: "Refusé." else "Module indisponible, réessaie plus tard.",
-                )
+                // L'état réel suit (actualisation ci-dessous).
+                ApiError.NoReply -> state.refused(a, "Pas de réponse du serveur : vérifie avant de réessayer.")
+                is ApiError.Server -> state.refused(a, if (e.code == 422) e.message ?: "Refusé." else "${e.unavailable()}.")
             }
         }
         // Le serveur fait foi (urgence, quantités lisibles, lot disparu ailleurs).
@@ -261,14 +260,16 @@ fun MaisonScreen(
             if (state.offline) {
                 OfflineBar(snapshot.reason ?: "Hors ligne", snapshot.fetchedAt, refreshing, ::refresh)
             }
-            // Le panneau naît du bandeau touché, et y retourne.
-            val banners = remember { mutableMapOf<Long, LayoutCoordinates>() }
-            state.orders.forEach { order ->
+            // Un seul bandeau, la commande la plus récente ; le panneau en naît, et y retourne.
+            var banner by remember { mutableStateOf<LayoutCoordinates?>(null) }
+            state.banner?.let { order ->
                 OrderBanner(
                     order,
+                    others = state.orders.size - 1,
                     enabled = state.canAct,
-                    onClick = { onUnpack(order, banners[order.id]) },
-                    modifier = Modifier.onGloballyPositioned { banners[order.id] = it },
+                    onClick = { onUnpack(order, banner) },
+                    onOthers = { UnpackState.nextOrder(state.orders, order.id)?.let { onUnpack(it, banner) } },
+                    modifier = Modifier.onGloballyPositioned { banner = it },
                 )
             }
             KitchenPlan(
@@ -529,7 +530,14 @@ private fun OfflineBar(reason: String, fetchedAt: String?, refreshing: Boolean, 
 }
 
 @Composable
-private fun OrderBanner(order: Order, enabled: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+private fun OrderBanner(
+    order: Order,
+    others: Int,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    onOthers: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val left = order.lines.count { !it.done }
     val shape = RoundedCornerShape(MaisonActionCorner)
     Surface(
@@ -548,10 +556,19 @@ private fun OrderBanner(order: Order, enabled: Boolean, onClick: () -> Unit, mod
             Column(Modifier.weight(1f)) {
                 Text("Commande à ranger", fontWeight = FontWeight.Bold)
                 Text(
-                    listOfNotNull(order.store.trim().takeIf { it.isNotEmpty() }, "$left produit${if (left > 1) "s" else ""}").joinToString(" · "),
+                    listOfNotNull(
+                        order.store.trim().takeIf { it.isNotEmpty() },
+                        "$left produit${if (left > 1) "s" else ""}",
+                        pickupLabel(order.pickup),
+                    ).joinToString(" · "),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f),
                 )
+            }
+            if (others > 0) {
+                TextButton(onClick = onOthers, enabled = enabled) {
+                    Text("+$others autre${if (others > 1) "s" else ""}", color = MaterialTheme.colorScheme.onPrimary)
+                }
             }
             Text("Ranger ›", fontWeight = FontWeight.SemiBold)
         }

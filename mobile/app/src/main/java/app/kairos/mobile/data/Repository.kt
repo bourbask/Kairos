@@ -91,7 +91,7 @@ class Repository(
             write(maisonFile, MaisonSnapshot.serializer(), fresh)
         } catch (e: ApiError) {
             if (e is ApiError.Unauthorized) throw e
-            val reason = if (e is ApiError.Server) "Module indisponible" else null
+            val reason = (e as? ApiError.Server)?.let { if (it.outdated) ApiError.Server.OUTDATED else "Module indisponible" }
             _maison.update { it.copy(offline = true, reason = reason) }
         }
     }
