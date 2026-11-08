@@ -126,7 +126,8 @@ pub struct Line {
     /// Unité : g, kg, ml, cl, l, pièce (défaut), douzaine.
     #[serde(default)]
     pub unit: Option<String>,
-    /// frigo, congelateur, placard, etagere, corbeille (fruits et légumes à l'air libre).
+    /// frigo, congelateur, placard, etagere, corbeille (fruits et légumes à l'air libre),
+    /// evier (sous l'évier : entretien) ou sdb (salle de bain : hygiène).
     #[serde(default)]
     pub location: Option<String>,
     /// Date imprimée (AAAA-MM-JJ), si connue ; sinon estimée d'après le produit et l'emplacement.

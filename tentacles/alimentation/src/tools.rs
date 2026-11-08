@@ -303,7 +303,11 @@ const FRESH_SPAN_DAYS: i64 = 30;
 
 /// Entretien et hygiène : ni repas, ni urgence, ni briefing.
 fn non_food(l: &Lot) -> bool {
-    l.nature.is_some_and(|n| !n.is_food()) || matches!(l.location.as_str(), "evier" | "sdb")
+    // La nature prime : des oignons rangés sous l'évier restent de l'alimentaire.
+    match l.nature {
+        Some(n) => !n.is_food(),
+        None => matches!(l.location.as_str(), "evier" | "sdb"),
+    }
 }
 
 /// Se gâte vraiment : DLC, produit gardé au frais (œufs, beurre), frais sans
@@ -1686,6 +1690,16 @@ mod tests {
         let z = |id: &str| zones.iter().find(|z| z["id"] == id).unwrap().clone();
         assert_eq!((z("evier")["label"].clone(), z("evier")["count"].clone()), ("Sous l'évier".into(), 1.into()));
         assert_eq!((z("sdb")["label"].clone(), z("sdb")["count"].clone()), ("Salle de bain".into(), 1.into()));
+    }
+
+    #[test]
+    fn food_under_sink_stays_perishable() {
+        let mut onions = lot(None, false, "evier", 7);
+        onions.nature = Some(crate::nature::Nature::Legume);
+        assert!(perishable(&onions), "la nature prime sur la zone");
+        let mut soap = lot(None, false, "frigo", 7);
+        soap.nature = Some(crate::nature::Nature::Hygiene);
+        assert!(!perishable(&soap));
     }
 
     #[test]

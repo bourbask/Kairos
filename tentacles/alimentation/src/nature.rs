@@ -216,6 +216,12 @@ const PHRASES: &[(&str, Nature)] = &[
     ("lait demaquillant", Hygiene),
     ("creme hydratante", Hygiene),
     ("eau micellaire", Hygiene),
+    ("creme solaire", Hygiene),
+    ("lait solaire", Hygiene),
+    ("lait de toilette", Hygiene),
+    ("sopalin", Entretien),
+    ("film alimentaire", Entretien),
+    ("papier aluminium", Entretien),
     ("lait de coco", Base),
     ("creme de coco", Base),
     ("coconut milk", Base),
@@ -465,6 +471,12 @@ mod tests {
         assert_eq!(resolve(None, Some("cleaning products"), "Produit X"), Some(Nature::Entretien));
         assert_eq!(resolve(None, Some("shampoos"), "Produit X"), Some(Nature::Hygiene));
         assert_eq!(from_name("Selle d'agneau"), Some(Nature::Proteine));
+        for n in ["Crème solaire SPF50", "Lait solaire", "Lait de toilette"] {
+            assert_eq!(from_name(n), Some(Nature::Hygiene), "{n}");
+        }
+        for n in ["Sopalin", "Film alimentaire", "Papier aluminium"] {
+            assert_eq!(from_name(n), Some(Nature::Entretien), "{n}");
+        }
         assert!(!Nature::Entretien.is_food() && !Nature::Hygiene.is_food() && Nature::Plat.is_food());
     }
 
