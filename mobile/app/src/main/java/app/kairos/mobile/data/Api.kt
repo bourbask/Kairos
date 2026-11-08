@@ -33,11 +33,19 @@ sealed class ApiError(message: String) : Exception(message) {
         /** 404 nu : la tête ne connaît pas la route, elle précède cette version de l'application. */
         val outdated: Boolean get() = code == 404 && bare
 
-        /** Module hors d'atteinte, ou tête à mettre à jour. */
-        fun unavailable(): String = if (outdated) OUTDATED else "Module indisponible, réessaie plus tard"
+        /** Réponse reçue mais impossible à lire (format inattendu) : le module a répondu. */
+        val unreadable: Boolean get() = code in 200..299
+
+        /** Module hors d'atteinte, réponse illisible, ou tête à mettre à jour. */
+        fun unavailable(): String = when {
+            outdated -> OUTDATED
+            unreadable -> UNREADABLE
+            else -> "Module indisponible, réessaie plus tard"
+        }
 
         companion object {
             const val OUTDATED = "Serveur à mettre à jour"
+            const val UNREADABLE = "Réponse illisible du module"
         }
     }
 }

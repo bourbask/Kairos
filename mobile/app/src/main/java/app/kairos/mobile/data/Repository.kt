@@ -120,7 +120,7 @@ class Repository(
             write(maisonFile, MaisonSnapshot.serializer(), fresh)
         } catch (e: ApiError) {
             if (e is ApiError.Unauthorized) throw e
-            val reason = (e as? ApiError.Server)?.let { if (it.outdated) ApiError.Server.OUTDATED else "Module indisponible" }
+            val reason = (e as? ApiError.Server)?.let { app.kairos.mobile.ui.finances.issueOf(it) }
             _maison.update { it.copy(offline = true, reason = reason) }
         }
     }
@@ -206,7 +206,7 @@ class Repository(
      * Retire une proposition triée sans attendre le module ; [ignore] la garde écartée
      * sur l'appareil. Un refus de suivi revient avec la prochaine actualisation.
      */
-    suspend fun dropProposal(id: String, ignore: Boolean) {
+    suspend fun dropProposal(id: String, ignore: Boolean) = marchesLock.withLock {
         val next = _marches.updateAndGet { s ->
             s.copy(proposals = s.proposals.filterNot { it.id == id }, ignored = if (ignore) s.ignored + id else s.ignored)
         }

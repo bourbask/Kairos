@@ -43,6 +43,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -158,10 +160,14 @@ fun MarchesScreen(
                 return@launch unauthorized()
             }
             when (out) {
-                is DoneOutcome.Done -> try {
-                    repository.refreshMarches()
-                } catch (_: ApiError.Unauthorized) {
-                    unauthorized()
+                is DoneOutcome.Done -> {
+                    try {
+                        repository.refreshMarches()
+                    } catch (_: ApiError.Unauthorized) {
+                        return@launch unauthorized()
+                    }
+                    // Relue sans elle : plus besoin de la cacher, et suivie à nouveau plus tard, elle doit réapparaître.
+                    if (repository.marches.value.issue == null) hidden = hidden - m.id
                 }
                 is DoneOutcome.Refused -> snackbar.showSnackbar(out.message)
                 else -> Unit
@@ -329,6 +335,7 @@ private fun Deltas(m: FollowedMarket) {
                 style = MaterialTheme.typography.labelMedium,
                 fontWeight = FontWeight.SemiBold,
                 color = trendOf(d).color(),
+                modifier = Modifier.clearAndSetSemantics { contentDescription = spokenDelta(d, period) },
             )
         }
     }
@@ -388,7 +395,14 @@ private fun ScenarioBlock(s: Scenario, followed: List<FollowedMarket>) {
         Text(s.name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
         s.links.forEach { l ->
             val m = byId[l.id]
-            Row(Modifier.fillMaxWidth().semantics(mergeDescendants = true) {}, verticalAlignment = Alignment.CenterVertically) {
+            val d = m?.let { deltasOf(it).firstOrNull() }
+            val spoken = listOfNotNull(
+                signWord(l.sign),
+                m?.question ?: "question plus suivie",
+                m?.let(::headline),
+                d?.let { (period, v) -> spokenDelta(v, period) },
+            ).joinToString(", ")
+            Row(Modifier.fillMaxWidth().clearAndSetSemantics { contentDescription = spoken }, verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     if (l.sign >= 0) "+" else "−",
                     style = MaterialTheme.typography.titleSmall,
@@ -402,13 +416,12 @@ private fun ScenarioBlock(s: Scenario, followed: List<FollowedMarket>) {
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
-                val d = m?.let { deltasOf(it).firstOrNull()?.second }
                 if (m != null) {
                     Spacer(Modifier.width(8.dp))
                     Text(
-                        if (d != null) "${headline(m)} ${deltaLabel(d)}" else headline(m),
+                        if (d != null) "${headline(m)} ${deltaLabel(d.second)}" else headline(m),
                         style = MaterialTheme.typography.labelMedium,
-                        color = d?.let { trendOf(it).color() } ?: MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = d?.let { trendOf(it.second).color() } ?: MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
@@ -515,8 +528,8 @@ private fun DetailPanel(
                 if (p?.up != null || p?.down != null) {
                     SectionHeader("Projection")
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        p.up?.let { ProjectionLine("▲ Si ça monte", it, MaterialTheme.colorScheme.primary) }
-                        p.down?.let { ProjectionLine("▼ Si ça baisse", it, MaterialTheme.colorScheme.error) }
+                        p.up?.let { ProjectionLine("▲ Si ça monte", "Si la probabilité monte", it, MaterialTheme.colorScheme.primary) }
+                        p.down?.let { ProjectionLine("▼ Si ça baisse", "Si la probabilité baisse", it, MaterialTheme.colorScheme.error) }
                     }
                 }
                 if (d.scenarios.isNotEmpty()) {
@@ -526,7 +539,9 @@ private fun DetailPanel(
                         Text(
                             "${if (sign >= 0) "+" else "−"} ${s.name}",
                             style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.padding(vertical = 2.dp),
+                            modifier = Modifier
+                                .padding(vertical = 2.dp)
+                                .clearAndSetSemantics { contentDescription = "${signWord(sign)} le scénario ${s.name}" },
                         )
                     }
                 }
@@ -540,8 +555,8 @@ private fun DetailPanel(
 }
 
 @Composable
-private fun ProjectionLine(title: String, text: String, color: Color) {
-    Column(Modifier.semantics(mergeDescendants = true) {}) {
+private fun ProjectionLine(title: String, spoken: String, text: String, color: Color) {
+    Column(Modifier.clearAndSetSemantics { contentDescription = "$spoken : $text" }) {
         Text(title, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold, color = color)
         Text(text, style = MaterialTheme.typography.bodyMedium)
     }

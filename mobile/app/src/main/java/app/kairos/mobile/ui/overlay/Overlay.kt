@@ -35,6 +35,7 @@ import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
@@ -97,9 +98,12 @@ fun OverlayState.anchorTo(coordinates: LayoutCoordinates, corner: Dp) {
 /**
  * Écran recouvert par des panneaux : il recule (transformation de conteneur)
  * ou glisse en parallaxe (panneau venu du bord), arrondi pendant le mouvement.
+ * Tant qu'un panneau est à l'écran, l'écran recouvert sort de l'arbre d'accessibilité :
+ * lecteurs d'écran et outils d'inspection ne voient que le panneau.
+ * Appelé pendant la composition : le masquage suit l'ouverture et la fermeture.
  */
 fun Modifier.underOverlays(rtl: Boolean, vararg states: OverlayState): Modifier =
-    graphicsLayer {
+    (if (states.any { it.shown }) clearAndSetSemantics {} else this).graphicsLayer {
         var depth = 0f
         var shift = 0f
         for (s in states) {

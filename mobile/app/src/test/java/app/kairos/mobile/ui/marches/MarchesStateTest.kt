@@ -178,4 +178,45 @@ class MarchesStateTest {
         assertEquals("2026-11-08T08:00", half.fetchedAt)
         assertFalse(half.markets == null)
     }
+
+    @Test
+    fun times_in_local_zone() {
+        val paris = java.time.ZoneId.of("Europe/Paris")
+        // Horodatage RFC 3339 en UTC : affiché à l'heure locale.
+        assertEquals("08/11 à 08:00", app.kairos.mobile.ui.finances.syncLabel("2026-11-08T07:00:00+00:00", paris))
+        assertEquals("08/11 à 08:00", app.kairos.mobile.ui.finances.syncLabel("2026-11-08T07:00:00Z", paris))
+        assertEquals("08/11 à 10:00", app.kairos.mobile.ui.finances.syncLabel("2026-11-08T09:00:00Z", paris))
+        // Heure locale sans décalage : inchangée.
+        assertEquals("08/11 à 07:00", app.kairos.mobile.ui.finances.syncLabel("2026-11-08T07:00:00", paris))
+        // Échéance à 23 h 30 UTC le 31/12 : déjà le 01/01 à Paris.
+        assertEquals("01/01", app.kairos.mobile.ui.finances.dayLabel("2026-12-31T23:30:00+00:00", paris))
+        assertEquals("31/12", app.kairos.mobile.ui.finances.dayLabel("2026-12-31", paris))
+    }
+
+    @Test
+    fun details_pruned_to_followed() {
+        val detail = app.kairos.mobile.data.MarketDetail("gone")
+        val prev = MarchesSnapshot(details = mapOf("a" to detail.copy(id = "a"), "gone" to detail))
+        val fresh = marchesAfter(prev, Result.success(Markets(followed = listOf(m("a")))), Result.success(emptyList()), "t")
+        assertEquals(setOf("a"), fresh.details.keys)
+        // Sans réponse : rien n'est oublié.
+        val down = marchesAfter(prev, Result.failure(ApiError.Offline), Result.failure(ApiError.Offline), "t")
+        assertEquals(setOf("a", "gone"), down.details.keys)
+    }
+
+    @Test
+    fun unreadable_reply_is_not_unavailable() {
+        val down = marchesAfter(MarchesSnapshot(), Result.failure(ApiError.Server(200, "Réponse illisible")), Result.success(emptyList()), "t")
+        assertEquals("Réponse illisible du module", down.issue)
+        assertEquals("Module indisponible", marchesAfter(MarchesSnapshot(), Result.failure(ApiError.Server(503, "x")), Result.success(emptyList()), "t").issue)
+    }
+
+    @Test
+    fun spoken_labels() {
+        assertEquals("hausse de 5 points sur 24 heures", spokenDelta(0.05, "24 h"))
+        assertEquals("baisse de 1 point sur 7 jours", spokenDelta(-0.01, "7 j"))
+        assertEquals("stable sur 24 heures", spokenDelta(0.0, "24 h"))
+        assertEquals("soutient", signWord(1))
+        assertEquals("contredit", signWord(-1))
+    }
 }

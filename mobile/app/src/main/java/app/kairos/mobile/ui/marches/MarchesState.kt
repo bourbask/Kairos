@@ -75,6 +75,21 @@ fun deltaLabel(d: Double): String = when (trendOf(d)) {
     Trend.Flat -> "= "
 } + deltaText(d)
 
+/** Variation lue par les lecteurs d'écran : « hausse de 5 points sur 24 heures ». */
+fun spokenDelta(d: Double, period: String): String {
+    val n = abs(points(d))
+    val over = "sur " + period.replace(" h", " heures").replace(" j", " jours")
+    val amount = "de $n point${if (n > 1) "s" else ""}"
+    return when (trendOf(d)) {
+        Trend.Up -> "hausse $amount $over"
+        Trend.Down -> "baisse $amount $over"
+        Trend.Flat -> "stable $over"
+    }
+}
+
+/** Lien d'une question à un scénario, en mots. */
+fun signWord(sign: Int): String = if (sign >= 0) "soutient" else "contredit"
+
 /** Variations à afficher (période, valeur) ; aucune pour une question dénouée. */
 fun deltasOf(m: FollowedMarket): List<Pair<String, Double>> =
     if (m.closed) emptyList() else listOfNotNull(m.d1?.let { "24 h" to it }, m.d7?.let { "7 j" to it })
@@ -139,13 +154,15 @@ fun pendingProposals(s: MarchesSnapshot): List<MarketProposal> {
 
 /**
  * Nouvel état après une lecture : ce qui a répondu remplace l'ancien, le reste est
- * gardé avec la raison. Les propositions ignorées qui ne sont plus proposées sont oubliées.
+ * gardé avec la raison. Les propositions ignorées qui ne sont plus proposées, et les
+ * détails des questions qui ne sont plus suivies, sont oubliés.
  */
 fun marchesAfter(prev: MarchesSnapshot, markets: Result<Markets>, proposals: Result<List<MarketProposal>>, now: String): MarchesSnapshot {
     val p = proposals.getOrNull()
     val failure = markets.exceptionOrNull() ?: proposals.exceptionOrNull()
     return prev.copy(
         markets = markets.getOrNull() ?: prev.markets,
+        details = markets.getOrNull()?.let { m -> prev.details.filterKeys { id -> m.followed.any { it.id == id } } } ?: prev.details,
         proposals = p ?: prev.proposals,
         ignored = p?.let { list -> prev.ignored.intersect(list.map { it.id }.toSet()) } ?: prev.ignored,
         fetchedAt = if (failure == null) now else prev.fetchedAt,

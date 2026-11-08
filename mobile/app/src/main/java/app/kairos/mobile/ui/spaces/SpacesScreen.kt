@@ -39,6 +39,9 @@ import app.kairos.mobile.ui.marches.deltaLabel
 import app.kairos.mobile.ui.marches.headline
 import app.kairos.mobile.ui.marches.pendingProposals
 import app.kairos.mobile.ui.marches.strongestToday
+import app.kairos.mobile.ui.marches.spokenDelta
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import app.kairos.mobile.ui.marches.trendOf
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.text.style.TextOverflow
@@ -259,6 +262,7 @@ private fun MarchesCard(marches: MarchesSnapshot, onClick: () -> Unit, modifier:
                     Text(top.question, style = MaterialTheme.typography.bodyMedium, color = colors.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(
                         "${headline(top)} · ${deltaLabel(d1)} sur 24 h",
+                        modifier = Modifier.clearAndSetSemantics { contentDescription = "${headline(top)}, ${spokenDelta(d1, "24 h")}" },
                         style = MaterialTheme.typography.bodySmall,
                         fontWeight = FontWeight.SemiBold,
                         color = trendOf(d1).color(),
