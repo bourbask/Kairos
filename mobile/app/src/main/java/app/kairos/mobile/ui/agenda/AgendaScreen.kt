@@ -75,6 +75,7 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
+import app.kairos.mobile.ui.kit.UndoWindows
 import app.kairos.mobile.data.AgendaDay
 import app.kairos.mobile.data.AgendaTask
 import app.kairos.mobile.data.ApiError
@@ -130,6 +131,7 @@ fun AgendaScreen(
     val scope = rememberCoroutineScope()
     val unauthorized by rememberUpdatedState(onUnauthorized)
     val snackbar = remember { SnackbarHostState() }
+    val undo = remember { UndoWindows(snackbar) }
     var today by remember { mutableStateOf(LocalDate.now()) }
     val strip = remember(today) { dayStrip(today) }
     var selectedText by rememberSaveable { mutableStateOf(today.toString()) }
@@ -172,9 +174,7 @@ fun AgendaScreen(
         shownDay = selected
     }
 
-    suspend fun undoWindow(text: String): Boolean = withTimeoutOrNull(UNDO_MS) {
-        snackbar.showSnackbar(text, actionLabel = "Annuler", duration = SnackbarDuration.Indefinite)
-    } == SnackbarResult.ActionPerformed
+    suspend fun undoWindow(text: String): Boolean = undo.open(text)
 
     // Depuis appScope : quitter l'espace pendant la fenêtre n'abandonne pas l'action.
     fun taskDone(task: AgendaTask) {

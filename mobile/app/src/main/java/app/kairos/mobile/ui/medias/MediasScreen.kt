@@ -44,12 +44,14 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
+import app.kairos.mobile.ui.kit.UndoWindows
 import app.kairos.mobile.data.ApiError
 import app.kairos.mobile.data.DownloadItem
 import app.kairos.mobile.data.Downloads
@@ -102,6 +104,7 @@ fun MediasScreen(
     val scope = rememberCoroutineScope()
     val unauthorized by rememberUpdatedState(onUnauthorized)
     val snackbar = remember { SnackbarHostState() }
+    val undo = remember { UndoWindows(snackbar) }
     var refreshing by remember { mutableStateOf(false) }
     var hidden by remember { mutableStateOf(emptySet<String>()) }
     val busy = remember { InFlight() }
@@ -149,11 +152,7 @@ fun MediasScreen(
                     watchedCard(w),
                     null,
                     mark = { m -> hidden = if (m == null) hidden - w.key else hidden + w.key },
-                    undoWindow = {
-                        withTimeoutOrNull(UNDO_MS) {
-                            snackbar.showSnackbar("Vu · ${w.title}", actionLabel = "Annuler", duration = SnackbarDuration.Indefinite)
-                        } == SnackbarResult.ActionPerformed
-                    },
+                    undoWindow = { undo.open("Vu · ${w.title}") },
                     call = repository::tool,
                     busy = busy,
                 )
@@ -290,7 +289,7 @@ private fun WatchRow(w: Watch, onWatched: (Watch) -> Unit) {
                     Text(w.title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     Text(w.note, style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
                 }
-                TextButton(onClick = { onWatched(w) }) { Text("Vu") }
+                TextButton(onClick = { onWatched(w) }, modifier = Modifier.semantics { contentDescription = "Marquer vu : ${w.title}" }) { Text("Vu") }
             }
         }
     }
@@ -442,6 +441,7 @@ private fun Requests(
                         }
                     },
                     enabled = state.enabled && k !in sending,
+                    modifier = Modifier.semantics { contentDescription = "${state.label} : ${r.title}" },
                 ) { Text(if (k in sending) "Envoi…" else state.label) }
             }
         }
