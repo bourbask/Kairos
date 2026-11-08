@@ -4,6 +4,8 @@ import app.kairos.mobile.data.ApiError
 import app.kairos.mobile.data.Card
 import app.kairos.mobile.data.CardDone
 import app.kairos.mobile.data.Mark
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -19,14 +21,22 @@ sealed interface DoneOutcome {
     data class Refused(val message: String) : DoneOutcome
 }
 
-/** Cartes dont un geste est en cours (fenêtre d'annulation ou envoi) : un second geste est ignoré. */
+/**
+ * Cartes dont un geste est en cours (fenêtre d'annulation ou envoi) : un second geste est ignoré.
+ * [keys] est observable : le fil garde ces cartes à leur place tant que l'issue n'est pas connue.
+ */
 class InFlight {
-    private val keys = mutableSetOf<String>()
+    private val _keys = MutableStateFlow(emptySet<String>())
+    val keys: StateFlow<Set<String>> = _keys
 
-    @Synchronized fun claim(key: String): Boolean = keys.add(key)
+    @Synchronized fun claim(key: String): Boolean {
+        if (key in _keys.value) return false
+        _keys.value += key
+        return true
+    }
 
     @Synchronized fun release(key: String) {
-        keys.remove(key)
+        _keys.value -= key
     }
 }
 

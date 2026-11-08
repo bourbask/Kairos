@@ -20,7 +20,7 @@ internal const val DAYS_JSON = """[{"day": "2026-11-08", "work": "repos", "cards
   {"id": "repas-2026-11-08-midi", "kind": "info", "time": "12:15",
    "title": "Midi · Soupe de carcasse", "body": "Frigo, réchauffer 5 min",
    "chips": [{"text": "champignons à finir", "tone": "attention"}],
-   "detail": "texte long optionnel (recette…)", "module": "alimentation", "inconnu": 1},
+   "detail": "texte long optionnel (recette…)", "module": "alimentation", "dish": "Soupe de carcasse", "inconnu": 1},
   {"id": "agenda-1", "title": "Sans heure", "module": "agenda"}]},
  {"day": "2026-11-09", "work": "sur site", "cards": []}]"""
 
@@ -67,8 +67,10 @@ class ApiTest {
         assertEquals("alimentation", card.module)
         assertEquals(Chip("champignons à finir", Tone.Attention), card.chips.single())
         assertEquals("texte long optionnel (recette…)", card.detail)
+        assertEquals("Soupe de carcasse", card.dish)
         val bare = days[0].cards[1]
         assertNull(bare.time)
+        assertNull(bare.dish)
         assertNull(bare.body)
         assertEquals("sur site", days[1].work)
     }

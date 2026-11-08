@@ -1006,7 +1006,18 @@ impl Store {
     /// Portions d'un plat cuisiné mises au frigo. Le plat est un produit à part,
     /// de nature `plat` : un ingrédient du même nom n'est jamais retagué.
     pub fn add_dish(&self, dish: &str, portions: f64) -> Result<String, String> {
+        self.add_dish_at(dish, portions, "frigo", "reste")
+    }
+
+    /// Portions d'un plat cuisiné rangées au frigo ou au congélateur.
+    pub fn add_dish_at(&self, dish: &str, portions: f64, loc: &str, reason: &str) -> Result<String, String> {
         let name = dish.trim();
+        if name.is_empty() || portions.is_nan() || portions <= 0.0 {
+            return Err("Plat : nom et nombre de portions attendus.".to_string());
+        }
+        if loc != "frigo" && loc != "congelateur" {
+            return Err("Un plat se range au frigo ou au congélateur.".to_string());
+        }
         let p = {
             let db = self.db.lock().unwrap();
             let plat = Nature::Plat.as_str();
@@ -1030,7 +1041,7 @@ impl Store {
                 }
             }
         };
-        self.stock_lot(&p, portions, "frigo", None, "reste", None, None)
+        self.stock_lot(&p, portions, loc, None, reason, None, None)
     }
 
     /// Repas depuis une date : (jour, moment, plat, lieu).

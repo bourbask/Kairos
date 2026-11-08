@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use serde::de::DeserializeOwned;
 
 #[derive(Debug, thiserror::Error)]
@@ -132,6 +132,91 @@ pub struct RuleResult {
     pub applied: bool,
 }
 
+/// Liste tolérante : un élément illisible (champ requis nul ou mal typé) est écarté et compté,
+/// la liste reste servie.
+#[derive(Debug, Clone)]
+pub struct Lenient<T> {
+    pub items: Vec<T>,
+    pub dropped: usize,
+}
+
+impl<T> Default for Lenient<T> {
+    fn default() -> Self {
+        Lenient { items: Vec::new(), dropped: 0 }
+    }
+}
+
+impl<'de, T: DeserializeOwned> Deserialize<'de> for Lenient<T> {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let raw: Option<Vec<serde_json::Value>> = Deserialize::deserialize(d)?;
+        let raw = raw.unwrap_or_default();
+        let n = raw.len();
+        let items: Vec<T> = raw.into_iter().filter_map(|v| serde_json::from_value(v).ok()).collect();
+        Ok(Lenient { dropped: n - items.len(), items })
+    }
+}
+
+/// Réponses du backend de patrimoine : lecture tolérante (champs absents ou nuls à `None`,
+/// inconnus ignorés), chaque section de l'écran étant facultative.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct NetWorth {
+    pub net_of_debt: Option<f64>,
+    pub debt: Option<f64>,
+    pub loans: Lenient<NetWorthLoan>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct NetWorthLoan {
+    pub name: String,
+    pub remaining_balance: f64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Snapshot {
+    pub month: String,
+    pub net_worth: f64,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct Snapshots {
+    pub snapshots: Lenient<Snapshot>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Loan {
+    pub name: String,
+    pub balance: f64,
+    #[serde(default)]
+    pub payment: Option<f64>,
+    #[serde(default)]
+    pub payoff_month: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct Loans {
+    pub loans: Lenient<Loan>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Instrument {
+    pub name: String,
+    pub cost: f64,
+    #[serde(default)]
+    pub bucket: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct Portfolio {
+    pub total_cost: Option<f64>,
+    pub instruments: Lenient<Instrument>,
+    pub by_bucket: BTreeMap<String, Option<f64>>,
+    pub bucket_weights: BTreeMap<String, Option<f64>>,
+}
+
 /// Nature d'une erreur HTTP, sans son texte : il peut citer l'adresse appelée.
 fn kind(e: &reqwest::Error) -> &'static str {
     if e.is_timeout() {
@@ -234,5 +319,21 @@ impl FinanceApi {
             .post(format!("{}/api/rules", self.base))
             .json(&serde_json::json!({"payee": payee, "poste": poste}));
         self.send(req).await
+    }
+
+    pub async fn networth(&self) -> Result<NetWorth, ApiError> {
+        self.get("/api/networth", &[]).await
+    }
+
+    pub async fn snapshots(&self) -> Result<Snapshots, ApiError> {
+        self.get("/api/snapshots", &[]).await
+    }
+
+    pub async fn loans(&self) -> Result<Loans, ApiError> {
+        self.get("/api/loans", &[]).await
+    }
+
+    pub async fn portfolio(&self) -> Result<Portfolio, ApiError> {
+        self.get("/api/portfolio", &[]).await
     }
 }

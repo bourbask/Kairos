@@ -34,6 +34,8 @@ data class Card(
     val chips: List<Chip> = emptyList(),
     val detail: String? = null,
     val module: String = "",
+    /** Plat d'une carte repas. */
+    val dish: String? = null,
     /** Action « fait » du module ; absente = simple marque locale. */
     val done: CardDone? = null,
 ) {
@@ -170,3 +172,100 @@ data class MaisonSnapshot(
 /** Dernier APK déposé sur la tête (`GET /app/v1/app`). */
 @Serializable
 data class AppRelease(val version: String, val size: Long)
+
+/* Espace Finances : outils `app_finance_cycle`, `app_finance_wealth`, `app_afford`. Montants en euros. */
+
+/** Fraîcheur des données bancaires. */
+@Serializable
+data class Freshness(
+    val stale: Boolean = false,
+    @SerialName("consent_expired") val consentExpired: Boolean = false,
+    @SerialName("last_sync") val lastSync: String? = null,
+)
+
+/** Enveloppe d'un poste : prévu face à dépensé sur le cycle. */
+@Serializable
+data class Envelope(val poste: String, val planned: Double = 0.0, val spent: Double = 0.0)
+
+@Serializable
+data class Charge(val name: String, val amount: Double = 0.0, val date: String? = null)
+
+@Serializable
+data class Cushion(val balance: Double = 0.0, val floor: Double = 0.0)
+
+@Serializable
+data class FinanceAlert(val id: String = "", val title: String = "", val details: String = "", val remedy: String? = null)
+
+/** Cycle budgétaire ; un champ absent = section indisponible. */
+@Serializable
+data class FinanceCycle(
+    val start: String? = null,
+    val end: String? = null,
+    val today: String? = null,
+    @SerialName("days_left") val daysLeft: Int? = null,
+    val available: Double? = null,
+    val balance: Double? = null,
+    val envelopes: List<Envelope> = emptyList(),
+    val charges: List<Charge> = emptyList(),
+    val cushion: Cushion? = null,
+    val alerts: List<FinanceAlert>? = null,
+    val postes: List<String> = emptyList(),
+    val freshness: Freshness? = null,
+)
+
+@Serializable
+data class NetWorthPoint(val month: String, @SerialName("net_worth") val netWorth: Double = 0.0)
+
+@Serializable
+data class Loan(
+    val name: String,
+    val balance: Double = 0.0,
+    val payment: Double? = null,
+    @SerialName("payoff_month") val payoffMonth: String? = null,
+)
+
+/** Catégorie de risque du portefeuille ; [weight] cible, absent si inconnu. */
+@Serializable
+data class Bucket(val name: String, val weight: Double? = null, val amount: Double = 0.0)
+
+@Serializable
+data class PortfolioLine(val name: String, val amount: Double? = null, val bucket: String? = null)
+
+@Serializable
+data class Portfolio(val total: Double? = null, val buckets: List<Bucket> = emptyList(), val lines: List<PortfolioLine> = emptyList())
+
+/** Patrimoine ; chaque section est absente si sa source n'a pas répondu. */
+@Serializable
+data class FinanceWealth(
+    @SerialName("net_worth") val netWorth: Double? = null,
+    val debt: Double? = null,
+    val history: List<NetWorthPoint>? = null,
+    val loans: List<Loan>? = null,
+    val portfolio: Portfolio? = null,
+    val freshness: Freshness? = null,
+)
+
+@Serializable
+data class Cut(val poste: String? = null, val amount: Double = 0.0)
+
+/** Verdict « puis-je me permettre » : [after] = reste à vivre après la dépense. */
+@Serializable
+data class Affordability(val ok: Boolean = false, val after: Double = 0.0, val reason: String? = null, val cuts: List<Cut> = emptyList())
+
+/**
+ * Dernier état connu des finances, source par source (cycle, patrimoine).
+ * `*At` = dernière réponse complète de la source ; `*Issue` = pourquoi elle
+ * n'est pas à jour (hors ligne, module indisponible, réponse partielle), null si elle l'est.
+ */
+@Serializable
+data class FinancesSnapshot(
+    val cycle: FinanceCycle? = null,
+    val wealth: FinanceWealth? = null,
+    val cycleAt: String? = null,
+    val wealthAt: String? = null,
+    val cycleIssue: String? = null,
+    val wealthIssue: String? = null,
+) {
+    val fetchedAt: String? get() = listOfNotNull(cycleAt, wealthAt).maxOrNull()
+    val offline: Boolean get() = cycleIssue != null || wealthIssue != null
+}

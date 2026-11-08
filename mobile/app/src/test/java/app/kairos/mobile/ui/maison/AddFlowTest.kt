@@ -1,6 +1,8 @@
 package app.kairos.mobile.ui.maison
 
 import app.kairos.mobile.data.ApiError
+import app.kairos.mobile.data.Card
+import app.kairos.mobile.data.Day
 import app.kairos.mobile.data.Product
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
@@ -43,6 +45,27 @@ class AddFlowTest {
         assertNull(parseQty("abc"))
         assertEquals("1000", qtyText(1000.0))
         assertEquals("1.5", qtyText(1.5))
+    }
+
+    @Test
+    fun cooked_dish_args() {
+        val a = dishArgs(" Soupe de carcasse ", 3, "congelateur")
+        assertEquals("""{"name":"Soupe de carcasse","portions":3,"location":"congelateur"}""", a.toString())
+        assertEquals(listOf("frigo", "congelateur"), DISH_ZONES)
+    }
+
+    @Test
+    fun planned_dishes_today_first_then_recent() {
+        // Le plat vient du champ `dish`, jamais du titre.
+        fun meal(day: String, slot: String, dish: String) = Card(id = "repas-$day-$slot", title = "$slot · autre", module = "alimentation", dish = dish)
+        val days = listOf(
+            Day("2026-11-07", cards = listOf(meal("2026-11-07", "soir", "Soupe"))),
+            Day("2026-11-08", cards = listOf(meal("2026-11-08", "midi", "Soupe"), meal("2026-11-08", "soir", "Dhal"), Card(id = "rdv", title = "Dentiste · 9 h", module = "agenda"), Card(id = "x", title = "Midi · Pâtes", module = "alimentation"))),
+            Day("2026-11-09", cards = listOf(meal("2026-11-09", "soir", "Curry"))),
+            Day("2026-11-06", cards = listOf(meal("2026-11-06", "soir", "Gratin"))),
+        )
+        assertEquals(listOf("Soupe", "Dhal", "Gratin", "Curry"), plannedDishes(days, "2026-11-08"))
+        assertEquals(emptyList<String>(), plannedDishes(emptyList(), "2026-11-08"))
     }
 
     @Test
