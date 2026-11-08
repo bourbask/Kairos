@@ -35,6 +35,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.contentColorFor
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Snackbar
 import androidx.compose.material3.SnackbarHost
@@ -589,7 +590,7 @@ internal fun SwipeRow(
             ) {
                 Text(
                     if (positive) rightLabel else leftLabel,
-                    color = Color.White,
+                    color = if (positive) MaterialTheme.colorScheme.onPrimary else contentColorFor(leftColor),
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.alpha((abs(dx) / threshold).coerceIn(0.35f, 1f)),
                 )

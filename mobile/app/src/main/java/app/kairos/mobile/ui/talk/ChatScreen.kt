@@ -375,7 +375,7 @@ private fun RoundAction(label: String, filled: Boolean, onClick: () -> Unit, ico
 }
 
 @Composable
-private fun IconButton(label: String, onClick: () -> Unit, state: String? = null, icon: @Composable () -> Unit) {
+internal fun IconButton(label: String, onClick: () -> Unit, state: String? = null, icon: @Composable () -> Unit) {
     Box(
         Modifier
             .size(48.dp)

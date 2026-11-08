@@ -46,15 +46,18 @@ sealed class LotAction(val lot: Lot) {
 
 /**
  * Inventaire affiché, sans réseau ni horloge. Chaque action s'applique tout de
- * suite à l'écran, par-dessus le dernier état du serveur ; elle disparaît quand
- * le serveur la confirme ([confirmed]) ou la refuse ([refused] : le lot revient,
- * avec la raison). Seule la dernière consommation est annulable, tant que
+ * suite à l'écran (liste et compteurs du plan), par-dessus le dernier état du
+ * serveur. Confirmée ([confirmed]), elle reste appliquée jusqu'à ce qu'un état lu
+ * après coup arrive ([settle]) : une actualisation partie avant, ou un échec qui ne
+ * rend que l'ancien état, ne la fait pas revenir en arrière. Refusée ([refused]),
+ * le lot revient, avec la raison. Seule la dernière consommation est annulable, tant que
  * l'écran ne l'a pas envoyée ([dispatch]). Hors ligne, tout est en lecture seule.
  */
 class MaisonState(snapshot: MaisonSnapshot = MaisonSnapshot()) {
     private var base by mutableStateOf(snapshot)
     private var pending by mutableStateOf<List<LotAction>>(emptyList())
     private var sent by mutableStateOf<Set<LotAction>>(emptySet())
+    private var acked by mutableStateOf<Set<LotAction>>(emptySet())
     private var undoable by mutableStateOf<LotAction.Use?>(null)
     private var selected by mutableStateOf<String?>(null)
 
@@ -148,11 +151,18 @@ class MaisonState(snapshot: MaisonSnapshot = MaisonSnapshot()) {
         return true
     }
 
-    /** Le serveur a accepté : l'effet reste acquis jusqu'à la prochaine actualisation. */
+    /** Le serveur a accepté : l'effet reste appliqué jusqu'à [settle]. */
     fun confirmed(a: LotAction) {
-        if (a !in pending) return
-        base = base.copy(inventory = base.inventory.copy(lots = applied(base.inventory.lots, a)))
-        forget(a)
+        if (a in pending) acked = acked + a
+    }
+
+    /**
+     * État du serveur lu après les confirmations reçues jusqu'ici : il les reflète,
+     * elles cessent d'être rejouées par-dessus.
+     */
+    fun settle(snapshot: MaisonSnapshot) {
+        base = snapshot
+        acked.forEach(::forget)
     }
 
     /** Le serveur a refusé : le lot revient tel qu'il était, avec la raison. */
@@ -176,6 +186,7 @@ class MaisonState(snapshot: MaisonSnapshot = MaisonSnapshot()) {
     private fun forget(a: LotAction) {
         pending = pending - a
         sent = sent - a
+        acked = acked - a
         if (undoable === a) undoable = null
     }
 }
@@ -193,6 +204,15 @@ private fun applied(lots: List<Lot>, a: LotAction): List<Lot> = when (a) {
             )
         }
     }
+}
+
+/**
+ * Un cran de +/− depuis [value] (unité de base), jamais sous zéro. Arrondi au
+ * millième : des pas décimaux répétés ne laissent pas de reste flottant.
+ */
+fun stepQty(value: Double, step: Double, up: Boolean): Double {
+    val s = step.takeIf { it > 0 } ?: 1.0
+    return (((if (up) value + s else value - s) * 1000).roundToLong() / 1000.0).coerceAtLeast(0.0)
 }
 
 /** Nombre à deux décimales au plus, virgule française (comme le module). */
