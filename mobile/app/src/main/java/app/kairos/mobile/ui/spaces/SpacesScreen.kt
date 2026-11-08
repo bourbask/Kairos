@@ -33,6 +33,15 @@ import androidx.compose.ui.unit.dp
 import app.kairos.mobile.data.AgendaSnapshot
 import app.kairos.mobile.data.FinancesSnapshot
 import app.kairos.mobile.data.MaisonSnapshot
+import app.kairos.mobile.data.MarchesSnapshot
+import app.kairos.mobile.ui.marches.color
+import app.kairos.mobile.ui.marches.deltaLabel
+import app.kairos.mobile.ui.marches.headline
+import app.kairos.mobile.ui.marches.pendingProposals
+import app.kairos.mobile.ui.marches.strongestToday
+import app.kairos.mobile.ui.marches.trendOf
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.text.style.TextOverflow
 import app.kairos.mobile.ui.kit.Amount
 import app.kairos.mobile.ui.kit.Tone
 import app.kairos.mobile.ui.kit.barTone
@@ -67,17 +76,23 @@ fun SpacesScreen(
     onOpenAgenda: () -> Unit,
     onCloseAgenda: () -> Unit,
     agendaContent: @Composable () -> Unit,
+    marches: MarchesSnapshot,
+    marchesOpen: Boolean,
+    onOpenMarches: () -> Unit,
+    onCloseMarches: () -> Unit,
+    marchesContent: @Composable () -> Unit,
     maisonContent: @Composable () -> Unit,
 ) {
     val overlay = rememberOverlayState(maisonOpen, Origin.Anchor)
     val financesOverlay = rememberOverlayState(financesOpen, Origin.Anchor)
     val agendaOverlay = rememberOverlayState(agendaOpen, Origin.Anchor)
+    val marchesOverlay = rememberOverlayState(marchesOpen, Origin.Anchor)
     val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.outlineVariant)) {
         Column(
             Modifier
                 .fillMaxSize()
-                .underOverlays(rtl, overlay, financesOverlay, agendaOverlay)
+                .underOverlays(rtl, overlay, financesOverlay, agendaOverlay, marchesOverlay)
                 .background(MaterialTheme.colorScheme.background)
                 .padding(padding)
                 .padding(horizontal = 20.dp, vertical = 20.dp),
@@ -91,6 +106,8 @@ fun SpacesScreen(
             FinancesCard(finances, onOpenFinances, Modifier.overlayAnchor(financesOverlay, CardCorner))
             Spacer(Modifier.height(12.dp))
             AgendaCard(agenda, onOpenAgenda, Modifier.overlayAnchor(agendaOverlay, CardCorner))
+            Spacer(Modifier.height(12.dp))
+            MarchesCard(marches, onOpenMarches, Modifier.overlayAnchor(marchesOverlay, CardCorner))
             Spacer(Modifier.height(16.dp))
             Text(
                 "D'autres espaces viendront ici.",
@@ -106,6 +123,9 @@ fun SpacesScreen(
         }
         Overlay(agendaOverlay, agendaOpen, onClose = onCloseAgenda, anchorColor = MaterialTheme.colorScheme.surface) {
             agendaContent()
+        }
+        Overlay(marchesOverlay, marchesOpen, onClose = onCloseMarches, anchorColor = MaterialTheme.colorScheme.surface) {
+            marchesContent()
         }
     }
 }
@@ -212,6 +232,59 @@ private fun AgendaCard(agenda: AgendaSnapshot, onClick: () -> Unit, modifier: Mo
             Text("›", style = MaterialTheme.typography.headlineSmall, color = colors.onSurfaceVariant)
         }
     }
+}
+
+/** Question qui a le plus bougé sur 24 h, sens lisible sans la couleur ; propositions à trier. */
+@Composable
+private fun MarchesCard(marches: MarchesSnapshot, onClick: () -> Unit, modifier: Modifier) {
+    val colors = MaterialTheme.colorScheme
+    val top = strongestToday(marches.markets?.followed.orEmpty())
+    val proposals = pendingProposals(marches).size
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(CardCorner),
+        color = colors.surface,
+        border = BorderStroke(1.dp, colors.outlineVariant),
+        modifier = modifier.fillMaxWidth(),
+    ) {
+        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            TrendIcon(colors.primary, colors.primaryContainer)
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text("Marchés", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                val d1 = top?.d1
+                if (top == null || d1 == null) {
+                    Text("Questions suivies et propositions", style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant)
+                } else {
+                    Text(top.question, style = MaterialTheme.typography.bodyMedium, color = colors.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        "${headline(top)} · ${deltaLabel(d1)} sur 24 h",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = trendOf(d1).color(),
+                    )
+                }
+                if (proposals > 0) {
+                    Text(
+                        "$proposals proposition${if (proposals > 1) "s" else ""} à trier",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colors.onSurfaceVariant,
+                    )
+                }
+            }
+            Text("›", style = MaterialTheme.typography.headlineSmall, color = colors.onSurfaceVariant)
+        }
+    }
+}
+
+/** Courbe montante. */
+@Composable
+private fun TrendIcon(line: Color, fill: Color) = Canvas(Modifier.size(44.dp).background(fill, RoundedCornerShape(12.dp)).padding(9.dp)) {
+    val w = size.width
+    val h = size.height
+    val pts = listOf(Offset(0f, h * 0.8f), Offset(w * 0.35f, h * 0.5f), Offset(w * 0.6f, h * 0.65f), Offset(w, h * 0.15f))
+    for (i in 0 until pts.size - 1) drawLine(line, pts[i], pts[i + 1], 2.5.dp.toPx(), StrokeCap.Round)
+    drawCircle(line, 3.dp.toPx(), pts.last())
 }
 
 /** Page de calendrier : bandeau et grille. */

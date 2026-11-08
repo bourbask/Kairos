@@ -186,4 +186,12 @@ class KitMathTest {
         val b = TimeBlock("Point", 600, 660, source = "travail", subtitle = "Salle B")
         assertEquals("Point, travail, de 10 h à 11 h, Salle B", describeBlock(b))
     }
+
+    @Test
+    fun column_heights_relative_to_max() {
+        assertEquals(listOf(0.5f, 1f, 0f, 0f), columnHeights(listOf(50.0, 100.0, -3.0, Double.NaN)))
+        assertEquals(listOf(0f, 0f), columnHeights(listOf(0.0, 0.0)))
+        assertEquals(emptyList<Float>(), columnHeights(emptyList()))
+        assertEquals("Volume, aucune donnée", describeColumns("Volume", listOf(0.0), { it.toString() }))
+    }
 }

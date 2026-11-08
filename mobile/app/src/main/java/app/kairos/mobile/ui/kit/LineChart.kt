@@ -16,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
@@ -88,4 +89,30 @@ fun LineChart(
             }
         }
     }
+}
+
+/**
+ * Mini-courbe d'une série, sans axe ni libellé ni animation : la forme seule, pour une
+ * ligne de liste. Moins de deux points : rien n'est dessiné. Décorative pour les lecteurs
+ * d'écran, la ligne qui la porte dit déjà la tendance.
+ */
+@Composable
+fun Sparkline(values: List<Double>, modifier: Modifier = Modifier, color: Color = MaterialTheme.colorScheme.primary) {
+    val points = remember(values) { if (values.size < 2) emptyList() else linePoints(values) }
+    Spacer(
+        modifier.clearAndSetSemantics {}.drawWithCache {
+            val pad = 2.dp.toPx()
+            val w = size.width - 2 * pad
+            val h = size.height - 2 * pad
+            val path = Path().apply {
+                points.forEachIndexed { i, (x, y) ->
+                    val px = pad + x * w
+                    val py = pad + (1 - y) * h
+                    if (i == 0) moveTo(px, py) else lineTo(px, py)
+                }
+            }
+            val style = Stroke(1.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+            onDrawBehind { if (points.isNotEmpty()) drawPath(path, color, style = style) }
+        },
+    )
 }
