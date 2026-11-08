@@ -9,14 +9,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.ui.graphics.lerp
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -91,6 +84,7 @@ import app.kairos.mobile.data.ChatEntry
 import app.kairos.mobile.ui.DockHeight
 import app.kairos.mobile.ui.mascot.Mascot
 import app.kairos.mobile.ui.mascot.MascotState
+import app.kairos.mobile.ui.theme.Motion
 import app.kairos.mobile.ui.theme.Palette
 import kotlin.math.max
 
@@ -112,8 +106,6 @@ fun ChatScreen(
         conversation.visible = true
         onDispose { conversation.visible = false }
     }
-    BackHandler(onBack = onClose)
-
     Column(
         Modifier
             .fillMaxSize()
@@ -136,7 +128,7 @@ private fun Header(
     val haptic = LocalHapticFeedback.current
     val closePx = with(LocalDensity.current) { 96.dp.toPx() }
     var pull by remember { mutableFloatStateOf(0f) }
-    val offset by animateFloatAsState(pull, label = "tirer")
+    val offset by animateFloatAsState(pull, Motion.settle(), label = "tirer")
     Row(
         Modifier
             .fillMaxWidth()
@@ -348,7 +340,7 @@ private fun InputBar(conversation: Conversation, focusInput: Boolean, onMic: () 
         // Micro quand la saisie est vide, envoi dès qu'il y a du texte.
         AnimatedContent(
             targetState = canSend,
-            transitionSpec = { (scaleIn() + fadeIn()) togetherWith (scaleOut() + fadeOut()) },
+            transitionSpec = { Motion.fadeThrough() },
             label = "action",
         ) { send ->
             RoundAction(
@@ -417,8 +409,8 @@ fun TalkPanel(
     val nav = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     AnimatedVisibility(
         visible = visible,
-        enter = slideInVertically { it / 2 } + fadeIn(),
-        exit = slideOutVertically { it / 2 } + fadeOut(),
+        enter = Motion.riseIn,
+        exit = Motion.sinkOut,
         modifier = modifier,
     ) {
         val colors = MaterialTheme.colorScheme

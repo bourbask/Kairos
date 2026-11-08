@@ -12,11 +12,6 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -44,6 +39,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.DefaultLifecycleObserver
@@ -57,7 +54,13 @@ import app.kairos.mobile.data.Credentials
 import app.kairos.mobile.data.KairosApi
 import app.kairos.mobile.data.Repository
 import app.kairos.mobile.data.SecureStore
+import app.kairos.mobile.ui.KairosButtonCorner
 import app.kairos.mobile.ui.Shell
+import app.kairos.mobile.ui.overlay.Origin
+import app.kairos.mobile.ui.overlay.Overlay
+import app.kairos.mobile.ui.overlay.overlayAnchor
+import app.kairos.mobile.ui.overlay.rememberOverlayState
+import app.kairos.mobile.ui.overlay.underOverlays
 import app.kairos.mobile.ui.decide.DeckScreen
 import app.kairos.mobile.ui.pairing.PairingScreen
 import app.kairos.mobile.ui.talk.ChatScreen
@@ -74,6 +77,7 @@ import app.kairos.mobile.ui.settings.SettingsScreen
 import app.kairos.mobile.ui.settings.maskAddress
 import app.kairos.mobile.data.Settings
 import androidx.compose.runtime.DisposableEffect
+import app.kairos.mobile.ui.today.DecisionsPeekCorner
 import app.kairos.mobile.ui.today.TodayScreen
 import app.kairos.mobile.voice.Speech
 import app.kairos.mobile.voice.Tts
@@ -384,8 +388,16 @@ private fun KairosRoot(model: AppModel) {
     }
 
     val mascot = mascotFor(talk.mode, conversation.busy || conversation.awaiting, conversation.decisions, conversation.unread)
-    Box(Modifier.fillMaxSize()) {
+    val deck = rememberOverlayState(decisionsOpen, Origin.Anchor)
+    val chat = rememberOverlayState(chatOpen, Origin.Anchor)
+    val settings = rememberOverlayState(settingsOpen, Origin.End)
+    val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+    val primary = MaterialTheme.colorScheme.primary
+    // Fond révélé quand l'écran principal recule sous un panneau.
+    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.outlineVariant)) {
         Shell(
+            modifier = Modifier.underOverlays(rtl, deck, chat, settings),
+            kairosModifier = Modifier.overlayAnchor(chat, KairosButtonCorner),
             mascotState = mascot,
             onTap = {
                 focusInput = false
@@ -402,10 +414,11 @@ private fun KairosRoot(model: AppModel) {
                     onOpenDecisions = { decisionsOpen = true },
                     onOpenSettings = { settingsOpen = true },
                     onUnauthorized = model::unauthorized,
+                    decisionsAnchor = Modifier.overlayAnchor(deck, DecisionsPeekCorner),
                 )
             },
         )
-        if (decisionsOpen) {
+        Overlay(deck, decisionsOpen, onClose = { decisionsOpen = false }, anchorColor = primary) {
             val snapshot by session.repository.snapshot.collectAsState()
             DeckScreen(
                 decisions = snapshot.decisions,
@@ -428,11 +441,7 @@ private fun KairosRoot(model: AppModel) {
                 onClose = { decisionsOpen = false },
             )
         }
-        AnimatedVisibility(
-            visible = chatOpen,
-            enter = slideInVertically { it / 3 } + fadeIn(),
-            exit = slideOutVertically { it / 3 } + fadeOut(),
-        ) {
+        Overlay(chat, chatOpen, onClose = { chatOpen = false }, anchorColor = primary) {
             ChatScreen(
                 conversation = conversation,
                 mascot = mascot,
@@ -442,7 +451,7 @@ private fun KairosRoot(model: AppModel) {
                 onClose = { chatOpen = false },
             )
         }
-        if (settingsOpen) {
+        Overlay(settings, settingsOpen, onClose = { settingsOpen = false }) {
             SettingsScreen(
                 theme = model.theme,
                 onTheme = model::changeTheme,

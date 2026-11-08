@@ -1,6 +1,5 @@
 package app.kairos.mobile.ui.settings
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -50,7 +49,6 @@ fun SettingsScreen(
     onLogout: () -> Unit,
     onClose: () -> Unit,
 ) {
-    BackHandler(onBack = onClose)
     var confirm by remember { mutableStateOf(false) }
     Column(
         Modifier
