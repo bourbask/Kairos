@@ -148,10 +148,10 @@ fun agendaAfter(
 }
 
 /** Bandeau quand la dernière synchronisation des calendriers a échoué, ou null. */
-fun syncBanner(s: AgendaSnapshot): String? {
+fun syncBanner(s: AgendaSnapshot, zone: java.time.ZoneId = java.time.ZoneId.systemDefault()): String? {
     val sync = s.sync ?: return null
     if (sync.synced) return null
-    return "Agenda pas à jour — " + (sync.at?.let { "dernière synchro ${syncLabel(it)}" } ?: "jamais synchronisé")
+    return "Agenda pas à jour — " + (sync.at?.let { "dernière synchro ${syncLabel(it, zone)}" } ?: "jamais synchronisé")
 }
 
 /** Minutes depuis minuit pour « HH:MM », ou null. */

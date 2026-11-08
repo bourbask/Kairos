@@ -123,12 +123,12 @@ class AgendaStateTest {
 
         // Synchronisation impossible : base locale lue, bandeau avec la dernière synchro réussie.
         val stale = agendaAfter(fresh, Result.success(d), Result.success(week), Result.success(AgendaSync(false, "2026-11-08T08:00:00+01:00")), "2026-11-08T10:00", today)
-        assertEquals("Agenda pas à jour — dernière synchro 08/11 à 08:00", syncBanner(stale))
+        assertEquals("Agenda pas à jour — dernière synchro 08/11 à 08:00", syncBanner(stale, java.time.ZoneId.of("Europe/Paris")))
 
         // Synchronisation sans réponse (délai dépassé) : bandeau aussi, avec la dernière réussie.
         val timeout = agendaAfter(fresh, Result.success(d), Result.success(week), Result.failure(ApiError.NoReply), "2026-11-08T10:00", today)
         assertEquals(AgendaSync(false, "2026-11-08T08:00:00+01:00"), timeout.sync)
-        assertEquals("Agenda pas à jour — dernière synchro 08/11 à 08:00", syncBanner(timeout))
+        assertEquals("Agenda pas à jour — dernière synchro 08/11 à 08:00", syncBanner(timeout, java.time.ZoneId.of("Europe/Paris")))
         assertNull(timeout.issue)
 
         // Les jours passés sortent du cache.
