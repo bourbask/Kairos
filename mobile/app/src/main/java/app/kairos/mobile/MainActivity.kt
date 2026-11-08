@@ -81,6 +81,8 @@ import app.kairos.mobile.ui.maison.UnpackState
 import app.kairos.mobile.ui.overlay.anchorTo
 import app.kairos.mobile.data.Order
 import app.kairos.mobile.ui.spaces.SpacesScreen
+import app.kairos.mobile.ui.agenda.AgendaScreen
+import java.time.LocalDate
 import app.kairos.mobile.ui.finances.FinancesScreen
 import app.kairos.mobile.ui.kit.LocalAmountsMasked
 import app.kairos.mobile.ui.pairing.PairingScreen
@@ -487,6 +489,7 @@ private fun KairosRoot(model: AppModel) {
     var settingsOpen by rememberSaveable { mutableStateOf(false) }
     var maisonOpen by rememberSaveable { mutableStateOf(false) }
     var financesOpen by rememberSaveable { mutableStateOf(false) }
+    var agendaOpen by rememberSaveable { mutableStateOf(false) }
     var unpackOrder by rememberSaveable { mutableStateOf<Long?>(null) }
     var adding by rememberSaveable { mutableStateOf(false) }
     var focusInput by remember { mutableStateOf(false) }
@@ -588,9 +591,15 @@ private fun KairosRoot(model: AppModel) {
             spaces = { padding ->
                 val maison by session.repository.maison.collectAsState()
                 val finances by session.repository.finances.collectAsState()
+                val agenda by session.repository.agenda.collectAsState()
                 // Une actualisation à l'arrivée sur l'onglet : les chiffres des cartes sont à jour.
                 LaunchedEffect(Unit) {
-                    for (refresh in listOf<suspend () -> Unit>({ session.repository.refreshMaison() }, { session.repository.refreshFinances(force = false) })) {
+                    val refreshes = listOf<suspend () -> Unit>(
+                        { session.repository.refreshMaison() },
+                        { session.repository.refreshFinances(force = false) },
+                        { session.repository.refreshAgenda(LocalDate.now(), force = false) },
+                    )
+                    for (refresh in refreshes) {
                         launch {
                             try {
                                 refresh()
@@ -617,6 +626,19 @@ private fun KairosRoot(model: AppModel) {
                             masked = model.amountsMasked,
                             onToggleMasked = model::toggleAmountsMasked,
                             onClose = { financesOpen = false },
+                            onUnauthorized = model::unauthorized,
+                        )
+                    },
+                    agenda = agenda,
+                    agendaOpen = agendaOpen,
+                    onOpenAgenda = { agendaOpen = true },
+                    onCloseAgenda = { agendaOpen = false },
+                    agendaContent = {
+                        AgendaScreen(
+                            repository = session.repository,
+                            padding = padding,
+                            appScope = model.viewModelScope,
+                            onClose = { agendaOpen = false },
                             onUnauthorized = model::unauthorized,
                         )
                     },

@@ -1283,7 +1283,7 @@ dependencies = [
 
 [[package]]
 name = "kairos"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1314,6 +1314,7 @@ name = "kairos-agenda"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "axum",
  "chrono",
  "kairos",
  "reqwest 0.12.28",
