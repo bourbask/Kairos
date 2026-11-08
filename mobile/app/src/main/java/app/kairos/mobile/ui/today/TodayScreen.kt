@@ -172,6 +172,7 @@ fun TodayScreen(
     val notice by rememberUpdatedState(onNotice)
 
     val busy = remember { InFlight() }
+    val pending by busy.keys.collectAsState()
 
     /**
      * Fenêtre d'annulation propre à chaque carte, comptée depuis son geste ; vrai si
@@ -271,6 +272,7 @@ fun TodayScreen(
                     DayContent(
                         snapshot = snapshot,
                         marks = marks,
+                        pending = pending,
                         now = now,
                         bottom = padding.calculateBottomPadding(),
                         onRefresh = ::refresh,
@@ -326,6 +328,7 @@ fun TodayScreen(
 private fun DayContent(
     snapshot: Snapshot,
     marks: Map<String, Map<String, Mark>>,
+    pending: Set<String>,
     now: LocalDateTime,
     bottom: Dp,
     onRefresh: () -> Unit,
@@ -343,8 +346,8 @@ private fun DayContent(
     val todayKey = now.toLocalDate().toString()
     val today = snapshot.days.firstOrNull { it.day == todayKey }
     val tomorrow = snapshot.days.firstOrNull { it.day == now.toLocalDate().plusDays(1).toString() }
-    val items = remember(today, marks, now) {
-        timeline(today?.cards.orEmpty(), marks[todayKey].orEmpty(), now.toLocalTime())
+    val items = remember(today, marks, pending, now) {
+        timeline(today?.cards.orEmpty(), marks[todayKey].orEmpty(), now.toLocalTime(), pending)
     }
     var expanded by rememberSaveable { mutableStateOf<String?>(null) }
 
@@ -586,11 +589,14 @@ private fun TimelineRow(
                     drawCircle(ring, r, c, style = Stroke(2.dp.toPx()))
                 },
         )
+        // La carte reste dans le fil pendant le geste (marquée sur place) : elle revient se poser, sans partir.
         SwipeRow(
             enabled = swipeEnabled,
             onRight = onDone,
             onLeft = onLater,
             modifier = Modifier.weight(1f).padding(bottom = 8.dp),
+            rightStays = true,
+            leftStays = true,
         ) {
             ItemCard(item, expanded, onToggle, onDone, onLater, onRestore, swipeEnabled)
         }
@@ -724,7 +730,7 @@ private fun Color.darken(): Color =
 /**
  * Glissement horizontal : → positif ([rightLabel]), ← négatif ([leftLabel]). Le libellé
  * de l'action apparaît sous l'élément pendant le geste ; vibration au seuil.
- * [rightStays] : → ouvre un choix sur place, l'élément revient au lieu de partir.
+ * [rightStays] : → ouvre un choix sur place, l'élément revient au lieu de partir ([leftStays] : ←).
  */
 @Composable
 internal fun SwipeRow(
@@ -736,6 +742,7 @@ internal fun SwipeRow(
     leftLabel: String = "Plus tard",
     leftColor: Color = MaterialTheme.colorScheme.tertiary,
     rightStays: Boolean = false,
+    leftStays: Boolean = false,
     content: @Composable () -> Unit,
 ) {
     val right by rememberUpdatedState(onRight)
@@ -785,7 +792,7 @@ internal fun SwipeRow(
                         val fling = abs(velocity) > 2000f && abs(dx) > width * 0.12f && velocity * dx > 0
                         val commit = armed || fling
                         val positive = dx > 0
-                        val target = if (!commit || (rightStays && positive)) 0f else if (positive) width.toFloat() else -width.toFloat()
+                        val target = if (!commit || (if (positive) rightStays else leftStays)) 0f else if (positive) width.toFloat() else -width.toFloat()
                         scope.launch {
                             animate(dx, target, initialVelocity = velocity, animationSpec = Motion.settle()) { v, _ -> dx = v }
                             if (commit) {

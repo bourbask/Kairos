@@ -34,6 +34,8 @@ data class Card(
     val chips: List<Chip> = emptyList(),
     val detail: String? = null,
     val module: String = "",
+    /** Plat d'une carte repas. */
+    val dish: String? = null,
     /** Action « fait » du module ; absente = simple marque locale. */
     val done: CardDone? = null,
 ) {
