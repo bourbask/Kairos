@@ -38,9 +38,14 @@ data class Card(
     val dish: String? = null,
     /** Action « fait » du module ; absente = simple marque locale. */
     val done: CardDone? = null,
+    /** État connu du module (« fait ») : prime sur l'absence de marque locale. */
+    val state: String? = null,
 ) {
     /** Identifiant unique dans le fil : deux modules peuvent émettre le même `id`. */
     val key: String get() = "$module/$id"
+
+    /** Marque affichée : la marque locale, sinon « fait » si le module le sait déjà. */
+    fun markIn(marks: Map<String, Mark>): Mark? = marks[key] ?: Mark.Fait.takeIf { state == "fait" }
 }
 
 /** Outil `app_*` du module à lancer quand la carte est faite. */

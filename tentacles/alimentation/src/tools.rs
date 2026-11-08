@@ -432,6 +432,14 @@ impl FoodServer {
         use serde_json::json;
         let d = chrono::NaiveDate::parse_from_str(&date(day)?, "%Y-%m-%d").map_err(|e| e.to_string())?;
         let meals = self.store.plan(&d.to_string(), &d.to_string()).map_err(|e| e.to_string())?;
+        let noted: Vec<String> = self
+            .store
+            .meals_since(&d.to_string())
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .filter(|(day, ..)| *day == d.to_string())
+            .map(|(_, slot, ..)| slot)
+            .collect();
         let mut cards = Vec::new();
         for m in &meals {
             let (slot, label, time) = match m.slot {
@@ -463,8 +471,11 @@ impl FoodServer {
             if options.len() > 1 {
                 done["choices"] = json!({"label": "Portions mangées", "key": "portions", "options": options, "default": 1});
             }
-            // Un repas à venir ne se déclare pas mangé.
-            if d <= self.today() {
+            // Repas déjà noté (ici ou ailleurs) : la carte se montre faite, quelle que soit la marque locale.
+            if noted.iter().any(|n| n == slot) {
+                c["state"] = "fait".into();
+            } else if d <= self.today() {
+                // Un repas à venir ne se déclare pas mangé.
                 c["done"] = done;
             }
             cards.push(c);
@@ -1317,15 +1328,14 @@ impl FoodServer {
             .ok_or_else(|| format!("Aucun repas prévu le {day} ({}).", slot.as_str()))?;
         let eaten = a.portions.unwrap_or(1).max(1);
         // Un seul repas par jour et créneau : un second « fait » (double tap, renvoi) ne décompte rien.
-        let note = |place: &str| -> Result<i64, String> {
-            self.store
-                .add_meal_once(&day, slot.as_str(), &m.dish, place, None)
-                .map_err(|e| e.to_string())?
-                .ok_or_else(|| format!("{} : déjà noté le {day} ({}).", m.dish, slot.as_str()))
+        let note = |place: &str| -> Result<Option<i64>, String> {
+            self.store.add_meal_once(&day, slot.as_str(), &m.dish, place, None).map_err(|e| e.to_string())
         };
+        // Déjà noté : c'est fait, le geste aboutit sans rien décompter une seconde fois.
+        let already = || message(format!("{} : déjà noté le {day} ({}).", m.dish, slot.as_str()));
         let mut out = vec![format!("Repas noté : {}", m.dish)];
         if m.kind == MealKind::Cook {
-            let id = note("maison")?;
+            let Some(id) = note("maison")? else { return already() };
             if let Some(r) = self.store.recipe(&m.dish).map_err(|e| e.to_string())? {
                 for i in &r.ingredients {
                     let Some(qty) = i.qty else { continue };
@@ -1348,7 +1358,9 @@ impl FoodServer {
         } else {
             let lots = self.dish_lots(&m.dish)?;
             let have: f64 = lots.iter().map(|l| l.qty).sum();
-            note(if m.kind == MealKind::Box { "bureau" } else { "maison" })?;
+            if note(if m.kind == MealKind::Box { "bureau" } else { "maison" })?.is_none() {
+                return already();
+            }
             // Plat cuisiné avant tout suivi : le repas compte, rien à décompter.
             if lots.is_empty() {
                 return message(format!(
@@ -2153,17 +2165,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn meal_done_twice_refused() {
+    async fn meal_done_twice_is_idempotent() {
         let s = server();
         let day = "2026-11-08";
         dhal(&s, day);
         s.store.add(&item("Lentilles corail", 1000.0, "g", "placard", None), "achat", None).unwrap();
         v(done(&s, day, "soir", None).await);
-        let e = done(&s, day, "soir", None).await.unwrap_err();
-        assert!(e.contains("déjà"), "{e}");
+        // Second « fait » (autre appareil, marque perdue) : accepté sans rien décompter.
+        let again = v(done(&s, day, "soir", None).await);
+        assert!(again["message"].as_str().unwrap().contains("déjà"), "{again}");
         assert_eq!(s.store.meals_since(day).unwrap().len(), 1);
         assert_eq!(s.store.lots(None, Some("lentilles")).unwrap()[0].qty, 700.0);
         assert_eq!(dish_lots(&s, "dhal")[0].qty, 3.0);
+    }
+
+    #[tokio::test]
+    async fn noted_meal_card_is_done() {
+        let s = server();
+        let day = "2026-11-08";
+        dhal(&s, day);
+        assert!(cards(&s, day)[0].get("state").is_none());
+        v(done(&s, day, "soir", None).await);
+        let c = cards(&s, day);
+        assert_eq!(c[0]["state"], "fait");
+        assert!(c[0].get("done").is_none(), "repas déjà noté : rien à renvoyer");
     }
 
     #[tokio::test]
@@ -2206,7 +2231,8 @@ mod tests {
         assert!(m.contains("Repas noté") && m.contains("Aucun plat « Dhal » en stock"), "{m}");
         assert_eq!(s.store.meals_since(day).unwrap().len(), 1, "le repas est noté quand même");
         assert!(s.store.lots(None, None).unwrap().is_empty(), "jamais de stock négatif");
-        assert!(done(&s, day, "midi", None).await.unwrap_err().contains("déjà"), "une seule fois par créneau");
+        assert!(v(done(&s, day, "midi", None).await)["message"].as_str().unwrap().contains("déjà"), "une seule fois par créneau");
+        assert_eq!(s.store.meals_since(day).unwrap().len(), 1);
     }
 
     #[tokio::test]

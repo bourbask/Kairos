@@ -22,15 +22,15 @@ private fun Card.at(): LocalTime? = time?.let { runCatching { LocalTime.parse(it
 fun timeline(cards: List<Card>, marks: Map<String, Mark>, now: LocalTime, pending: Set<String> = emptySet()): List<TimelineItem> {
     val ordered = cards.filter { it.at() != null }.sortedBy { it.at() } + cards.filter { it.at() == null }
     val timed = ordered.filter { it.at() != null }
-    val open = timed.filter { marks[it.key] == null }
+    val open = timed.filter { it.markIn(marks) == null }
     // Dernier élément ouvert commencé, sauf si un élément plus récent (déjà commencé) a été marqué :
     // on est alors passé à la suite. Sinon, le prochain élément ouvert. Jamais un élément sans heure.
     val started = open.lastOrNull { it.at()!! <= now }
-    val movedOn = started != null && timed.any { marks[it.key] != null && it.at()!! > started.at()!! && it.at()!! <= now }
+    val movedOn = started != null && timed.any { it.markIn(marks) != null && it.at()!! > started.at()!! && it.at()!! <= now }
     val current = if (started != null && !movedOn) started else open.firstOrNull { it.at()!! > now }
     val currentAt = current?.at()
     return ordered.map { c ->
-        val phase = when (marks[c.key]) {
+        val phase = when (c.markIn(marks)) {
             Mark.Fait -> Phase.Fait
             Mark.PlusTard -> Phase.PlusTard
             null -> when {
