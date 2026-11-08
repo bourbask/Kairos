@@ -20,7 +20,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -49,6 +52,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.kairos.mobile.data.ApiError
+import app.kairos.mobile.data.Day
 import app.kairos.mobile.data.KairosApi
 import app.kairos.mobile.data.PIECE
 import app.kairos.mobile.data.Product
@@ -63,7 +67,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
-private enum class AddStep { Scan, Name, Quantity, Zone, Date }
+private enum class AddStep { Scan, Name, Quantity, Zone, Date, Dish }
 
 /** Nom saisi ou dicté : borné, une seule ligne. */
 private const val NAME_MAX = 80
@@ -92,6 +96,33 @@ internal fun addArgs(name: String, barcode: String?, product: Product?, qty: Dou
         expiry?.let { put("expiry", it.toString()) }
     }
 
+/** Un plat cuisiné se compte en portions et se range au froid. */
+internal const val PORTIONS = "portions"
+internal val DISH_ZONES = listOf("frigo", "congelateur")
+private const val PORTIONS_MAX = 20
+
+/** Arguments de `app_add` pour un plat cuisiné : le module le range comme plat, jamais comme ingrédient. */
+internal fun dishArgs(name: String, portions: Int, zone: String): JsonObject = buildJsonObject {
+    put("name", name.trim())
+    put("qty", portions.toDouble())
+    put("unit", PORTIONS)
+    put("location", zone)
+}
+
+/**
+ * Plats prévus d'après les cartes repas du fil (« Midi · <plat> ») : ceux du jour,
+ * puis des jours passés les plus proches, puis à venir ; sans doublon.
+ */
+internal fun plannedDishes(days: List<Day>, today: String): List<String> {
+    val (past, rest) = days.partition { it.day < today }
+    val ordered = rest.filter { it.day == today } + past.sortedByDescending { it.day } + rest.filter { it.day > today }.sortedBy { it.day }
+    // ponytail: le plat se lit dans le titre de la carte ; un champ dédié si le titre change de forme.
+    return ordered.flatMap { it.cards }
+        .filter { it.module == "alimentation" && it.id.startsWith("repas-") }
+        .mapNotNull { it.title.substringAfter(" · ", "").trim().takeIf(String::isNotEmpty) }
+        .distinct()
+}
+
 /**
  * Message d'un échec ; null = appareil à réappairer. [lookupFailed] : message d'une recherche
  * impossible (le produit n'est pas dit inconnu) ; absent = un ajout, qui n'est pas idempotent.
@@ -111,6 +142,7 @@ internal fun addFailure(e: ApiError, lookupFailed: String? = null): String? = wh
  * produit retrouvé (`app_product`), quantité s'il se compte en g ou ml, zone,
  * date si frais, puis `app_add` ; un produit inconnu ou sans code-barres se
  * nomme au clavier ou à la voix, et un nom déjà connu reprend ce produit.
+ * Un plat cuisiné (nom, portions, frigo ou congélo) s'ajoute aussi d'ici.
  * Après chaque ajout, retour au scan pour le suivant.
  */
 @Composable
@@ -128,6 +160,9 @@ fun AddScreen(
     val today = remember { LocalDate.now() }
     val maison by repository.maison.collectAsState()
     val zones = zonesOf(maison.inventory)
+    val snapshot by repository.snapshot.collectAsState()
+    val dishes = remember(snapshot.days) { plannedDishes(snapshot.days, today.toString()).take(6) }
+    var portions by remember { mutableIntStateOf(1) }
     var step by remember { mutableStateOf(AddStep.Scan) }
     var barcode by remember { mutableStateOf<String?>(null) }
     var product by remember { mutableStateOf<Product?>(null) }
@@ -147,6 +182,7 @@ fun AddScreen(
         name = ""
         qty = ""
         zone = null
+        portions = 1
         step = AddStep.Scan
     }
 
@@ -217,11 +253,9 @@ fun AddScreen(
         }
     }
 
-    fun add(expiry: LocalDate?) {
-        val at = zone ?: return
+    fun send(args: JsonObject) {
         if (busy || offline) return
         busy = true
-        val args = addArgs(name, barcode, product, parseQty(qty), at, expiry)
         // Depuis appScope : un ajout parti n'est pas abandonné si le panneau se ferme.
         appScope.launch {
             try {
@@ -244,6 +278,10 @@ fun AddScreen(
                 busy = false
             }
         }
+    }
+
+    fun add(expiry: LocalDate?) {
+        send(addArgs(name, barcode, product, parseQty(qty), zone ?: return, expiry))
     }
 
     fun choose(at: String) {
@@ -273,10 +311,18 @@ fun AddScreen(
                         )
                         if (busy) CircularProgressIndicator()
                     }
-                    BigTile("Sans code-barres", Modifier.fillMaxWidth().padding(bottom = 8.dp), enabled = !offline && !busy) {
-                        note = null
-                        barcode = null
-                        step = AddStep.Name
+                    Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        BigTile("Sans code-barres", Modifier.weight(1f), enabled = !offline && !busy) {
+                            note = null
+                            barcode = null
+                            step = AddStep.Name
+                        }
+                        BigTile("Plat cuisiné", Modifier.weight(1f), enabled = !offline && !busy) {
+                            note = null
+                            barcode = null
+                            name = dishes.firstOrNull().orEmpty().take(NAME_MAX)
+                            step = AddStep.Dish
+                        }
                     }
                 }
                 AddStep.Name -> NameStep(
@@ -312,6 +358,17 @@ fun AddScreen(
                     onDate = ::add,
                     onBack = { step = AddStep.Zone },
                     onMissing = null,
+                )
+                AddStep.Dish -> DishStep(
+                    name = name,
+                    suggestions = dishes,
+                    portions = portions,
+                    zones = DISH_ZONES.map { it to (zoneLabel(it, zones) ?: it) },
+                    enabled = !offline && !busy,
+                    onName = { name = it.take(NAME_MAX) },
+                    onPortions = { portions = it.coerceIn(1, PORTIONS_MAX) },
+                    onZone = { send(dishArgs(name, portions, it)) },
+                    onBack = ::restart,
                 )
             }
         }
@@ -352,6 +409,55 @@ private fun QuantityStep(name: String, unit: String, qty: String, onQty: (String
         )
         Spacer(Modifier.weight(1f))
         BigTile("Suivant →", Modifier.fillMaxWidth().padding(bottom = 8.dp), enabled = parseQty(qty) != null, highlighted = true, onClick = onNext)
+    }
+}
+
+/** Plat cuisiné : nom (plats prévus proposés), portions, frigo ou congélo. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun DishStep(
+    name: String,
+    suggestions: List<String>,
+    portions: Int,
+    zones: List<Pair<String, String>>,
+    enabled: Boolean,
+    onName: (String) -> Unit,
+    onPortions: (Int) -> Unit,
+    onZone: (String) -> Unit,
+    onBack: () -> Unit,
+) {
+    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        TextButton(onClick = onBack) { Text("← Scanner") }
+        Text("Plat cuisiné", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        OutlinedTextField(
+            value = name,
+            onValueChange = onName,
+            label = { Text("Nom du plat") },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Done),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        if (suggestions.isNotEmpty()) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                suggestions.forEach { d ->
+                    FilterChip(selected = d == name, onClick = { onName(d) }, label = { Text(d, maxLines = 1, overflow = TextOverflow.Ellipsis) })
+                }
+            }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Portions", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+            TextButton(onClick = { onPortions(portions - 1) }, enabled = portions > 1) {
+                Text("−", style = MaterialTheme.typography.headlineSmall)
+            }
+            Text("$portions", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold)
+            TextButton(onClick = { onPortions(portions + 1) }) { Text("+", style = MaterialTheme.typography.headlineSmall) }
+        }
+        Spacer(Modifier.weight(1f))
+        Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            zones.forEach { (id, label) ->
+                BigTile(label, Modifier.weight(1f), enabled = enabled && name.isNotBlank(), highlighted = id == zones.first().first) { onZone(id) }
+            }
+        }
     }
 }
 
