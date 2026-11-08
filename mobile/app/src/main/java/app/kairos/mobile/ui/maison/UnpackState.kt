@@ -32,7 +32,10 @@ class Stow(val order: Long, val line: OrderLine, val location: String?, val expi
  * Une ligne traitée part tout de suite à l'écran ; l'écran l'envoie après le
  * délai d'annulation ([dispatch]). Un refus du serveur ([refused]) la remet en tête.
  */
-class UnpackState(order: Order, private val zones: List<Pair<String, String>> = ZONES) {
+class UnpackState(order: Order, zones: List<Pair<String, String>> = ZONES) {
+    /** Zones acceptées ; suivent celles du serveur, même arrivées après l'ouverture. */
+    var zones by mutableStateOf(zones)
+
     enum class Step { Zone, Date }
 
     private val id = order.id

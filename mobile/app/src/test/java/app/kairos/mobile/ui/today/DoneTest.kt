@@ -5,6 +5,9 @@ import app.kairos.mobile.data.Card
 import app.kairos.mobile.data.CardDone
 import app.kairos.mobile.data.KairosJson
 import app.kairos.mobile.data.Mark
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -22,10 +25,10 @@ class DoneTest {
     )
 
     /** Journal des effets, dans l'ordre. */
-    private class Fake(val undo: Boolean = false, val fail: ApiError? = null) {
+    private class Fake(val undo: Boolean = false, val fail: ApiError? = null, val gate: CompletableDeferred<Unit>? = null) {
         val log = mutableListOf<String>()
         val mark: suspend (Mark?) -> Unit = { log += "mark $it" }
-        val window: suspend () -> Boolean = { log += "window"; undo }
+        val window: suspend () -> Boolean = { log += "window"; gate?.await(); undo }
         val call: suspend (String, String, JsonObject) -> String = { m, t, a ->
             log += "call $m/$t $a"
             fail?.let { throw it }
@@ -62,7 +65,7 @@ class DoneTest {
         val plain = CardDone("app_lot_use", KairosJson.decodeFromString(JsonObject.serializer(), """{"lot":3}"""))
         assertFalse(plain.asks)
         assertEquals("""{"lot":3}""", doneArgs(plain, null).toString())
-        assertEquals(listOf("1", "2", "3"), done.choices!!.options.map(::optionLabel))
+        assertEquals(listOf("1", "2", "3"), done.choices.options.map(::optionLabel))
     }
 
     @Test
@@ -83,5 +86,31 @@ class DoneTest {
         val out = completeCard(meal, null, off.mark, off.window, off.call) as DoneOutcome.Refused
         assertTrue(out.message.contains("rien n'a été enregistré"))
         assertEquals("mark null", off.log.last())
+    }
+
+    @Test
+    fun double_done_runs_once() = runBlocking {
+        val gate = CompletableDeferred<Unit>()
+        val f = Fake(gate = gate)
+        val busy = InFlight()
+        val first = async(start = CoroutineStart.UNDISPATCHED) { completeCard(meal, null, f.mark, f.window, f.call, busy) }
+        // Double tap pendant la fenêtre : ignoré, rien de plus n'est marqué ni envoyé.
+        assertEquals(DoneOutcome.Ignored, completeCard(meal, null, f.mark, f.window, f.call, busy))
+        assertFalse(busy.claim(meal.key))
+        gate.complete(Unit)
+        assertTrue(first.await() is DoneOutcome.Done)
+        assertEquals(1, f.log.count { it.startsWith("call") })
+        assertEquals(1, f.log.count { it == "mark Fait" })
+        // Terminé (ou refusé) : la carte est de nouveau libre.
+        assertTrue(busy.claim(meal.key))
+    }
+
+    @Test
+    fun restore_hidden_once_module_acted() {
+        val agenda = Card(id = "rdv", title = "Dentiste", module = "agenda")
+        assertTrue(restorable(TimelineItem(agenda, Phase.Fait)))
+        assertTrue(restorable(TimelineItem(meal, Phase.PlusTard)))
+        // L'effet du module ne se défait pas depuis le fil.
+        assertFalse(restorable(TimelineItem(meal, Phase.Fait)))
     }
 }

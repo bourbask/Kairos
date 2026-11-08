@@ -42,6 +42,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -121,6 +122,8 @@ fun UnpackScreen(
     val maison by repository.maison.collectAsState()
     val zones = zonesOf(maison.inventory)
     val state = remember(order.id) { UnpackState(order, zones) }
+    // Pas dans la clé de remember : un changement de zones ne perd pas les lignes déjà rangées.
+    SideEffect { state.zones = zones }
     val scope = rememberCoroutineScope()
     val haptic = LocalHapticFeedback.current
     val offset = remember { Animatable(Offset.Zero, Offset.VectorConverter) }

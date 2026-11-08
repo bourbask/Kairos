@@ -165,18 +165,28 @@ fun TodayScreen(
     val unauthorized by rememberUpdatedState(onUnauthorized)
     val notice by rememberUpdatedState(onNotice)
 
-    /** Fenêtre d'annulation ; vrai si « Annuler » a été touché. */
+    val busy = remember { InFlight() }
+
+    /**
+     * Fenêtre d'annulation propre à chaque carte, comptée depuis son geste ; vrai si
+     * « Annuler » a été touché. Un second geste ne chasse pas la fenêtre en cours :
+     * son snackbar attend son tour, pour le temps qui reste à sa propre fenêtre.
+     */
     suspend fun undoWindow(text: String): Boolean {
-        snackbar.currentSnackbarData?.dismiss()
         return withTimeoutOrNull(UNDO_MS) {
             snackbar.showSnackbar(text, actionLabel = "Annuler", duration = SnackbarDuration.Indefinite)
         } == SnackbarResult.ActionPerformed
     }
 
     fun later(day: String, card: Card) {
+        if (!busy.claim(card.key)) return
         scope.launch {
-            repository.mark(day, card.key, Mark.PlusTard)
-            if (undoWindow("Plus tard · ${card.title}")) repository.mark(day, card.key, null)
+            try {
+                repository.mark(day, card.key, Mark.PlusTard)
+                if (undoWindow("Plus tard · ${card.title}")) repository.mark(day, card.key, null)
+            } finally {
+                busy.release(card.key)
+            }
         }
     }
 
@@ -190,6 +200,7 @@ fun TodayScreen(
                     mark = { repository.mark(day, card.key, it) },
                     undoWindow = { undoWindow("Fait · ${card.title}") },
                     call = repository::tool,
+                    busy = busy,
                 )
             } catch (_: ApiError.Unauthorized) {
                 return@launch unauthorized()
@@ -208,7 +219,7 @@ fun TodayScreen(
                     haptic.performHapticFeedback(HapticFeedbackType.Reject)
                     notice(out.message)
                 }
-                DoneOutcome.Local, DoneOutcome.Undone -> Unit
+                DoneOutcome.Local, DoneOutcome.Undone, DoneOutcome.Ignored -> Unit
             }
         }
     }
@@ -604,7 +615,7 @@ private fun ItemCard(
                         if (actionable) {
                             Pill("Fait ✓", onDone)
                             Pill("Plus tard", onLater)
-                        } else {
+                        } else if (restorable(item)) {
                             Pill("Remettre dans le fil", onRestore)
                         }
                     }
