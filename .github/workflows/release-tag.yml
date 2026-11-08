@@ -1,4 +1,4 @@
-name: Auto-tag releases
+name: Release
 
 on:
   pull_request:
@@ -6,7 +6,7 @@ on:
     branches: [main]
 
 jobs:
-  tag:
+  release:
     if: github.event.pull_request.merged == true && startsWith(github.event.pull_request.title, 'Release ')
     runs-on: ubuntu-latest
     permissions:
@@ -14,12 +14,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: main
           fetch-depth: 0
       - name: Extract version from PR title
         id: extract
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
         run: |
-          TITLE="${{ github.event.pull_request.title }}"
-          VERSION=$(echo "$TITLE" | sed -n 's/^Release \([0-9]*\.[0-9]*\.[0-9]*\).*/\1/p')
+          VERSION=$(echo "$TITLE" | sed -n 's/^Release \([0-9]*\.[0-9]*\.[0-9]*\)$/\1/p')
           if [ -z "$VERSION" ]; then
             echo "::error::Could not extract version from PR title: $TITLE"
             exit 1
@@ -31,6 +33,41 @@ jobs:
           git config user.email "github-actions@github.com"
           git tag -a "v${{ steps.extract.outputs.version }}" -m "Release ${{ steps.extract.outputs.version }}"
           git push origin "v${{ steps.extract.outputs.version }}"
-      - name: Summary
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Gradle wrapper download (official, then checksum-pinned mirror)
+        working-directory: mobile
         run: |
-          echo "Tag v${{ steps.extract.outputs.version }} created and pushed."
+          for i in 1 2; do ./gradlew --no-daemon -q --version && exit 0; sleep 20; done
+          # Same file from a public mirror: the wrapper still verifies distributionSha256Sum.
+          sed -i 's#^distributionUrl=.*#distributionUrl=https\\://mirrors.cloud.tencent.com/gradle/gradle-9.9.0-bin.zip#' gradle/wrapper/gradle-wrapper.properties
+          ./gradlew --no-daemon -q --version
+      - name: Android SDK packages
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0" > /dev/null
+      - name: Signed release APK
+        working-directory: mobile
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KAIROS_KEYSTORE_BASE64 }}
+          KAIROS_KEYSTORE_PASSWORD: ${{ secrets.KAIROS_KEYSTORE_PASSWORD }}
+          KAIROS_KEY_ALIAS: ${{ secrets.KAIROS_KEY_ALIAS }}
+          KAIROS_KEY_PASSWORD: ${{ secrets.KAIROS_KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::error::Release signing secrets are missing."
+            exit 1
+          fi
+          export KAIROS_KEYSTORE="$RUNNER_TEMP/release.jks"
+          echo "$KEYSTORE_BASE64" | base64 -d > "$KAIROS_KEYSTORE"
+          ./gradlew --no-daemon assembleRelease
+          cp app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/kairos-v${{ steps.extract.outputs.version }}.apk"
+      - name: GitHub release with the APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v${{ steps.extract.outputs.version }}" \
+            "$RUNNER_TEMP/kairos-v${{ steps.extract.outputs.version }}.apk" \
+            --title "Kairos ${{ steps.extract.outputs.version }}" \
+            --generate-notes

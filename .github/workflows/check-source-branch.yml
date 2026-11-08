@@ -1,20 +1,50 @@
-name: Check source branch
+name: Check release PR
 
 on:
   pull_request:
-    types: [opened, synchronize]
+    types: [opened, edited, synchronize, reopened]
     branches: [main]
 
 jobs:
   check-branch:
     runs-on: ubuntu-latest
     steps:
-      - name: Validate source branch
+      - name: Only develop merges into main
+        env:
+          HEAD_REF: ${{ github.head_ref }}
         run: |
-          PATTERN='^(develop|hotfix/.*)$'
-          if [[ "${{ github.head_ref }}" =~ $PATTERN ]]; then
-            echo "Source branch '${{ github.head_ref }}' is allowed to merge into main."
-          else
-            echo "::error::PRs to main must come from 'develop' or 'hotfix/*'. Found: '${{ github.head_ref }}'"
+          if [ "$HEAD_REF" != "develop" ]; then
+            echo "::error::PRs to main must come from 'develop'. Found: '$HEAD_REF'"
             exit 1
           fi
+
+  check-version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Title, version and tags agree
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          VERSION=$(echo "$TITLE" | sed -n 's/^Release \([0-9]*\.[0-9]*\.[0-9]*\)$/\1/p')
+          if [ -z "$VERSION" ]; then
+            echo "::error::PR title must be exactly 'Release X.Y.Z'. Found: '$TITLE'"
+            exit 1
+          fi
+          CARGO=$(grep -m1 '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
+          if [ "$CARGO" != "$VERSION" ]; then
+            echo "::error::Cargo.toml version ($CARGO) differs from the PR title ($VERSION)."
+            exit 1
+          fi
+          if git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null; then
+            echo "::error::Tag v$VERSION already exists."
+            exit 1
+          fi
+          LAST=$(git tag -l 'v*' --sort=-v:refname | head -1 | sed 's/^v//')
+          if [ -n "$LAST" ] && [ "$(printf '%s\n%s\n' "$LAST" "$VERSION" | sort -V | tail -1)" != "$VERSION" ]; then
+            echo "::error::Version $VERSION is not greater than the last release $LAST."
+            exit 1
+          fi
+          echo "Release $VERSION (previous: ${LAST:-none})."
