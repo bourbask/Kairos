@@ -15,7 +15,7 @@ use tentacle_common::BriefPeriod;
 
 use crate::api::{ApiError, FinanceApi, Meta};
 use crate::render::{
-    clean_payee, cycle_text, envelopes_text, header, unclassified_text, verdict_text,
+    clean_payee, clean_text, cycle_text, envelopes_text, header, unclassified_text, verdict_text,
 };
 
 /// Handler MCP ; bon marché à construire (le client est partagé).
@@ -85,7 +85,33 @@ type Out = Result<String, String>;
 fn api_err(e: ApiError) -> String {
     match e {
         ApiError::Unavailable => "Données financières indisponibles.".to_string(),
-        ApiError::Rejected(m) => m,
+        ApiError::Rejected(m) => clean_text(&m, 200),
+    }
+}
+
+/// Plafond de vraisemblance d'un montant saisi.
+const AMOUNT_MAX: f64 = 1e9;
+
+/// Bornes des textes envoyés à l'application.
+const SHORT: usize = 60;
+const LONG: usize = 300;
+
+/// Section facultative : un échec est tracé (nature seule) et la section omise.
+fn section<T>(name: &str, r: Result<T, ApiError>) -> Option<T> {
+    r.map_err(|e| {
+        let kind = match e {
+            ApiError::Unavailable => "indisponible",
+            ApiError::Rejected(_) => "refusée",
+        };
+        tracing::warn!(section = name, kind, "finances : section omise");
+    })
+    .ok()
+}
+
+/// Éléments écartés d'une section, comptés sans leurs valeurs.
+fn dropped(name: &str, n: usize) {
+    if n > 0 {
+        tracing::warn!(section = name, dropped = n, "finances : éléments illisibles écartés");
     }
 }
 
@@ -163,10 +189,10 @@ fn merchant_groups(ops: &[crate::api::Operation]) -> Vec<(String, f64, usize, Na
 
 /// Un montant se valide avant tout appel : strictement positif et fini.
 fn check_amount(a: f64) -> Result<(), String> {
-    if a.is_finite() && a > 0.0 {
+    if a.is_finite() && a > 0.0 && a <= AMOUNT_MAX {
         Ok(())
     } else {
-        Err("Le montant doit être un nombre fini strictement positif.".to_string())
+        Err("Le montant doit être un nombre strictement positif, au plus 1 000 000 000.".to_string())
     }
 }
 
@@ -174,7 +200,7 @@ fn check_amount(a: f64) -> Result<(), String> {
 fn freshness(m: &Meta) -> serde_json::Value {
     let mut f = json!({"stale": m.stale, "consent_expired": m.consent_expired});
     if let Some(s) = &m.last_sync {
-        f["last_sync"] = json!(s);
+        f["last_sync"] = json!(clean_text(s, SHORT));
     }
     f
 }
@@ -354,7 +380,7 @@ impl FinanceServer {
             .iter()
             .map(|p| {
                 json!({
-                    "poste": p,
+                    "poste": clean_text(p, SHORT),
                     "planned": c.envelopes.get(*p).copied().unwrap_or(0.0),
                     "spent": c.spent.get(*p).copied().unwrap_or(0.0),
                 })
@@ -366,33 +392,38 @@ impl FinanceServer {
             .map(|ch| {
                 let mut o = json!({"name": clean_payee(&ch.name), "amount": ch.amount});
                 if let Some(d) = &ch.due {
-                    o["date"] = json!(d);
+                    o["date"] = json!(clean_text(d, SHORT));
                 }
                 o
             })
             .collect();
         let mut out = json!({
-            "start": c.start,
-            "end": c.end,
-            "today": c.today,
+            "start": clean_text(&c.start, SHORT),
+            "end": clean_text(&c.end, SHORT),
+            "today": clean_text(&c.today, SHORT),
             "days_left": c.days_left,
             "available": c.available.available,
             "balance": c.available.balance,
             "envelopes": envelopes,
             "charges": charges,
             "cushion": {"balance": c.cushion.balance, "floor": c.cushion.floor},
-            "postes": c.envelopes.keys().collect::<Vec<_>>(),
+            "postes": c.envelopes.keys().map(|p| clean_text(p, SHORT)).collect::<Vec<_>>(),
             "freshness": freshness(&c.meta),
         });
         // Alertes indisponibles : section omise, le cycle reste servi.
-        if let Ok(r) = self.api.alerts().await {
+        if let Some(r) = section("alerts", self.api.alerts().await) {
             let alerts: Vec<_> = r
                 .alerts
                 .iter()
                 .map(|a| {
-                    let mut o = json!({"id": a.id, "title": a.title, "details": a.details});
-                    if !a.remedy.is_empty() {
-                        o["remedy"] = json!(a.remedy);
+                    let mut o = json!({
+                        "id": clean_text(&a.id, SHORT),
+                        "title": clean_text(&a.title, LONG),
+                        "details": clean_text(&a.details, LONG),
+                    });
+                    let remedy = clean_text(&a.remedy, LONG);
+                    if !remedy.is_empty() {
+                        o["remedy"] = json!(remedy);
                     }
                     o
                 })
@@ -413,31 +444,37 @@ impl FinanceServer {
         );
         let mut out = json!({});
         let mut fallback_loans = Vec::new();
-        if let Ok(n) = nw {
+        if let Some(n) = section("networth", nw) {
             if let Some(v) = n.net_of_debt {
                 out["net_worth"] = json!(v);
             }
             if let Some(v) = n.debt {
                 out["debt"] = json!(v);
             }
+            dropped("networth.loans", n.loans.dropped);
             fallback_loans = n
                 .loans
+                .items
                 .iter()
                 .map(|l| json!({"name": clean_payee(&l.name), "balance": l.remaining_balance}))
                 .collect();
         }
-        if let Ok(s) = snaps {
+        if let Some(s) = section("snapshots", snaps) {
+            dropped("snapshots", s.snapshots.dropped);
             let history: Vec<_> = s
                 .snapshots
+                .items
                 .iter()
-                .map(|s| json!({"month": s.month, "net_worth": s.net_worth}))
+                .map(|s| json!({"month": clean_text(&s.month, SHORT), "net_worth": s.net_worth}))
                 .collect();
             out["history"] = json!(history);
         }
-        match loans {
-            Ok(l) => {
+        match section("loans", loans) {
+            Some(l) => {
+                dropped("loans", l.loans.dropped);
                 let items: Vec<_> = l
                     .loans
+                    .items
                     .iter()
                     .map(|l| {
                         let mut o = json!({"name": clean_payee(&l.name), "balance": l.balance});
@@ -446,7 +483,7 @@ impl FinanceServer {
                             o["payment"] = json!(p);
                         }
                         if let Some(m) = &l.payoff_month {
-                            o["payoff_month"] = json!(m);
+                            o["payoff_month"] = json!(clean_text(m, SHORT));
                         }
                         o
                     })
@@ -454,31 +491,37 @@ impl FinanceServer {
                 out["loans"] = json!(items);
             }
             // Prêts indisponibles : restant dû connu du patrimoine, sans mensualité ni échéance.
-            Err(_) if out.get("debt").is_some() || !fallback_loans.is_empty() => {
+            None if out.get("debt").is_some() || !fallback_loans.is_empty() => {
                 out["loans"] = json!(fallback_loans);
             }
-            Err(_) => {}
+            None => {}
         }
-        if let Ok(p) = pf {
+        if let Some(p) = section("portfolio", pf) {
             // Ordre de risque décroissant, catégories inconnues ensuite ; libellés laissés à l'application.
             let rank = |n: &str| ["high", "mid", "low"].iter().position(|k| *k == n).unwrap_or(3);
             let mut buckets: Vec<(&String, f64)> =
                 p.by_bucket.iter().filter_map(|(n, a)| a.map(|a| (n, a))).collect();
+            dropped("portfolio.buckets", p.by_bucket.len() - buckets.len());
+            dropped("portfolio.lines", p.instruments.dropped);
             buckets.sort_by_key(|(n, _)| rank(n));
             let buckets: Vec<_> = buckets
                 .iter()
                 .map(|(name, amount)| {
-                    json!({
-                        "name": name,
-                        "weight": p.bucket_weights.get(*name).copied().flatten().unwrap_or(0.0),
-                        "amount": amount,
-                    })
+                    let mut o = json!({"name": clean_text(name, SHORT), "amount": amount});
+                    // Poids inconnu : omis, l'application ne le confond pas avec 0 %.
+                    if let Some(w) = p.bucket_weights.get(*name).copied().flatten() {
+                        o["weight"] = json!(w);
+                    }
+                    o
                 })
                 .collect();
             let lines: Vec<_> = p
                 .instruments
+                .items
                 .iter()
-                .map(|i| json!({"name": clean_payee(&i.name), "amount": i.cost, "bucket": i.bucket}))
+                .map(|i| {
+                    json!({"name": clean_payee(&i.name), "amount": i.cost, "bucket": clean_text(&i.bucket, SHORT)})
+                })
                 .collect();
             let mut o = json!({"buckets": buckets, "lines": lines});
             if let Some(t) = p.total_cost {
@@ -487,7 +530,7 @@ impl FinanceServer {
             out["portfolio"] = o;
         }
         // Fraîcheur bancaire portée par le cycle.
-        if let Ok(c) = cycle {
+        if let Some(c) = section("cycle", cycle) {
             out["freshness"] = freshness(&c.meta);
         }
         Ok(out.to_string())
@@ -505,13 +548,13 @@ impl FinanceServer {
             .cuts
             .iter()
             .map(|c| match &c.poste {
-                Some(p) => json!({"poste": p, "amount": c.amount}),
+                Some(p) => json!({"poste": clean_text(p, SHORT), "amount": c.amount}),
                 None => json!({"amount": c.amount}),
             })
             .collect();
         let mut out = json!({"ok": v.ok, "after": v.after, "cuts": cuts});
         if let Some(r) = &v.reason {
-            out["reason"] = json!(r);
+            out["reason"] = json!(clean_text(r, LONG));
         }
         Ok(out.to_string())
     }
@@ -521,5 +564,15 @@ impl FinanceServer {
 impl ServerHandler for FinanceServer {
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejected_message_is_cleaned() {
+        assert_eq!(api_err(ApiError::Rejected("Mon\u{202e}tant\n refusé\u{200b}".into())), "Montant refusé");
     }
 }

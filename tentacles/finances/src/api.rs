@@ -132,10 +132,28 @@ pub struct RuleResult {
     pub applied: bool,
 }
 
-/// Liste tolérante : un élément illisible (champ requis nul ou mal typé) est écarté, pas la liste.
-fn lenient<'de, D: Deserializer<'de>, T: DeserializeOwned>(d: D) -> Result<Vec<T>, D::Error> {
-    let raw: Option<Vec<serde_json::Value>> = Deserialize::deserialize(d)?;
-    Ok(raw.unwrap_or_default().into_iter().filter_map(|v| serde_json::from_value(v).ok()).collect())
+/// Liste tolérante : un élément illisible (champ requis nul ou mal typé) est écarté et compté,
+/// la liste reste servie.
+#[derive(Debug, Clone)]
+pub struct Lenient<T> {
+    pub items: Vec<T>,
+    pub dropped: usize,
+}
+
+impl<T> Default for Lenient<T> {
+    fn default() -> Self {
+        Lenient { items: Vec::new(), dropped: 0 }
+    }
+}
+
+impl<'de, T: DeserializeOwned> Deserialize<'de> for Lenient<T> {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let raw: Option<Vec<serde_json::Value>> = Deserialize::deserialize(d)?;
+        let raw = raw.unwrap_or_default();
+        let n = raw.len();
+        let items: Vec<T> = raw.into_iter().filter_map(|v| serde_json::from_value(v).ok()).collect();
+        Ok(Lenient { dropped: n - items.len(), items })
+    }
 }
 
 /// Réponses du backend de patrimoine : lecture tolérante (champs absents ou nuls à `None`,
@@ -145,8 +163,7 @@ fn lenient<'de, D: Deserializer<'de>, T: DeserializeOwned>(d: D) -> Result<Vec<T
 pub struct NetWorth {
     pub net_of_debt: Option<f64>,
     pub debt: Option<f64>,
-    #[serde(deserialize_with = "lenient")]
-    pub loans: Vec<NetWorthLoan>,
+    pub loans: Lenient<NetWorthLoan>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -164,8 +181,7 @@ pub struct Snapshot {
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct Snapshots {
-    #[serde(deserialize_with = "lenient")]
-    pub snapshots: Vec<Snapshot>,
+    pub snapshots: Lenient<Snapshot>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -181,8 +197,7 @@ pub struct Loan {
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct Loans {
-    #[serde(deserialize_with = "lenient")]
-    pub loans: Vec<Loan>,
+    pub loans: Lenient<Loan>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -197,8 +212,7 @@ pub struct Instrument {
 #[serde(default)]
 pub struct Portfolio {
     pub total_cost: Option<f64>,
-    #[serde(deserialize_with = "lenient")]
-    pub instruments: Vec<Instrument>,
+    pub instruments: Lenient<Instrument>,
     pub by_bucket: BTreeMap<String, Option<f64>>,
     pub bucket_weights: BTreeMap<String, Option<f64>>,
 }
