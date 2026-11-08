@@ -111,12 +111,11 @@ fn proposal_row(r: &rusqlite::Row) -> rusqlite::Result<Proposal> {
 fn migrate(c: &Connection) -> rusqlite::Result<()> {
     let cols: Vec<String> =
         c.prepare("PRAGMA table_info(proposals)")?.query_map([], |r| r.get(1))?.collect::<rusqlite::Result<_>>()?;
-    if !cols.iter().any(|c| c == "prob") {
-        c.execute_batch(
-            "ALTER TABLE proposals ADD COLUMN prob REAL;
-             ALTER TABLE proposals ADD COLUMN volume REAL;
-             ALTER TABLE proposals ADD COLUMN end_at INTEGER;",
-        )?;
+    // Colonne par colonne : une migration interrompue se complète à l'ouverture suivante.
+    for (name, ty) in [("prob", "REAL"), ("volume", "REAL"), ("end_at", "INTEGER")] {
+        if !cols.iter().any(|c| c == name) {
+            c.execute_batch(&format!("ALTER TABLE proposals ADD COLUMN {name} {ty};"))?;
+        }
     }
     Ok(())
 }
@@ -348,13 +347,6 @@ impl Store {
             .optional()?)
     }
 
-    /// Proposition de la dernière liste, par identifiant de question.
-    pub fn proposal_by_market(&self, market: &str) -> Result<Option<Proposal>> {
-        Ok(self
-            .db()
-            .query_row(&format!("SELECT {PROPOSAL_COLS} FROM proposals WHERE market = ?1 ORDER BY n LIMIT 1"), [market], proposal_row)
-            .optional()?)
-    }
 
     pub fn record_alert(&self, key: &str, at: DateTime<Utc>, budgeted: bool, text: &str) -> Result<()> {
         self.db().execute(
@@ -506,8 +498,19 @@ mod tests {
         )
         .unwrap();
         let s = Store::init(c).unwrap();
-        let p = s.proposal_by_market("m").unwrap().unwrap();
+        let p = s.proposal(1).unwrap().unwrap();
         assert_eq!((p.prob, p.volume, p.end), (None, None, None));
+    }
+
+    #[test]
+    fn partial_migration_repaired() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch("CREATE TABLE proposals (n INTEGER PRIMARY KEY, market TEXT NOT NULL, outcome TEXT NOT NULL, title TEXT NOT NULL, prob REAL);")
+            .unwrap();
+        let s = Store::init(c).unwrap();
+        s.set_proposals(&[Proposal { n: 1, market: "m".into(), outcome: "Yes".into(), title: "T".into(), prob: Some(0.2), volume: Some(3.0), end: None }])
+            .unwrap();
+        assert_eq!(s.proposal(1).unwrap().unwrap().volume, Some(3.0));
     }
 
     #[test]

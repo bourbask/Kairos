@@ -518,7 +518,14 @@ impl MarketServer {
         if let Some(f) = self.followed_by_id(&a.id)? {
             return json_out(json!({"message": format!("Déjà suivie : {}.", label(&f))}));
         }
-        let p = self.store.proposal_by_market(&a.id).map_err(e)?.ok_or("Proposition inconnue : rien n'est suivi.")?;
+        // Même périmètre que app_market_proposals : la liste de la semaine en cours.
+        let p = self
+            .store
+            .proposals_of_week(Utc::now())
+            .map_err(e)?
+            .into_iter()
+            .find(|p| p.market == a.id)
+            .ok_or("Proposition inconnue ou périmée : rien n'est suivi.")?;
         self.store.follow(&p.market, &p.outcome, &p.title).map_err(e)?;
         json_out(json!({"message": format!("Suivi : {}.", p.title)}))
     }
@@ -728,10 +735,20 @@ mod tests {
     async fn follow_idempotent() {
         let s = srv();
         s.store.set_proposals(&[prop(1, "a", "A")]).unwrap();
+        s.store.mark_proposed(Utc::now()).unwrap();
         js(s.app_market_follow(id("a")).await);
         let m = js(s.app_market_follow(id("a")).await);
         assert!(m["message"].as_str().unwrap().contains("Déjà suivie"));
         assert_eq!(s.store.followed().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn follow_rejects_previous_week_proposal() {
+        let s = srv();
+        s.store.set_proposals(&[prop(1, "a", "A")]).unwrap();
+        s.store.mark_proposed(Utc::now() - Duration::days(8)).unwrap();
+        assert!(s.app_market_follow(id("a")).await.is_err());
+        assert!(s.store.followed().unwrap().is_empty());
     }
 
     #[tokio::test]
