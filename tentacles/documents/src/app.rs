@@ -47,10 +47,13 @@ impl DocServer {
                 let mut v = json!({
                     "date": d.date.format("%Y-%m-%d").to_string(),
                     "kind": d.kind,
-                    "what": clean(&d.what, MAX_TEXT),
                     "private": private,
                     "overdue": d.date < today,
                 });
+                // Nature privée : le type extrait est du texte libre, il ne sort pas ; seul le motif calculé reste.
+                if !private {
+                    v["what"] = json!(clean(&d.what, MAX_TEXT));
+                }
                 if let Some(o) = d.organisme.as_deref().filter(|_| !private).map(|o| clean(o, MAX_TEXT)) {
                     v["org"] = json!(o);
                 }
@@ -233,7 +236,7 @@ mod tests {
         let v = js(s.app_documents());
         assert_eq!(
             v["deadlines"],
-            json!([{"date": day(30), "kind": "expiration", "what": "carte nationale d'identité", "private": true, "overdue": false}])
+            json!([{"date": day(30), "kind": "expiration", "private": true, "overdue": false}])
         );
         let all = v.to_string();
         for leak in ["Préfecture", "REF-0001", "321", "carte-recto", "Identité/"] {

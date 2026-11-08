@@ -62,7 +62,8 @@ fun deadlineTone(d: DocDeadline, today: LocalDate): Tone {
 data class DeadlineRow(val date: String, val day: String, val title: String, val note: String, val left: String?, val tone: Tone)
 
 /** « Document privé · type » : ni organisme ni motif pour une nature privée. */
-private fun privateTitle(d: DocDeadline) = listOfNotNull("Document privé", d.what.ifBlank { null }).joinToString(" · ")
+/** Nature privée : jamais le texte libre (type, organisme) ; seulement le motif calculé. */
+private fun privateTitle(d: DocDeadline) = listOfNotNull("Document privé", d.kind.ifBlank { null }?.cap()).joinToString(" · ")
 
 fun deadlineRow(d: DocDeadline, today: LocalDate): DeadlineRow {
     val at = date(d.date)

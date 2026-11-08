@@ -82,16 +82,27 @@ class DocumentsStateTest {
 
     @Test
     fun private_deadline_label() {
-        val row = deadlineRows(sample, today).single { it.date == "2026-12-09" }
-        assertEquals("Document privé · carte nationale d'identité", row.title)
-        // Ni organisme, ni motif : seulement le type et la date.
-        assertEquals("", row.note)
-        // Même si un organisme arrivait quand même, il ne s'affiche pas.
-        val leak = DocDeadline(date = "2026-12-09", kind = "expiration", what = "passeport", org = "Organisme", private = true)
+        // Nature privée : le texte libre (type extrait) n'est jamais affiché, seulement le motif calculé.
+        val leak = DocDeadline(date = "2026-12-09", kind = "expiration", what = "passeport de Untel", org = "Organisme", private = true)
         val shown = deadlineRows(Documents(deadlines = listOf(leak)), today).single()
-        assertFalse("Organisme" in shown.title + shown.note)
-        assertEquals("Document privé · passeport", shown.title)
-        assertEquals("Document privé", deadlineRows(Documents(deadlines = listOf(leak.copy(what = ""))), today).single().title)
+        assertEquals("Document privé · Expiration", shown.title)
+        assertEquals("", shown.note)
+        assertFalse("Untel" in shown.title || "Organisme" in shown.title + shown.note)
+        assertFalse("Untel" in nextDeadline(Documents(deadlines = listOf(leak)), today)!!)
+        assertEquals("Document privé", deadlineRows(Documents(deadlines = listOf(leak.copy(kind = ""))), today).single().title)
+    }
+
+    @Test
+    fun deadline_without_date_is_tolerated() {
+        val d = app.kairos.mobile.data.KairosJson.decodeFromString(Documents.serializer(), """{"deadlines":[{"kind":"fin"}]}""")
+        assertEquals(1, d.deadlines.size)
+    }
+
+    @Test
+    fun passage_markers_unpaired_or_empty() {
+        assertEquals(listOf("a" to true), passageSpans("«a"))
+        assertEquals(listOf("a" to false), passageSpans("a»"))
+        assertEquals(emptyList<Pair<String, Boolean>>(), passageSpans("«»"))
     }
 
     @Test
@@ -165,7 +176,7 @@ class DocumentsStateTest {
         assertNull(overdueLabel(0))
         // Prochaine échéance privée : jamais d'organisme ni de motif.
         val priv = Documents(deadlines = listOf(sample.deadlines[2].copy(org = "Organisme")))
-        assertEquals("Document privé · carte nationale d'identité · dans 30 j", nextDeadline(priv, today))
+        assertEquals("Document privé · Expiration · dans 30 j", nextDeadline(priv, today))
         assertNull(nextDeadline(Documents(deadlines = listOf(sample.deadlines[0])), today))
         assertEquals(0, overdueCount(Documents(), today))
     }

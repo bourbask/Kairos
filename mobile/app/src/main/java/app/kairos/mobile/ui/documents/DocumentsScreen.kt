@@ -211,6 +211,7 @@ private fun Search(search: suspend (String) -> List<DocHit>, onUnauthorized: () 
         if (!canSearch(query) || searching) return
         searching = true
         failed = null
+        results = null
         scope.launch {
             try {
                 results = search(query.trim())
@@ -230,7 +231,8 @@ private fun Search(search: suspend (String) -> List<DocHit>, onUnauthorized: () 
             value = query,
             onValueChange = {
                 query = it
-                if (it.isBlank()) results = null
+                // Résultats d'une autre recherche : retirés dès que la requête change.
+                results = null
             },
             label = { Text("Mot, organisme, référence…") },
             singleLine = true,

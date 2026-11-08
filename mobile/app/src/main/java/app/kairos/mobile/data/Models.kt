@@ -527,7 +527,7 @@ data class MediasSnapshot(
 /** Échéance d'un document ; [date] AAAA-MM-JJ, [org] absent pour une nature privée. */
 @Serializable
 data class DocDeadline(
-    val date: String,
+    val date: String = "",
     val kind: String = "",
     val what: String = "",
     val org: String? = null,
