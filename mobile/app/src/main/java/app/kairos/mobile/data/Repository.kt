@@ -317,7 +317,11 @@ class Repository(
     }
 
     private suspend fun <T> read(file: File, serializer: KSerializer<T>): T? = withContext(Dispatchers.IO) {
-        runCatching { codec.open(file.readBytes())?.let { KairosJson.decodeFromString(serializer, it) } }.getOrNull()
+        runCatching {
+            // Illisible (ancien cache en clair, clé perdue) : effacé, traité comme absent.
+            val plain = codec.open(file.readBytes()) ?: return@runCatching null.also { file.delete() }
+            KairosJson.decodeFromString(serializer, plain)
+        }.getOrNull()
     }
 
     private suspend fun <T> write(file: File, serializer: KSerializer<T>, value: T) {

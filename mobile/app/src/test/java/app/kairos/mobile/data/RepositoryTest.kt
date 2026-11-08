@@ -140,6 +140,7 @@ class RepositoryTest {
         val again = Repository(api, dir, testCodec) { today }.apply { load() }
         assertEquals(emptyMap<String, Map<String, Mark>>(), again.marks.value)
         assertEquals(Snapshot(), again.snapshot.value)
+        assertFalse(File(dir, "snapshot.json").exists())
     }
 
     @Test
