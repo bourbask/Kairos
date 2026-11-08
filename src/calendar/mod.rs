@@ -137,7 +137,7 @@ pub fn tasks_to_ics(tasks: &[Task]) -> Option<String> {
 }
 
 /// Escape ICS text: inverse de `unescape_ics` (\\, puis ; , et \n, dans cet ordre).
-fn escape_ics(s: &str) -> String {
+pub fn escape_ics(s: &str) -> String {
     s.replace('\\', "\\\\")
         .replace(';', "\\;")
         .replace(',', "\\,")
