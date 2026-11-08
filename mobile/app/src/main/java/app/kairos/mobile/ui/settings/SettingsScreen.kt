@@ -49,6 +49,8 @@ fun SettingsScreen(
     onTheme: (ThemeMode) -> Unit,
     speakReplies: Boolean,
     onSpeakReplies: (Boolean) -> Unit,
+    hideFromCaptures: Boolean,
+    onHideFromCaptures: (Boolean) -> Unit,
     address: String,
     version: String,
     update: AppRelease?,
@@ -102,6 +104,23 @@ fun SettingsScreen(
                 checked = speakReplies,
                 onCheckedChange = onSpeakReplies,
                 modifier = Modifier.semantics { contentDescription = "Lire les réponses à voix haute" },
+            )
+        }
+
+        HorizontalDivider(Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant)
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Masquer l'app dans les captures et les apps récentes", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "Captures d'écran bloquées, aperçu masqué dans les applications récentes.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Switch(
+                checked = hideFromCaptures,
+                onCheckedChange = onHideFromCaptures,
+                modifier = Modifier.semantics { contentDescription = "Masquer l'app dans les captures et les apps récentes" },
             )
         }
 

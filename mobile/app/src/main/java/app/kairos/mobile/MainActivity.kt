@@ -15,6 +15,7 @@ import app.kairos.mobile.update.runUpdate
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -132,6 +133,13 @@ class MainActivity : ComponentActivity() {
                 )
                 onDispose {}
             }
+            // Ni capture d'écran ni aperçu dans les applications récentes, sauf choix contraire.
+            val secure = model.hideFromCaptures
+            DisposableEffect(secure) {
+                if (secure) window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                else window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                onDispose {}
+            }
             KairosTheme(dark = dark) {
                 CompositionLocalProvider(LocalAmountsMasked provides model.amountsMasked) {
                     KairosRoot(model)
@@ -200,6 +208,10 @@ class AppModel(app: Application) : AndroidViewModel(app) {
 
     /** Montants masqués dans tous les espaces. */
     var amountsMasked by mutableStateOf(false)
+        private set
+
+    /** Fenêtre exclue des captures et des applications récentes (activé par défaut). */
+    var hideFromCaptures by mutableStateOf(true)
         private set
 
     private val processStarted: Boolean
@@ -343,6 +355,7 @@ class AppModel(app: Application) : AndroidViewModel(app) {
             speakReplies = saved?.speakReplies ?: false
             theme = saved?.theme ?: ThemeMode.Clair
             amountsMasked = saved?.amountsMasked ?: false
+            hideFromCaptures = saved?.hideFromCaptures ?: true
             session = runCatching { store.load() }.getOrNull()?.let(::open)
             loaded = true
             checkUpdate()
@@ -394,6 +407,11 @@ class AppModel(app: Application) : AndroidViewModel(app) {
     fun changeTheme(mode: ThemeMode) {
         theme = mode
         viewModelScope.launch { settings.saveTheme(mode) }
+    }
+
+    fun changeHideFromCaptures(on: Boolean) {
+        hideFromCaptures = on
+        viewModelScope.launch { settings.saveHideFromCaptures(on) }
     }
 
     fun toggleAmountsMasked() {
@@ -771,6 +789,8 @@ private fun KairosRoot(model: AppModel) {
                 onTheme = model::changeTheme,
                 speakReplies = model.speakReplies,
                 onSpeakReplies = model::changeSpeakReplies,
+                hideFromCaptures = model.hideFromCaptures,
+                onHideFromCaptures = model::changeHideFromCaptures,
                 address = maskAddress(session.address),
                 version = model.version,
                 update = model.update,
