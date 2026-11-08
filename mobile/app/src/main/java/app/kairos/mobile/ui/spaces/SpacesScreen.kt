@@ -35,7 +35,11 @@ import app.kairos.mobile.data.AgendaSnapshot
 import app.kairos.mobile.data.FinancesSnapshot
 import app.kairos.mobile.data.MaisonSnapshot
 import app.kairos.mobile.data.MarchesSnapshot
+import app.kairos.mobile.data.DocumentsSnapshot
 import app.kairos.mobile.data.MediasSnapshot
+import app.kairos.mobile.ui.documents.nextDeadline
+import app.kairos.mobile.ui.documents.overdueCount
+import app.kairos.mobile.ui.documents.overdueLabel
 import app.kairos.mobile.data.MemoireSnapshot
 import app.kairos.mobile.ui.medias.nextRelease
 import app.kairos.mobile.ui.medias.readyCount
@@ -103,6 +107,11 @@ fun SpacesScreen(
     onOpenMedias: () -> Unit,
     onCloseMedias: () -> Unit,
     mediasContent: @Composable () -> Unit,
+    documents: DocumentsSnapshot,
+    documentsOpen: Boolean,
+    onOpenDocuments: () -> Unit,
+    onCloseDocuments: () -> Unit,
+    documentsContent: @Composable () -> Unit,
     maisonContent: @Composable () -> Unit,
 ) {
     val overlay = rememberOverlayState(maisonOpen, Origin.Anchor)
@@ -111,12 +120,13 @@ fun SpacesScreen(
     val marchesOverlay = rememberOverlayState(marchesOpen, Origin.Anchor)
     val memoireOverlay = rememberOverlayState(memoireOpen, Origin.Anchor)
     val mediasOverlay = rememberOverlayState(mediasOpen, Origin.Anchor)
+    val documentsOverlay = rememberOverlayState(documentsOpen, Origin.Anchor)
     val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.outlineVariant)) {
         Column(
             Modifier
                 .fillMaxSize()
-                .underOverlays(rtl, overlay, financesOverlay, agendaOverlay, marchesOverlay, memoireOverlay, mediasOverlay)
+                .underOverlays(rtl, overlay, financesOverlay, agendaOverlay, marchesOverlay, memoireOverlay, mediasOverlay, documentsOverlay)
                 .background(MaterialTheme.colorScheme.background)
                 .padding(padding)
                 .padding(horizontal = 20.dp, vertical = 20.dp),
@@ -136,6 +146,8 @@ fun SpacesScreen(
             MemoireCard(memoire, memoireLater, onOpenMemoire, Modifier.overlayAnchor(memoireOverlay, CardCorner))
             Spacer(Modifier.height(12.dp))
             MediasCard(medias, onOpenMedias, Modifier.overlayAnchor(mediasOverlay, CardCorner))
+            Spacer(Modifier.height(12.dp))
+            DocumentsCard(documents, onOpenDocuments, Modifier.overlayAnchor(documentsOverlay, CardCorner))
             Spacer(Modifier.height(16.dp))
             Text(
                 "D'autres espaces viendront ici.",
@@ -160,6 +172,9 @@ fun SpacesScreen(
         }
         Overlay(mediasOverlay, mediasOpen, onClose = onCloseMedias, anchorColor = MaterialTheme.colorScheme.surface) {
             mediasContent()
+        }
+        Overlay(documentsOverlay, documentsOpen, onClose = onCloseDocuments, anchorColor = MaterialTheme.colorScheme.surface) {
+            documentsContent()
         }
     }
 }
@@ -391,6 +406,53 @@ private fun MediasCard(medias: MediasSnapshot, onClick: () -> Unit, modifier: Mo
             Text("›", style = MaterialTheme.typography.headlineSmall, color = colors.onSurfaceVariant)
         }
     }
+}
+
+/** Prochaine échéance et nombre de retards. */
+@Composable
+private fun DocumentsCard(documents: DocumentsSnapshot, onClick: () -> Unit, modifier: Modifier) {
+    val colors = MaterialTheme.colorScheme
+    val d = documents.documents
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(CardCorner),
+        color = colors.surface,
+        border = BorderStroke(1.dp, colors.outlineVariant),
+        modifier = modifier.fillMaxWidth(),
+    ) {
+        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            FolderIcon(colors.primary, colors.primaryContainer)
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text("Documents", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                if (d == null) {
+                    Text("Échéances, recherche et pièces attendues", style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant)
+                } else {
+                    val today = LocalDate.now()
+                    Text(
+                        nextDeadline(d, today) ?: "Aucune échéance à venir",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = colors.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    overdueLabel(overdueCount(d, today))?.let {
+                        Text(it, style = MaterialTheme.typography.bodySmall, color = colors.error, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
+            Text("›", style = MaterialTheme.typography.headlineSmall, color = colors.onSurfaceVariant)
+        }
+    }
+}
+
+/** Dossier. */
+@Composable
+private fun FolderIcon(line: Color, fill: Color) = Canvas(Modifier.size(44.dp).background(fill, RoundedCornerShape(12.dp)).padding(9.dp)) {
+    val w = size.width
+    val h = size.height
+    drawRoundRect(line.copy(alpha = 0.35f), Offset(0f, h * 0.18f), Size(w * 0.5f, h * 0.2f), CornerRadius(2.dp.toPx()))
+    drawRoundRect(line, Offset(0f, h * 0.28f), Size(w, h * 0.56f), CornerRadius(3.dp.toPx()))
 }
 
 /** Écran et bouton lecture. */

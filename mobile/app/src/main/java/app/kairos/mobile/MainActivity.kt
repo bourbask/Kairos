@@ -88,6 +88,7 @@ import app.kairos.mobile.ui.marches.MarchesScreen
 import app.kairos.mobile.ui.memoire.laterIds
 import app.kairos.mobile.ui.memoire.MemoireScreen
 import app.kairos.mobile.ui.medias.MediasScreen
+import app.kairos.mobile.ui.documents.DocumentsScreen
 import app.kairos.mobile.ui.kit.LocalAmountsMasked
 import app.kairos.mobile.ui.pairing.PairingScreen
 import app.kairos.mobile.ui.talk.ChatScreen
@@ -497,6 +498,7 @@ private fun KairosRoot(model: AppModel) {
     var marchesOpen by rememberSaveable { mutableStateOf(false) }
     var memoireOpen by rememberSaveable { mutableStateOf(false) }
     var mediasOpen by rememberSaveable { mutableStateOf(false) }
+    var documentsOpen by rememberSaveable { mutableStateOf(false) }
     var unpackOrder by rememberSaveable { mutableStateOf<Long?>(null) }
     var adding by rememberSaveable { mutableStateOf(false) }
     var focusInput by remember { mutableStateOf(false) }
@@ -602,6 +604,7 @@ private fun KairosRoot(model: AppModel) {
                 val marches by session.repository.marches.collectAsState()
                 val memoire by session.repository.memoire.collectAsState()
                 val medias by session.repository.medias.collectAsState()
+                val documents by session.repository.documents.collectAsState()
                 val marks by session.repository.marks.collectAsState()
                 // Une actualisation à l'arrivée sur l'onglet : les chiffres des cartes sont à jour.
                 LaunchedEffect(Unit) {
@@ -612,6 +615,7 @@ private fun KairosRoot(model: AppModel) {
                         { session.repository.refreshMarches(force = false) },
                         { session.repository.refreshMemoire(force = false) },
                         { session.repository.refreshMedias(force = false) },
+                        { session.repository.refreshDocuments(force = false) },
                     )
                     for (refresh in refreshes) {
                         launch {
@@ -693,6 +697,18 @@ private fun KairosRoot(model: AppModel) {
                             padding = padding,
                             appScope = model.viewModelScope,
                             onClose = { mediasOpen = false },
+                            onUnauthorized = model::unauthorized,
+                        )
+                    },
+                    documents = documents,
+                    documentsOpen = documentsOpen,
+                    onOpenDocuments = { documentsOpen = true },
+                    onCloseDocuments = { documentsOpen = false },
+                    documentsContent = {
+                        DocumentsScreen(
+                            repository = session.repository,
+                            padding = padding,
+                            onClose = { documentsOpen = false },
                             onUnauthorized = model::unauthorized,
                         )
                     },
