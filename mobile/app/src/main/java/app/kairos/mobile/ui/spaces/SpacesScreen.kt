@@ -30,11 +30,14 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import app.kairos.mobile.data.AgendaSnapshot
 import app.kairos.mobile.data.FinancesSnapshot
 import app.kairos.mobile.data.MaisonSnapshot
 import app.kairos.mobile.ui.kit.Amount
 import app.kairos.mobile.ui.kit.Tone
 import app.kairos.mobile.ui.kit.barTone
+import app.kairos.mobile.ui.agenda.upcomingWhen
+import java.time.LocalDate
 import app.kairos.mobile.ui.overlay.Origin
 import app.kairos.mobile.ui.overlay.Overlay
 import app.kairos.mobile.ui.overlay.overlayAnchor
@@ -59,16 +62,22 @@ fun SpacesScreen(
     onOpenFinances: () -> Unit,
     onCloseFinances: () -> Unit,
     financesContent: @Composable () -> Unit,
+    agenda: AgendaSnapshot,
+    agendaOpen: Boolean,
+    onOpenAgenda: () -> Unit,
+    onCloseAgenda: () -> Unit,
+    agendaContent: @Composable () -> Unit,
     maisonContent: @Composable () -> Unit,
 ) {
     val overlay = rememberOverlayState(maisonOpen, Origin.Anchor)
     val financesOverlay = rememberOverlayState(financesOpen, Origin.Anchor)
+    val agendaOverlay = rememberOverlayState(agendaOpen, Origin.Anchor)
     val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.outlineVariant)) {
         Column(
             Modifier
                 .fillMaxSize()
-                .underOverlays(rtl, overlay, financesOverlay)
+                .underOverlays(rtl, overlay, financesOverlay, agendaOverlay)
                 .background(MaterialTheme.colorScheme.background)
                 .padding(padding)
                 .padding(horizontal = 20.dp, vertical = 20.dp),
@@ -80,6 +89,8 @@ fun SpacesScreen(
             MaisonCard(maison, onOpenMaison, Modifier.overlayAnchor(overlay, CardCorner))
             Spacer(Modifier.height(12.dp))
             FinancesCard(finances, onOpenFinances, Modifier.overlayAnchor(financesOverlay, CardCorner))
+            Spacer(Modifier.height(12.dp))
+            AgendaCard(agenda, onOpenAgenda, Modifier.overlayAnchor(agendaOverlay, CardCorner))
             Spacer(Modifier.height(16.dp))
             Text(
                 "D'autres espaces viendront ici.",
@@ -92,6 +103,9 @@ fun SpacesScreen(
         }
         Overlay(financesOverlay, financesOpen, onClose = onCloseFinances, anchorColor = MaterialTheme.colorScheme.surface) {
             financesContent()
+        }
+        Overlay(agendaOverlay, agendaOpen, onClose = onCloseAgenda, anchorColor = MaterialTheme.colorScheme.surface) {
+            agendaContent()
         }
     }
 }
@@ -169,6 +183,48 @@ private fun FinancesCard(finances: FinancesSnapshot, onClick: () -> Unit, modifi
             }
             Text("›", style = MaterialTheme.typography.headlineSmall, color = colors.onSurfaceVariant)
         }
+    }
+}
+
+@Composable
+private fun AgendaCard(agenda: AgendaSnapshot, onClick: () -> Unit, modifier: Modifier) {
+    val colors = MaterialTheme.colorScheme
+    val next = agenda.week?.upcoming?.firstOrNull()
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(CardCorner),
+        color = colors.surface,
+        border = BorderStroke(1.dp, colors.outlineVariant),
+        modifier = modifier.fillMaxWidth(),
+    ) {
+        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            CalendarIcon(colors.primary, colors.primaryContainer)
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text("Agenda", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                if (next == null) {
+                    Text("Journée, plages libres et tâches", style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant)
+                } else {
+                    Text(next.title, style = MaterialTheme.typography.bodyMedium, color = colors.onSurface, maxLines = 1)
+                    Text(upcomingWhen(next, LocalDate.now()), style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
+                }
+            }
+            Text("›", style = MaterialTheme.typography.headlineSmall, color = colors.onSurfaceVariant)
+        }
+    }
+}
+
+/** Page de calendrier : bandeau et grille. */
+@Composable
+private fun CalendarIcon(line: Color, fill: Color) = Canvas(Modifier.size(44.dp).background(fill, RoundedCornerShape(12.dp)).padding(9.dp)) {
+    val g = 2.dp.toPx()
+    val r = CornerRadius(2.dp.toPx())
+    val head = size.height * 0.26f
+    drawRoundRect(line, Offset.Zero, Size(size.width, head), r)
+    val cell = (size.width - g * 2) / 3
+    val rowH = (size.height - head - g * 3) / 2
+    for (row in 0 until 2) for (col in 0 until 3) {
+        drawRoundRect(line.copy(alpha = if (row == 0 && col == 1) 1f else 0.4f), Offset(col * (cell + g), head + g + row * (rowH + g)), Size(cell, rowH), r)
     }
 }
 

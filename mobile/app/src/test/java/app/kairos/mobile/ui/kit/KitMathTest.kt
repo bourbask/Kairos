@@ -78,4 +78,112 @@ class KitMathTest {
         assertEquals(listOf(0f, 0f), donutWeights(listOf(0.0, 0.0)))
         assertTrue(donutWeights(emptyList()).isEmpty())
     }
+
+    private fun block(title: String, start: String, end: String, allDay: Boolean = false) =
+        TimeBlock(title, minuteOf(start), minuteOf(end), allDay = allDay)
+
+    private fun minuteOf(hhmm: String) = hhmm.split(":").let { it[0].toInt() * 60 + it[1].toInt() }
+
+    @Test
+    fun blocks_positioned_by_minutes() {
+        // Plage 7 h – 23 h : 960 minutes.
+        val placed = timelineLayout(
+            listOf(block("A", "09:00", "10:00"), block("Tôt", "06:00", "07:30"), block("Tard", "23:30", "23:59")),
+            7, 23,
+        ).placed
+        val a = placed.single { it.index == 0 }
+        assertEquals(120f / 960, a.top, 1e-6f)
+        assertEquals(180f / 960, a.bottom, 1e-6f)
+        // Débordement rogné à la plage ; bloc hors plage absent.
+        val early = placed.single { it.index == 1 }
+        assertEquals(0f, early.top, 1e-6f)
+        assertEquals(30f / 960, early.bottom, 1e-6f)
+        assertTrue(placed.none { it.index == 2 })
+        assertEquals(0.5f, minuteFraction(15 * 60, 7, 23), 1e-6f)
+        assertEquals("1 h 30", durationText(90))
+        assertEquals("45 min", durationText(45))
+        assertEquals("2 h", durationText(120))
+    }
+
+    @Test
+    fun overlapping_events_side_by_side() {
+        val placed = timelineLayout(
+            listOf(block("A", "09:00", "10:00"), block("B", "09:30", "11:00"), block("C", "11:00", "12:00")),
+            7, 23,
+        ).placed.associateBy { it.index }
+        assertEquals(0 to 2, placed.getValue(0).column to placed.getValue(0).columns)
+        assertEquals(1 to 2, placed.getValue(1).column to placed.getValue(1).columns)
+        // Bloc qui touche sans chevaucher : pleine largeur.
+        assertEquals(0 to 1, placed.getValue(2).column to placed.getValue(2).columns)
+    }
+
+    @Test
+    fun now_line_only_today() {
+        val day = java.time.LocalDate.of(2026, 11, 8)
+        assertEquals(0.5f, nowFraction(day, day.atTime(15, 0), 7, 23)!!, 1e-6f)
+        assertEquals(null, nowFraction(day.plusDays(1), day.atTime(15, 0), 7, 23))
+        assertEquals(null, nowFraction(day, day.atTime(6, 0), 7, 23))
+        // Passé minuit, le jour affiché n'est plus aujourd'hui.
+        assertEquals(null, nowFraction(day, day.plusDays(1).atTime(0, 5), 0, 24))
+        assertEquals(30_000L, millisToNextMinute(day.atTime(23, 59, 30)))
+        assertEquals(60_000L, millisToNextMinute(day.atTime(10, 0)))
+    }
+
+    @Test
+    fun all_day_events_on_top() {
+        val layout = timelineLayout(
+            listOf(block("Réunion", "10:00", "11:00"), block("Congé", "00:00", "00:00", allDay = true)),
+            7, 23,
+        )
+        assertEquals(listOf("Congé"), layout.allDay.map { it.title })
+        assertEquals(listOf(0), layout.placed.map { it.index })
+        assertEquals("Congé, toute la journée", describeBlock(layout.allDay.single()))
+        assertEquals("Réunion, de 10 h à 11 h", describeBlock(block("Réunion", "10:00", "11:00")))
+    }
+
+    @Test
+    fun short_block_keeps_min_height_for_overlap() {
+        // 9 h – 9 h 05 occupe visuellement 20 min : 9 h 10 doit se ranger à côté.
+        val layout = timelineLayout(listOf(block("A", "09:00", "09:05"), block("B", "09:10", "10:00")), 7, 23)
+        val p = layout.placed.associateBy { it.index }
+        assertEquals(0 to 2, p.getValue(0).column to p.getValue(0).columns)
+        assertEquals(1 to 2, p.getValue(1).column to p.getValue(1).columns)
+        // Le bas reste la vraie fin.
+        assertEquals(125f / 960, p.getValue(0).bottom, 1e-6f)
+        // Seuil désactivable.
+        assertEquals(1, timelineLayout(listOf(block("A", "09:00", "09:05"), block("B", "09:10", "10:00")), 7, 23, minMinutes = 0).placed[1].columns)
+    }
+
+    @Test
+    fun overlap_chain_reuses_first_column() {
+        val p = timelineLayout(
+            listOf(block("A", "09:00", "10:00"), block("B", "09:30", "10:30"), block("C", "10:00", "11:00")),
+            7, 23,
+        ).placed.associateBy { it.index }
+        assertEquals(listOf(0, 1, 0), (0..2).map { p.getValue(it).column })
+        assertEquals(listOf(2, 2, 2), (0..2).map { p.getValue(it).columns })
+    }
+
+    @Test
+    fun edge_crossing_block_overlaps() {
+        val p = timelineLayout(listOf(block("Tôt", "06:00", "07:30"), block("B", "07:00", "08:00")), 7, 23)
+            .placed.associateBy { it.index }
+        assertEquals(2, p.getValue(0).columns)
+        assertEquals(0f, p.getValue(0).top, 1e-6f)
+        assertEquals(1, p.getValue(1).column)
+    }
+
+    @Test
+    fun block_description_mentions_tone() {
+        val b = TimeBlock("Point", 600, 660, tone = Tone.Urgent)
+        assertTrue(describeBlock(b).contains("important"))
+        assertTrue(describeBlock(b.copy(tone = Tone.Attention)).contains("à surveiller"))
+        assertEquals("Point, de 10 h à 11 h", describeBlock(b.copy(tone = Tone.Neutral)))
+    }
+
+    @Test
+    fun block_description_names_source() {
+        val b = TimeBlock("Point", 600, 660, source = "travail", subtitle = "Salle B")
+        assertEquals("Point, travail, de 10 h à 11 h, Salle B", describeBlock(b))
+    }
 }

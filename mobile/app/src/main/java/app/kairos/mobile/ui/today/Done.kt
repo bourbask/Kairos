@@ -93,11 +93,14 @@ private suspend fun run(
         DoneOutcome.Done(call(card.module, done.tool, doneArgs(done, choice)))
     } catch (e: ApiError) {
         mark(null)
-        when (e) {
-            ApiError.Unauthorized -> throw e
-            ApiError.Offline -> DoneOutcome.Refused("Serveur injoignable : rien n'a été enregistré.")
-            ApiError.NoReply -> DoneOutcome.Refused("Pas de réponse du serveur : vérifie avant de réessayer.")
-            is ApiError.Server -> DoneOutcome.Refused(if (e.code == 422) e.message ?: "Refusé." else "${e.unavailable()}.")
-        }
+        DoneOutcome.Refused(refusal(e))
     }
+}
+
+/** Raison lisible d'une écriture qui n'a pas abouti ; [ApiError.Unauthorized] remonte. */
+fun refusal(e: ApiError): String = when (e) {
+    ApiError.Unauthorized -> throw e
+    ApiError.Offline -> "Serveur injoignable : rien n'a été enregistré."
+    ApiError.NoReply -> "Pas de réponse du serveur : vérifie avant de réessayer."
+    is ApiError.Server -> if (e.code == 422) e.message ?: "Refusé." else "${e.unavailable()}."
 }

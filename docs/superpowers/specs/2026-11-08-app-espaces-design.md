@@ -57,3 +57,25 @@ opérations.
 
 - Écrire dans la stratégie de finances depuis l'application.
 - Graphiques interactifs avancés (zoom, comparaison).
+
+## Espace Agenda
+
+Sources : module agenda (événements des calendriers perso et travail, plages
+libres, tâches du planning), rythme de travail de la tête (sur site,
+télétravail, repos).
+
+- **Bandeau de jours** : 7 jours à partir d'aujourd'hui (puces), le jour
+  choisi ouvre sa vue ; glisser horizontalement sur la vue (jamais depuis le
+  bord) passe au jour voisin ; bouton « Aujourd'hui ».
+- **Vue du jour** : frise 07 h–23 h, événements en blocs (perso / travail
+  distingués), **plages libres** visibles (« libre 2 h »), trait de l'heure
+  actuelle, mode de travail du jour en badge.
+- **Tâches** dues à ce jour : glisser → = faite (annulable 4 s).
+- **À venir** : les prochains événements sur 7 jours, en liste compacte.
+- **Ajouter un événement** : titre, jour, heure de début, durée en puces
+  (30 min, 1 h, 2 h, journée), calendrier perso ou travail ; écrit dans le
+  calendrier puis visible aussitôt.
+- **Fraîcheur** : l'agenda local est resynchronisé à l'ouverture de l'espace
+  (au plus une fois par minute), sans attendre la synchronisation de nuit.
+
+Hors du premier jet : modifier ou supprimer un événement, invitations.

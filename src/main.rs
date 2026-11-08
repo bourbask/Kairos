@@ -396,7 +396,7 @@ async fn main() -> anyhow::Result<()> {
 
                     let mut total = 0;
                     for (url, source) in collections {
-                        println!("Syncing from {}...", url);
+                        println!("Syncing {}...", if source == calendar::SOURCE_WORK { "travail" } else { "perso" });
                         let client = calendar::CalendarClient::new(url, username.clone(), password.clone());
                         let events = client.sync(source).await?;
 

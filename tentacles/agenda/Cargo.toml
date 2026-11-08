@@ -18,6 +18,8 @@ tentacle-common = { path = "../../crates/tentacle-common" }
 rmcp = { version = "3.8", features = ["server", "macros"] }
 schemars = "1"
 tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", features = ["json"] }
 
 [dev-dependencies]
-reqwest = { version = "0.12", features = ["json"] }
+axum = "0.8"
+tokio = { version = "1", features = ["full", "test-util"] }
