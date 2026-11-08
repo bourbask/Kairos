@@ -21,11 +21,13 @@ use tentacle_common::BriefPeriod;
 
 use crate::{
     slots::{DAY_END, DAY_START, free_slots},
-    write::{Cal, Calendars, LastSync, Span, TIMEOUT, ics, stable_uid},
+    write::{Cal, Calendars, LastSync, Span, ics, stable_uid},
 };
 
 /// Intervalle minimal entre deux synchronisations à la demande.
 const SYNC_EVERY: std::time::Duration = std::time::Duration::from_secs(60);
+/// Budget total d'une synchronisation à la demande, sous le délai d'appel d'outil de la tête (20 s).
+const SYNC_BUDGET: std::time::Duration = std::time::Duration::from_secs(15);
 // ponytail: seuil fixe des plages libres affichées ; préférence le jour où elle sert
 const FREE_MIN: i64 = 30;
 
@@ -316,9 +318,11 @@ impl AgendaServer {
         let collections = self.cal.collections();
         let mut ok = !collections.is_empty();
         let (user, pass) = self.cal.credentials();
+        // une seule échéance pour toutes les collections : la réponse part avant le délai de la tête
+        let deadline = tokio::time::Instant::now() + SYNC_BUDGET;
         for (url, source) in collections {
             // échec (réseau, statut, délai) : la base locale reste intacte, sans détail exposé
-            let fetched = tokio::time::timeout(TIMEOUT, CalendarClient::new(url, user.clone(), pass.clone()).sync(source)).await;
+            let fetched = tokio::time::timeout_at(deadline, CalendarClient::new(url, user.clone(), pass.clone()).sync(source)).await;
             ok &= match fetched {
                 Ok(Ok(events)) => self.db().and_then(|db| db.replace_calendar_events(source, &events).map_err(err)).is_ok(),
                 _ => false,
@@ -754,6 +758,24 @@ mod app_tests {
         let srv = server(&[], Calendars::new(Some("http://127.0.0.1:1/cal/".into()), None, "u".into(), "p".into()));
         let out = srv.app_agenda_sync().await.unwrap();
         assert!(!out.contains("127.0.0.1"));
+    }
+
+    /// Calendrier qui accepte la connexion mais ne répond jamais.
+    async fn silent_dav() -> String {
+        let app = axum::Router::new().fallback(|| std::future::pending::<&'static str>());
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/cal/", l.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(l, app).await });
+        url
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn sync_bounded_overall() {
+        let srv = server(&[], Calendars::new(Some(silent_dav().await), Some(silent_dav().await), "u".into(), "p".into()));
+        let t0 = tokio::time::Instant::now();
+        let v: Value = serde_json::from_str(&srv.app_agenda_sync().await.unwrap()).unwrap();
+        assert_eq!(v["synced"], false);
+        assert!(t0.elapsed() < std::time::Duration::from_secs(18), "synchro bornée dans son ensemble : {:?}", t0.elapsed());
     }
 
     fn add_args(title: &str, cal: &str) -> AddArgs {
