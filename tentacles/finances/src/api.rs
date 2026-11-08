@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use serde::de::DeserializeOwned;
 
 #[derive(Debug, thiserror::Error)]
@@ -132,17 +132,30 @@ pub struct RuleResult {
     pub applied: bool,
 }
 
-/// Réponses du backend de patrimoine : lecture tolérante (champs absents à zéro, inconnus ignorés),
-/// chaque section de l'écran étant facultative.
+/// Liste tolérante : un élément illisible (champ requis nul ou mal typé) est écarté, pas la liste.
+fn lenient<'de, D: Deserializer<'de>, T: DeserializeOwned>(d: D) -> Result<Vec<T>, D::Error> {
+    let raw: Option<Vec<serde_json::Value>> = Deserialize::deserialize(d)?;
+    Ok(raw.unwrap_or_default().into_iter().filter_map(|v| serde_json::from_value(v).ok()).collect())
+}
+
+/// Réponses du backend de patrimoine : lecture tolérante (champs absents ou nuls à `None`,
+/// inconnus ignorés), chaque section de l'écran étant facultative.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct NetWorth {
-    pub net_of_debt: f64,
-    pub debt: f64,
+    pub net_of_debt: Option<f64>,
+    pub debt: Option<f64>,
+    #[serde(deserialize_with = "lenient")]
+    pub loans: Vec<NetWorthLoan>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Clone, Deserialize)]
+pub struct NetWorthLoan {
+    pub name: String,
+    pub remaining_balance: f64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct Snapshot {
     pub month: String,
     pub net_worth: f64,
@@ -151,39 +164,43 @@ pub struct Snapshot {
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct Snapshots {
+    #[serde(deserialize_with = "lenient")]
     pub snapshots: Vec<Snapshot>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct Loan {
     pub name: String,
     pub balance: f64,
+    #[serde(default)]
     pub payment: Option<f64>,
+    #[serde(default)]
     pub payoff_month: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct Loans {
+    #[serde(deserialize_with = "lenient")]
     pub loans: Vec<Loan>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct Instrument {
     pub name: String,
     pub cost: f64,
+    #[serde(default)]
     pub bucket: String,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct Portfolio {
-    pub total_cost: f64,
+    pub total_cost: Option<f64>,
+    #[serde(deserialize_with = "lenient")]
     pub instruments: Vec<Instrument>,
-    pub by_bucket: BTreeMap<String, f64>,
-    pub bucket_weights: BTreeMap<String, f64>,
+    pub by_bucket: BTreeMap<String, Option<f64>>,
+    pub bucket_weights: BTreeMap<String, Option<f64>>,
 }
 
 /// Nature d'une erreur HTTP, sans son texte : il peut citer l'adresse appelée.

@@ -412,9 +412,19 @@ impl FinanceServer {
             self.api.portfolio(),
         );
         let mut out = json!({});
+        let mut fallback_loans = Vec::new();
         if let Ok(n) = nw {
-            out["net_worth"] = json!(n.net_of_debt);
-            out["debt"] = json!(n.debt);
+            if let Some(v) = n.net_of_debt {
+                out["net_worth"] = json!(v);
+            }
+            if let Some(v) = n.debt {
+                out["debt"] = json!(v);
+            }
+            fallback_loans = n
+                .loans
+                .iter()
+                .map(|l| json!({"name": clean_payee(&l.name), "balance": l.remaining_balance}))
+                .collect();
         }
         if let Ok(s) = snaps {
             let history: Vec<_> = s
@@ -424,32 +434,43 @@ impl FinanceServer {
                 .collect();
             out["history"] = json!(history);
         }
-        if let Ok(l) = loans {
-            let items: Vec<_> = l
-                .loans
-                .iter()
-                .map(|l| {
-                    let mut o = json!({"name": clean_payee(&l.name), "balance": l.balance});
-                    // Mensualité nulle : inconnue côté backend, donc omise.
-                    if let Some(p) = l.payment.filter(|p| *p > 0.0) {
-                        o["payment"] = json!(p);
-                    }
-                    if let Some(m) = &l.payoff_month {
-                        o["payoff_month"] = json!(m);
-                    }
-                    o
-                })
-                .collect();
-            out["loans"] = json!(items);
+        match loans {
+            Ok(l) => {
+                let items: Vec<_> = l
+                    .loans
+                    .iter()
+                    .map(|l| {
+                        let mut o = json!({"name": clean_payee(&l.name), "balance": l.balance});
+                        // Mensualité nulle : inconnue côté backend, donc omise.
+                        if let Some(p) = l.payment.filter(|p| *p > 0.0) {
+                            o["payment"] = json!(p);
+                        }
+                        if let Some(m) = &l.payoff_month {
+                            o["payoff_month"] = json!(m);
+                        }
+                        o
+                    })
+                    .collect();
+                out["loans"] = json!(items);
+            }
+            // Prêts indisponibles : restant dû connu du patrimoine, sans mensualité ni échéance.
+            Err(_) if out.get("debt").is_some() || !fallback_loans.is_empty() => {
+                out["loans"] = json!(fallback_loans);
+            }
+            Err(_) => {}
         }
         if let Ok(p) = pf {
-            let buckets: Vec<_> = p
-                .by_bucket
+            // Ordre de risque décroissant, catégories inconnues ensuite ; libellés laissés à l'application.
+            let rank = |n: &str| ["high", "mid", "low"].iter().position(|k| *k == n).unwrap_or(3);
+            let mut buckets: Vec<(&String, f64)> =
+                p.by_bucket.iter().filter_map(|(n, a)| a.map(|a| (n, a))).collect();
+            buckets.sort_by_key(|(n, _)| rank(n));
+            let buckets: Vec<_> = buckets
                 .iter()
                 .map(|(name, amount)| {
                     json!({
                         "name": name,
-                        "weight": p.bucket_weights.get(name).copied().unwrap_or(0.0),
+                        "weight": p.bucket_weights.get(*name).copied().flatten().unwrap_or(0.0),
                         "amount": amount,
                     })
                 })
@@ -459,7 +480,11 @@ impl FinanceServer {
                 .iter()
                 .map(|i| json!({"name": clean_payee(&i.name), "amount": i.cost, "bucket": i.bucket}))
                 .collect();
-            out["portfolio"] = json!({"total": p.total_cost, "buckets": buckets, "lines": lines});
+            let mut o = json!({"buckets": buckets, "lines": lines});
+            if let Some(t) = p.total_cost {
+                o["total"] = json!(t);
+            }
+            out["portfolio"] = o;
         }
         // Fraîcheur bancaire portée par le cycle.
         if let Ok(c) = cycle {
