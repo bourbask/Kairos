@@ -370,6 +370,14 @@ fn sizes(n: Nature) -> &'static [&'static str] {
     }
 }
 
+/// Nom d'un produit de la base ouverte, marque comprise.
+fn off_name(p: &crate::off::OffProduct) -> String {
+    match &p.brand {
+        Some(b) => format!("{} ({b})", p.name),
+        None => p.name.clone(),
+    }
+}
+
 fn message(m: String) -> Out {
     Ok(serde_json::json!({ "message": m }).to_string())
 }
@@ -548,8 +556,8 @@ impl FoodServer {
         }
     }
 
-    /// Décisions « produit à compléter » : nature d'abord, contenance ensuite.
-    fn product_decisions(&self) -> Result<Vec<serde_json::Value>, String> {
+    /// Décisions « produit à compléter » (nom du produit, décision) : nature d'abord, contenance ensuite.
+    fn product_decisions(&self) -> Result<Vec<(String, serde_json::Value)>, String> {
         use crate::units::Family;
         use serde_json::json;
         let opt = |id: &str, label: &str| json!({"id": id, "label": label});
@@ -579,7 +587,7 @@ impl FoodServer {
                 }
                 Some(_) => continue,
             };
-            out.push(json!({
+            out.push((p.name.clone(), json!({
                 "id": format!("produit-{}-{kind}", p.id),
                 "title": "Produit à compléter",
                 "headline": format!("{} : {question}", p.name),
@@ -587,7 +595,7 @@ impl FoodServer {
                 "proposal": null,
                 "alternatives": alternatives,
                 "expires": expires.format("%Y-%m-%d").to_string(),
-            }));
+            })));
         }
         Ok(out)
     }
@@ -602,10 +610,7 @@ impl FoodServer {
             }
             let p =
                 self.off.lookup(&code).await?.ok_or_else(|| format!("Code-barres {code} inconnu : donner le nom."))?;
-            l.name = match p.brand {
-                Some(b) => format!("{} ({b})", p.name),
-                None => p.name,
-            };
+            l.name = off_name(&p);
         }
         Ok(l)
     }
@@ -1443,10 +1448,7 @@ impl FoodServer {
             None => {
                 let Some(code) = code else { return unknown() };
                 let Some(p) = self.off.lookup(code).await? else { return unknown() };
-                let name = match &p.brand {
-                    Some(b) => format!("{} ({b})", p.name),
-                    None => p.name.clone(),
-                };
+                let name = off_name(&p);
                 let cat = p.category.as_deref().map(crate::units::fold).unwrap_or_default();
                 let nature = crate::nature::resolve(None, p.category.as_deref(), &p.name);
                 let loc = crate::bon::location(&cat, &name).to_string();
@@ -1483,9 +1485,32 @@ impl FoodServer {
             barcode: a.barcode.map(|b| b.trim().to_string()).filter(|b| !b.is_empty()),
             price: None,
         };
-        let mut l = self.complete(l).await?;
+        // Produit nouveau avec code-barres : la fiche de la base ouverte donne nom,
+        // contenance et catégorie. Base injoignable : bloquant seulement sans nom.
+        let mut sheet = None;
+        if let Some(code) = l.barcode.clone()
+            && self.store.usual(&l.name, Some(&code)).map_err(|e| e.to_string())?.is_none()
+        {
+            match self.off.lookup(&code).await {
+                Ok(p) => sheet = p,
+                Err(e) if l.name.trim().is_empty() => return Err(e),
+                Err(_) => {}
+            }
+        }
+        let mut l = match &sheet {
+            Some(p) if l.name.trim().is_empty() => Line { name: off_name(p), ..l },
+            _ => self.complete(l).await?,
+        };
         let known = self.store.usual(&l.name, l.barcode.as_deref()).map_err(|e| e.to_string())?;
         let new = known.is_none();
+        // Compté en pièces alors que la fiche annonce une contenance : n pièces → n × contenance.
+        if new
+            && let Some((f, size)) = sheet.as_ref().and_then(|p| p.quantity.as_deref()).and_then(crate::units::pack)
+            && let Some((crate::units::Family::Piece, k)) = crate::units::parse_unit(l.unit.as_deref().unwrap_or(""))
+        {
+            l.qty *= k * size;
+            l.unit = Some(f.base().to_string());
+        }
         // Produit déjà connu : le même, dans sa famille, jamais un doublon compté autrement.
         if let Some(p) = known {
             let unit = l.unit.get_or_insert_with(|| p.family.base().to_string());
@@ -1495,6 +1520,12 @@ impl FoodServer {
             l.name = p.name;
         }
         let m = self.store.add(&l, "ajout", None)?;
+        if let Some(p) = &sheet
+            && let Ok(found) = self.store.find(&l.name)
+            && let Some(local) = found.iter().find(|x| x.barcode == l.barcode)
+        {
+            self.store.set_details(local.id, p.category.as_deref(), p.nutriscore.as_deref(), p.nova);
+        }
         if new {
             // Nouveau produit en pièces : sa contenance passera par la pile de décisions.
             self.store.flag_size_unknown(&l.name).map_err(|e| e.to_string())?;
@@ -1504,7 +1535,8 @@ impl FoodServer {
 
     #[tool(description = "Décisions en attente pour l'application : produits à compléter (nature, contenance), au format JSON.")]
     async fn decisions(&self) -> Out {
-        serde_json::to_string(&self.product_decisions()?).map_err(|e| e.to_string())
+        let items: Vec<_> = self.product_decisions()?.into_iter().map(|(_, d)| d).collect();
+        serde_json::to_string(&items).map_err(|e| e.to_string())
     }
 
     #[tool(description = "Trancher une décision de l'application : id = décision, choice = option proposée.")]
@@ -1512,7 +1544,7 @@ impl FoodServer {
         // Seule une décision encore en attente est acceptée : une fiche complétée
         // entre-temps n'est jamais réécrite.
         let pending = self.product_decisions()?;
-        let d = pending.iter().find(|d| d["id"] == a.id).ok_or("Décision inconnue ou déjà traitée.")?;
+        let (name, d) = pending.iter().find(|(_, d)| d["id"] == a.id).ok_or("Décision inconnue ou déjà traitée.")?;
         let alts = d["alternatives"].as_array().map(Vec::as_slice).unwrap_or_default();
         let label = alts
             .iter()
@@ -1521,7 +1553,6 @@ impl FoodServer {
             .ok_or_else(|| format!("Choix « {} » non proposé.", a.choice))?;
         let mut parts = a.id.splitn(3, '-').skip(1);
         let id: i64 = parts.next().and_then(|x| x.parse().ok()).ok_or("Décision inconnue ou déjà traitée.")?;
-        let name = d["headline"].as_str().unwrap_or_default().split(" : ").next().unwrap_or_default();
         match parts.next() {
             Some("nature") => {
                 let n = Nature::parse(a.choice.trim_start_matches("alimentaire:")).ok_or("Nature inconnue.")?;
@@ -2263,7 +2294,7 @@ mod tests {
         assert!(alts.contains(&"alimentaire:legume") && alts.contains(&"entretien") && alts.contains(&"hygiene"), "{alts:?}");
         assert!(!alts.contains(&"alimentaire:entretien"));
         let exp = chrono::NaiveDate::parse_from_str(d[0]["expires"].as_str().unwrap(), "%Y-%m-%d").unwrap();
-        assert_eq!(exp, chrono::Utc::now().date_naive() + chrono::Duration::days(30));
+        assert_eq!(exp, s.today() + chrono::Duration::days(30));
         decide(&s, &format!("produit-{id}-nature"), "entretien").await.unwrap();
         let d = decisions(&s).await;
         assert_eq!(d.len(), 1);
@@ -2330,5 +2361,25 @@ mod tests {
         decide(&s, &format!("produit-{id}-contenance"), "500ml").await.unwrap();
         assert!(decide(&s, &format!("produit-{id}-contenance"), "250ml").await.is_err(), "pas de seconde conversion");
         assert_eq!(s.store.lots(None, Some("zorglub")).unwrap()[0].qty, 1000.0);
+    }
+
+    const SHEET: &str = r#"{"status":1,"product":{"product_name":"Xylo","quantity":"1,5 l","categories_tags":["en:laundry"]}}"#;
+
+    #[tokio::test]
+    async fn barcode_add_takes_pack_and_category_from_base() {
+        // Sans nom : la fiche donne nom, contenance et catégorie.
+        let s = off_answering("200 OK", SHEET).await;
+        let a = serde_json::json!({"barcode": "3017620422003", "qty": 2, "unit": "pièce", "location": "placard"});
+        v(s.app_add(Parameters(serde_json::from_value(a).unwrap())).await);
+        let l = &s.store.lots(None, Some("xylo")).unwrap()[0];
+        assert_eq!((l.family, l.qty, l.nature), (Family::Volume, 3000.0, Some(crate::nature::Nature::Entretien)));
+        assert!(decisions(&s).await.is_empty(), "rien à demander : {:?}", decisions(&s).await);
+        // Avec le nom repris par l'application : même fiche.
+        let s = off_answering("200 OK", SHEET).await;
+        let a = serde_json::json!({"name": "Xylo", "barcode": "3017620422003", "qty": 1, "unit": "pièce", "location": "placard"});
+        v(s.app_add(Parameters(serde_json::from_value(a).unwrap())).await);
+        let l = &s.store.lots(None, Some("xylo")).unwrap()[0];
+        assert_eq!((l.family, l.qty), (Family::Volume, 1500.0));
+        assert!(decisions(&s).await.is_empty());
     }
 }
