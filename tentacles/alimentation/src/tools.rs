@@ -276,6 +276,18 @@ struct AppAddArgs {
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
+struct AppAddDishArgs {
+    /// Nom du plat.
+    name: String,
+    /// Portions, de 1 à 100.
+    portions: u32,
+    /// `frigo` ou `congelateur`.
+    location: String,
+}
+
+const DISH_PORTIONS_MAX: u32 = 100;
+
+#[derive(Deserialize, schemars::JsonSchema)]
 struct DecideArgs {
     /// Identifiant de la décision (`decisions`).
     id: String,
@@ -434,7 +446,7 @@ impl FoodServer {
             };
             let mut c = json!({
                 "id": format!("repas-{d}-{slot}"), "kind": "info", "time": time,
-                "title": format!("{label} · {}", m.dish),
+                "title": format!("{label} · {}", m.dish), "dish": m.dish,
             });
             if let Some(b) = body {
                 c["body"] = b.into();
@@ -1484,14 +1496,8 @@ impl FoodServer {
         .to_string())
     }
 
-    #[tool(
-        description = "Application : ajouter au stock hors commande (comme stock_add). Unité « portions » : plat cuisiné, au frigo ou au congélateur."
-    )]
+    #[tool(description = "Application : ajouter au stock hors commande (comme stock_add).")]
     async fn app_add(&self, Parameters(a): Parameters<AppAddArgs>) -> Out {
-        if a.unit.as_deref().is_some_and(|u| crate::units::fold(u.trim()).starts_with("portion")) {
-            let loc = crate::store::location(&a.location)?;
-            return message(self.store.add_dish_at(a.name.as_deref().unwrap_or_default(), a.qty, &loc, "ajout")?);
-        }
         let l = Line {
             name: a.name.unwrap_or_default(),
             qty: a.qty,
@@ -1547,6 +1553,15 @@ impl FoodServer {
             self.store.flag_size_unknown(&l.name).map_err(|e| e.to_string())?;
         }
         message(m)
+    }
+
+    #[tool(description = "Application : mettre un plat cuisiné en stock (portions, frigo ou congélateur), jamais confondu avec un ingrédient.")]
+    async fn app_add_dish(&self, Parameters(a): Parameters<AppAddDishArgs>) -> Out {
+        if !(1..=DISH_PORTIONS_MAX).contains(&a.portions) {
+            return Err(format!("Portions : de 1 à {DISH_PORTIONS_MAX}."));
+        }
+        let loc = crate::store::location(&a.location)?;
+        message(self.store.add_dish_at(&a.name, f64::from(a.portions), &loc, "ajout")?)
     }
 
     #[tool(description = "Décisions en attente pour l'application : produits à compléter (nature, contenance), au format JSON.")]
@@ -1720,6 +1735,7 @@ mod tests {
         assert_eq!(c[0]["id"], "repas-2026-11-08-midi");
         assert_eq!(c[0]["time"], "12:15");
         assert_eq!(c[0]["title"], "Midi · Pâtes");
+        assert_eq!(c[0]["dish"], "Pâtes");
         assert_eq!(c[0]["body"], "reste");
         assert!(c[0].get("detail").is_none());
         assert_eq!(c[1]["id"], "repas-2026-11-08-soir");
@@ -2197,14 +2213,23 @@ mod tests {
     async fn app_add_cooked_dish() {
         let s = server();
         s.store.add(&item("Navets", 2.0, "pièce", "frigo", None), "achat", None).unwrap();
-        let a = serde_json::json!({"name": "Navets", "qty": 3, "unit": "portions", "location": "congelateur"});
-        v(s.app_add(Parameters(serde_json::from_value(a).unwrap())).await);
+        let dish = |name: &str, portions: u32, loc: &str| {
+            let a = serde_json::json!({"name": name, "portions": portions, "location": loc});
+            s.app_add_dish(Parameters(serde_json::from_value(a).unwrap()))
+        };
+        v(dish("Navets", 3, "congelateur").await);
         let plats = dish_lots(&s, "navets");
         assert_eq!((plats.len(), plats[0].qty, plats[0].location.as_str()), (1, 3.0, "congelateur"));
         let raw = s.store.lots(None, Some("navets")).unwrap();
         assert!(raw.iter().any(|l| l.nature != Some(crate::nature::Nature::Plat) && l.qty == 2.0), "l'ingrédient n'est pas retagué");
-        let a = serde_json::json!({"name": "Navets", "qty": 1, "unit": "portion", "location": "placard"});
-        assert!(s.app_add(Parameters(serde_json::from_value(a).unwrap())).await.is_err(), "plat : frigo ou congélo");
+        assert!(dish("Navets", 1, "placard").await.is_err(), "plat : frigo ou congélo");
+        assert!(dish("Navets", 0, "frigo").await.is_err(), "au moins une portion");
+        assert!(dish("Navets", 101, "frigo").await.is_err(), "100 portions au plus");
+        assert!(dish(" ", 2, "frigo").await.is_err(), "nom attendu");
+        // `app_add` ne traite plus « portions » à part : jamais un plat.
+        let a = serde_json::json!({"name": "Carottes", "qty": 2, "unit": "portions", "location": "frigo"});
+        let _ = s.app_add(Parameters(serde_json::from_value(a).unwrap())).await;
+        assert!(dish_lots(&s, "carottes").is_empty());
         // Le plat ajouté sert ensuite au « fait » d'un reste.
         let day = "2026-11-08";
         s.store.replace_plan(day, day, &[meal(day, Slot::Midi, "Navets", MealKind::Leftover, None)]).unwrap();
