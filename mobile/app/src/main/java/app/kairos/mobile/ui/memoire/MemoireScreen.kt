@@ -66,7 +66,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
-import app.kairos.mobile.ui.kit.UndoWindows
+import app.kairos.mobile.ui.kit.rememberNotifier
 import app.kairos.mobile.data.ApiError
 import app.kairos.mobile.data.Card
 import app.kairos.mobile.data.ConversationSummary
@@ -90,7 +90,7 @@ import app.kairos.mobile.ui.talk.IconButton
 import app.kairos.mobile.ui.today.DoneOutcome
 import app.kairos.mobile.ui.today.InFlight
 import app.kairos.mobile.ui.today.Pill
-import app.kairos.mobile.ui.today.SwipeRow
+import app.kairos.mobile.ui.kit.SwipeRow
 import app.kairos.mobile.ui.today.completeCard
 import app.kairos.mobile.ui.today.refusal
 import kotlinx.coroutines.CoroutineScope
@@ -130,7 +130,7 @@ fun MemoireScreen(
     val scope = rememberCoroutineScope()
     val unauthorized by rememberUpdatedState(onUnauthorized)
     val snackbar = remember { SnackbarHostState() }
-    val undo = remember { UndoWindows(snackbar) }
+    val undo = rememberNotifier(snackbar)
     var refreshing by remember { mutableStateOf(false) }
     var hidden by remember { mutableStateOf(emptySet<Long>()) }
     var revealed by remember { mutableStateOf(emptySet<Long>()) }
@@ -161,7 +161,7 @@ fun MemoireScreen(
         onPauseOrDispose {}
     }
 
-    suspend fun undoWindow(text: String): Boolean = undo.open(text)
+    suspend fun undoWindow(text: String): Boolean = undo.undo(text)
 
     fun notice(text: String) {
         scope.launch { snackbar.showSnackbar(text) }

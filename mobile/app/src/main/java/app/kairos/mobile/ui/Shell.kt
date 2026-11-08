@@ -56,9 +56,11 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import app.kairos.mobile.ui.mascot.Mascot
 import app.kairos.mobile.ui.mascot.MascotState
+import app.kairos.mobile.ui.mascot.mascotDescription
 import app.kairos.mobile.ui.theme.Motion
 import app.kairos.mobile.ui.theme.Palette
 import java.time.LocalDate
@@ -83,6 +85,7 @@ internal val DockHeight = 104.dp
 @Composable
 fun Shell(
     mascotState: MascotState = MascotState.Repos,
+    kairosState: String = mascotDescription(mascotState, 0),
     onTap: () -> Unit = {},
     onPressStart: () -> Unit = {},
     onPressEnd: () -> Unit = {},
@@ -109,6 +112,7 @@ fun Shell(
             tab = tab,
             onTab = { tab = it },
             mascotState = mascotState,
+            kairosState = kairosState,
             onTap = onTap,
             onPressStart = onPressStart,
             onPressEnd = onPressEnd,
@@ -125,6 +129,7 @@ private fun Dock(
     tab: Tab,
     onTab: (Tab) -> Unit,
     mascotState: MascotState,
+    kairosState: String,
     onTap: () -> Unit,
     onPressStart: () -> Unit,
     onPressEnd: () -> Unit,
@@ -144,7 +149,7 @@ private fun Dock(
         verticalAlignment = Alignment.Bottom,
     ) {
         TabItem("Aujourd'hui", tab == Tab.Aujourdhui, { onTab(Tab.Aujourdhui) }) { TodayIcon(it) }
-        KairosButton(mascotState, onTap, onPressStart, onPressEnd, onDrag, onSpeak, kairosModifier)
+        KairosButton(mascotState, onTap, onPressStart, onPressEnd, onDrag, onSpeak, kairosModifier, kairosState)
         TabItem("Espaces", tab == Tab.Espaces, { onTab(Tab.Espaces) }) { SpacesIcon(it) }
     }
 }
@@ -196,6 +201,8 @@ fun KairosButton(
     onDrag: (Offset) -> Unit,
     onSpeak: () -> Unit,
     modifier: Modifier = Modifier,
+    /** État du personnage en mots, annoncé avec le bouton. */
+    stateText: String = mascotDescription(state, 0),
 ) {
     val speak by rememberUpdatedState(onSpeak)
     val tap by rememberUpdatedState(onTap)
@@ -217,6 +224,7 @@ fun KairosButton(
             .semantics {
                 role = Role.Button
                 contentDescription = "Kairos"
+                stateDescription = stateText
                 onClick("Ouvrir la conversation") { tap(); true }
                 customActions = listOf(CustomAccessibilityAction("Parler") { speak(); true })
             }

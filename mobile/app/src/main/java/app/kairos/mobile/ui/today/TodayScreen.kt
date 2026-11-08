@@ -46,7 +46,8 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Surface
-import app.kairos.mobile.ui.kit.UndoWindows
+import app.kairos.mobile.ui.kit.rememberNotifier
+import app.kairos.mobile.ui.kit.SwipeRow
 import app.kairos.mobile.data.AppRelease
 import app.kairos.mobile.ui.settings.updateLabel
 import androidx.compose.material3.Text
@@ -137,7 +138,7 @@ fun TodayScreen(
     val marks by repository.marks.collectAsState()
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
-    val undo = remember { UndoWindows(snackbar) }
+    val undo = rememberNotifier(snackbar)
     var refreshing by remember { mutableStateOf(false) }
     var week by rememberSaveable { mutableStateOf(false) }
     var now by remember { mutableStateOf(LocalDateTime.now()) }
@@ -182,7 +183,7 @@ fun TodayScreen(
      * « Annuler » a été touché. Un second geste ne chasse pas la fenêtre en cours :
      * son snackbar attend son tour, pour le temps qui reste à sa propre fenêtre.
      */
-    suspend fun undoWindow(text: String): Boolean = undo.open(text)
+    suspend fun undoWindow(text: String): Boolean = undo.undo(text)
 
     fun later(day: String, card: Card) {
         if (!busy.claim(card.key)) return
@@ -737,86 +738,6 @@ internal fun ChipView(chip: Chip) {
 /** Ambre lisible sur fond clair ; inchangé quand la couleur est déjà claire (thème sombre). */
 private fun Color.darken(): Color =
     if (red + green + blue > 2.2f) this else Color(red * 0.64f, green * 0.62f, blue * 0.6f, alpha)
-
-/**
- * Glissement horizontal : → positif ([rightLabel]), ← négatif ([leftLabel]). Le libellé
- * de l'action apparaît sous l'élément pendant le geste ; vibration au seuil.
- * [rightStays] : → ouvre un choix sur place, l'élément revient au lieu de partir ([leftStays] : ←).
- */
-@Composable
-internal fun SwipeRow(
-    enabled: Boolean,
-    onRight: () -> Unit,
-    onLeft: () -> Unit,
-    modifier: Modifier = Modifier,
-    rightLabel: String = "Fait ✓",
-    leftLabel: String = "Plus tard",
-    leftColor: Color = MaterialTheme.colorScheme.tertiary,
-    rightStays: Boolean = false,
-    leftStays: Boolean = false,
-    content: @Composable () -> Unit,
-) {
-    val right by rememberUpdatedState(onRight)
-    val left by rememberUpdatedState(onLeft)
-    val haptic = LocalHapticFeedback.current
-    val scope = rememberCoroutineScope()
-    var dx by remember { mutableFloatStateOf(0f) }
-    var width by remember { mutableIntStateOf(1) }
-    var armed by remember { mutableStateOf(false) }
-    val threshold = width * 0.32f
-
-    Box(modifier.onSizeChanged { width = it.width }) {
-        if (dx != 0f) {
-            val positive = dx > 0
-            Row(
-                Modifier
-                    .matchParentSize()
-                    .clip(MaterialTheme.shapes.medium)
-                    .background(if (positive) MaterialTheme.colorScheme.primary else leftColor)
-                    .padding(horizontal = 18.dp),
-                horizontalArrangement = if (positive) Arrangement.Start else Arrangement.End,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    if (positive) rightLabel else leftLabel,
-                    color = if (positive) MaterialTheme.colorScheme.onPrimary else contentColorFor(leftColor),
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.alpha((abs(dx) / threshold).coerceIn(0.35f, 1f)),
-                )
-            }
-        }
-        Box(
-            Modifier
-                .offset { IntOffset(dx.roundToInt(), 0) }
-                .draggable(
-                    orientation = Orientation.Horizontal,
-                    enabled = enabled,
-                    state = rememberDraggableState { delta ->
-                        dx += delta
-                        val over = abs(dx) > threshold
-                        if (over != armed) {
-                            armed = over
-                            haptic.performHapticFeedback(HapticFeedbackType.SegmentTick)
-                        }
-                    },
-                    onDragStopped = { velocity ->
-                        val fling = abs(velocity) > 2000f && abs(dx) > width * 0.12f && velocity * dx > 0
-                        val commit = armed || fling
-                        val positive = dx > 0
-                        val target = if (!commit || (if (positive) rightStays else leftStays)) 0f else if (positive) width.toFloat() else -width.toFloat()
-                        scope.launch {
-                            animate(dx, target, initialVelocity = velocity, animationSpec = Motion.settle()) { v, _ -> dx = v }
-                            if (commit) {
-                                if (positive) right() else left()
-                            }
-                            dx = 0f
-                            armed = false
-                        }
-                    },
-                ),
-        ) { content() }
-    }
-}
 
 /** Pincer (deux doigts qui se rapprochent) ou écarter ; un seul doigt laisse défiler la liste. */
 internal fun Modifier.pinch(onPinchIn: () -> Unit, onSpread: () -> Unit): Modifier = composed {

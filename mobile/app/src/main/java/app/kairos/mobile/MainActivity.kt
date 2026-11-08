@@ -31,8 +31,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -92,6 +90,10 @@ import app.kairos.mobile.ui.memoire.MemoireScreen
 import app.kairos.mobile.ui.medias.MediasScreen
 import app.kairos.mobile.ui.documents.DocumentsScreen
 import app.kairos.mobile.ui.kit.LocalAmountsMasked
+import app.kairos.mobile.ui.kit.LocalNotifier
+import app.kairos.mobile.ui.kit.NotifierHost
+import app.kairos.mobile.ui.kit.rememberNotifier
+import app.kairos.mobile.ui.mascot.mascotDescription
 import app.kairos.mobile.ui.pairing.PairingScreen
 import app.kairos.mobile.ui.talk.ChatScreen
 import app.kairos.mobile.ui.talk.Conversation
@@ -144,7 +146,10 @@ class MainActivity : ComponentActivity() {
                 onDispose {}
             }
             KairosTheme(dark = dark) {
-                CompositionLocalProvider(LocalAmountsMasked provides model.amountsMasked) {
+                CompositionLocalProvider(
+                    LocalAmountsMasked provides model.amountsMasked,
+                    LocalNotifier provides rememberNotifier(),
+                ) {
                     KairosRoot(model)
                 }
             }
@@ -505,7 +510,8 @@ private fun KairosRoot(model: AppModel) {
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
-    val snackbar = remember { SnackbarHostState() }
+    val notifier = LocalNotifier.current
+    val snackbar = notifier.host
     val conversation = session.conversation
     val talk = model.talk
     var decisionsOpen by rememberSaveable { mutableStateOf(false) }
@@ -593,6 +599,7 @@ private fun KairosRoot(model: AppModel) {
             modifier = Modifier.underOverlays(rtl, deck, chat, settings, unpack, add),
             kairosModifier = Modifier.overlayAnchor(chat, KairosButtonCorner),
             mascotState = mascot,
+            kairosState = mascotDescription(mascot, conversation.decisions),
             onTap = {
                 focusInput = false
                 chatOpen = true
@@ -847,8 +854,8 @@ private fun KairosRoot(model: AppModel) {
             onMic = { if (talk.listening) model.stopListening() else run(talk.resume()) },
             modifier = Modifier.align(Alignment.BottomCenter),
         )
-        SnackbarHost(
-            snackbar,
+        NotifierHost(
+            notifier,
             Modifier
                 .align(if (chatOpen) Alignment.TopCenter else Alignment.BottomCenter)
                 .then(if (chatOpen) Modifier.statusBarsPadding().padding(top = 64.dp) else Modifier.navigationBarsPadding().padding(bottom = 112.dp)),

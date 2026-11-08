@@ -103,7 +103,7 @@ import app.kairos.mobile.data.Repository
 import app.kairos.mobile.data.Tone
 import app.kairos.mobile.ui.talk.IconButton
 import app.kairos.mobile.ui.theme.Motion
-import app.kairos.mobile.ui.today.SwipeRow
+import app.kairos.mobile.ui.kit.SwipeRow
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter

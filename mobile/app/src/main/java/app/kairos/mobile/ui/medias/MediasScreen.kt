@@ -51,7 +51,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
-import app.kairos.mobile.ui.kit.UndoWindows
+import app.kairos.mobile.ui.kit.rememberNotifier
 import app.kairos.mobile.data.ApiError
 import app.kairos.mobile.data.DownloadItem
 import app.kairos.mobile.data.Downloads
@@ -69,7 +69,7 @@ import app.kairos.mobile.ui.talk.IconButton
 import app.kairos.mobile.ui.today.DoneOutcome
 import app.kairos.mobile.ui.today.InFlight
 import app.kairos.mobile.ui.today.Pill
-import app.kairos.mobile.ui.today.SwipeRow
+import app.kairos.mobile.ui.kit.SwipeRow
 import app.kairos.mobile.ui.today.completeCard
 import app.kairos.mobile.ui.today.refusal
 import kotlinx.coroutines.CoroutineScope
@@ -104,7 +104,7 @@ fun MediasScreen(
     val scope = rememberCoroutineScope()
     val unauthorized by rememberUpdatedState(onUnauthorized)
     val snackbar = remember { SnackbarHostState() }
-    val undo = remember { UndoWindows(snackbar) }
+    val undo = rememberNotifier(snackbar)
     var refreshing by remember { mutableStateOf(false) }
     var hidden by remember { mutableStateOf(emptySet<String>()) }
     val busy = remember { InFlight() }
@@ -152,7 +152,7 @@ fun MediasScreen(
                     watchedCard(w),
                     null,
                     mark = { m -> hidden = if (m == null) hidden - w.key else hidden + w.key },
-                    undoWindow = { undo.open("Vu · ${w.title}") },
+                    undoWindow = { undo.undo("Vu · ${w.title}") },
                     call = repository::tool,
                     busy = busy,
                 )

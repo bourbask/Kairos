@@ -51,7 +51,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
-import app.kairos.mobile.ui.kit.UndoWindows
+import app.kairos.mobile.ui.kit.rememberNotifier
 import app.kairos.mobile.data.ApiError
 import app.kairos.mobile.data.FollowedMarket
 import app.kairos.mobile.data.MarchesSnapshot
@@ -78,7 +78,7 @@ import app.kairos.mobile.ui.talk.IconButton
 import app.kairos.mobile.ui.today.DoneOutcome
 import app.kairos.mobile.ui.today.InFlight
 import app.kairos.mobile.ui.today.Pill
-import app.kairos.mobile.ui.today.SwipeRow
+import app.kairos.mobile.ui.kit.SwipeRow
 import app.kairos.mobile.ui.today.completeCard
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -114,7 +114,7 @@ fun MarchesScreen(
     val scope = rememberCoroutineScope()
     val unauthorized by rememberUpdatedState(onUnauthorized)
     val snackbar = remember { SnackbarHostState() }
-    val undo = remember { UndoWindows(snackbar) }
+    val undo = rememberNotifier(snackbar)
     var refreshing by remember { mutableStateOf(false) }
     var detailId by rememberSaveable { mutableStateOf<String?>(null) }
     var deckOpen by rememberSaveable { mutableStateOf(false) }
@@ -142,7 +142,7 @@ fun MarchesScreen(
         onPauseOrDispose {}
     }
 
-    suspend fun undoWindow(text: String): Boolean = undo.open(text)
+    suspend fun undoWindow(text: String): Boolean = undo.undo(text)
 
     // Depuis appScope : quitter l'espace pendant la fenêtre n'abandonne pas l'action.
     fun unfollow(m: FollowedMarket) {
