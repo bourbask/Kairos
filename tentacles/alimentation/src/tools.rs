@@ -451,7 +451,10 @@ impl FoodServer {
             if options.len() > 1 {
                 done["choices"] = json!({"label": "Portions mangées", "key": "portions", "options": options, "default": 1});
             }
-            c["done"] = done;
+            // Un repas à venir ne se déclare pas mangé.
+            if d <= self.today() {
+                c["done"] = done;
+            }
             cards.push(c);
             if m.slot == Slot::Soir && m.note.as_deref() == Some(crate::plan::BOX_NOTE) {
                 // Sans action : la portion est déjà au frigo, la carte reste une note locale.
@@ -1289,6 +1292,9 @@ impl FoodServer {
     async fn app_meal_done(&self, Parameters(a): Parameters<AppMealDoneArgs>) -> Out {
         use crate::plan::MealKind;
         let day = date(&a.day)?;
+        if day > self.today().to_string() {
+            return Err(format!("Repas du {day} encore à venir : rien à noter."));
+        }
         let slot = crate::nature::Slot::parse(&a.slot).ok_or("Créneau : midi ou soir.")?;
         let m = self
             .store
@@ -2149,6 +2155,19 @@ mod tests {
         assert_eq!(left, 2.0);
         assert!(dish_lots(&s, "dhal").iter().all(|l| l.qty == 2.0), "le plus ancien d'abord");
         assert_eq!(s.store.meals_since(day).unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn future_meal_not_done() {
+        let s = server();
+        let day = (s.today() + chrono::Duration::days(1)).to_string();
+        s.store.replace_plan(&day, &day, &[meal(&day, Slot::Midi, "Dhal", MealKind::Leftover, None)]).unwrap();
+        s.store.add_dish("Dhal", 2.0).unwrap();
+        assert!(cards(&s, &day)[0].get("done").is_none(), "pas de « fait » sur un repas à venir");
+        let e = done(&s, &day, "midi", None).await.unwrap_err();
+        assert!(e.contains("venir"), "{e}");
+        assert!(s.store.meals_since(&day).unwrap().is_empty());
+        assert_eq!(dish_lots(&s, "dhal")[0].qty, 2.0);
     }
 
     #[tokio::test]
