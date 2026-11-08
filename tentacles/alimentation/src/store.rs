@@ -845,6 +845,29 @@ impl Store {
         Ok(db.last_insert_rowid())
     }
 
+    /// Note un repas sauf s'il en existe déjà un ce jour-là à ce moment : `None` alors.
+    pub fn add_meal_once(&self, day: &str, slot: &str, name: &str, place: &str) -> rusqlite::Result<Option<i64>> {
+        let db = self.db.lock().unwrap();
+        let n = db.execute(
+            "INSERT INTO meals (day, slot, name, place, at)
+             SELECT ?1, ?2, ?3, ?4, ?5 WHERE NOT EXISTS (SELECT 1 FROM meals WHERE day = ?1 AND slot = ?2)",
+            params![day, slot, name, place, now()],
+        )?;
+        Ok((n > 0).then(|| db.last_insert_rowid()))
+    }
+
+    /// Portions d'un plat cuisiné mises au frigo, comme un produit de nature `plat`.
+    pub fn add_dish(&self, dish: &str, portions: f64) -> Result<String, String> {
+        let p = self.product(dish, Family::Piece, None, None).map_err(|e| e.to_string())?;
+        self.db
+            .lock()
+            .unwrap()
+            .execute("UPDATE products SET nature = ?2 WHERE id = ?1", params![p.id, Nature::Plat.as_str()])
+            .map_err(|e| e.to_string())?;
+        let l = Line { name: p.name, qty: portions, unit: Some("pièce".into()), location: Some("frigo".into()), ..Default::default() };
+        self.add(&l, "reste", None)
+    }
+
     /// Repas depuis une date : (jour, moment, plat, lieu).
     pub fn meals_since(&self, day: &str) -> rusqlite::Result<Vec<(String, String, String, String)>> {
         let db = self.db.lock().unwrap();
