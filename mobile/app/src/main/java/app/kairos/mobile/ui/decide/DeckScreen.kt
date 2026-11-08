@@ -85,7 +85,8 @@ private const val FLING_DP_S = 1_200
  * fermer la pile envoie aussitôt les choix en attente. [onDecided] suit chaque
  * réponse du serveur, [onFinished] la fermeture. [onDispatch] reçoit chaque
  * choix au moment où il part : il quitte l'état connu, rouvrir la pile
- * (ou tourner l'écran) ne le repropose pas.
+ * (ou tourner l'écran) ne le repropose pas. Avec [directLeft], ← retient
+ * aussitôt la première alternative (ex. « ignorer ») au lieu de les montrer.
  */
 @Composable
 fun DeckScreen(
@@ -99,6 +100,7 @@ fun DeckScreen(
     onUnauthorized: () -> Unit,
     onNotice: (String) -> Unit,
     onClose: () -> Unit,
+    directLeft: Boolean = false,
 ) {
     val deck = remember { DeckState(decisions) }
     val scope = rememberCoroutineScope()
@@ -165,8 +167,8 @@ fun DeckScreen(
     suspend fun flingTo(target: Offset) = offset.animateTo(target, Motion.fling())
     suspend fun back() = offset.animateTo(Offset.Zero, Motion.settle())
 
-    suspend fun commit(option: String) {
-        flingTo(Offset(width * 1.4f, offset.value.y))
+    suspend fun commit(option: String, left: Boolean = false) {
+        flingTo(Offset(width * (if (left) -1.4f else 1.4f), offset.value.y))
         haptic.performHapticFeedback(HapticFeedbackType.Confirm)
         deck.choose(option)
         offset.snapTo(Offset.Zero)
@@ -178,6 +180,7 @@ fun DeckScreen(
         when {
             card == null -> back()
             swipe == Swipe.Right && !offline && card.proposal != null -> commit(card.proposal.id)
+            swipe == Swipe.Left && directLeft && !offline && card.alternatives.isNotEmpty() -> commit(card.alternatives.first().id, left = true)
             swipe == Swipe.Right || swipe == Swipe.Left -> {
                 back()
                 if (!offline) deck.swipeLeft()
@@ -331,7 +334,9 @@ fun DeckScreen(
             Alternatives(current, enabled = !offline, onChoose = { exclusive { commit(it) } }, onBack = deck::dismissAlternatives)
         } else if (current != null) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                TextButton(onClick = { exclusive { act(Swipe.Left) } }, enabled = !offline) { Text("← autre") }
+                TextButton(onClick = { exclusive { act(Swipe.Left) } }, enabled = !offline) {
+                    Text(current.alternatives.firstOrNull()?.takeIf { directLeft }?.let { "← ${it.label.lowercase(Locale.FRENCH)}" } ?: "← autre")
+                }
                 TextButton(onClick = { exclusive { act(Swipe.Up) } }) { Text("↑ plus tard") }
                 TextButton(onClick = { exclusive { act(Swipe.Right) } }, enabled = !offline) {
                     Text(if (current.proposal != null) "oui →" else "choisir →", fontWeight = FontWeight.Bold)

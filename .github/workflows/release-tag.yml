@@ -54,6 +54,7 @@ jobs:
           KAIROS_KEYSTORE_PASSWORD: ${{ secrets.KAIROS_KEYSTORE_PASSWORD }}
           KAIROS_KEY_ALIAS: ${{ secrets.KAIROS_KEY_ALIAS }}
           KAIROS_KEY_PASSWORD: ${{ secrets.KAIROS_KEY_PASSWORD }}
+          KAIROS_VERSION: ${{ steps.extract.outputs.version }}
         run: |
           if [ -z "$KEYSTORE_BASE64" ]; then
             echo "::error::Release signing secrets are missing."

@@ -324,3 +324,94 @@ data class AgendaSnapshot(
     val fetchedAt: String? = null,
     val issue: String? = null,
 )
+
+/*
+ * Espace Marchés : outils `app_markets`, `app_market`, `app_market_proposals`,
+ * `app_market_follow`, `app_market_unfollow`. Probabilités et variations entre 0 et 1.
+ */
+
+/**
+ * Question suivie : [prob] = probabilité de l'issue suivie [outcome], absente avant le
+ * premier relevé ; [d1] / [d7] = variation sur 24 h / 7 jours, absentes sans historique ;
+ * [spark] = une valeur par jour, 30 au plus ; [closed] = échéance passée, pas encore
+ * tranchée (une question tranchée quitte la liste).
+ */
+@Serializable
+data class FollowedMarket(
+    val id: String,
+    val question: String = "",
+    val outcome: String = "",
+    val prob: Double? = null,
+    val d1: Double? = null,
+    val d7: Double? = null,
+    val spark: List<Double> = emptyList(),
+    val end: String? = null,
+    val closed: Boolean = false,
+)
+
+/** Question liée à un scénario ; [sign] > 0 = elle le soutient, < 0 = elle le contredit. */
+@Serializable
+data class ScenarioLink(val id: String, val sign: Int = 1)
+
+@Serializable
+data class Scenario(val name: String, val links: List<ScenarioLink> = emptyList())
+
+@Serializable
+data class MarketAlert(val id: String = "", val text: String = "", val at: String? = null)
+
+@Serializable
+data class Markets(
+    val followed: List<FollowedMarket> = emptyList(),
+    val scenarios: List<Scenario> = emptyList(),
+    val alerts: List<MarketAlert> = emptyList(),
+)
+
+@Serializable
+data class MarketOutcome(val name: String, val prob: Double? = null)
+
+@Serializable
+data class ProbPoint(val at: String, val prob: Double = 0.0)
+
+/** Volume échangé ce jour-là (écart d'un jour sur l'autre). */
+@Serializable
+data class VolumePoint(val day: String, val value: Double = 0.0)
+
+/** Ce que change une hausse, une baisse. */
+@Serializable
+data class Projection(val up: String? = null, val down: String? = null)
+
+@Serializable
+data class MarketDetail(
+    val id: String,
+    val question: String = "",
+    val outcomes: List<MarketOutcome> = emptyList(),
+    val history: List<ProbPoint> = emptyList(),
+    val volume: List<VolumePoint> = emptyList(),
+    val projection: Projection? = null,
+    val scenarios: List<Scenario> = emptyList(),
+)
+
+@Serializable
+data class MarketProposal(
+    val id: String,
+    val question: String = "",
+    val outcome: String = "",
+    val prob: Double? = null,
+    val volume: Double? = null,
+    val end: String? = null,
+)
+
+/**
+ * Dernier état connu des marchés ; [details] = détails déjà ouverts, relisibles hors ligne ;
+ * [ignored] = propositions écartées sur l'appareil (le module n'a pas d'outil pour ça).
+ * [fetchedAt] = dernière lecture complète ; [issue] = pourquoi la dernière ne l'a pas été.
+ */
+@Serializable
+data class MarchesSnapshot(
+    val markets: Markets? = null,
+    val proposals: List<MarketProposal> = emptyList(),
+    val details: Map<String, MarketDetail> = emptyMap(),
+    val ignored: Set<String> = emptySet(),
+    val fetchedAt: String? = null,
+    val issue: String? = null,
+)

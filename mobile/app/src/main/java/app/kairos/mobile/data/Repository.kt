@@ -7,6 +7,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -19,6 +20,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import app.kairos.mobile.ui.agenda.agendaAfter
 import app.kairos.mobile.ui.finances.financesAfter
+import app.kairos.mobile.ui.marches.marchesAfter
 import java.io.File
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -40,10 +42,13 @@ class Repository(
     private val maisonFile = File(dir, "maison.json")
     private val financesFile = File(dir, "finances.json")
     private val agendaFile = File(dir, "agenda.json")
+    private val marchesFile = File(dir, "marches.json")
     private val loadLock = Mutex()
     private val maisonLock = Mutex()
     private val financesLock = Mutex()
     private val agendaLock = Mutex()
+    private val marchesLock = Mutex()
+    private var marchesTried: Long? = null
     private var agendaTried: Long? = null
     private var financesTried: Long? = null
     private var loaded = false
@@ -63,6 +68,9 @@ class Repository(
     private val _agenda = MutableStateFlow(AgendaSnapshot())
     val agenda: StateFlow<AgendaSnapshot> = _agenda.asStateFlow()
 
+    private val _marches = MutableStateFlow(MarchesSnapshot())
+    val marches: StateFlow<MarchesSnapshot> = _marches.asStateFlow()
+
     /** Relit l'état enregistré (une seule fois) ; appelé d'office par [refresh] et [mark]. */
     suspend fun load() = loadLock.withLock {
         if (loaded) return@withLock
@@ -70,6 +78,7 @@ class Repository(
         read(maisonFile, MaisonSnapshot.serializer())?.let { saved -> _maison.update { if (it.fetchedAt == null) saved else it } }
         read(financesFile, FinancesSnapshot.serializer())?.let { saved -> _finances.update { if (it.fetchedAt == null) saved else it } }
         read(agendaFile, AgendaSnapshot.serializer())?.let { saved -> _agenda.update { if (it.fetchedAt == null) saved else it } }
+        read(marchesFile, MarchesSnapshot.serializer())?.let { saved -> _marches.update { if (it.fetchedAt == null) saved else it } }
         val savedMarks = read(marksFile, MARKS).orEmpty()
         _marks.update { current -> (savedMarks + current).filterKeys { it >= today().toString() } }
         loaded = true
@@ -111,7 +120,7 @@ class Repository(
             write(maisonFile, MaisonSnapshot.serializer(), fresh)
         } catch (e: ApiError) {
             if (e is ApiError.Unauthorized) throw e
-            val reason = (e as? ApiError.Server)?.let { if (it.outdated) ApiError.Server.OUTDATED else "Module indisponible" }
+            val reason = (e as? ApiError.Server)?.let { app.kairos.mobile.ui.finances.issueOf(it) }
             _maison.update { it.copy(offline = true, reason = reason) }
         }
     }
@@ -157,6 +166,51 @@ class Repository(
         val next = agendaAfter(_agenda.value, d, w, synced, LocalDateTime.now().withNano(0).toString(), today())
         _agenda.value = next
         if (d.isSuccess || w.isSuccess) write(agendaFile, AgendaSnapshot.serializer(), next)
+    }
+
+    /**
+     * Questions suivies, scénarios, alertes et propositions, en parallèle ; ce qui n'a pas
+     * répondu est gardé hors ligne. Sans [force], ignorée si la précédente date de moins de [FRESH_MS].
+     */
+    suspend fun refreshMarches(force: Boolean = true) = marchesLock.withLock {
+        val last = marchesTried
+        if (!force && last != null && System.nanoTime() - last < FRESH_MS * 1_000_000) return@withLock
+        load()
+        val (m, p) = coroutineScope {
+            val m = async { attempt { api.tool(MARCHES, "app_markets", Markets.serializer()) } }
+            val p = async { attempt { api.tool(MARCHES, "app_market_proposals", PROPOSALS) } }
+            m.await() to p.await()
+        }
+        marchesTried = System.nanoTime()
+        val next = marchesAfter(_marches.value, m, p, LocalDateTime.now().withNano(0).toString())
+        _marches.value = next
+        if (m.isSuccess || p.isSuccess) write(marchesFile, MarchesSnapshot.serializer(), next)
+    }
+
+    /**
+     * Détail d'une question, gardé pour une relecture hors ligne. Rend vrai s'il est à jour ;
+     * faux si le module n'a pas répondu (le dernier détail connu reste affiché).
+     */
+    suspend fun refreshMarket(id: String): Boolean {
+        load()
+        val detail = attempt { api.tool(MARCHES, "app_market", MarketDetail.serializer(), buildJsonObject { put("id", id) }) }
+            .getOrElse { return false }
+        val next = marchesLock.withLock {
+            _marches.updateAndGet { it.copy(details = it.details + (id to detail)) }
+        }
+        write(marchesFile, MarchesSnapshot.serializer(), next)
+        return true
+    }
+
+    /**
+     * Retire une proposition triée sans attendre le module ; [ignore] la garde écartée
+     * sur l'appareil. Un refus de suivi revient avec la prochaine actualisation.
+     */
+    suspend fun dropProposal(id: String, ignore: Boolean) = marchesLock.withLock {
+        val next = _marches.updateAndGet { s ->
+            s.copy(proposals = s.proposals.filterNot { it.id == id }, ignored = if (ignore) s.ignored + id else s.ignored)
+        }
+        write(marchesFile, MarchesSnapshot.serializer(), next)
     }
 
     /** Verdict « puis-je me permettre » pour [amount] euros, sur [poste] s'il est donné. */
@@ -207,12 +261,15 @@ class Repository(
         _maison.value = MaisonSnapshot()
         _finances.value = FinancesSnapshot()
         _agenda.value = AgendaSnapshot()
+        _marches.value = MarchesSnapshot()
+        marchesTried = null
         financesTried = null
         agendaTried = null
         withContext(Dispatchers.IO) {
             maisonFile.delete()
             financesFile.delete()
             agendaFile.delete()
+            marchesFile.delete()
             snapshotFile.delete()
             marksFile.delete()
         }
@@ -238,8 +295,10 @@ class Repository(
         const val ALIMENTATION = "alimentation"
         const val FINANCES = "finances"
         const val AGENDA = "agenda"
+        const val MARCHES = app.kairos.mobile.ui.marches.MARCHES
         const val FRESH_MS = 30_000L
         val ORDERS = ListSerializer(Order.serializer())
+        val PROPOSALS = ListSerializer(MarketProposal.serializer())
         val MARKS = MapSerializer(String.serializer(), MapSerializer(String.serializer(), Mark.serializer()))
     }
 }

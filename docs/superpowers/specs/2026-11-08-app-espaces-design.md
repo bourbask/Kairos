@@ -79,3 +79,25 @@ télétravail, repos).
   (au plus une fois par minute), sans attendre la synchronisation de nuit.
 
 Hors du premier jet : modifier ou supprimer un événement, invitations.
+
+## Espace Marchés
+
+Sources : module de veille des marchés de prédiction (questions suivies,
+scénarios, historique des probabilités sur 30 jours, alertes de bascule et de
+volume, propositions hebdomadaires, projections « si ça monte / si ça baisse »).
+Lecture seule du monde : aucun pari, aucun compte.
+
+- **Questions suivies** : pour chacune, la question, la probabilité actuelle de
+  l'issue suivie (gros pourcentage), la variation sur 24 h et 7 jours (flèche
+  et couleur), une **mini-courbe** des 30 derniers jours, l'échéance.
+  Tri : plus forte variation récente d'abord.
+- **Détail d'une question** (tap) : courbe sur 30 jours, volume, issues avec
+  leur probabilité, projection (« si ça monte… / si ça baisse… »), scénarios
+  liés. Glisser ← dans la liste = ne plus suivre (annulable).
+- **Scénarios** : chaque scénario avec ses questions liées (signe + / −) et
+  leur tendance.
+- **Alertes récentes** : bascules et pics de volume, datés.
+- **Propositions** de la semaine en pile de cartes : → suivre, ← ignorer.
+
+Hors du premier jet : créer ou modifier un scénario depuis l'application,
+recherche libre de marchés.

@@ -229,3 +229,16 @@ fun describeBlock(b: TimeBlock): String {
     }
     return listOfNotNull(b.title, b.source, time, b.subtitle, tone).joinToString(", ")
 }
+
+/** Hauteur de chaque colonne dans [0, 1], relative au maximum ; négatifs et non finis à zéro. */
+fun columnHeights(values: List<Double>): List<Float> {
+    val clean = values.map { if (it.isFinite() && it > 0) it else 0.0 }
+    val max = clean.maxOrNull() ?: return emptyList()
+    return clean.map { if (max == 0.0) 0f else (it / max).toFloat() }
+}
+
+fun describeColumns(label: String, values: List<Double>, format: (Double) -> String): String {
+    val clean = values.filter { it.isFinite() && it > 0 }
+    if (clean.isEmpty()) return "$label, aucune donnée"
+    return "$label : ${values.size} valeurs, total ${format(clean.sum())}, maximum ${format(clean.max())}"
+}
