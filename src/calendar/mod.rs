@@ -253,12 +253,7 @@ impl CalendarClient {
     /// et la découverte multi-étapes (principal → home-set → énumération) était
     /// fragile et renvoyait la home (REPORT vide) au lieu de la collection.
     pub async fn sync(&self, source: &str) -> anyhow::Result<Vec<CalendarEvent>> {
-        let xml = self.fetch_events().await?;
-        let mut events = Vec::new();
-        for block in extract_calendar_data(&xml) {
-            events.extend(parse_ics(&block, source));
-        }
-        Ok(events)
+        parse_report(&self.fetch_events().await?, source)
     }
 
     /// REPORT calendar-query : récupère tous les VEVENT de la collection.
@@ -292,6 +287,20 @@ impl CalendarClient {
         }
         Ok(text)
     }
+}
+
+/// Événements d'une réponse REPORT. Refuse tout ce qui n'est pas un multistatus
+/// (page de connexion, réponse tronquée…) : l'appelant remplace la source entière,
+/// une réponse inattendue viderait donc l'agenda local. Un multistatus vide reste valide.
+fn parse_report(xml: &str, source: &str) -> anyhow::Result<Vec<CalendarEvent>> {
+    let is_multistatus = xml.split('<').skip(1).any(|tag| {
+        let name = tag.split(|c: char| c.is_whitespace() || c == '>' || c == '/').next().unwrap_or("");
+        name.rsplit(':').next() == Some("multistatus")
+    });
+    if !is_multistatus {
+        anyhow::bail!("Calendar server REPORT: unexpected response");
+    }
+    Ok(extract_calendar_data(xml).iter().flat_map(|b| parse_ics(b, source)).collect())
 }
 
 /// Extrait chaque bloc VCALENDAR d'une réponse multistatus.
@@ -510,6 +519,17 @@ END:VCALENDAR"#;
         // 09:00 UTC en juillet = 11:00 Paris (CEST)
         assert_eq!(timed.start_time.format("%H:%M").to_string(), "11:00");
         assert_eq!(timed.location.as_deref(), Some("Visio"));
+    }
+
+    #[test]
+    fn report_must_be_multistatus() {
+        // une réponse 2xx qui n'est pas un multistatus ne doit jamais vider l'agenda local
+        assert!(parse_report("<html><body>Connexion</body></html>", SOURCE_PERSONAL).is_err());
+        assert!(parse_report("", SOURCE_PERSONAL).is_err());
+        let empty = "<?xml version='1.0'?><D:multistatus xmlns:D=\"DAV:\"/>";
+        assert!(parse_report(empty, SOURCE_PERSONAL).unwrap().is_empty());
+        let one = "<multistatus xmlns=\"DAV:\"><response><C:calendar-data>BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:x\nDTSTART:20260709T090000\nDTEND:20260709T100000\nEND:VEVENT\nEND:VCALENDAR</C:calendar-data></response></multistatus>";
+        assert_eq!(parse_report(one, SOURCE_PERSONAL).unwrap().len(), 1);
     }
 
     #[test]

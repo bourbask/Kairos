@@ -10,7 +10,7 @@ use serde::Deserialize;
 pub const TIMEOUT: Duration = Duration::from_secs(20);
 
 /// Calendrier cible côté application.
-#[derive(Deserialize, schemars::JsonSchema, Clone, Copy, Hash)]
+#[derive(Deserialize, schemars::JsonSchema, Clone, Copy)]
 #[serde(rename_all = "lowercase")]
 pub enum Cal {
     Perso,

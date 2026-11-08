@@ -293,11 +293,7 @@ impl AgendaServer {
 impl AgendaServer {
     #[tool(description = "Cartes JSON du jour pour l'application (événements et tâches dues).")]
     fn cards(&self, Parameters(a): Parameters<CardsArgs>) -> Out {
-        let day = match a.day.as_deref().filter(|d| !d.trim().is_empty()) {
-            Some(d) => parse_day(d)?,
-            None => today_local(),
-        };
-        self.cards_json(day)
+        self.cards_json(opt_day(a.day.as_deref())?)
     }
 
     #[tool(description = "Vue JSON d'un jour pour l'application : événements, plages libres, tâches dues.")]
@@ -362,6 +358,8 @@ impl AgendaServer {
         };
         let (url, source) = self.cal.collection(a.calendar).ok_or(format!("agenda {cal_name} non configuré"))?;
         let uid = stable_uid(&[cal_name, &title, &a.day, &key]);
+        // sous le verrou de synchronisation : une synchro concurrente ne peut pas effacer l'ajout local
+        let _sync = self.cal.last_sync.lock().await;
         self.cal.put(&url, &uid, ics(&uid, &title, &span, Utc::now())).await?;
         let event = CalendarEvent {
             uid: uid.clone(),
