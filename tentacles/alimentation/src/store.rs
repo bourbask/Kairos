@@ -402,7 +402,29 @@ impl Store {
 
     /// Un seul produit pour ce nom : exact, sinon unique, sinon le seul en stock.
     pub fn resolve(&self, query: &str) -> Result<Product, String> {
+        self.pick(query, self.find(query).map_err(|e| e.to_string())?)
+    }
+
+    /// Comme [`Self::resolve`], sans jamais retenir un plat : un ingrédient n'est pas un reste.
+    fn resolve_ingredient(&self, query: &str) -> Result<Product, String> {
         let found = self.find(query).map_err(|e| e.to_string())?;
+        let found = {
+            let db = self.db.lock().unwrap();
+            let mut keep = Vec::new();
+            for p in found {
+                let n: Option<String> = db
+                    .query_row("SELECT nature FROM products WHERE id = ?1", [p.id], |r| r.get(0))
+                    .map_err(|e| e.to_string())?;
+                if n.as_deref() != Some(Nature::Plat.as_str()) {
+                    keep.push(p);
+                }
+            }
+            keep
+        };
+        self.pick(query, found)
+    }
+
+    fn pick(&self, query: &str, found: Vec<Product>) -> Result<Product, String> {
         match found.len() {
             0 => Err(format!("Aucun produit « {} » dans l'inventaire.", query.trim())),
             1 => Ok(found[0].clone()),
@@ -620,7 +642,8 @@ impl Store {
     /// Sortie de stock : lots entamés d'abord, puis ceux qui périment le plus tôt.
     /// Rend (ligne lisible, quantité manquante dans l'unité de base).
     pub fn take(&self, l: &Line, reason: &str, meal: Option<i64>) -> Result<(String, f64), String> {
-        let p = self.resolve(&l.name)?;
+        // Rattaché à un repas : ingrédient de recette, jamais un plat déjà cuisiné.
+        let p = if meal.is_some() { self.resolve_ingredient(&l.name)? } else { self.resolve(&l.name)? };
         let (f, mut q) = qty_in(l)?;
         if p.family != f {
             return Err(format!("{} est compté en {} : unité incompatible.", p.name, p.family.as_str()));
@@ -1322,6 +1345,15 @@ mod tests {
         assert!(t.contains("reste 0 pièce") && t.contains("5 pièces de plus que le stock connu"), "{t}");
         assert_eq!(short, 5.0);
         assert!(s.lots(None, None).unwrap().is_empty());
+    }
+
+    #[test]
+    fn recipe_ingredient_never_takes_a_dish() {
+        let s = Store::memory();
+        s.add_dish("Tomates farcies", 3.0).unwrap();
+        let e = s.take(&line("tomates", 2.0, "pièce", ""), "repas", Some(1)).unwrap_err();
+        assert!(e.contains("Aucun produit"), "{e}");
+        assert_eq!(s.lots(None, Some("tomates")).unwrap()[0].qty, 3.0, "le plat reste entier");
     }
 
     #[test]
