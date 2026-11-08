@@ -2,6 +2,16 @@ package app.kairos.mobile
 
 import android.Manifest
 import android.app.Application
+import android.content.Intent
+import android.net.Uri
+import android.os.SystemClock
+import android.provider.Settings as AndroidSettings
+import app.kairos.mobile.data.AppRelease
+import app.kairos.mobile.update.SystemInstaller
+import app.kairos.mobile.update.UpdateOutcome
+import app.kairos.mobile.update.checkDue
+import app.kairos.mobile.update.offered
+import app.kairos.mobile.update.runUpdate
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.os.Bundle
@@ -181,11 +191,101 @@ class AppModel(app: Application) : AndroidViewModel(app) {
     private val processStarted: Boolean
         get() = ProcessLifecycleOwner.get().lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
 
+    /** Version installée, comparée à celle que la tête propose. */
+    val version: String = runCatching { app.packageManager.getPackageInfo(app.packageName, 0).versionName }.getOrNull().orEmpty()
+
+    /** Version plus récente disponible sur la tête, sinon null. */
+    var update by mutableStateOf<AppRelease?>(null)
+        private set
+
+    /** Avancement 0..1 pendant le téléchargement puis l'installation, sinon null. */
+    var updateProgress by mutableStateOf<Float?>(null)
+        private set
+
+    /** L'installation d'applications doit être autorisée dans les réglages du téléphone. */
+    var askInstallPermission by mutableStateOf(false)
+
+    var updateNotice by mutableStateOf<String?>(null)
+        private set
+
+    private var checkedAt: Long? = null
+    private var pendingConfirm: Intent? = null
+    private val installer = SystemInstaller(app) { if (processStarted) showConfirm(it) else pendingConfirm = it }
+    private val apkFile = File(app.cacheDir, "maj/kairos.apk")
+
+    private fun showConfirm(intent: Intent) {
+        getApplication<Application>().startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    }
+
+    /**
+     * Interroge la tête ; [force] ignore l'intervalle entre deux vérifications automatiques,
+     * [report] dit le résultat (bouton « Vérifier »).
+     */
+    fun checkUpdate(force: Boolean = false, report: Boolean = false) {
+        val api = session?.api ?: return
+        val now = SystemClock.elapsedRealtime()
+        if (!force && !checkDue(checkedAt, now)) return
+        viewModelScope.launch {
+            try {
+                update = offered(api.appRelease(), version)
+                checkedAt = now
+                if (report && update == null) updateNotice = "Kairos est à jour ($version)."
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: ApiError.Unauthorized) {
+                unauthorized()
+            } catch (e: ApiError) {
+                if (report) updateNotice = "Vérification impossible : ${e.message}."
+            }
+        }
+    }
+
+    fun startUpdate() {
+        val release = update ?: return
+        val api = session?.api ?: return
+        if (updateProgress != null) return
+        updateProgress = 0f
+        viewModelScope.launch {
+            val out = try {
+                runUpdate(release, apkFile, api::downloadApp, installer) { updateProgress = it }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: ApiError.Unauthorized) {
+                unauthorized()
+                null
+            } finally {
+                updateProgress = null
+            }
+            when (out) {
+                UpdateOutcome.NeedsPermission -> askInstallPermission = true
+                UpdateOutcome.Cancelled -> updateNotice = "Mise à jour annulée."
+                is UpdateOutcome.Failed -> updateNotice = out.message
+                UpdateOutcome.Installed, null -> Unit
+            }
+        }
+    }
+
+    /** Retour de l'écran « Installer des applis inconnues » : on reprend si c'est autorisé. */
+    fun installPermissionReturned() {
+        if (installer.allowed()) startUpdate()
+        else updateNotice = "Installation non autorisée : la mise à jour attendra."
+    }
+
+    fun consumeUpdateNotice() {
+        updateNotice = null
+    }
+
     // Premier plan de l'application (pas d'une activité : une rotation ne compte pas).
     private val lifecycle = object : DefaultLifecycleObserver {
         override fun onStart(owner: LifecycleOwner) {
             ReplyWatcher.stop(getApplication())
             session?.conversation?.foreground(true)
+            checkUpdate()
+            // Confirmation d'installation arrivée hors du premier plan : montrée au retour.
+            pendingConfirm?.let {
+                pendingConfirm = null
+                showConfirm(it)
+            }
         }
 
         override fun onStop(owner: LifecycleOwner) {
@@ -208,6 +308,7 @@ class AppModel(app: Application) : AndroidViewModel(app) {
             theme = saved?.theme ?: ThemeMode.Clair
             session = runCatching { store.load() }.getOrNull()?.let(::open)
             loaded = true
+            checkUpdate()
         }
     }
 
@@ -296,6 +397,7 @@ class AppModel(app: Application) : AndroidViewModel(app) {
         store.save(candidate)
         pairingMessage = null
         session = open(candidate)
+        checkUpdate(force = true)
         null
     } catch (e: CancellationException) {
         throw e
@@ -393,6 +495,14 @@ private fun KairosRoot(model: AppModel) {
             notifications.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
     }
+    LaunchedEffect(model.updateNotice) {
+        val notice = model.updateNotice ?: return@LaunchedEffect
+        model.consumeUpdateNotice()
+        snackbar.showSnackbar(notice)
+    }
+    val unknownSources = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        model.installPermissionReturned()
+    }
     LaunchedEffect(conversation.notice) {
         val notice = conversation.notice ?: return@LaunchedEffect
         conversation.consumeNotice()
@@ -430,6 +540,9 @@ private fun KairosRoot(model: AppModel) {
                     onUnauthorized = model::unauthorized,
                     appScope = model.viewModelScope,
                     onNotice = { scope.launch { snackbar.showSnackbar(it) } },
+                    update = model.update,
+                    updateProgress = model.updateProgress,
+                    onUpdate = model::startUpdate,
                     decisionsAnchor = Modifier.overlayAnchor(deck, DecisionsPeekCorner),
                 )
             },
@@ -542,6 +655,11 @@ private fun KairosRoot(model: AppModel) {
                 speakReplies = model.speakReplies,
                 onSpeakReplies = model::changeSpeakReplies,
                 address = maskAddress(session.address),
+                version = model.version,
+                update = model.update,
+                updateProgress = model.updateProgress,
+                onUpdate = model::startUpdate,
+                onCheck = { model.checkUpdate(force = true, report = it) },
                 onLogout = {
                     settingsOpen = false
                     model.logout()
@@ -563,6 +681,28 @@ private fun KairosRoot(model: AppModel) {
             Modifier
                 .align(if (chatOpen) Alignment.TopCenter else Alignment.BottomCenter)
                 .then(if (chatOpen) Modifier.statusBarsPadding().padding(top = 64.dp) else Modifier.navigationBarsPadding().padding(bottom = 112.dp)),
+        )
+    }
+
+    if (model.askInstallPermission) {
+        AlertDialog(
+            onDismissRequest = { model.askInstallPermission = false },
+            title = { Text("Autoriser la mise à jour") },
+            text = {
+                Text(
+                    "Pour installer sa nouvelle version, Kairos doit être autorisé à installer des applications. " +
+                        "Active « Autoriser cette source » sur l'écran qui s'ouvre, puis reviens : la mise à jour reprendra.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    model.askInstallPermission = false
+                    unknownSources.launch(
+                        Intent(AndroidSettings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${context.packageName}")),
+                    )
+                }) { Text("Ouvrir les réglages") }
+            },
+            dismissButton = { TextButton(onClick = { model.askInstallPermission = false }) { Text("Plus tard") } },
         )
     }
 

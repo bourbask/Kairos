@@ -151,4 +151,28 @@ class ApiTest {
         ).build())
         assertEquals(Product(true, "Riz", null, false, "placard", "g", 1000.0), api().tool("alimentation", "app_product", Product.serializer()))
     }
+
+    @Test
+    fun app_release_absent_is_null() = runBlocking {
+        server.enqueue(MockResponse.Builder().code(404).build())
+        assertNull(api().appRelease())
+        server.enqueue(MockResponse.Builder().body("""{"version": "0.4.0", "size": 3}""").build())
+        assertEquals(AppRelease("0.4.0", 3), api().appRelease())
+        assertEquals("/app/v1/app", server.takeRequest().url.encodedPath)
+    }
+
+    @Test
+    fun app_download_writes_file_with_auth() = runBlocking {
+        server.enqueue(MockResponse.Builder().body("abc").build())
+        val file = java.io.File.createTempFile("kairos", ".apk")
+        var seen = 0L
+        api().downloadApp(file) { seen = it }
+        assertEquals("abc", file.readText())
+        assertEquals(3L, seen)
+        val req = server.takeRequest()
+        assertEquals("/app/v1/app.apk", req.url.encodedPath)
+        assertEquals("Bearer secret-token", req.headers["Authorization"])
+        file.delete()
+        Unit
+    }
 }

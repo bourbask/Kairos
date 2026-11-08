@@ -43,7 +43,10 @@ import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Surface
+import app.kairos.mobile.data.AppRelease
+import app.kairos.mobile.ui.settings.updateLabel
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
@@ -123,6 +126,9 @@ fun TodayScreen(
     onUnauthorized: () -> Unit,
     appScope: CoroutineScope,
     onNotice: (String) -> Unit,
+    update: AppRelease?,
+    updateProgress: Float?,
+    onUpdate: () -> Unit,
     decisionsAnchor: Modifier = Modifier,
 ) {
     val snapshot by repository.snapshot.collectAsState()
@@ -275,6 +281,9 @@ fun TodayScreen(
                         onDone = ::done,
                         onLater = ::later,
                         onUnmark = { day, card -> scope.launch { repository.mark(day, card.key, null) } },
+                        update = update,
+                        updateProgress = updateProgress,
+                        onUpdate = onUpdate,
                     )
                 }
             }
@@ -327,6 +336,9 @@ private fun DayContent(
     onDone: (String, Card) -> Unit,
     onLater: (String, Card) -> Unit,
     onUnmark: (String, Card) -> Unit,
+    update: AppRelease?,
+    updateProgress: Float?,
+    onUpdate: () -> Unit,
 ) {
     val todayKey = now.toLocalDate().toString()
     val today = snapshot.days.firstOrNull { it.day == todayKey }
@@ -341,6 +353,9 @@ private fun DayContent(
         contentPadding = PaddingValues(bottom = bottom + 16.dp),
     ) {
         if (snapshot.offline) item(key = "offline") { OfflineBanner(snapshot.fetchedAt, onRefresh) }
+        if (update != null) {
+            item(key = "update") { UpdateBanner(update.version, updateProgress, onUpdate, Modifier.animateItem()) }
+        }
         item(key = "header") { Header(now, tomorrow?.work, onWeek, onRefresh, onSettings) }
         if (snapshot.decisions.isNotEmpty()) {
             item(key = "decisions") { DecisionsPeek(snapshot.decisions.size, onOpenDecisions, decisionsAnchor) }
@@ -425,6 +440,30 @@ internal fun OfflineBanner(fetchedAt: String?, onRetry: () -> Unit) {
                 modifier = Modifier.weight(1f),
             )
             TextButton(onClick = onRetry) { Text("Réessayer") }
+        }
+    }
+}
+
+/** Bandeau discret : nouvelle version sur le serveur, puis avancement du téléchargement. */
+@Composable
+private fun UpdateBanner(version: String, progress: Float?, onUpdate: () -> Unit, modifier: Modifier) {
+    Surface(
+        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.10f),
+        shape = MaterialTheme.shapes.medium,
+        modifier = modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 6.dp),
+    ) {
+        Column(Modifier.padding(start = 14.dp, end = 4.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    if (progress == null) "Kairos $version disponible" else updateLabel(progress),
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.weight(1f).padding(vertical = 12.dp),
+                )
+                if (progress == null) TextButton(onClick = onUpdate) { Text("Mettre à jour") }
+            }
+            if (progress != null) {
+                LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth().padding(end = 10.dp, bottom = 10.dp))
+            }
         }
     }
 }

@@ -166,3 +166,7 @@ data class MaisonSnapshot(
     /** Raison de la lecture seule quand le serveur répond mais pas le module. */
     val reason: String? = null,
 )
+
+/** Dernier APK déposé sur la tête (`GET /app/v1/app`). */
+@Serializable
+data class AppRelease(val version: String, val size: Long)

@@ -29,6 +29,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.compose.material3.Button
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.runtime.LaunchedEffect
+import app.kairos.mobile.data.AppRelease
 import app.kairos.mobile.ui.theme.ThemeMode
 
 /** Adresse du serveur montrée en partie seulement : de quoi reconnaître l'appareil, pas de quoi la relever. */
@@ -46,10 +50,17 @@ fun SettingsScreen(
     speakReplies: Boolean,
     onSpeakReplies: (Boolean) -> Unit,
     address: String,
+    version: String,
+    update: AppRelease?,
+    updateProgress: Float?,
+    onUpdate: () -> Unit,
+    onCheck: (report: Boolean) -> Unit,
     onLogout: () -> Unit,
     onClose: () -> Unit,
 ) {
     var confirm by remember { mutableStateOf(false) }
+    // Vérification discrète à l'ouverture ; le bouton « Vérifier » dit le résultat.
+    LaunchedEffect(Unit) { onCheck(false) }
     Column(
         Modifier
             .fillMaxSize()
@@ -95,6 +106,18 @@ fun SettingsScreen(
         }
 
         HorizontalDivider(Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant)
+        Section("Application")
+        Text("Version installée : $version", style = MaterialTheme.typography.bodyLarge)
+        when {
+            updateProgress != null -> {
+                Text(updateLabel(updateProgress), style = MaterialTheme.typography.bodyMedium)
+                LinearProgressIndicator(progress = { updateProgress }, modifier = Modifier.fillMaxWidth())
+            }
+            update != null -> Button(onClick = onUpdate) { Text("Mettre à jour vers ${update.version}") }
+            else -> OutlinedButton(onClick = { onCheck(true) }) { Text("Vérifier les mises à jour") }
+        }
+
+        HorizontalDivider(Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant)
         Section("Appareil appairé")
         Text(address, style = MaterialTheme.typography.bodyLarge)
         OutlinedButton(onClick = { confirm = true }) { Text("Se déconnecter") }
@@ -109,6 +132,10 @@ fun SettingsScreen(
         )
     }
 }
+
+/** « Téléchargement… 42 % » puis « Installation… » une fois le fichier complet. */
+internal fun updateLabel(progress: Float): String =
+    if (progress < 1f) "Téléchargement… ${(progress * 100).toInt()} %" else "Installation…"
 
 @Composable
 private fun Section(label: String) {
