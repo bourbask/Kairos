@@ -19,7 +19,9 @@ const MAX_TEXT: usize = 200;
 
 /// Texte sur une ligne : caractères de contrôle retirés, blancs resserrés, borné.
 fn clean(s: &str, max: usize) -> String {
-    let flat: String = s.chars().map(|c| if c.is_control() { ' ' } else { c }).collect();
+    // Caractères invisibles de mise en forme (largeur nulle, sens d'écriture) : retirés, ils peuvent tromper l'affichage.
+    let invisible = |c: char| matches!(c, '\u{00AD}' | '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{2069}' | '\u{FEFF}');
+    let flat: String = s.chars().filter(|&c| !invisible(c)).map(|c| if c.is_control() { ' ' } else { c }).collect();
     flat.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(max).collect()
 }
 
@@ -354,4 +356,10 @@ mod tests {
         }
         std::fs::remove_dir_all(root).unwrap();
     }
+
+    #[test]
+    fn clean_drops_invisible_format_chars() {
+        assert_eq!(super::clean("a\u{200B}b\u{202E}c\u{2066}d", 50), "abcd");
+    }
+
 }
