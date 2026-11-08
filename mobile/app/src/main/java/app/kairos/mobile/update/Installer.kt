@@ -64,7 +64,7 @@ class SystemInstaller(private val context: Context, private val confirm: (Intent
                     }
                     PackageInstaller.STATUS_SUCCESS -> UpdateOutcome.Installed
                     PackageInstaller.STATUS_FAILURE_ABORTED -> UpdateOutcome.Cancelled
-                    else -> UpdateOutcome.Failed(failure(status))
+                    else -> UpdateOutcome.Failed(installFailure(status))
                 }
             }
             outcome
@@ -76,13 +76,15 @@ class SystemInstaller(private val context: Context, private val confirm: (Intent
             context.unregisterReceiver(receiver)
         }
     }
+}
 
-    private fun failure(status: Int): String = when (status) {
-        PackageInstaller.STATUS_FAILURE_CONFLICT, PackageInstaller.STATUS_FAILURE_INCOMPATIBLE ->
-            "Cette version ne peut pas remplacer l'application installée (signature différente)."
-        PackageInstaller.STATUS_FAILURE_STORAGE -> "Espace insuffisant sur le téléphone pour installer la mise à jour."
-        PackageInstaller.STATUS_FAILURE_INVALID -> "Fichier de mise à jour invalide."
-        PackageInstaller.STATUS_FAILURE_BLOCKED -> "Installation bloquée par le téléphone."
-        else -> "L'installation a échoué."
-    }
+/** Message d'échec pour un statut `PackageInstaller`. */
+internal fun installFailure(status: Int): String = when (status) {
+    PackageInstaller.STATUS_FAILURE_CONFLICT ->
+        "Cette version ne peut pas remplacer l'application installée (signature différente)."
+    PackageInstaller.STATUS_FAILURE_INCOMPATIBLE -> "Version incompatible avec ce téléphone."
+    PackageInstaller.STATUS_FAILURE_STORAGE -> "Espace insuffisant sur le téléphone pour installer la mise à jour."
+    PackageInstaller.STATUS_FAILURE_INVALID -> "Fichier de mise à jour invalide."
+    PackageInstaller.STATUS_FAILURE_BLOCKED -> "Installation bloquée par le téléphone."
+    else -> "L'installation a échoué."
 }

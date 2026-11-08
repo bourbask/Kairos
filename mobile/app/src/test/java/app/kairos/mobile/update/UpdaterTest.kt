@@ -57,6 +57,17 @@ class UpdaterTest {
     }
 
     @Test
+    fun local_write_failure_reports_storage() = runBlocking {
+        val out = runUpdate(AppRelease("0.4.0", 4), apk(), { _, _ -> throw java.io.IOException("ENOSPC") }, FakeInstaller()) {}
+        assertEquals(UpdateOutcome.Failed("Espace insuffisant ou écriture impossible."), out)
+    }
+
+    @Test
+    fun incompatible_has_its_own_message() {
+        assertEquals("Version incompatible avec ce téléphone.", installFailure(android.content.pm.PackageInstaller.STATUS_FAILURE_INCOMPATIBLE))
+    }
+
+    @Test
     fun incomplete_download_not_installed() = runBlocking {
         val file = apk()
         val installer = FakeInstaller()

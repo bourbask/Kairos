@@ -175,4 +175,20 @@ class ApiTest {
         file.delete()
         Unit
     }
+
+    @Test
+    fun app_download_local_write_failure_is_not_offline() = runBlocking {
+        server.enqueue(MockResponse.Builder().body("abc").build())
+        // Un dossier à la place du fichier : écriture impossible côté téléphone.
+        val dir = java.nio.file.Files.createTempDirectory("kairos").toFile()
+        try {
+            api().downloadApp(dir) {}
+            fail("écriture impossible attendue")
+        } catch (e: ApiError) {
+            fail("erreur locale prise pour une erreur réseau : $e")
+        } catch (_: java.io.IOException) {
+        } finally {
+            dir.delete()
+        }
+    }
 }

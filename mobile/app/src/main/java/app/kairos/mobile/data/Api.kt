@@ -101,24 +101,35 @@ class KairosApi(baseUrl: String, private val token: String, private val client: 
                 if (r.code == 401) throw ApiError.Unauthorized
                 if (!r.isSuccessful) throw ApiError.Server(r.code, "Erreur du serveur (${r.code})", bare = true)
                 r.body.byteStream().use { input ->
-                    to.outputStream().use { out ->
+                    local { to.outputStream() }.use { out ->
                         val buf = ByteArray(64 * 1024)
                         var total = 0L
                         while (true) {
                             val n = input.read(buf)
                             if (n < 0) break
-                            out.write(buf, 0, n)
+                            local { out.write(buf, 0, n) }
                             total += n
                             onBytes(total)
                         }
                     }
                 }
             }
+        } catch (e: LocalWrite) {
+            // Disque du téléphone, pas le réseau : remonte telle quelle à l'appelant.
+            throw e.cause
         } catch (_: InterruptedIOException) {
             throw ApiError.NoReply
         } catch (_: IOException) {
             throw ApiError.Offline
         }
+    }
+
+    private class LocalWrite(override val cause: IOException) : Exception(cause)
+
+    private inline fun <T> local(block: () -> T): T = try {
+        block()
+    } catch (e: IOException) {
+        throw LocalWrite(e)
     }
 
     private fun url(path: String) = root.newBuilder().addPathSegments(path).build()

@@ -68,7 +68,7 @@ suspend fun runUpdate(
             if (e == ApiError.Unauthorized) throw e
             return UpdateOutcome.Failed(downloadMessage(e))
         } catch (_: IOException) {
-            return UpdateOutcome.Failed("Impossible d'enregistrer la mise à jour sur le téléphone.")
+            return UpdateOutcome.Failed("Espace insuffisant ou écriture impossible.")
         }
         if (apk.length() != release.size) {
             return UpdateOutcome.Failed("Téléchargement incomplet (${apk.length()} octets sur ${release.size}). Réessaie.")
