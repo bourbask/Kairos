@@ -147,7 +147,7 @@ class Repository(
         val last = agendaTried
         if (!force && last != null && System.nanoTime() - last < FRESH_MS * 1_000_000) return@withLock
         load()
-        val synced = if (sync) attempt { api.tool(AGENDA, "app_agenda_sync", AgendaSync.serializer()) }.getOrNull() else null
+        val synced = if (sync) attempt { api.tool(AGENDA, "app_agenda_sync", AgendaSync.serializer()) } else null
         val (d, w) = coroutineScope {
             val d = async { attempt { api.tool(AGENDA, "app_agenda_day", AgendaDay.serializer(), buildJsonObject { put("day", day.toString()) }) } }
             val w = async { attempt { api.tool(AGENDA, "app_agenda_week", AgendaWeek.serializer(), buildJsonObject { put("from", today().toString()) }) } }

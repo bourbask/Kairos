@@ -21,6 +21,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.LocalDate
+import java.time.LocalDateTime
 import java.time.LocalTime
 
 class AgendaStateTest {
@@ -65,6 +66,12 @@ class AgendaStateTest {
         assertNotNull("heure absente", formError(valid.copy(start = null)))
         // Journée entière : pas d'heure demandée.
         assertNull(formError(valid.copy(span = Span.Day, start = null)))
+        // Aujourd'hui : une heure déjà passée est refusée, pas une heure à venir ni une journée.
+        val now = LocalDateTime.of(2026, 11, 9, 14, 0)
+        assertNotNull("heure passée", formError(valid, now))
+        assertNull(formError(valid.copy(start = LocalTime.of(15, 0)), now))
+        assertNull(formError(valid.copy(span = Span.Day), now))
+        assertNull(formError(valid, now.minusDays(1)))
 
         val args = addArgs(valid)
         assertEquals("Dentiste", args["title"]!!.jsonPrimitive.content)
@@ -84,14 +91,14 @@ class AgendaStateTest {
         var calls = 0
         val busy = InFlight()
         val call: suspend (JsonObject) -> String = { calls++; gate.await(); "Événement ajouté." }
-        val first = async(start = CoroutineStart.UNDISPATCHED) { submitEvent(valid, busy, call) }
-        val second = async(start = CoroutineStart.UNDISPATCHED) { submitEvent(valid, busy, call) }
+        val first = async(start = CoroutineStart.UNDISPATCHED) { submitEvent(valid, busy, call = call) }
+        val second = async(start = CoroutineStart.UNDISPATCHED) { submitEvent(valid, busy, call = call) }
         assertEquals(AddOutcome.Ignored, second.await())
         gate.complete(Unit)
         assertEquals(AddOutcome.Added("Événement ajouté."), first.await())
         assertEquals(1, calls)
         // Formulaire invalide : rien ne part.
-        assertTrue(submitEvent(valid.copy(title = ""), busy, call) is AddOutcome.Invalid)
+        assertTrue(submitEvent(valid.copy(title = ""), busy, call = call) is AddOutcome.Invalid)
         assertEquals(1, calls)
         // Refus du module : raison affichée, le panneau reste ouvert.
         val refused = submitEvent(valid, busy) { throw ApiError.Server(422, "agenda travail non configuré") }
@@ -102,7 +109,7 @@ class AgendaStateTest {
     fun offline_keeps_last_day() {
         val d = AgendaDay(day = "2026-11-09", events = listOf(AgendaEvent(uid = "a", title = "Dentiste", start = "09:30", end = "10:30")))
         val week = AgendaWeek(upcoming = listOf(Upcoming(uid = "a", title = "Dentiste", day = "2026-11-09", start = "09:30")))
-        val fresh = agendaAfter(AgendaSnapshot(), Result.success(d), Result.success(week), AgendaSync(true, "2026-11-08T08:00:00+01:00"), "2026-11-08T08:00", today)
+        val fresh = agendaAfter(AgendaSnapshot(), Result.success(d), Result.success(week), Result.success(AgendaSync(true, "2026-11-08T08:00:00+01:00")), "2026-11-08T08:00", today)
         assertEquals(d, fresh.days["2026-11-09"])
         assertNull(fresh.issue)
         assertNull(syncBanner(fresh))
@@ -115,8 +122,14 @@ class AgendaStateTest {
         assertEquals("2026-11-08T08:00", down.fetchedAt)
 
         // Synchronisation impossible : base locale lue, bandeau avec la dernière synchro réussie.
-        val stale = agendaAfter(fresh, Result.success(d), Result.success(week), AgendaSync(false, "2026-11-08T08:00:00+01:00"), "2026-11-08T10:00", today)
+        val stale = agendaAfter(fresh, Result.success(d), Result.success(week), Result.success(AgendaSync(false, "2026-11-08T08:00:00+01:00")), "2026-11-08T10:00", today)
         assertEquals("Agenda pas à jour — dernière synchro 08/11 à 08:00", syncBanner(stale))
+
+        // Synchronisation sans réponse (délai dépassé) : bandeau aussi, avec la dernière réussie.
+        val timeout = agendaAfter(fresh, Result.success(d), Result.success(week), Result.failure(ApiError.NoReply), "2026-11-08T10:00", today)
+        assertEquals(AgendaSync(false, "2026-11-08T08:00:00+01:00"), timeout.sync)
+        assertEquals("Agenda pas à jour — dernière synchro 08/11 à 08:00", syncBanner(timeout))
+        assertNull(timeout.issue)
 
         // Les jours passés sortent du cache.
         val later = agendaAfter(fresh, Result.failure(ApiError.Offline), null, null, "2026-11-10T08:00", LocalDate.of(2026, 11, 10))

@@ -66,6 +66,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
@@ -92,11 +93,14 @@ import app.kairos.mobile.ui.today.InFlight
 import app.kairos.mobile.ui.today.Pill
 import app.kairos.mobile.ui.today.SwipeRow
 import app.kairos.mobile.ui.today.completeCard
+import java.time.Duration
 import java.time.LocalDate
+import java.time.LocalDateTime
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.buildJsonObject
@@ -126,7 +130,7 @@ fun AgendaScreen(
     val scope = rememberCoroutineScope()
     val unauthorized by rememberUpdatedState(onUnauthorized)
     val snackbar = remember { SnackbarHostState() }
-    val today = remember { LocalDate.now() }
+    var today by remember { mutableStateOf(LocalDate.now()) }
     val strip = remember(today) { dayStrip(today) }
     var selectedText by rememberSaveable { mutableStateOf(today.toString()) }
     val selected = runCatching { LocalDate.parse(selectedText) }.getOrNull()?.takeIf { it in strip } ?: today
@@ -149,10 +153,18 @@ fun AgendaScreen(
         }
     }
 
-    // Ouverture et retour au premier plan : synchroniser puis lire (retour rapide : rien).
+    // Ouverture et retour au premier plan : synchroniser puis lire le jour affiché (retour rapide : rien).
+    val shown by rememberUpdatedState(selected)
     LifecycleResumeEffect(Unit) {
-        load(selected, sync = true, force = false)
+        val now = LocalDate.now()
+        today = now
+        load(shown.takeIf { it >= now } ?: now, sync = true, force = false)
         onPauseOrDispose {}
+    }
+    // Passé minuit, écran ouvert : le bandeau repart du nouveau jour.
+    LaunchedEffect(today) {
+        delay(Duration.between(LocalDateTime.now(), today.plusDays(1).atStartOfDay()).toMillis().coerceAtLeast(0) + 1_000)
+        today = LocalDate.now()
     }
     var shownDay by remember { mutableStateOf<LocalDate?>(null) }
     LaunchedEffect(selected) {
@@ -266,19 +278,28 @@ fun AgendaScreen(
         if (addOpen) {
             ModalBottomSheet(onDismissRequest = { addOpen = false }) {
                 AddPanel(strip, selected, adding) { form, done ->
-                    // Portée de l'écran : fermer le panneau n'abandonne pas l'envoi.
-                    scope.launch {
+                    // Depuis appScope : fermer le panneau ou l'espace n'abandonne pas l'envoi.
+                    appScope.launch {
                         val out = try {
                             submitEvent(form, adding) { args -> repository.tool("agenda", "app_event_add", args) }
                         } catch (_: ApiError.Unauthorized) {
                             return@launch unauthorized()
                         }
                         done(out)
-                        if (out is AddOutcome.Added) {
-                            addOpen = false
-                            // Autre jour : le changement de jour le relit.
-                            if (form.day == selected) load(form.day, sync = false) else selectedText = form.day.toString()
-                            snackbar.showSnackbar(out.message.ifBlank { "Événement ajouté." })
+                        when (out) {
+                            is AddOutcome.Added -> {
+                                addOpen = false
+                                selectedText = form.day.toString()
+                                try {
+                                    repository.refreshAgenda(form.day)
+                                } catch (_: ApiError.Unauthorized) {
+                                    return@launch unauthorized()
+                                }
+                                snackbar.showSnackbar(out.message.ifBlank { "Événement ajouté." })
+                            }
+                            // Panneau fermé entre-temps : la raison ne doit pas se perdre.
+                            is AddOutcome.Refused -> if (!addOpen) snackbar.showSnackbar(out.message)
+                            else -> Unit
                         }
                     }
                 }
@@ -459,7 +480,8 @@ private fun Upcoming(items: List<app.kairos.mobile.data.Upcoming>, today: LocalD
     val colors = MaterialTheme.colorScheme
     SectionHeader("À venir")
     items.take(UPCOMING_MAX).forEach { u ->
-        Row(Modifier.fillMaxWidth().padding(vertical = 6.dp).semantics(mergeDescendants = true) {}, verticalAlignment = Alignment.CenterVertically) {
+        val description = "${u.title}, ${calendarLabel(u.calendar)}, ${upcomingWhen(u, today)}"
+        Row(Modifier.fillMaxWidth().padding(vertical = 6.dp).clearAndSetSemantics { contentDescription = description }, verticalAlignment = Alignment.CenterVertically) {
             Box(
                 Modifier
                     .size(10.dp)
@@ -502,11 +524,11 @@ private fun AddPanel(
     val context = LocalContext.current
     val pending by busy.keys.collectAsState()
     var title by rememberSaveable { mutableStateOf("") }
-    var day by remember { mutableStateOf(initialDay) }
-    var start by remember { mutableStateOf<LocalTime?>(defaultStart(LocalTime.now())) }
-    var span by remember { mutableStateOf<Span?>(null) }
-    var calendar by remember { mutableStateOf(Cal.Perso) }
-    var tried by remember { mutableStateOf(false) }
+    var day by rememberSaveable { mutableStateOf(initialDay) }
+    var start by rememberSaveable { mutableStateOf<LocalTime?>(defaultStart(LocalTime.now())) }
+    var span by rememberSaveable { mutableStateOf<Span?>(null) }
+    var calendar by rememberSaveable { mutableStateOf(Cal.Perso) }
+    var tried by rememberSaveable { mutableStateOf(false) }
     var refused by remember { mutableStateOf<String?>(null) }
     val form = AddForm(title, day, start, span, calendar)
     val error = formError(form)

@@ -130,6 +130,8 @@ data class TimeBlock(
     val tone: Tone = Tone.Neutral,
     val kind: BlockKind = BlockKind.Primary,
     val allDay: Boolean = false,
+    /** Source annoncée aux lecteurs d'écran (la famille visuelle ne se voit pas). */
+    val source: String? = null,
 )
 
 /** Plage mise en valeur (ex. créneau libre), avec son libellé affiché. */
@@ -225,5 +227,5 @@ fun describeBlock(b: TimeBlock): String {
         Tone.Attention -> "à surveiller"
         Tone.Urgent -> "important"
     }
-    return listOfNotNull(b.title, time, b.subtitle, tone).joinToString(", ")
+    return listOfNotNull(b.title, b.source, time, b.subtitle, tone).joinToString(", ")
 }

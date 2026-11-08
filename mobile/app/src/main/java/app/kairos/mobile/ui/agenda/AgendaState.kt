@@ -20,6 +20,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import java.time.LocalDate
+import java.time.LocalDateTime
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -62,12 +63,13 @@ data class AddForm(
 /** Même plafond que le module. */
 private const val TITLE_MAX = 200
 
-/** Raison du refus du formulaire, ou null s'il peut partir. */
-fun formError(f: AddForm): String? = when {
+/** Raison du refus du formulaire, ou null s'il peut partir ; une heure déjà passée aujourd'hui est refusée. */
+fun formError(f: AddForm, now: LocalDateTime = LocalDateTime.now()): String? = when {
     f.title.isBlank() -> "Donne un titre."
     f.title.trim().length > TITLE_MAX -> "Titre trop long ($TITLE_MAX caractères au plus)."
     f.span == null -> "Choisis une durée."
     f.span != Span.Day && f.start == null -> "Choisis l'heure de début."
+    f.span != Span.Day && f.day == now.toLocalDate() && f.start!! < now.toLocalTime().withSecond(0).withNano(0) -> "Cette heure est déjà passée."
     else -> null
 }
 
@@ -101,8 +103,13 @@ private const val ADD_KEY = "agenda/add"
  * Envoie l'événement une seule fois : un second appui pendant l'envoi est ignoré
  * ([busy] partagé par le panneau). [ApiError.Unauthorized] remonte.
  */
-suspend fun submitEvent(form: AddForm, busy: InFlight, call: suspend (JsonObject) -> String): AddOutcome {
-    formError(form)?.let { return AddOutcome.Invalid(it) }
+suspend fun submitEvent(
+    form: AddForm,
+    busy: InFlight,
+    now: LocalDateTime = LocalDateTime.now(),
+    call: suspend (JsonObject) -> String,
+): AddOutcome {
+    formError(form, now)?.let { return AddOutcome.Invalid(it) }
     if (!busy.claim(ADD_KEY)) return AddOutcome.Ignored
     return try {
         AddOutcome.Added(call(addArgs(form)))
@@ -115,14 +122,15 @@ suspend fun submitEvent(form: AddForm, busy: InFlight, call: suspend (JsonObject
 
 /**
  * Nouvel état après une lecture : ce qui a répondu remplace l'ancien, le reste est
- * gardé avec la raison. [week] null = pas relue ; [sync] null = pas de synchronisation.
+ * gardé avec la raison. [week] null = pas relue ; [sync] null = pas de synchronisation ;
+ * synchronisation sans réponse = échouée, la dernière réussie reste datée.
  * Les jours passés sortent du cache.
  */
 fun agendaAfter(
     prev: AgendaSnapshot,
     day: Result<AgendaDay>,
     week: Result<AgendaWeek>?,
-    sync: AgendaSync?,
+    sync: Result<AgendaSync>?,
     now: String,
     today: LocalDate,
 ): AgendaSnapshot {
@@ -133,7 +141,7 @@ fun agendaAfter(
     return AgendaSnapshot(
         days = days,
         week = w ?: prev.week,
-        sync = sync ?: prev.sync,
+        sync = sync?.getOrElse { AgendaSync(false, prev.sync?.at) } ?: prev.sync,
         fetchedAt = if (failure == null) now else prev.fetchedAt,
         issue = failure?.let(::issueOf),
     )
@@ -168,6 +176,7 @@ fun blocksOf(events: List<AgendaEvent>): List<TimeBlock> = events.map { e ->
         end = end ?: (24 * 60),
         subtitle = listOfNotNull(hours, e.location?.takeIf { it.isNotBlank() }).joinToString(" · ").ifBlank { null },
         kind = if (e.calendar == "travail") BlockKind.Secondary else BlockKind.Primary,
+        source = calendarLabel(e.calendar),
         allDay = e.allDay || (start == null && end == null),
     )
 }
@@ -178,6 +187,9 @@ fun freeSpans(day: AgendaDay): List<TimeSpan> = day.free.mapNotNull { f ->
     val e = minutesOf(f.end) ?: return@mapNotNull null
     TimeSpan(s, e, "libre ${durationText(f.minutes)}")
 }
+
+/** « perso » ou « travail », pour les lecteurs d'écran. */
+fun calendarLabel(calendar: String): String = if (calendar == "travail") "travail" else "perso"
 
 private val Fr = Locale.FRENCH
 private val SHORT_DAY = DateTimeFormatter.ofPattern("EEE d", Fr)

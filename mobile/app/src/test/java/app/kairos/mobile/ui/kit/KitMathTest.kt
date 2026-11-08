@@ -180,4 +180,10 @@ class KitMathTest {
         assertTrue(describeBlock(b.copy(tone = Tone.Attention)).contains("à surveiller"))
         assertEquals("Point, de 10 h à 11 h", describeBlock(b.copy(tone = Tone.Neutral)))
     }
+
+    @Test
+    fun block_description_names_source() {
+        val b = TimeBlock("Point", 600, 660, source = "travail", subtitle = "Salle B")
+        assertEquals("Point, travail, de 10 h à 11 h, Salle B", describeBlock(b))
+    }
 }
