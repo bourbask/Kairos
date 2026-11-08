@@ -33,11 +33,6 @@ jobs:
             echo "::error::PR title must be exactly 'Release X.Y.Z'. Found: '$TITLE'"
             exit 1
           fi
-          CARGO=$(grep -m1 '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
-          if [ "$CARGO" != "$VERSION" ]; then
-            echo "::error::Cargo.toml version ($CARGO) differs from the PR title ($VERSION)."
-            exit 1
-          fi
           if git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null; then
             echo "::error::Tag v$VERSION already exists."
             exit 1

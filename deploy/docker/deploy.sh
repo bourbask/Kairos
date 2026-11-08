@@ -10,7 +10,7 @@
 # redémarrerait en boucle.
 #
 # APK de l'application : si `gh` est disponible et authentifié, l'APK de la
-# release v<version du Cargo.toml racine> est déposé dans <KAIROS_DIR>/apk sur
+# release du dernier tag vX.Y.Z de la branche déployée est déposé dans <KAIROS_DIR>/apk sur
 # l'hôte (servi par la tête). Sinon l'étape est sautée, le déploiement continue.
 set -euo pipefail
 
@@ -43,9 +43,9 @@ deploy_apk() {
     local version tmp apk
     # Créé ici par l'utilisateur ssh : sinon le compose le créerait en root au démarrage.
     ssh "$VPS_HOST" "mkdir -p '$KAIROS_DIR/apk'" || true
-    version="$(sed -n 's/^version = "\(.*\)"$/\1/p' "$ROOT/Cargo.toml" | head -n1)"
+    version="$(cd "$ROOT" && git describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null | sed 's/^v//')"
     if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-        echo "    APK ignoré : version illisible dans Cargo.toml."; return 0
+        echo "    APK ignoré : aucun tag de version sur la branche déployée."; return 0
     fi
     if ! command -v gh >/dev/null 2>&1; then
         echo "    APK ignoré : gh indisponible (l'application garde la version déjà déposée)."; return 0
