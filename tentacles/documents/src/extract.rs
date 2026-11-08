@@ -5,8 +5,10 @@
 //! PDF scannés sans couche texte : reconnaissance de caractères (`tesseract`,
 //! français), si elle est activée.
 
+use std::io::Read;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 /// Texte au-delà duquel un document est tronqué dans l'index.
 pub const MAX_TEXT: usize = 2_000_000;
@@ -58,9 +60,38 @@ pub fn strip_xml(xml: &str) -> String {
     out.replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&apos;", "'").replace("&amp;", "&")
 }
 
+/// Durée maximale d'une commande d'extraction.
+const RUN_TIMEOUT: Duration = Duration::from_secs(120);
+
 fn run(cmd: &str, args: &[&str]) -> Option<String> {
-    let out = Command::new(cmd).args(args).output().ok()?;
-    out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+    run_with(cmd, args, MAX_TEXT, RUN_TIMEOUT)
+}
+
+/// Sortie standard de la commande, lue jusqu'à `max` octets ; au-delà, le tube
+/// est fermé et le texte tronqué est gardé. Tuée après `timeout` (résultat `None`).
+fn run_with(cmd: &str, args: &[&str], max: usize, timeout: Duration) -> Option<String> {
+    let mut child =
+        Command::new(cmd).args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().ok()?;
+    let stdout = child.stdout.take()?;
+    let reader = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = stdout.take(max as u64).read_to_end(&mut buf);
+        buf
+    });
+    let deadline = Instant::now() + timeout;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(st)) => break st,
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(20)),
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    };
+    let buf = reader.join().ok()?;
+    (status.success() || buf.len() >= max).then(|| String::from_utf8_lossy(&buf).into_owned())
 }
 
 fn cap(mut s: String) -> String {
@@ -121,7 +152,11 @@ pub fn text(path: &Path, ocr: bool) -> Option<String> {
             _ if ocr => ocr_pdf(p)?,
             _ => return None,
         },
-        Kind::Text => std::fs::read_to_string(path).ok()?,
+        Kind::Text => {
+            let mut buf = Vec::new();
+            std::fs::File::open(path).ok()?.take(MAX_TEXT as u64).read_to_end(&mut buf).ok()?;
+            String::from_utf8_lossy(&buf).into_owned()
+        }
         Kind::Docx => strip_xml(&run("unzip", &["-p", p, "word/document.xml"])?),
         Kind::Image if ocr => ocr_image(p)?,
         Kind::Image | Kind::Other => return None,
@@ -160,6 +195,19 @@ mod tests {
         assert_eq!(text(&short, false), None);
         assert_eq!(text(&dir.join("photo.jpg"), false), None);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn run_is_bounded_in_size_and_time() {
+        let t = Duration::from_secs(10);
+        assert_eq!(run_with("sh", &["-c", "echo bonjour"], 100, t).as_deref(), Some("bonjour\n"));
+        assert_eq!(run_with("sh", &["-c", "echo x; exit 1"], 100, t), None);
+        // Sortie sans fin : coupée à la borne.
+        assert_eq!(run_with("yes", &[], 1000, t).map(|s| s.len()), Some(1000));
+        // Processus bloqué : tué au délai.
+        let start = std::time::Instant::now();
+        assert_eq!(run_with("sleep", &["30"], 100, Duration::from_millis(300)), None);
+        assert!(start.elapsed() < Duration::from_secs(5));
     }
 
     #[test]

@@ -64,6 +64,11 @@ const APP_PROVENANCE: &str = "application";
 /// La personnalité de l'assistant ne se lit ni ne se modifie depuis l'application.
 const PERSONA_REFUSED: &str = "La personnalité de l'assistant ne se modifie pas d'ici.";
 
+/// La personnalité ne s'écrit que depuis l'hôte (`kairos-memoire persona`), jamais par un outil.
+fn is_persona(key: &str) -> bool {
+    key.trim().eq_ignore_ascii_case(PERSONA_KEY)
+}
+
 /// Sensibilité des notes saisies depuis l'application.
 const APP_SENSITIVITY: Sensitivity = Sensitivity::Commune;
 
@@ -234,6 +239,9 @@ impl MemoryServer {
 
     #[tool(description = "Enregistrer ou mettre à jour un fait stable sur l'utilisateur (l'historique est conservé).")]
     fn fact_set(&self, Parameters(a): Parameters<FactSetArgs>) -> Out {
+        if is_persona(&a.key) {
+            return Err(PERSONA_REFUSED.into());
+        }
         self.db()?.fact_set(&a.key, &a.value, &a.provenance).map_err(err)?;
         json_out(serde_json::json!({ "ok": true }))
     }
@@ -405,7 +413,7 @@ impl MemoryServer {
 
     #[tool(description = "Historique des valeurs d'un fait pour l'application, de la plus ancienne à la plus récente.")]
     fn app_fact_history(&self, Parameters(a): Parameters<KeyArgs>) -> Out {
-        if a.key.trim() == PERSONA_KEY {
+        if is_persona(&a.key) {
             return Err(PERSONA_REFUSED.into());
         }
         let h = self.db()?.fact_history(&a.key).map_err(err)?;
@@ -418,11 +426,40 @@ impl MemoryServer {
         if key.is_empty() || value.is_empty() {
             return Err("clé ou valeur vide".into());
         }
-        if key == PERSONA_KEY {
+        if is_persona(key) {
             return Err(PERSONA_REFUSED.into());
         }
         self.db()?.fact_set(key, value, APP_PROVENANCE).map_err(err)?;
         json_out(json!({"message": "Fait enregistré."}))
+    }
+
+    #[tool(description = "Supprimer définitivement une entrée du journal depuis l'application.")]
+    fn app_journal_delete(&self, Parameters(a): Parameters<IdArgs>) -> Out {
+        if !self.db()?.journal_delete(a.id).map_err(err)? {
+            return Err("entrée inconnue".into());
+        }
+        json_out(json!({"message": "Entrée supprimée."}))
+    }
+
+    #[tool(description = "Oublier un fait depuis l'application : valeur courante et historique.")]
+    fn app_fact_forget(&self, Parameters(a): Parameters<KeyArgs>) -> Out {
+        if is_persona(&a.key) {
+            return Err(PERSONA_REFUSED.into());
+        }
+        // Clé telle qu'écrite (éventuellement avec espaces), sinon nettoyée.
+        let db = self.db()?;
+        if db.fact_forget(&a.key).map_err(err)? == 0 && db.fact_forget(a.key.trim()).map_err(err)? == 0 {
+            return Err("fait inconnu".into());
+        }
+        json_out(json!({"message": "Fait oublié."}))
+    }
+
+    #[tool(description = "Supprimer définitivement une conversation depuis l'application.")]
+    fn app_conversation_delete(&self, Parameters(a): Parameters<IdArgs>) -> Out {
+        if !self.db()?.conversation_delete(a.id).map_err(err)? {
+            return Err("conversation inconnue".into());
+        }
+        json_out(json!({"message": "Conversation supprimée."}))
     }
 
     #[tool(description = "Rechercher dans les conversations pour l'application (30 résultats au plus).")]
@@ -645,6 +682,51 @@ mod tests {
         assert!(s.app_fact_set(Parameters(AppFactSetArgs { key: " persona ".into(), value: "ok".into() })).is_err());
         assert!(s.app_fact_history(Parameters(KeyArgs { key: PERSONA_KEY.into() })).is_err());
         assert_eq!(s.db().unwrap().fact_get(PERSONA_KEY).unwrap().unwrap().value, "calme");
+    }
+
+    #[test]
+    fn llm_fact_set_refuses_persona() {
+        let s = srv();
+        s.db().unwrap().fact_set(PERSONA_KEY, "calme", "hote").unwrap();
+        for k in ["persona", " persona ", "PERSONA"] {
+            let a = FactSetArgs { key: k.into(), value: "autre".into(), provenance: "x".into() };
+            assert!(s.fact_set(Parameters(a)).is_err(), "{k}");
+        }
+        assert_eq!(s.db().unwrap().fact_get(PERSONA_KEY).unwrap().unwrap().value, "calme");
+        let a = FactSetArgs { key: "gout".into(), value: "thé".into(), provenance: "x".into() };
+        assert!(s.fact_set(Parameters(a)).is_ok());
+    }
+
+    #[test]
+    fn app_erasure_tools() {
+        let s = srv();
+        let j = jw(&s, "à oublier", Sensitivity::Strategique);
+        assert!(js(s.app_journal_delete(Parameters(IdArgs { id: j })))["message"].is_string());
+        assert!(s.app_journal_delete(Parameters(IdArgs { id: j })).is_err());
+        assert!(js(s.app_memory())["journal"].as_array().unwrap().is_empty());
+
+        s.app_fact_set(Parameters(AppFactSetArgs { key: "k".into(), value: "a".into() })).unwrap();
+        s.app_fact_set(Parameters(AppFactSetArgs { key: "k".into(), value: "b".into() })).unwrap();
+        assert!(js(s.app_fact_forget(Parameters(KeyArgs { key: " k ".into() })))["message"].is_string());
+        assert!(js(s.app_fact_history(Parameters(KeyArgs { key: "k".into() }))).as_array().unwrap().is_empty());
+        assert!(s.app_fact_forget(Parameters(KeyArgs { key: "k".into() })).is_err());
+
+        s.db().unwrap().fact_set(PERSONA_KEY, "calme", "hote").unwrap();
+        assert!(s.app_fact_forget(Parameters(KeyArgs { key: "persona".into() })).is_err());
+        assert!(s.db().unwrap().fact_get(PERSONA_KEY).unwrap().is_some());
+
+        let c = NewConversation {
+            channel: "voix".into(),
+            device: "d".into(),
+            started_at: now_local(),
+            ended_at: now_local(),
+            transcript: "parlons du jardin".into(),
+            session_id: None,
+        };
+        let id = s.db().unwrap().conversation_ingest(&c).unwrap();
+        assert!(js(s.app_conversation_delete(Parameters(IdArgs { id })))["message"].is_string());
+        assert!(js(s.app_conversation_search(q("jardin"))).as_array().unwrap().is_empty());
+        assert!(s.app_conversation_delete(Parameters(IdArgs { id })).is_err());
     }
 
     #[test]

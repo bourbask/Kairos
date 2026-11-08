@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Déploiement Docker de Kairos sur un hôte distant, depuis la machine de dev.
-# Envoie le working tree courant (pas git), reconstruit l'image, (re)démarre les services.
+# Envoie le working tree courant (fichiers connus de git, ignorés exclus), reconstruit l'image, (re)démarre les services.
 #
 # Usage : VPS_HOST=user@hote [KAIROS_DIR=kairos] [KAIROS_SERVICES="…"] ./deploy/docker/deploy.sh
 #
@@ -29,13 +29,12 @@ fi
 
 echo "==> [1/4] Envoi du working tree vers l'hôte"
 ssh "$VPS_HOST" "mkdir -p '$KAIROS_DIR'"
-# --exclude-vcs-ignores écarte tout ce que le dépôt ignore : configuration et
+# Liste établie par git (suivis + non suivis non ignorés) : configuration et
 # secrets propres à une machine restent sur leur hôte, les fichiers d'exemple
-# suivent. Sans lui, la configuration locale de l'opérateur écrase celle de
-# l'hôte cible à chaque envoi, y compris ses jetons.
-tar czf - -C "$ROOT" --exclude-vcs-ignores \
-    --exclude=target --exclude=.git --exclude=data --exclude=briefings \
-    --exclude=logs --exclude=private --exclude=./apk . \
+# suivent. Un fichier suivi supprimé localement est sauté.
+git -C "$ROOT" ls-files -z --cached --others --exclude-standard \
+  | while IFS= read -r -d '' f; do if [ -e "$ROOT/$f" ]; then printf '%s\0' "$f"; fi; done \
+  | tar czf - -C "$ROOT" --null -T - \
   | ssh "$VPS_HOST" "tar xzf - -C '$KAIROS_DIR'"
 
 # Remplace l'APK de l'hôte par celui de la release ; tout échec est rapporté, jamais fatal.

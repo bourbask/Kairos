@@ -10,9 +10,12 @@ import kotlinx.coroutines.flow.first
 
 private val Context.settingsStore by preferencesDataStore("reglages")
 
-/** Réglages de l'application (thème, lecture vocale, montants masqués), persistés. */
+/** Réglages de l'application (thème, lecture vocale, montants masqués, captures), persistés. */
 class Settings(private val context: Context) {
-    data class Values(val theme: ThemeMode = ThemeMode.Clair, val speakReplies: Boolean = false, val amountsMasked: Boolean = false)
+    data class Values(
+        val theme: ThemeMode = ThemeMode.Clair, val speakReplies: Boolean = false, val amountsMasked: Boolean = false,
+        val hideFromCaptures: Boolean = true,
+    )
 
     suspend fun load(): Values {
         val p = context.settingsStore.data.first()
@@ -20,6 +23,7 @@ class Settings(private val context: Context) {
             theme = p[THEME]?.let { runCatching { ThemeMode.valueOf(it) }.getOrNull() } ?: ThemeMode.Clair,
             speakReplies = p[SPEAK] ?: false,
             amountsMasked = p[MASKED] ?: false,
+            hideFromCaptures = p[SECURE] ?: true,
         )
     }
 
@@ -35,9 +39,14 @@ class Settings(private val context: Context) {
         context.settingsStore.edit { it[MASKED] = on }
     }
 
+    suspend fun saveHideFromCaptures(on: Boolean) {
+        context.settingsStore.edit { it[SECURE] = on }
+    }
+
     private companion object {
         val THEME = stringPreferencesKey("theme")
         val SPEAK = booleanPreferencesKey("lecture-reponses")
         val MASKED = booleanPreferencesKey("montants-masques")
+        val SECURE = booleanPreferencesKey("masquer-captures")
     }
 }
