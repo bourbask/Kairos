@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -38,6 +39,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -94,8 +96,8 @@ private const val THRESHOLD = 0.35f
 /** Vitesse au-delà de laquelle un lancer vaut validation, même sous le seuil. */
 private const val FLING_DP_S = 1_200
 
-/** Libellé affiché d'une zone stockée. */
-internal fun zoneLabel(id: String?): String = ZONES.firstOrNull { it.first == id }?.second ?: "?"
+/** Libellé affiché d'une zone stockée ; null si ce n'est pas une zone de [zones]. */
+internal fun zoneLabel(id: String?, zones: List<Pair<String, String>>): String? = zones.firstOrNull { it.first == id }?.second
 
 /**
  * Ranger une commande, un produit à la fois : → (ou la zone proposée) valide,
@@ -116,7 +118,9 @@ fun UnpackScreen(
     others: Int = 0,
     onOther: () -> Unit = {},
 ) {
-    val state = remember(order.id) { UnpackState(order) }
+    val maison by repository.maison.collectAsState()
+    val zones = zonesOf(maison.inventory)
+    val state = remember(order.id) { UnpackState(order, zones) }
     val scope = rememberCoroutineScope()
     val haptic = LocalHapticFeedback.current
     val offset = remember { Animatable(Offset.Zero, Offset.VectorConverter) }
@@ -236,7 +240,7 @@ fun UnpackScreen(
                 step == null || line == null -> Done("Tout est rangé")
                 step == UnpackState.Step.Date -> DateStep(
                     name = line.name,
-                    zone = state.zone,
+                    zone = zoneLabel(state.zone, zones),
                     today = today,
                     enabled = !offline,
                     onDate = { d -> schedule(state.date(d)) },
@@ -259,7 +263,7 @@ fun UnpackScreen(
                         state.next?.let { next ->
                             LineCard(
                                 next,
-                                proposed = next.location,
+                                proposed = zoneLabel(next.location, zones),
                                 message = null,
                                 Modifier.graphicsLayer {
                                     val s = 0.92f + 0.08f * lift
@@ -275,7 +279,7 @@ fun UnpackScreen(
                         var armed by remember { mutableStateOf<Swipe?>(null) }
                         LineCard(
                             line,
-                            proposed = state.proposed,
+                            proposed = zoneLabel(state.proposed, zones),
                             message = state.message,
                             Modifier
                                 .graphicsLayer {
@@ -305,14 +309,14 @@ fun UnpackScreen(
                                     },
                                 ),
                             stamps = {
-                                state.proposed?.let {
-                                    Stamp(zoneLabel(it).uppercase(Locale.FRENCH), MaterialTheme.colorScheme.primary, (o.x / threshold).coerceIn(0f, 1f), 12f, Alignment.TopEnd)
+                                zoneLabel(state.proposed, zones)?.let {
+                                    Stamp(it.uppercase(Locale.FRENCH), MaterialTheme.colorScheme.primary, (o.x / threshold).coerceIn(0f, 1f), 12f, Alignment.TopEnd)
                                 }
                                 Stamp("RUPTURE", MaterialTheme.colorScheme.error, (-o.x / threshold).coerceIn(0f, 1f), -12f, Alignment.TopStart)
                             },
                         )
                     }
-                    ZoneGrid(proposed = state.proposed, enabled = !offline, onZone = ::place) { m ->
+                    ZoneGrid(zones, proposed = state.proposed, enabled = !offline, onZone = ::place) { m ->
                         BigTile("Rupture", m, enabled = !offline, color = MaterialTheme.colorScheme.error, onClick = ::missing)
                     }
                 }
@@ -361,6 +365,7 @@ internal fun TopBar(title: String, subtitle: String, done: Int, total: Int, onCl
 @Composable
 private fun LineCard(
     line: OrderLine,
+    /** Libellé de la zone proposée ; null = aucune zone connue. */
     proposed: String?,
     message: String?,
     modifier: Modifier = Modifier,
@@ -397,13 +402,13 @@ private fun LineCard(
                         .background(colors.primaryContainer, RoundedCornerShape(16.dp))
                         .padding(14.dp),
                 ) {
-                    val known = proposed != null && ZONES.any { it.first == proposed }
+                    val known = proposed != null
                     Text(
                         if (known) "Kairos propose · glisse →" else "Touche une zone ci-dessous",
                         style = MaterialTheme.typography.labelMedium,
                         color = colors.onPrimaryContainer,
                     )
-                    if (known) Text(zoneLabel(proposed), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = colors.onPrimaryContainer)
+                    if (proposed != null) Text(proposed, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = colors.onPrimaryContainer)
                 }
             }
             stamps()
@@ -412,18 +417,30 @@ private fun LineCard(
 }
 
 /**
- * Les cinq zones en grosses tuiles sous le pouce (3 × 2) ; [proposed] en
- * surbrillance ; [extra] occupe la sixième case.
+ * Les zones en grosses tuiles sous le pouce, rangées de trois au plus ;
+ * [proposed] en surbrillance ; [extra] occupe la dernière case.
  */
 @Composable
-internal fun ZoneGrid(proposed: String?, enabled: Boolean, onZone: (String) -> Unit, extra: @Composable (Modifier) -> Unit) {
+internal fun ZoneGrid(
+    zones: List<Pair<String, String>>,
+    proposed: String?,
+    enabled: Boolean,
+    onZone: (String) -> Unit,
+    extra: @Composable (Modifier) -> Unit,
+) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        for (row in ZONES.chunked(3)) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                for ((id, label) in row) {
-                    BigTile(label, Modifier.weight(1f), enabled, highlighted = id == proposed) { onZone(id) }
+        var start = 0
+        for (n in planRows(zones.size + 1)) {
+            val row = (start until start + n).toList()
+            start += n
+            // Tuiles d'une rangée à la même hauteur : celle du libellé le plus long.
+            Row(Modifier.height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                for (i in row) {
+                    val m = Modifier.weight(1f).fillMaxHeight()
+                    zones.getOrNull(i)?.let { (id, label) ->
+                        BigTile(label, m, enabled, highlighted = id == proposed) { onZone(id) }
+                    } ?: extra(m)
                 }
-                if (row.size < 3) extra(Modifier.weight(1f))
             }
         }
     }
@@ -463,6 +480,7 @@ private val CHIP_DATE = DateTimeFormatter.ofPattern("EEE d MMM", Locale.FRENCH)
 @Composable
 internal fun DateStep(
     name: String,
+    /** Libellé de la zone choisie. */
     zone: String?,
     today: LocalDate,
     enabled: Boolean,
@@ -476,7 +494,7 @@ internal fun DateStep(
     val haptic = LocalHapticFeedback.current
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = onBack) { Text("← ${zoneLabel(zone)}") }
+            TextButton(onClick = onBack) { Text("← ${zone ?: "?"}") }
             Text(name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         LabelCamera(

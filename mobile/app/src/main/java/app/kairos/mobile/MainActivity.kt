@@ -428,6 +428,8 @@ private fun KairosRoot(model: AppModel) {
                     onOpenDecisions = { decisionsOpen = true },
                     onOpenSettings = { settingsOpen = true },
                     onUnauthorized = model::unauthorized,
+                    appScope = model.viewModelScope,
+                    onNotice = { scope.launch { snackbar.showSnackbar(it) } },
                     decisionsAnchor = Modifier.overlayAnchor(deck, DecisionsPeekCorner),
                 )
             },

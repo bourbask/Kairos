@@ -14,7 +14,6 @@ import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
@@ -589,43 +588,29 @@ private fun OrderBanner(
 }
 
 /**
- * Plan de la cuisine, disposition de la maquette. Hauteur : celle que demande le
- * contenu des zones (taille de police comprise), au moins une fraction de la
- * largeur ; aucune zone ne descend sous la hauteur de son texte.
+ * Plan de l'inventaire : les zones du serveur, dans son ordre, en rangées de trois
+ * au plus. Hauteur : celle que demande le contenu (taille de police comprise) ;
+ * dans une rangée, toutes les tuiles prennent la hauteur du libellé le plus long.
  */
 @Composable
 private fun KitchenPlan(zones: List<ZoneView>, selected: String, onSelect: (String) -> Unit) {
-    val byId = zones.associateBy { it.id }
-    @Composable
-    fun tile(id: String, modifier: Modifier, round: Boolean = false) {
-        byId[id]?.let { ZoneTile(it, it.id == selected, round, { onSelect(id) }, modifier) }
-    }
     val shape = RoundedCornerShape(20.dp)
-    BoxWithConstraints(Modifier.fillMaxWidth().padding(start = PlanMargin, end = PlanMargin, top = 6.dp, bottom = PlanMargin)) {
-        Surface(
-            shape = shape,
-            color = MaterialTheme.colorScheme.surface,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-            shadowElevation = 1.dp,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            // Ordre voulu : le minimum borne la hauteur intrinsèque, qui ne descend donc jamais sous le contenu.
-            Row(
-                Modifier
-                    .heightIn(min = (maxWidth * 0.55f).coerceIn(180.dp, 320.dp))
-                    .height(IntrinsicSize.Min)
-                    .padding(8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Column(Modifier.weight(0.33f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    tile("frigo", Modifier.weight(0.64f))
-                    tile("congelateur", Modifier.weight(0.36f))
-                }
-                Column(Modifier.weight(0.67f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    // Placard et étagère à la hauteur de leur contenu ; la table prend le reste.
-                    tile("placard", Modifier)
-                    tile("etagere", Modifier)
-                    tile("corbeille", Modifier.weight(1f).padding(horizontal = 28.dp), round = true)
+    Surface(
+        shape = shape,
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        shadowElevation = 1.dp,
+        modifier = Modifier.fillMaxWidth().padding(start = PlanMargin, end = PlanMargin, top = 6.dp, bottom = PlanMargin),
+    ) {
+        Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            var start = 0
+            for (n in planRows(zones.size)) {
+                val row = zones.subList(start, start + n)
+                start += n
+                Row(Modifier.height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    row.forEach { z ->
+                        ZoneTile(z, z.id == selected, { onSelect(z.id) }, Modifier.weight(1f).fillMaxHeight())
+                    }
                 }
             }
         }
@@ -636,8 +621,8 @@ private fun KitchenPlan(zones: List<ZoneView>, selected: String, onSelect: (Stri
 private val PlanMargin = 16.dp
 
 @Composable
-private fun ZoneTile(zone: ZoneView, selected: Boolean, round: Boolean, onClick: () -> Unit, modifier: Modifier) {
-    val shape = if (round) CircleShape else RoundedCornerShape(12.dp)
+private fun ZoneTile(zone: ZoneView, selected: Boolean, onClick: () -> Unit, modifier: Modifier) {
+    val shape = RoundedCornerShape(12.dp)
     val colors = MaterialTheme.colorScheme
     val bg by animateColorAsState(if (selected) colors.primaryContainer else colors.background, Motion.enter(), label = "fond")
     val line by animateColorAsState(if (selected) colors.primary else colors.outlineVariant, Motion.enter(), label = "bord")
@@ -645,7 +630,7 @@ private fun ZoneTile(zone: ZoneView, selected: Boolean, round: Boolean, onClick:
     Column(
         modifier
             .fillMaxWidth()
-            .heightIn(min = 48.dp)
+            .heightIn(min = 56.dp)
             .clip(shape)
             .background(bg)
             .border(1.5.dp, line, shape)
@@ -653,10 +638,9 @@ private fun ZoneTile(zone: ZoneView, selected: Boolean, round: Boolean, onClick:
             .semantics(mergeDescendants = true) {
                 contentDescription = zone.label + ", " + count + if (zone.urgent > 0) ", ${zone.urgent} urgent" + (if (zone.urgent > 1) "s" else "") else ""
             }
-            .padding(horizontal = if (round) 14.dp else 10.dp, vertical = 7.dp),
-        // Libellé en bas de la zone (au centre pour la table), comme sur la maquette.
-        verticalArrangement = if (round) Arrangement.Center else Arrangement.Bottom,
-        horizontalAlignment = if (round) Alignment.CenterHorizontally else Alignment.Start,
+            .padding(horizontal = 10.dp, vertical = 7.dp),
+        // Libellé en bas de la zone, comme sur la maquette.
+        verticalArrangement = Arrangement.Bottom,
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
@@ -664,7 +648,7 @@ private fun ZoneTile(zone: ZoneView, selected: Boolean, round: Boolean, onClick:
                 fontSize = 14.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = if (selected) colors.onPrimaryContainer else colors.onSurface,
-                modifier = if (round) Modifier else Modifier.weight(1f),
+                modifier = Modifier.weight(1f),
             )
             if (zone.urgent > 0) {
                 Box(
@@ -679,7 +663,7 @@ private fun ZoneTile(zone: ZoneView, selected: Boolean, round: Boolean, onClick:
                 }
             }
         }
-        Text(count, fontSize = 11.5.sp, color = colors.onSurfaceVariant, textAlign = if (round) TextAlign.Center else TextAlign.Start)
+        Text(count, fontSize = 11.5.sp, color = colors.onSurfaceVariant)
     }
 }
 

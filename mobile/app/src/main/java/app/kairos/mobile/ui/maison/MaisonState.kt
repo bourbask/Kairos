@@ -3,6 +3,7 @@ package app.kairos.mobile.ui.maison
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import app.kairos.mobile.data.Inventory
 import app.kairos.mobile.data.Lot
 import app.kairos.mobile.data.MaisonSnapshot
 import app.kairos.mobile.data.Order
@@ -16,8 +17,18 @@ import java.time.temporal.ChronoUnit
 import kotlin.math.abs
 import kotlin.math.roundToLong
 
-/** Zones du plan, dans l'ordre d'affichage : identifiant stocké → libellé. */
+/** Zones par défaut (identifiant stocké → libellé), tant que le serveur n'a pas donné les siennes. */
 val ZONES = listOf("frigo" to "Frigo", "congelateur" to "Congélo", "placard" to "Placard", "etagere" to "Étagère", "corbeille" to "Table")
+
+/** Zones à dessiner : celles du serveur, dans son ordre ; à défaut [ZONES]. */
+fun zonesOf(inventory: Inventory): List<Pair<String, String>> = inventory.zones.map { it.id to it.label }.ifEmpty { ZONES }
+
+/** Tuiles par rangée pour [n] zones : trois colonnes au plus, rangées équilibrées, les plus pleines en haut. */
+fun planRows(n: Int, columns: Int = 3): List<Int> {
+    if (n <= 0) return emptyList()
+    val rows = (n + columns - 1) / columns
+    return List(rows) { i -> n / rows + if (i < n % rows) 1 else 0 }
+}
 
 /** « retrait 10/11 » pour une date AAAA-MM-JJ ; rien si absente ou illisible. */
 fun pickupLabel(pickup: String?): String? =
@@ -83,16 +94,18 @@ class MaisonState(snapshot: MaisonSnapshot = MaisonSnapshot()) {
     val zones: List<ZoneView>
         get() {
             val all = lots
-            val labels = base.inventory.zones.associate { it.id to it.label }
-            return ZONES.map { (id, label) ->
+            return zonesOf(base.inventory).map { (id, label) ->
                 val here = all.filter { it.location == id }
-                ZoneView(id, labels[id] ?: label, here.size, here.count { it.tone == Tone.Urgent })
+                ZoneView(id, label, here.size, here.count { it.tone == Tone.Urgent })
             }
         }
 
     /** Zone ouverte : choisie, sinon la première qui a des urgences, sinon la première non vide. */
     val zone: String
-        get() = selected ?: zones.let { z -> (z.firstOrNull { it.urgent > 0 } ?: z.firstOrNull { it.count > 0 } ?: z.first()).id }
+        get() = zones.let { z ->
+            // Une zone choisie que le serveur ne donne plus ne reste pas ouverte.
+            (z.firstOrNull { it.id == selected } ?: z.firstOrNull { it.urgent > 0 } ?: z.firstOrNull { it.count > 0 } ?: z.first()).id
+        }
 
     val canUndo: Boolean get() = undoable?.let { it in pending && it !in sent } == true
 
@@ -117,7 +130,7 @@ class MaisonState(snapshot: MaisonSnapshot = MaisonSnapshot()) {
     }
 
     fun move(lot: Lot, to: String): LotAction? {
-        if (!canAct || to == lot.location || ZONES.none { it.first == to }) return null
+        if (!canAct || to == lot.location || zones.none { it.id == to }) return null
         return update(LotAction.Update(lot, location = to))
     }
 

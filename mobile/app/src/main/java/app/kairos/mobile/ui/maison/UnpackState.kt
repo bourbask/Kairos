@@ -32,7 +32,7 @@ class Stow(val order: Long, val line: OrderLine, val location: String?, val expi
  * Une ligne traitée part tout de suite à l'écran ; l'écran l'envoie après le
  * délai d'annulation ([dispatch]). Un refus du serveur ([refused]) la remet en tête.
  */
-class UnpackState(order: Order) {
+class UnpackState(order: Order, private val zones: List<Pair<String, String>> = ZONES) {
     enum class Step { Zone, Date }
 
     private val id = order.id
@@ -60,14 +60,14 @@ class UnpackState(order: Order) {
     val finished: Boolean get() = current == null
 
     /** Zone habituelle de la ligne en cours, si c'est une zone du plan. */
-    val proposed: String? get() = current?.location?.takeIf { l -> ZONES.any { it.first == l } }
+    val proposed: String? get() = current?.location?.takeIf { l -> zones.any { it.first == l } }
 
     val canUndo: Boolean get() = handled.lastOrNull()?.let { it !in sent } == true
 
     /** Range la ligne en cours dans [to] ; produit frais : passe d'abord par la date (rend null). */
     fun place(to: String? = proposed): Stow? {
         val line = current ?: return null
-        if (to == null || ZONES.none { it.first == to }) return null
+        if (to == null || zones.none { it.first == to }) return null
         if (line.fresh) {
             zone = to
             step = Step.Date

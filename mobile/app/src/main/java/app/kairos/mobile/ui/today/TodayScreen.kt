@@ -34,10 +34,12 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.contentColorFor
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Snackbar
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
@@ -91,8 +93,11 @@ import app.kairos.mobile.data.Tone
 import app.kairos.mobile.ui.mascot.Mascot
 import app.kairos.mobile.ui.mascot.MascotState
 import app.kairos.mobile.ui.theme.Motion
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.json.JsonElement
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
@@ -101,6 +106,8 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 private val Fr = Locale.FRENCH
+
+private const val UNDO_MS = 4_000L
 
 /**
  * Accueil : salutation, lendemain, pile de décisions, fil du jour.
@@ -114,6 +121,8 @@ fun TodayScreen(
     onOpenDecisions: () -> Unit,
     onOpenSettings: () -> Unit,
     onUnauthorized: () -> Unit,
+    appScope: CoroutineScope,
+    onNotice: (String) -> Unit,
     decisionsAnchor: Modifier = Modifier,
 ) {
     val snapshot by repository.snapshot.collectAsState()
@@ -152,15 +161,72 @@ fun TodayScreen(
     }
     BackHandler(enabled = week) { week = false }
 
-    fun markWithUndo(day: String, card: Card, mark: Mark) {
+    val haptic = LocalHapticFeedback.current
+    val unauthorized by rememberUpdatedState(onUnauthorized)
+    val notice by rememberUpdatedState(onNotice)
+
+    /** Fenêtre d'annulation ; vrai si « Annuler » a été touché. */
+    suspend fun undoWindow(text: String): Boolean {
+        snackbar.currentSnackbarData?.dismiss()
+        return withTimeoutOrNull(UNDO_MS) {
+            snackbar.showSnackbar(text, actionLabel = "Annuler", duration = SnackbarDuration.Indefinite)
+        } == SnackbarResult.ActionPerformed
+    }
+
+    fun later(day: String, card: Card) {
         scope.launch {
-            repository.mark(day, card.key, mark)
-            snackbar.currentSnackbarData?.dismiss()
-            val label = if (mark == Mark.Fait) "Fait" else "Plus tard"
-            val result = snackbar.showSnackbar("$label · ${card.title}", actionLabel = "Annuler", withDismissAction = false)
-            if (result == SnackbarResult.ActionPerformed) repository.mark(day, card.key, null)
+            repository.mark(day, card.key, Mark.PlusTard)
+            if (undoWindow("Plus tard · ${card.title}")) repository.mark(day, card.key, null)
         }
     }
+
+    // Depuis appScope : quitter l'écran pendant la fenêtre n'abandonne pas l'action du module.
+    fun complete(day: String, card: Card, choice: JsonElement?) {
+        appScope.launch {
+            val out = try {
+                completeCard(
+                    card,
+                    choice,
+                    mark = { repository.mark(day, card.key, it) },
+                    undoWindow = { undoWindow("Fait · ${card.title}") },
+                    call = repository::tool,
+                )
+            } catch (_: ApiError.Unauthorized) {
+                return@launch unauthorized()
+            }
+            when (out) {
+                is DoneOutcome.Done -> {
+                    notice(out.message.ifBlank { "Fait." })
+                    try {
+                        repository.refresh()
+                        repository.refreshMaison()
+                    } catch (_: ApiError.Unauthorized) {
+                        unauthorized()
+                    }
+                }
+                is DoneOutcome.Refused -> {
+                    haptic.performHapticFeedback(HapticFeedbackType.Reject)
+                    notice(out.message)
+                }
+                DoneOutcome.Local, DoneOutcome.Undone -> Unit
+            }
+        }
+    }
+
+    // Choix demandé par le module (portions…) : posé sous le pouce, avant la fenêtre d'annulation.
+    var choosing by remember { mutableStateOf<Pair<String, Card>?>(null) }
+    var chooserOpen by remember { mutableStateOf(false) }
+
+    fun done(day: String, card: Card) {
+        if (card.done?.asks == true) {
+            choosing = day to card
+            chooserOpen = true
+        } else {
+            complete(day, card, null)
+        }
+    }
+
+    BackHandler(enabled = chooserOpen) { chooserOpen = false }
 
     Box(Modifier.fillMaxSize()) {
         PullToRefreshBox(
@@ -195,10 +261,27 @@ fun TodayScreen(
                         onSettings = onOpenSettings,
                         onOpenDecisions = onOpenDecisions,
                         decisionsAnchor = decisionsAnchor,
-                        onMark = ::markWithUndo,
+                        onDone = ::done,
+                        onLater = ::later,
                         onUnmark = { day, card -> scope.launch { repository.mark(day, card.key, null) } },
                     )
                 }
+            }
+        }
+        AnimatedVisibility(
+            chooserOpen,
+            Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = padding.calculateBottomPadding())
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            enter = Motion.riseIn,
+            exit = Motion.sinkOut,
+        ) {
+            choosing?.let { (day, card) ->
+                Chooser(card, onPick = { v ->
+                    chooserOpen = false
+                    complete(day, card, v)
+                }, onCancel = { chooserOpen = false })
             }
         }
         SnackbarHost(
@@ -230,7 +313,8 @@ private fun DayContent(
     onSettings: () -> Unit,
     onOpenDecisions: () -> Unit,
     decisionsAnchor: Modifier,
-    onMark: (String, Card, Mark) -> Unit,
+    onDone: (String, Card) -> Unit,
+    onLater: (String, Card) -> Unit,
     onUnmark: (String, Card) -> Unit,
 ) {
     val todayKey = now.toLocalDate().toString()
@@ -260,8 +344,8 @@ private fun DayContent(
                 item = item,
                 expanded = expanded == item.card.key,
                 onToggle = { expanded = if (expanded == item.card.key) null else item.card.key },
-                onDone = { onMark(todayKey, item.card, Mark.Fait) },
-                onLater = { onMark(todayKey, item.card, Mark.PlusTard) },
+                onDone = { onDone(todayKey, item.card) },
+                onLater = { onLater(todayKey, item.card) },
                 onRestore = { onUnmark(todayKey, item.card) },
                 modifier = Modifier.animateItem(),
                 swipeEnabled = !marked,
@@ -525,6 +609,39 @@ private fun ItemCard(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+/** Choix compact (portions…) : une puce par option, la valeur par défaut en avant. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun Chooser(card: Card, onPick: (JsonElement) -> Unit, onCancel: () -> Unit) {
+    val c = card.done?.choices ?: return
+    Surface(
+        shape = MaterialTheme.shapes.large,
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        shadowElevation = 6.dp,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(start = 16.dp, end = 8.dp, top = 12.dp, bottom = 6.dp)) {
+            Text(c.label.ifBlank { "Combien ?" }, style = MaterialTheme.typography.titleSmall)
+            Text(card.title, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            FlowRow(
+                Modifier.padding(top = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.Center,
+            ) {
+                c.options.forEach { o ->
+                    FilterChip(
+                        selected = o == c.default,
+                        onClick = { onPick(o) },
+                        label = { Text(optionLabel(o), style = MaterialTheme.typography.titleSmall) },
+                    )
+                }
+                TextButton(onClick = onCancel) { Text("Annuler") }
             }
         }
     }
