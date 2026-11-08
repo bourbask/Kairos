@@ -17,7 +17,9 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
+import java.io.File
 import java.time.LocalDate
+import javax.crypto.KeyGenerator
 
 class RepositoryTest {
     @get:Rule val tmp = TemporaryFolder()
@@ -30,7 +32,7 @@ class RepositoryTest {
         server.enqueue(MockResponse.Builder().body(DAYS_JSON).build())
         server.enqueue(MockResponse.Builder().body("[]").build())
         val dir = tmp.newFolder()
-        val repo = Repository(KairosApi(server.url("/").toString(), "t", OkHttpClient()), dir) { today }
+        val repo = Repository(KairosApi(server.url("/").toString(), "t", OkHttpClient()), dir, testCodec) { today }
 
         repo.refresh()
         val fresh = repo.snapshot.value
@@ -44,7 +46,7 @@ class RepositoryTest {
         assertEquals(fresh.days, stale.days)
 
         // Le dernier état survit au redémarrage de l'application.
-        val reopened = Repository(KairosApi("http://127.0.0.1:1/", "t", OkHttpClient()), dir) { today }
+        val reopened = Repository(KairosApi("http://127.0.0.1:1/", "t", OkHttpClient()), dir, testCodec) { today }
         reopened.load()
         assertEquals(fresh.days, reopened.snapshot.value.days)
     }
@@ -57,7 +59,7 @@ class RepositoryTest {
         ).build())
         server.enqueue(MockResponse.Builder().body("""[{"id":3,"store":"drive","lines":[{"index":0,"name":"Lait"}]}]""").build())
         val dir = tmp.newFolder()
-        val repo = Repository(KairosApi(server.url("/").toString(), "t", OkHttpClient()), dir) { today }
+        val repo = Repository(KairosApi(server.url("/").toString(), "t", OkHttpClient()), dir, testCodec) { today }
 
         repo.refreshMaison()
         val fresh = repo.maison.value
@@ -70,18 +72,18 @@ class RepositoryTest {
         assertTrue(repo.maison.value.offline)
         assertEquals(fresh.inventory, repo.maison.value.inventory)
 
-        val reopened = Repository(KairosApi("http://127.0.0.1:1/", "t", OkHttpClient()), dir) { today }
+        val reopened = Repository(KairosApi("http://127.0.0.1:1/", "t", OkHttpClient()), dir, testCodec) { today }
         reopened.load()
         assertEquals(fresh.inventory, reopened.maison.value.inventory)
         reopened.clear()
-        assertEquals(MaisonSnapshot(), Repository(KairosApi("http://127.0.0.1:1/", "t", OkHttpClient()), dir).apply { load() }.maison.value)
+        assertEquals(MaisonSnapshot(), Repository(KairosApi("http://127.0.0.1:1/", "t", OkHttpClient()), dir, testCodec).apply { load() }.maison.value)
     }
 
     @Test
     fun maison_unavailable_module_is_not_offline() = runBlocking {
         val server = MockWebServer().apply { start() }
         server.enqueue(MockResponse.Builder().code(503).build())
-        val repo = Repository(KairosApi(server.url("/").toString(), "t", OkHttpClient()), tmp.newFolder()) { today }
+        val repo = Repository(KairosApi(server.url("/").toString(), "t", OkHttpClient()), tmp.newFolder(), testCodec) { today }
         repo.refreshMaison()
         assertTrue(repo.maison.value.offline)
         assertEquals("Module indisponible", repo.maison.value.reason)
@@ -94,7 +96,7 @@ class RepositoryTest {
     fun maison_outdated_server_says_so() = runBlocking {
         val server = MockWebServer().apply { start() }
         server.enqueue(MockResponse.Builder().code(404).build())
-        val repo = Repository(KairosApi(server.url("/").toString(), "t", OkHttpClient()), tmp.newFolder()) { today }
+        val repo = Repository(KairosApi(server.url("/").toString(), "t", OkHttpClient()), tmp.newFolder(), testCodec) { today }
         repo.refreshMaison()
         assertEquals("Serveur à mettre à jour", repo.maison.value.reason)
         server.close()
@@ -116,7 +118,7 @@ class RepositoryTest {
                     MockResponse.Builder().body("""{"lots":[{"id":1,"name":"récent"}]}""").build()
                 }
         }
-        val repo = Repository(KairosApi(server.url("/").toString(), "t", OkHttpClient()), tmp.newFolder()) { today }
+        val repo = Repository(KairosApi(server.url("/").toString(), "t", OkHttpClient()), tmp.newFolder(), testCodec) { today }
         val first = launch(Dispatchers.IO) { repo.refreshMaison() }
         delay(100)
         val second = launch(Dispatchers.IO) { repo.refreshMaison() }
@@ -127,14 +129,28 @@ class RepositoryTest {
     }
 
     @Test
+    fun cache_is_encrypted_and_old_plaintext_is_ignored() = runBlocking {
+        val dir = tmp.newFolder()
+        val api = KairosApi("http://127.0.0.1:1/", "t", OkHttpClient())
+        Repository(api, dir, testCodec) { today }.mark("2026-11-08", "agenda/secret", Mark.Fait)
+        assertFalse(File(dir, "marks.json").readText(Charsets.ISO_8859_1).contains("secret"))
+        // Ancien cache en clair : traité comme absent, sans erreur.
+        File(dir, "marks.json").writeText("""{"2026-11-08":{"agenda/a":"Fait"}}""")
+        File(dir, "snapshot.json").writeText("x")
+        val again = Repository(api, dir, testCodec) { today }.apply { load() }
+        assertEquals(emptyMap<String, Map<String, Mark>>(), again.marks.value)
+        assertEquals(Snapshot(), again.snapshot.value)
+    }
+
+    @Test
     fun marks_persist_per_day() = runBlocking {
         val dir = tmp.newFolder()
         val api = KairosApi("http://127.0.0.1:1/", "t", OkHttpClient())
-        Repository(api, dir) { today }.mark("2026-11-08", "agenda/a", Mark.Fait)
-        val again = Repository(api, dir) { today }.apply { load() }
+        Repository(api, dir, testCodec) { today }.mark("2026-11-08", "agenda/a", Mark.Fait)
+        val again = Repository(api, dir, testCodec) { today }.apply { load() }
         assertEquals(mapOf("2026-11-08" to mapOf("agenda/a" to Mark.Fait)), again.marks.value)
         // Les jours passés sont oubliés.
-        val tomorrow = Repository(api, dir) { today.plusDays(1) }.apply { load() }
+        val tomorrow = Repository(api, dir, testCodec) { today.plusDays(1) }.apply { load() }
         assertEquals(emptyMap<String, Map<String, Mark>>(), tomorrow.marks.value)
     }
 
@@ -142,7 +158,7 @@ class RepositoryTest {
     fun disk_errors_never_crash() = runBlocking {
         // Le « dossier » d'état est un fichier : aucune lecture ni écriture possible.
         val notADir = tmp.newFile()
-        val repo = Repository(KairosApi("http://127.0.0.1:1/", "t", OkHttpClient()), notADir) { today }
+        val repo = Repository(KairosApi("http://127.0.0.1:1/", "t", OkHttpClient()), notADir, testCodec) { today }
         repo.mark("2026-11-08", "agenda/a", Mark.Fait)
         repo.refresh()
         assertTrue(repo.snapshot.value.offline)
@@ -154,7 +170,7 @@ class RepositoryTest {
         val server = MockWebServer().apply { start() }
         server.enqueue(MockResponse.Builder().body("[]").build())
         server.enqueue(MockResponse.Builder().body(DECISIONS_JSON).build())
-        val repo = Repository(KairosApi(server.url("/").toString(), "t", OkHttpClient()), tmp.newFolder()) { today }
+        val repo = Repository(KairosApi(server.url("/").toString(), "t", OkHttpClient()), tmp.newFolder(), testCodec) { today }
         repo.refresh()
         repo.drop("finances", "op-1")
         assertEquals(listOf("alimentation/op-1", "finances/op-2"), repo.snapshot.value.decisions.map { "${it.module}/${it.id}" })
@@ -167,3 +183,6 @@ private const val DECISIONS_JSON = """[
   {"id": "op-1", "title": "B", "module": "alimentation"},
   {"id": "op-2", "title": "C", "module": "finances"}
 ]"""
+
+private val testKey = KeyGenerator.getInstance("AES").apply { init(256) }.generateKey()
+val testCodec = CacheCodec { testKey }

@@ -34,11 +34,13 @@ import java.time.LocalDateTime
  * stockage privé : sans serveur, l'application reste lisible.
  * Les marques « fait » / « plus tard » sont locales à l'appareil, par jour,
  * indexées par [Card.key].
+ * Fichiers chiffrés par [codec].
  * Accès disque hors du fil principal ; une erreur disque n'interrompt jamais l'affichage.
  */
 class Repository(
     private val api: KairosApi,
     private val dir: File,
+    private val codec: CacheCodec,
     private val today: () -> LocalDate = LocalDate::now,
 ) {
     private val snapshotFile = File(dir, "snapshot.json")
@@ -316,7 +318,7 @@ class Repository(
     }
 
     private suspend fun <T> read(file: File, serializer: KSerializer<T>): T? = withContext(Dispatchers.IO) {
-        runCatching { KairosJson.decodeFromString(serializer, file.readText()) }.getOrNull()
+        runCatching { codec.open(file.readBytes())?.let { KairosJson.decodeFromString(serializer, it) } }.getOrNull()
     }
 
     private suspend fun <T> write(file: File, serializer: KSerializer<T>, value: T) {
@@ -324,7 +326,7 @@ class Repository(
             runCatching {
                 dir.mkdirs()
                 val tmp = File(dir, file.name + ".tmp")
-                tmp.writeText(KairosJson.encodeToString(serializer, value))
+                tmp.writeBytes(codec.seal(KairosJson.encodeToString(serializer, value)))
                 check(tmp.renameTo(file))
             }
         }

@@ -61,6 +61,7 @@ import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.lifecycle.viewModelScope
 import app.kairos.mobile.data.ApiError
+import app.kairos.mobile.data.CacheCodec
 import app.kairos.mobile.data.ChatEntry
 import app.kairos.mobile.data.Credentials
 import app.kairos.mobile.data.KairosApi
@@ -165,7 +166,7 @@ class Session(
 ) {
     val address = credentials.baseUrl
     val api = KairosApi(credentials.baseUrl, credentials.token, http)
-    val repository = Repository(api, stateDir)
+    val repository = Repository(api, stateDir, CacheCodec.Device)
     val conversation = Conversation(api, scope, onUnauthorized, onReply)
 }
 
