@@ -1,0 +1,63 @@
+package app.kairos.mobile.ui.kit
+
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.unit.dp
+import app.kairos.mobile.ui.theme.Motion
+
+/**
+ * Valeur consommée face à sa limite, avec seuils (> 80 % attention, > 100 % urgent).
+ * [format] met en forme valeur et limite ; [masked] les remplace par un masque, sémantique comprise.
+ */
+@Composable
+fun Bar(
+    label: String,
+    value: Double,
+    limit: Double,
+    modifier: Modifier = Modifier,
+    format: (Double) -> String = { formatEuro(it, cents = false) },
+    masked: Boolean = LocalAmountsMasked.current,
+) {
+    val tone = barTone(value, limit)
+    val f by animateFloatAsState(fill(value, limit), Motion.enter(), label = "bar")
+    val color by animateColorAsState(tone.color(), Motion.enter(), label = "barTone")
+    val track = MaterialTheme.colorScheme.surfaceVariant
+    val shown: (Double) -> String = { if (masked) MASK else format(it) }
+    Column(
+        modifier.fillMaxWidth().clearAndSetSemantics {
+            contentDescription = describeBar(label, value, limit, format, masked)
+        },
+    ) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(label, style = MaterialTheme.typography.bodyMedium)
+            Text(
+                "${shown(value)} / ${shown(limit)}",
+                style = MaterialTheme.typography.bodySmall,
+                color = if (tone == Tone.Neutral) MaterialTheme.colorScheme.onSurfaceVariant else color,
+            )
+        }
+        Canvas(Modifier.fillMaxWidth().height(10.dp)) {
+            val h = 6.dp.toPx()
+            val top = (size.height - h) / 2
+            val r = CornerRadius(h / 2)
+            drawRoundRect(track, Offset(0f, top), Size(size.width, h), r)
+            if (f > 0f) drawRoundRect(color, Offset(0f, top), Size(size.width * f, h), r)
+        }
+    }
+}
