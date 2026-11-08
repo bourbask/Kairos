@@ -98,7 +98,7 @@ private fun MaisonCard(maison: MaisonSnapshot, onClick: () -> Unit, modifier: Mo
             PlanIcon(colors.primary, colors.primaryContainer)
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text("Maison", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text("Inventaire", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Text(
                     if (maison.fetchedAt == null) "Le stock de la cuisine, zone par zone" else "$lots produit${if (lots > 1) "s" else ""}",
                     style = MaterialTheme.typography.bodyMedium,
