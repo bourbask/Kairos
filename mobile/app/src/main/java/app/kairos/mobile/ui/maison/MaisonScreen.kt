@@ -5,6 +5,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animate
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -13,11 +14,12 @@ import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
@@ -29,6 +31,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.systemGestures
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -69,6 +72,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
@@ -79,6 +84,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -86,6 +92,7 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -95,6 +102,7 @@ import app.kairos.mobile.data.Lot
 import app.kairos.mobile.data.Order
 import app.kairos.mobile.data.Repository
 import app.kairos.mobile.data.Tone
+import app.kairos.mobile.ui.talk.IconButton
 import app.kairos.mobile.ui.theme.Motion
 import app.kairos.mobile.ui.today.SwipeRow
 import java.time.LocalDate
@@ -121,9 +129,9 @@ private const val SHEET_FLING = 1_500f
 private enum class Panel { Actions, Move, Qty }
 
 /**
- * Espace Maison : plan de la cuisine, stock de la zone choisie dans le panneau
+ * Espace Inventaire : plan de la cuisine, stock de la zone choisie dans le panneau
  * du bas (↑ l'agrandit). Sur un produit : ← consommé (annulable [UNDO_MS]),
- * → déplacer, tap sur la quantité = +/−, tap sur la ligne = les mêmes actions
+ * → déplacer, tap sur la quantité = +/− puis « Valider », tap sur la ligne = les mêmes actions
  * en boutons. Les écritures partent depuis [appScope], qui survit à l'écran.
  * [onUnpack] : ranger une commande, depuis son bandeau ; [onAdd] : ajouter hors commande.
  */
@@ -185,9 +193,11 @@ fun MaisonScreen(
                 is ApiError.Server -> state.refused(a, if (e.code == 422) e.message ?: "Refusé." else "${e.unavailable()}.")
             }
         }
-        // Le serveur fait foi (urgence, quantités lisibles, lot disparu ailleurs).
+        // Le serveur fait foi (urgence, quantités lisibles, lot disparu ailleurs). Lu après
+        // la confirmation (actualisations en file), cet état remplace l'effet local.
         try {
             repository.refreshMaison()
+            repository.maison.value.takeUnless { it.offline }?.let(state::settle)
         } catch (_: ApiError.Unauthorized) {
             unauthorized()
         }
@@ -280,14 +290,14 @@ fun MaisonScreen(
                     open = null
                 },
             )
-            Spacer(Modifier.height(14.dp))
         }
 
         val padTop = with(LocalDensity.current) { padding.calculateTopPadding().roundToPx() }
         Sheet(
             sheet = sheet,
             expandedTop = { headerHeight + padTop },
-            collapsedTop = { topHeight },
+            // [topHeight] est mesuré sous la marge du haut : on la rajoute.
+            collapsedTop = { topHeight + padTop },
             height = { height },
         ) {
             AnimatedContent(state.zone, transitionSpec = { Motion.fadeThrough() }, label = "zone") { zone ->
@@ -469,21 +479,13 @@ private fun SheetHeader(label: String, sheet: SheetState, onToggle: () -> Unit) 
 @Composable
 private fun Header(total: Int, urgent: Int, onClose: () -> Unit, modifier: Modifier = Modifier) {
     Row(
-        modifier.fillMaxWidth().padding(start = 12.dp, end = 20.dp, top = 8.dp, bottom = 10.dp),
+        modifier.fillMaxWidth().padding(start = 4.dp, end = 20.dp, top = 8.dp, bottom = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Surface(
-            onClick = onClose,
-            shape = CircleShape,
-            color = MaterialTheme.colorScheme.surface,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-            modifier = Modifier.size(40.dp).semantics { contentDescription = "Retour aux espaces" },
-        ) {
-            Box(contentAlignment = Alignment.Center) { Text("←", fontSize = 18.sp) }
-        }
-        Spacer(Modifier.width(12.dp))
+        IconButton(label = "Retour aux espaces", onClick = onClose) { ChevronBackIcon(MaterialTheme.colorScheme.onSurfaceVariant) }
+        Spacer(Modifier.width(4.dp))
         Column {
-            Text("Maison", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            Text("Inventaire", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
             Row {
                 Text(
                     "$total produit${if (total > 1) "s" else ""}",
@@ -500,6 +502,17 @@ private fun Header(total: Int, urgent: Int, onClose: () -> Unit, modifier: Modif
                 }
             }
         }
+    }
+}
+
+/** Chevron de retour, dessiné comme ceux de la conversation ; inversé en écriture de droite à gauche. */
+@Composable
+private fun ChevronBackIcon(color: Color) {
+    val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+    Canvas(Modifier.size(22.dp).graphicsLayer { scaleX = if (rtl) -1f else 1f }) {
+        val s = 2.2.dp.toPx()
+        drawLine(color, Offset(size.width * 0.62f, size.height * 0.2f), Offset(size.width * 0.34f, size.height * 0.5f), s, StrokeCap.Round)
+        drawLine(color, Offset(size.width * 0.34f, size.height * 0.5f), Offset(size.width * 0.62f, size.height * 0.8f), s, StrokeCap.Round)
     }
 }
 
@@ -575,7 +588,11 @@ private fun OrderBanner(
     }
 }
 
-/** Plan de la cuisine : proportions de la maquette, adaptées à la largeur de l'écran. */
+/**
+ * Plan de la cuisine, disposition de la maquette. Hauteur : celle que demande le
+ * contenu des zones (taille de police comprise), au moins une fraction de la
+ * largeur ; aucune zone ne descend sous la hauteur de son texte.
+ */
 @Composable
 private fun KitchenPlan(zones: List<ZoneView>, selected: String, onSelect: (String) -> Unit) {
     val byId = zones.associateBy { it.id }
@@ -584,28 +601,39 @@ private fun KitchenPlan(zones: List<ZoneView>, selected: String, onSelect: (Stri
         byId[id]?.let { ZoneTile(it, it.id == selected, round, { onSelect(id) }, modifier) }
     }
     val shape = RoundedCornerShape(20.dp)
-    Surface(
-        shape = shape,
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        shadowElevation = 1.dp,
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp).height(216.dp),
-    ) {
-        Row(Modifier.padding(8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Column(Modifier.weight(0.33f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                tile("frigo", Modifier.weight(0.64f))
-                tile("congelateur", Modifier.weight(0.36f))
-            }
-            Column(Modifier.weight(0.67f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                tile("placard", Modifier.weight(0.27f))
-                tile("etagere", Modifier.weight(0.2f))
-                Box(Modifier.weight(0.53f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    tile("corbeille", Modifier.fillMaxWidth(0.62f).fillMaxHeight(0.94f), round = true)
+    BoxWithConstraints(Modifier.fillMaxWidth().padding(start = PlanMargin, end = PlanMargin, top = 6.dp, bottom = PlanMargin)) {
+        Surface(
+            shape = shape,
+            color = MaterialTheme.colorScheme.surface,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            shadowElevation = 1.dp,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            // Ordre voulu : le minimum borne la hauteur intrinsèque, qui ne descend donc jamais sous le contenu.
+            Row(
+                Modifier
+                    .heightIn(min = (maxWidth * 0.55f).coerceIn(180.dp, 320.dp))
+                    .height(IntrinsicSize.Min)
+                    .padding(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Column(Modifier.weight(0.33f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    tile("frigo", Modifier.weight(0.64f))
+                    tile("congelateur", Modifier.weight(0.36f))
+                }
+                Column(Modifier.weight(0.67f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // Placard et étagère à la hauteur de leur contenu ; la table prend le reste.
+                    tile("placard", Modifier)
+                    tile("etagere", Modifier)
+                    tile("corbeille", Modifier.weight(1f).padding(horizontal = 28.dp), round = true)
                 }
             }
         }
     }
 }
+
+/** Marge du plan aux bords de l'écran, reprise entre le plan et le panneau du bas. */
+private val PlanMargin = 16.dp
 
 @Composable
 private fun ZoneTile(zone: ZoneView, selected: Boolean, round: Boolean, onClick: () -> Unit, modifier: Modifier) {
@@ -614,9 +642,10 @@ private fun ZoneTile(zone: ZoneView, selected: Boolean, round: Boolean, onClick:
     val bg by animateColorAsState(if (selected) colors.primaryContainer else colors.background, Motion.enter(), label = "fond")
     val line by animateColorAsState(if (selected) colors.primary else colors.outlineVariant, Motion.enter(), label = "bord")
     val count = if (zone.count == 0) "vide" else "${zone.count} produit${if (zone.count > 1) "s" else ""}"
-    Box(
+    Column(
         modifier
             .fillMaxWidth()
+            .heightIn(min = 48.dp)
             .clip(shape)
             .background(bg)
             .border(1.5.dp, line, shape)
@@ -624,26 +653,33 @@ private fun ZoneTile(zone: ZoneView, selected: Boolean, round: Boolean, onClick:
             .semantics(mergeDescendants = true) {
                 contentDescription = zone.label + ", " + count + if (zone.urgent > 0) ", ${zone.urgent} urgent" + (if (zone.urgent > 1) "s" else "") else ""
             }
-            .padding(horizontal = 10.dp, vertical = 7.dp),
+            .padding(horizontal = if (round) 14.dp else 10.dp, vertical = 7.dp),
+        // Libellé en bas de la zone (au centre pour la table), comme sur la maquette.
+        verticalArrangement = if (round) Arrangement.Center else Arrangement.Bottom,
+        horizontalAlignment = if (round) Alignment.CenterHorizontally else Alignment.Start,
     ) {
-        Column(
-            Modifier.align(if (round) Alignment.Center else Alignment.BottomStart),
-            horizontalAlignment = if (round) Alignment.CenterHorizontally else Alignment.Start,
-        ) {
-            Text(zone.label, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = if (selected) colors.onPrimaryContainer else colors.onSurface)
-            Text(count, fontSize = 11.5.sp, color = colors.onSurfaceVariant, maxLines = 1)
-        }
-        if (zone.urgent > 0) {
-            Box(
-                Modifier
-                    .align(Alignment.TopEnd)
-                    .size(20.dp)
-                    .background(colors.error, CircleShape),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text("${zone.urgent}", color = colors.onError, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                zone.label,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = if (selected) colors.onPrimaryContainer else colors.onSurface,
+                modifier = if (round) Modifier else Modifier.weight(1f),
+            )
+            if (zone.urgent > 0) {
+                Box(
+                    Modifier
+                        .padding(start = 4.dp)
+                        .sizeIn(minWidth = 20.dp, minHeight = 20.dp)
+                        .background(colors.error, CircleShape)
+                        .padding(horizontal = 4.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text("${zone.urgent}", color = colors.onError, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
+                }
             }
         }
+        Text(count, fontSize = 11.5.sp, color = colors.onSurfaceVariant, textAlign = if (round) TextAlign.Center else TextAlign.Start)
     }
 }
 
@@ -798,41 +834,43 @@ private fun MoveChoices(lot: Lot, zones: List<ZoneView>, enabled: Boolean, onMov
     }
 }
 
+/** +/− au pas du serveur, puis « Valider » (envoi) ou « Annuler » ; rien ne part sans validation. */
 @Composable
 private fun QtyEditor(lot: Lot, enabled: Boolean, onQty: (Double) -> Unit, onCancel: () -> Unit) {
     val haptic = LocalHapticFeedback.current
     var value by remember(lot.id, lot.qty) { mutableDoubleStateOf(lot.qty) }
-    val step = lot.step.takeIf { it > 0 } ?: 1.0
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        StepButton("−", enabled && value > 0) {
-            value = max(0.0, value - step)
-            haptic.performHapticFeedback(HapticFeedbackType.SegmentTick)
+    fun step(up: Boolean) {
+        value = stepQty(value, lot.step, up)
+        haptic.performHapticFeedback(HapticFeedbackType.SegmentTick)
+    }
+    // Deux lignes : sur un écran étroit ou en grande police, les boutons ne sortent jamais de l'écran.
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            StepButton("−", "Diminuer", enabled && value > 0) { step(up = false) }
+            Text(
+                if (value <= 0) "tout consommé" else formatQty(value, lot.unit),
+                style = MaterialTheme.typography.titleMedium,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.weight(1f).padding(horizontal = 6.dp),
+            )
+            StepButton("+", "Augmenter", enabled) { step(up = true) }
         }
-        Text(
-            if (value <= 0) "tout consommé" else formatQty(value, lot.unit),
-            style = MaterialTheme.typography.titleMedium,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.widthIn(min = 104.dp).padding(horizontal = 6.dp),
-        )
-        StepButton("+", enabled) {
-            value += step
-            haptic.performHapticFeedback(HapticFeedbackType.SegmentTick)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End), verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = onCancel) { Text("Annuler") }
+            Pill("Valider", { onQty(value) }, enabled && abs(value - lot.qty) > 1e-9, filled = true)
         }
-        Spacer(Modifier.weight(1f))
-        TextButton(onClick = onCancel) { Text("Annuler") }
-        Pill("OK", { onQty(value) }, enabled && abs(value - lot.qty) > 1e-9, filled = true)
     }
 }
 
 @Composable
-private fun RowScope.StepButton(text: String, enabled: Boolean, onClick: () -> Unit) {
+private fun StepButton(text: String, label: String, enabled: Boolean, onClick: () -> Unit) {
     Surface(
         onClick = onClick,
         enabled = enabled,
         shape = RoundedCornerShape(12.dp),
         color = MaterialTheme.colorScheme.primaryContainer,
         contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-        modifier = Modifier.size(44.dp).alpha(if (enabled) 1f else 0.45f),
+        modifier = Modifier.size(48.dp).alpha(if (enabled) 1f else 0.45f).semantics { contentDescription = label },
     ) {
         Box(contentAlignment = Alignment.Center) { Text(text, fontSize = 22.sp, fontWeight = FontWeight.Bold) }
     }

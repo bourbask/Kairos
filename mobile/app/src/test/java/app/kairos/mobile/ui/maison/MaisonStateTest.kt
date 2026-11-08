@@ -159,6 +159,41 @@ class MaisonStateTest {
     }
 
     @Test
+    fun confirmed_move_survives_stale_snapshot_until_settled() {
+        val s = MaisonState(snapshot())
+        val move = s.move(riz, "frigo")!!
+        s.dispatch(move)
+        s.confirmed(move)
+        // Une actualisation partie avant le déplacement (ou un échec qui rend l'ancien état)
+        // ne ramène pas le lot : plan et liste restent d'accord.
+        s.load(snapshot())
+        assertEquals(3 to 0, s.zones.first { it.id == "frigo" }.count to s.zones.first { it.id == "placard" }.count)
+        assertEquals(listOf(3L), s.lotsIn("frigo").filter { it.id == 3L }.map { it.id })
+        // L'état lu après la confirmation fait foi : l'effet local n'est plus rejoué.
+        val after = snapshot().let { it.copy(inventory = it.inventory.copy(lots = listOf(champignons, soupe))) }
+        s.settle(after)
+        assertEquals(2, s.total)
+        assertEquals(0, s.zones.first { it.id == "placard" }.count)
+        s.load(snapshot())
+        assertEquals("placard", s.lots.first { it.id == 3L }.location)
+    }
+
+    @Test
+    fun quantity_editor_steps_then_validates() {
+        // Pas du serveur, sans dérive flottante, jamais sous zéro.
+        assertEquals(1100.0, stepQty(1000.0, 100.0, up = true), 0.0)
+        assertEquals(0.3, stepQty(stepQty(stepQty(0.0, 0.1, true), 0.1, true), 0.1, true), 0.0)
+        assertEquals(0.0, stepQty(30.0, 50.0, up = false), 0.0)
+        assertEquals(2.0, stepQty(1.0, 0.0, up = true), 0.0)
+        // « Valider » envoie la quantité (unité de base) par app_lot_update, plan et liste à jour.
+        val s = MaisonState(snapshot())
+        val v = s.setQty(riz, stepQty(riz.qty, riz.step, up = false))!!
+        assertEquals("app_lot_update" to """{"lot":3,"qty":900.0}""", v.tool to v.args.toString())
+        assertEquals("900 g", s.lotsIn("placard").single().label)
+        assertTrue(s.dispatch(v))
+    }
+
+    @Test
     fun readable_quantities_and_dates() {
         assertEquals("950 g", formatQty(950.0, "g"))
         assertEquals("1,25 kg", formatQty(1250.0, "g"))
