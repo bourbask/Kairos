@@ -41,6 +41,8 @@ tar czf - -C "$ROOT" --exclude-vcs-ignores \
 # Remplace l'APK de l'hôte par celui de la release ; tout échec est rapporté, jamais fatal.
 deploy_apk() {
     local version tmp apk
+    # Créé ici par l'utilisateur ssh : sinon le compose le créerait en root au démarrage.
+    ssh "$VPS_HOST" "mkdir -p '$KAIROS_DIR/apk'" || true
     version="$(sed -n 's/^version = "\(.*\)"$/\1/p' "$ROOT/Cargo.toml" | head -n1)"
     if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
         echo "    APK ignoré : version illisible dans Cargo.toml."; return 0
@@ -55,7 +57,9 @@ deploy_apk() {
     fi
     apk="$(find "$tmp" -maxdepth 1 -name '*.apk' | head -n1)"
     # Dépôt sous un nom temporaire puis renommage : la tête ne sert jamais un fichier partiel.
+    # Un .part laissé par un envoi interrompu est retiré avant le dépôt.
     if ssh "$VPS_HOST" "mkdir -p '$KAIROS_DIR/apk' && cd '$KAIROS_DIR/apk' \
+            && rm -f .kairos-v*.apk.part \
             && cat > .kairos-v$version.apk.part && mv .kairos-v$version.apk.part kairos-v$version.apk \
             && find . -maxdepth 1 -name 'kairos-v*.apk' ! -name 'kairos-v$version.apk' -delete" < "$apk"; then
         echo "    APK v$version déposé."
