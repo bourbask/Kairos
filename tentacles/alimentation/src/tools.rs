@@ -425,17 +425,11 @@ impl FoodServer {
             c["done"] = done;
             cards.push(c);
             if m.slot == Slot::Soir && m.note.as_deref() == Some(crate::plan::BOX_NOTE) {
-                let next = (d + chrono::Duration::days(1)).to_string();
-                let plan = self.store.plan(&next, &next).map_err(|e| e.to_string())?;
-                let dish = plan.iter().find(|x| x.slot == Slot::Midi).map_or(m.dish.as_str(), |x| x.dish.as_str());
-                let mut b = json!({
+                // Sans action : la portion est déjà au frigo, la carte reste une note locale.
+                cards.push(json!({
                     "id": format!("box-{d}"), "kind": "info", "time": "20:00",
                     "title": "Box de demain", "body": crate::plan::BOX_NOTE,
-                });
-                if let Some(l) = self.dish_lots(dish, Some("congelateur"))?.first() {
-                    b["done"] = json!({"tool": "app_lot_update", "args": {"lot": l.id, "location": "frigo"}});
-                }
-                cards.push(b);
+                }));
             }
         }
         // ponytail: l'urgence se calcule depuis aujourd'hui, donc seulement pour le jour courant.
@@ -452,16 +446,18 @@ impl FoodServer {
         serde_json::to_string(&cards).map_err(|e| e.to_string())
     }
 
-    /// Lots de nature `plat` portant ce nom, les plus anciens d'abord.
-    fn dish_lots(&self, dish: &str, loc: Option<&str>) -> Result<Vec<Lot>, String> {
+    /// Lots de nature `plat` de ce nom exact : frigo d'abord, puis les plus anciens.
+    fn dish_lots(&self, dish: &str) -> Result<Vec<Lot>, String> {
+        use crate::units::fold;
+        let want = fold(dish.trim());
         let mut lots: Vec<Lot> = self
             .store
-            .lots(loc, Some(dish))
+            .lots(None, Some(dish))
             .map_err(|e| e.to_string())?
             .into_iter()
-            .filter(|l| l.nature == Some(Nature::Plat))
+            .filter(|l| l.nature == Some(Nature::Plat) && fold(&l.product) == want)
             .collect();
-        lots.sort_by_key(|l| (l.added_at, l.id));
+        lots.sort_by_key(|l| (l.location != "frigo", l.added_at, l.id));
         Ok(lots)
     }
 
@@ -868,8 +864,15 @@ impl FoodServer {
             None => self.today().to_string(),
         };
         let place = a.place.as_deref().map(|p| crate::units::fold(p.trim())).unwrap_or_else(|| "maison".into());
-        let id =
-            self.store.add_meal(&day, slot, a.name.trim(), &place, a.notes.as_deref()).map_err(|e| e.to_string())?;
+        // Midi et soir : un seul repas par créneau, comme le « fait » de l'application.
+        let id = if matches!(slot, "midi" | "soir") {
+            self.store
+                .add_meal_once(&day, slot, a.name.trim(), &place, a.notes.as_deref())
+                .map_err(|e| e.to_string())?
+                .ok_or_else(|| format!("Repas du {day} ({slot}) déjà noté : rien n'a été déduit."))?
+        } else {
+            self.store.add_meal(&day, slot, a.name.trim(), &place, a.notes.as_deref()).map_err(|e| e.to_string())?
+        };
         let mut out = vec![format!("Repas noté : {} — {}, {slot}, {place}", day, a.name.trim())];
         for l in a.ingredients.unwrap_or_default() {
             match self.store.take(&l, "repas", Some(id)) {
@@ -1228,7 +1231,7 @@ impl FoodServer {
         // Un seul repas par jour et créneau : un second « fait » (double tap, renvoi) ne décompte rien.
         let note = |place: &str| -> Result<i64, String> {
             self.store
-                .add_meal_once(&day, slot.as_str(), &m.dish, place)
+                .add_meal_once(&day, slot.as_str(), &m.dish, place, None)
                 .map_err(|e| e.to_string())?
                 .ok_or_else(|| format!("{} : déjà noté le {day} ({}).", m.dish, slot.as_str()))
         };
@@ -1247,11 +1250,16 @@ impl FoodServer {
                 }
                 let left = r.portions.saturating_sub(eaten);
                 if left > 0 {
-                    out.push(format!("- reste au frigo : {}", self.store.add_dish(&m.dish, f64::from(left))?));
+                    // Repas déjà noté et ingrédients déduits : un échec ici se signale, il n'annule rien.
+                    out.push(match self.store.add_dish(&m.dish, f64::from(left)) {
+                        Ok(s) => format!("- reste au frigo : {s}"),
+                        Err(e) => format!("- reste non mis en stock : {e}"),
+                    });
                 }
             }
         } else {
-            let lots = self.dish_lots(&m.dish, None)?;
+            let lots = self.dish_lots(&m.dish)?;
+            let have: f64 = lots.iter().map(|l| l.qty).sum();
             if lots.is_empty() {
                 return Err(format!("{} : aucune portion en stock, rien n'a été retiré.", m.dish));
             }
@@ -1264,6 +1272,9 @@ impl FoodServer {
                 let used = want.min(l.qty);
                 out.push(format!("- {}", self.store.use_lot(l.id, Some(used))?));
                 want -= used;
+            }
+            if have < f64::from(eaten) {
+                out.push(format!("- seulement {have} portion(s) disponible(s)"));
             }
         }
         message(out.join("\n"))
@@ -2029,7 +2040,7 @@ mod tests {
     }
 
     #[test]
-    fn box_card_done_moves_frozen_dish() {
+    fn box_card_is_a_local_note() {
         let s = server();
         let day = "2026-11-08";
         let next = "2026-11-09";
@@ -2038,12 +2049,74 @@ mod tests {
             meal(next, Slot::Midi, "Dhal", MealKind::Box, None),
         ];
         s.store.replace_plan(day, next, &plan).unwrap();
-        assert!(cards(&s, day)[1].get("done").is_none(), "aucun plat congelé : pas d'action");
         s.store.add_dish("Dhal", 2.0).unwrap();
         let id = dish_lots(&s, "dhal")[0].id;
         s.store.update_lot(id, Some("congelateur"), None, None).unwrap();
         let c = cards(&s, day);
         assert_eq!(c[1]["id"], "box-2026-11-08");
-        assert_eq!(c[1]["done"], serde_json::json!({"tool": "app_lot_update", "args": {"lot": id, "location": "frigo"}}));
+        assert!(c[1].get("done").is_none(), "la portion est déjà au frigo : note locale seulement");
+    }
+
+    #[tokio::test]
+    async fn leftover_matches_dish_exactly() {
+        let s = server();
+        let day = "2026-11-08";
+        s.store.replace_plan(day, day, &[meal(day, Slot::Midi, "Riz", MealKind::Leftover, None)]).unwrap();
+        s.store.add_dish("Riz cantonais", 2.0).unwrap();
+        assert!(done(&s, day, "midi", None).await.is_err(), "« Riz » ne puise pas dans « Riz cantonais »");
+        assert_eq!(dish_lots(&s, "riz cantonais")[0].qty, 2.0);
+    }
+
+    #[tokio::test]
+    async fn leftover_done_prefers_fridge_over_freezer() {
+        let s = server();
+        let day = "2026-11-08";
+        s.store.replace_plan(day, day, &[meal(day, Slot::Midi, "Dhal", MealKind::Leftover, None)]).unwrap();
+        s.store.add_dish("Dhal", 2.0).unwrap();
+        let frozen = dish_lots(&s, "dhal")[0].id;
+        s.store.update_lot(frozen, Some("congelateur"), None, None).unwrap();
+        s.store.add_dish("Dhal", 2.0).unwrap();
+        v(done(&s, day, "midi", None).await);
+        let lots = dish_lots(&s, "dhal");
+        assert_eq!(lots.iter().find(|l| l.id == frozen).unwrap().qty, 2.0, "le congelé reste entier");
+        assert_eq!(lots.iter().find(|l| l.location == "frigo").unwrap().qty, 1.0);
+    }
+
+    #[tokio::test]
+    async fn leftover_shortfall_is_said() {
+        let s = server();
+        let day = "2026-11-08";
+        s.store.replace_plan(day, day, &[meal(day, Slot::Midi, "Dhal", MealKind::Leftover, None)]).unwrap();
+        s.store.add_dish("Dhal", 1.0).unwrap();
+        let j = v(done(&s, day, "midi", Some(3)).await);
+        assert!(j["message"].as_str().unwrap().contains("seulement 1 portion(s) disponible(s)"), "{j}");
+        assert!(dish_lots(&s, "dhal").is_empty());
+    }
+
+    #[test]
+    fn add_dish_keeps_raw_ingredient() {
+        let s = server();
+        s.store.add(&item("Riz", 2.0, "pièce", "placard", None), "achat", None).unwrap();
+        let raw = s.store.lots(None, None).unwrap()[0].clone();
+        s.store.add_dish("Riz", 3.0).unwrap();
+        let lots = s.store.lots(None, None).unwrap();
+        assert_eq!(lots.iter().find(|l| l.id == raw.id).unwrap().nature, raw.nature, "l'ingrédient n'est pas retagué");
+        assert_ne!(raw.nature, Some(crate::nature::Nature::Plat));
+        let plats = dish_lots(&s, "riz");
+        assert_eq!((plats.len(), plats[0].qty), (1, 3.0));
+    }
+
+    #[tokio::test]
+    async fn meal_log_after_app_done_not_doubled() {
+        let s = server();
+        let day = "2026-11-08";
+        dhal(&s, day);
+        s.store.add(&item("Lentilles corail", 1000.0, "g", "placard", None), "achat", None).unwrap();
+        v(done(&s, day, "soir", None).await);
+        let a = serde_json::json!({"slot": "dîner", "name": "Dhal", "day": day,
+            "ingredients": [{"name": "Lentilles corail", "qty": 300, "unit": "g"}]});
+        assert!(s.meal_log(Parameters(serde_json::from_value(a).unwrap())).await.is_err());
+        assert_eq!(s.store.meals_since(day).unwrap().len(), 1);
+        assert_eq!(s.store.lots(None, Some("lentilles")).unwrap()[0].qty, 700.0);
     }
 }

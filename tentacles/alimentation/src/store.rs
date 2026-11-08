@@ -485,12 +485,28 @@ impl Store {
         if p.family != f {
             return Err(format!("{} est compté en {} : unité incompatible.", p.name, p.family.as_str()));
         }
-        let (exp, kind, est) = dating(&p.name, &loc, exp);
+        self.stock_lot(&p, q, &loc, exp, reason, order, l.price)
+    }
+
+    /// Nouveau lot d'un produit connu, et son mouvement d'entrée.
+    #[allow(clippy::too_many_arguments)]
+    fn stock_lot(
+        &self,
+        p: &Product,
+        q: f64,
+        loc: &str,
+        exp: Option<String>,
+        reason: &str,
+        order: Option<i64>,
+        price: Option<f64>,
+    ) -> Result<String, String> {
+        let f = p.family;
+        let (exp, kind, est) = dating(&p.name, loc, exp);
         let db = self.db.lock().unwrap();
         db.execute(
             "INSERT INTO lots (product_id, qty, location, expiry, expiry_kind, expiry_estimated, added_at, order_id, price)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-            params![p.id, q, loc, exp, kind.as_str(), est, now(), order, l.price],
+            params![p.id, q, loc, exp, kind.as_str(), est, now(), order, price],
         )
         .map_err(|e| e.to_string())?;
         db.execute(
@@ -848,26 +864,51 @@ impl Store {
     }
 
     /// Note un repas sauf s'il en existe déjà un ce jour-là à ce moment : `None` alors.
-    pub fn add_meal_once(&self, day: &str, slot: &str, name: &str, place: &str) -> rusqlite::Result<Option<i64>> {
+    pub fn add_meal_once(
+        &self,
+        day: &str,
+        slot: &str,
+        name: &str,
+        place: &str,
+        notes: Option<&str>,
+    ) -> rusqlite::Result<Option<i64>> {
         let db = self.db.lock().unwrap();
         let n = db.execute(
-            "INSERT INTO meals (day, slot, name, place, at)
-             SELECT ?1, ?2, ?3, ?4, ?5 WHERE NOT EXISTS (SELECT 1 FROM meals WHERE day = ?1 AND slot = ?2)",
-            params![day, slot, name, place, now()],
+            "INSERT INTO meals (day, slot, name, place, notes, at)
+             SELECT ?1, ?2, ?3, ?4, ?5, ?6 WHERE NOT EXISTS (SELECT 1 FROM meals WHERE day = ?1 AND slot = ?2)",
+            params![day, slot, name, place, notes, now()],
         )?;
         Ok((n > 0).then(|| db.last_insert_rowid()))
     }
 
-    /// Portions d'un plat cuisiné mises au frigo, comme un produit de nature `plat`.
+    /// Portions d'un plat cuisiné mises au frigo. Le plat est un produit à part,
+    /// de nature `plat` : un ingrédient du même nom n'est jamais retagué.
     pub fn add_dish(&self, dish: &str, portions: f64) -> Result<String, String> {
-        let p = self.product(dish, Family::Piece, None, None).map_err(|e| e.to_string())?;
-        self.db
-            .lock()
-            .unwrap()
-            .execute("UPDATE products SET nature = ?2 WHERE id = ?1", params![p.id, Nature::Plat.as_str()])
-            .map_err(|e| e.to_string())?;
-        let l = Line { name: p.name, qty: portions, unit: Some("pièce".into()), location: Some("frigo".into()), ..Default::default() };
-        self.add(&l, "reste", None)
+        let name = dish.trim();
+        let p = {
+            let db = self.db.lock().unwrap();
+            let plat = Nature::Plat.as_str();
+            let found = db
+                .query_row(
+                    "SELECT id, name, family, barcode FROM products WHERE folded = ?1 AND family = ?2 AND nature = ?3",
+                    params![fold(name), Family::Piece.as_str(), plat],
+                    Self::product_row,
+                )
+                .optional()
+                .map_err(|e| e.to_string())?;
+            match found {
+                Some(p) => p,
+                None => {
+                    db.execute(
+                        "INSERT INTO products (name, folded, family, nature, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+                        params![name, fold(name), Family::Piece.as_str(), plat, now()],
+                    )
+                    .map_err(|e| e.to_string())?;
+                    Product { id: db.last_insert_rowid(), name: name.to_string(), family: Family::Piece, barcode: None }
+                }
+            }
+        };
+        self.stock_lot(&p, portions, "frigo", None, "reste", None, None)
     }
 
     /// Repas depuis une date : (jour, moment, plat, lieu).
