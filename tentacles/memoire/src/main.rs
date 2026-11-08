@@ -20,10 +20,10 @@ async fn main() -> anyhow::Result<()> {
     }
     let env = TentacleEnv::from_env("MEMOIRE")?;
     let store = Arc::new(Mutex::new(MemoryStore::open(&path)?));
-    // Transcriptions résumées gardées N jours (0 = sans limite) ; purge au démarrage puis chaque jour.
+    // Transcriptions résumées gardées N jours (0, défaut = sans limite) ; purge au démarrage puis chaque jour.
     let days: i64 = match std::env::var("MEMOIRE_TRANSCRIPT_RETENTION_DAYS") {
         Ok(v) if !v.is_empty() => v.parse().context("MEMOIRE_TRANSCRIPT_RETENTION_DAYS invalide")?,
-        _ => 90,
+        _ => 0,
     };
     if days > 0 {
         let store = store.clone();

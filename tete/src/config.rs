@@ -153,7 +153,7 @@ impl Default for HeadConfig {
             interruptions_per_day: 2,
             suggestion_every_minutes: 120,
             session_idle_minutes: 30,
-            chat_retention_days: 90,
+            chat_retention_days: 0,
             commands_tentacle: "marches".into(),
             gateway: no_gateway(),
         }
@@ -241,8 +241,8 @@ mod tests {
         assert_eq!(c.interruptions_per_day, 2);
         assert_eq!(c.suggestion_every_minutes, 120);
         assert_eq!(c.session_idle_minutes, 30);
-        assert_eq!(c.chat_retention_days, 90);
-        assert_eq!(HeadConfig::from_parts("chat_retention_days = 0", env_of(&GATEWAY)).unwrap().chat_retention_days, 0);
+        assert_eq!(c.chat_retention_days, 0, "aucune purge sans choix explicite");
+        assert_eq!(HeadConfig::from_parts("chat_retention_days = 90", env_of(&GATEWAY)).unwrap().chat_retention_days, 90);
         assert_eq!(c.schedule.morning, t(7, 30));
         assert_eq!(c.schedule.evening, t(21, 0));
         assert_eq!(c.schedule.summaries, t(3, 0));
