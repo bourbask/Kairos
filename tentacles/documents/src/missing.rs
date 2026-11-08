@@ -133,12 +133,32 @@ struct MissingArgs {
     domain: Option<String>,
 }
 
-#[tool_router(router = missing_router, vis = "pub(crate)")]
+/// État d'une pièce attendue.
+pub enum Status {
+    /// Pas encore requise (premier contrôle technique à venir).
+    NotYet(NaiveDate),
+    /// Présente : source affichable, date, nombre d'exemplaires, ancienneté si trop vieille.
+    Present { src: String, date: Option<NaiveDate>, count: usize, stale: Option<i64> },
+    /// Absente des faits, mais peut-être parmi les documents illisibles.
+    Maybe(Vec<String>),
+    Missing,
+}
+
+pub struct Check {
+    pub domain: &'static str,
+    pub label: &'static str,
+    pub status: Status,
+}
+
+impl Check {
+    pub fn present(&self) -> bool {
+        matches!(self.status, Status::NotYet(_) | Status::Present { .. })
+    }
+}
+
 impl DocServer {
-    #[tool(
-        description = "Liste de contrôle des pièces administratives attendues (véhicule, logement, énergie, télécom, santé, impôts, emploi, identité, banque) : présentes, manquantes, trop anciennes, ou peut-être présentes mais illisibles."
-    )]
-    async fn missing_documents(&self, Parameters(a): Parameters<MissingArgs>) -> Out {
+    /// Liste de contrôle, éventuellement restreinte à un domaine.
+    pub(crate) fn checklist(&self, domain: Option<&str>) -> Result<Vec<Check>, String> {
         let today = chrono::Utc::now().with_timezone(&self.settings.tz).date_naive();
         let facts: Vec<(Doc, Facts)> = self
             .index
@@ -153,10 +173,8 @@ impl DocServer {
             .into_iter()
             .find(|(d, _)| d.label == "premier contrôle technique" && d.date >= today)
             .map(|(d, _)| d.date);
-        let wanted = a.domain.as_deref().map(fold);
-        let (mut ok, mut ko) = (0, 0);
-        let mut out: Vec<String> = Vec::new();
-        let mut current = "";
+        let wanted = domain.map(fold);
+        let mut out = Vec::new();
         for it in CHECKLIST {
             if wanted.as_deref().is_some_and(|w| fold(it.domain) != w.trim())
                 || self.settings.not_applicable.iter().any(|n| !n.is_empty() && fold(it.label).contains(&fold(n)))
@@ -181,60 +199,74 @@ impl DocServer {
                 .map(|(d, f)| Found { doc: d, date: doc_date(f, today) })
                 .collect();
             found.sort_by(|a, b| b.date.cmp(&a.date).then(a.doc.path.cmp(&b.doc.path)));
-            if it.domain != current {
-                current = it.domain;
-                out.push(it.domain.to_string());
-            }
             // Avant le premier contrôle, une « pièce de CT » ne peut être qu'une erreur de lecture.
             let first_ct = first_ct.filter(|_| it.label == CT_LABEL);
-            let line = match found.first() {
-                _ if first_ct.is_some() => {
-                    ok += 1;
-                    format!(
-                        "  ✓ {} — pas encore requis (premier contrôle avant le {})",
-                        it.label,
-                        first_ct.unwrap().format("%d/%m/%Y")
-                    )
-                }
-                Some(best) => {
-                    ok += 1;
-                    let src = if self.is_private(&best.doc.nature) {
+            let status = match (first_ct, found.first()) {
+                (Some(d), _) => Status::NotYet(d),
+                (None, Some(best)) => Status::Present {
+                    src: if self.is_private(&best.doc.nature) {
                         "document privé".to_string()
                     } else {
                         best.doc.path.clone()
-                    };
-                    let when = best.date.map(|d| format!(" ({})", d.format("%d/%m/%Y"))).unwrap_or_default();
-                    let more =
-                        if found.len() > 1 { format!(" — {} exemplaire(s)", found.len()) } else { String::new() };
-                    let stale = match (it.max_age, best.date) {
-                        (Some(max), Some(d)) if (today - d).num_days() > max => {
-                            format!(" — à renouveler ? le plus récent a {} jours", (today - d).num_days())
-                        }
-                        _ => String::new(),
-                    };
-                    format!("  ✓ {} — {src}{when}{more}{stale}", it.label)
-                }
-                None => {
-                    ko += 1;
-                    let maybe: Vec<&str> = unreadable
+                    },
+                    date: best.date,
+                    count: found.len(),
+                    stale: match (it.max_age, best.date) {
+                        (Some(max), Some(d)) if (today - d).num_days() > max => Some((today - d).num_days()),
+                        _ => None,
+                    },
+                },
+                (None, None) => {
+                    let maybe: Vec<String> = unreadable
                         .iter()
                         .filter(|d| !self.is_private(&d.nature) && matches(it, &words(&d.name)))
-                        .map(|d| d.path.as_str())
+                        .map(|d| d.path.clone())
                         .take(3)
                         .collect();
-                    if maybe.is_empty() {
-                        format!("  ✗ {} — manquant", it.label)
-                    } else {
-                        format!("  ? {} — peut-être illisible : {}", it.label, maybe.join(", "))
-                    }
+                    if maybe.is_empty() { Status::Missing } else { Status::Maybe(maybe) }
                 }
             };
-            out.push(line);
+            out.push(Check { domain: it.domain, label: it.label, status });
         }
-        if out.is_empty() {
+        Ok(out)
+    }
+}
+
+#[tool_router(router = missing_router, vis = "pub(crate)")]
+impl DocServer {
+    #[tool(
+        description = "Liste de contrôle des pièces administratives attendues (véhicule, logement, énergie, télécom, santé, impôts, emploi, identité, banque) : présentes, manquantes, trop anciennes, ou peut-être présentes mais illisibles."
+    )]
+    async fn missing_documents(&self, Parameters(a): Parameters<MissingArgs>) -> Out {
+        let checks = self.checklist(a.domain.as_deref())?;
+        if checks.is_empty() {
             let domains: Vec<_> =
                 CHECKLIST.iter().map(|i| i.domain).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
             return Err(format!("Domaine inconnu. Domaines : {}.", domains.join(", ")));
+        }
+        let ok = checks.iter().filter(|c| c.present()).count();
+        let ko = checks.len() - ok;
+        let mut out: Vec<String> = Vec::new();
+        let mut current = "";
+        for c in &checks {
+            if c.domain != current {
+                current = c.domain;
+                out.push(c.domain.to_string());
+            }
+            out.push(match &c.status {
+                Status::NotYet(d) => {
+                    format!("  ✓ {} — pas encore requis (premier contrôle avant le {})", c.label, d.format("%d/%m/%Y"))
+                }
+                Status::Present { src, date, count, stale } => {
+                    let when = date.map(|d| format!(" ({})", d.format("%d/%m/%Y"))).unwrap_or_default();
+                    let more = if *count > 1 { format!(" — {count} exemplaire(s)") } else { String::new() };
+                    let stale =
+                        stale.map(|n| format!(" — à renouveler ? le plus récent a {n} jours")).unwrap_or_default();
+                    format!("  ✓ {} — {src}{when}{more}{stale}", c.label)
+                }
+                Status::Maybe(paths) => format!("  ? {} — peut-être illisible : {}", c.label, paths.join(", ")),
+                Status::Missing => format!("  ✗ {} — manquant", c.label),
+            });
         }
         Ok(format!("Pièces attendues — {ok} présente(s), {ko} à trouver :\n{}", out.join("\n")))
     }

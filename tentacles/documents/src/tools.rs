@@ -40,6 +40,16 @@ pub struct Settings {
 /// Échéances de tous les documents. Natures privées : type et date seulement,
 /// sans organisme ni chemin (rendu « document privé »).
 pub fn all_deadlines(index: &Index, settings: &Settings, today: chrono::NaiveDate) -> Vec<(Deadline, bool)> {
+    all_deadlines_since(index, settings, today, facts::PAST_DAYS)
+}
+
+/// Comme `all_deadlines`, en gardant les retards d'au plus `past` jours.
+pub fn all_deadlines_since(
+    index: &Index,
+    settings: &Settings,
+    today: chrono::NaiveDate,
+    past: i64,
+) -> Vec<(Deadline, bool)> {
     let private = |n: &str| settings.private.iter().any(|p| fold(p) == fold(n));
     let mut out = Vec::new();
     for (doc, json) in index.all_facts().unwrap_or_default() {
@@ -48,8 +58,9 @@ pub fn all_deadlines(index: &Index, settings: &Settings, today: chrono::NaiveDat
         if is_private {
             f.organisme = None;
             f.reference = None;
+            f.montants.clear();
         }
-        for d in facts::deadlines(&doc.path, &f, today) {
+        for d in facts::deadlines_since(&doc.path, &f, today, past) {
             out.push((d, is_private));
         }
     }
@@ -167,7 +178,7 @@ struct ExcerptArgs {
 
 impl DocServer {
     pub fn new(index: Arc<Index>, settings: Arc<Settings>) -> Self {
-        Self { index, settings, tool_router: Self::tool_router() + Self::write_router() + Self::missing_router() }
+        Self { index, settings, tool_router: Self::tool_router() + Self::write_router() + Self::missing_router() + Self::app_router() }
     }
 
     pub(crate) fn is_private(&self, nature: &str) -> bool {
@@ -189,13 +200,13 @@ impl DocServer {
         format!("- {} ({when}) — {} — {src}", d.date.format("%d/%m/%Y"), d.label)
     }
 
-    fn today(&self) -> chrono::NaiveDate {
+    pub(crate) fn today(&self) -> chrono::NaiveDate {
         chrono::Utc::now().with_timezone(&self.settings.tz).date_naive()
     }
 
     /// Noms exacts des natures privées présentes dans l'index (comparaison sans casse ni accents),
     /// pour que l'exclusion ne dépende pas de la façon dont la configuration les écrit.
-    fn private_natures(&self) -> Result<Vec<String>, String> {
+    pub(crate) fn private_natures(&self) -> Result<Vec<String>, String> {
         let all = self.index.natures().map_err(|e| e.to_string())?;
         Ok(all.into_iter().map(|n| n.0).filter(|n| self.is_private(n)).collect())
     }
