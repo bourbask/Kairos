@@ -67,6 +67,7 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import app.kairos.mobile.data.ApiError
+import app.kairos.mobile.data.Card
 import app.kairos.mobile.data.ConversationSummary
 import app.kairos.mobile.data.Fact
 import app.kairos.mobile.data.FactValue
@@ -109,7 +110,8 @@ private val HISTORY = ListSerializer(FactValue.serializer())
 /**
  * Espace Mémoire : intentions à traiter (glisser → accepter, ← refuser, bouton « plus tard »,
  * ajout rapide), journal (entrées sensibles masquées, recherche, note), faits par thème
- * (tap = historique et correction), conversations résumées (recherche). Dernier état
+ * (tap = historique, correction, oubli), conversations résumées (recherche). Journal, faits
+ * et conversations s'effacent définitivement, après une fenêtre d'annulation. Dernier état
  * gardé hors ligne, sans les entrées sensibles.
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -130,6 +132,8 @@ fun MemoireScreen(
     var refreshing by remember { mutableStateOf(false) }
     var hidden by remember { mutableStateOf(emptySet<Long>()) }
     var revealed by remember { mutableStateOf(emptySet<Long>()) }
+    // Éléments en cours d'effacement ou effacés : jamais réaffichés, recherche comprise.
+    var erased by remember { mutableStateOf(emptySet<String>()) }
     var factKey by rememberSaveable { mutableStateOf<String?>(null) }
     val busy = remember { InFlight() }
     val detail = rememberOverlayState(factKey != null, Origin.Anchor)
@@ -194,7 +198,7 @@ fun MemoireScreen(
             when (out) {
                 is DoneOutcome.Done -> {
                     // Traitée (acceptée, refusée, échue) : le module ne la renvoie plus, elle quitte la liste.
-                    repository.dropIntention(i.id)
+                    repository.dropFromMemoire { withoutIntention(it, i.id) }
                     try {
                         repository.refreshMemoire()
                     } catch (_: ApiError.Unauthorized) {
@@ -203,6 +207,36 @@ fun MemoireScreen(
                     if (repository.memoire.value.issue == null) hidden = hidden - i.id
                     // Seul l'imprévu s'annonce : un message de confirmation retarderait l'annulation du geste suivant.
                     if (out.message == STALE) snackbar.showSnackbar(out.message)
+                }
+                is DoneOutcome.Refused -> snackbar.showSnackbar(out.message)
+                else -> Unit
+            }
+        }
+    }
+
+    /** Effacement définitif après la fenêtre d'annulation ; refus du module : l'élément revient. */
+    fun erase(c: Card, label: String) {
+        appScope.launch {
+            val out = try {
+                completeCard(
+                    c,
+                    null,
+                    mark = { m -> erased = if (m == null) erased - c.id else erased + c.id },
+                    undoWindow = { undoWindow(label) },
+                    call = repository::tool,
+                    busy = busy,
+                )
+            } catch (_: ApiError.Unauthorized) {
+                return@launch unauthorized()
+            }
+            when (out) {
+                is DoneOutcome.Done -> {
+                    repository.dropFromMemoire { withoutErased(it, c) }
+                    try {
+                        repository.refreshMemoire()
+                    } catch (_: ApiError.Unauthorized) {
+                        unauthorized()
+                    }
                 }
                 is DoneOutcome.Refused -> snackbar.showSnackbar(out.message)
                 else -> Unit
@@ -282,20 +316,24 @@ fun MemoireScreen(
                         )
                         Journal(
                             memory.journal,
+                            erased,
                             revealed,
                             masked,
                             onReveal = { id -> revealed = if (id in revealed) revealed - id else revealed + id },
+                            onDelete = { id -> erase(journalErasure(id), "Entrée supprimée") },
                             search = { q -> repository.lookup(MEMOIRE, "app_journal_search", JOURNAL, buildJsonObject { put("query", q) }) },
                             onAdd = { text -> write("app_journal_add", buildJsonObject { put("text", text.trim()) }) },
                             onNote = ::notice,
                             onUnauthorized = unauthorized,
                         )
-                        Facts(memory.facts) { fact, at ->
+                        Facts(memory.facts.filterNot { factErasure(it.key).id in erased }) { fact, at ->
                             at?.let { detail.anchorTo(it, RowCorner) }
                             factKey = fact.key
                         }
                         Conversations(
                             memory.conversations,
+                            erased,
+                            onDelete = { id -> erase(conversationErasure(id), "Conversation supprimée") },
                             search = { q -> repository.lookup(MEMOIRE, "app_conversation_search", CONVERSATIONS, buildJsonObject { put("query", q) }) },
                             onNote = ::notice,
                             onUnauthorized = unauthorized,
@@ -315,6 +353,10 @@ fun MemoireScreen(
                     padding = padding,
                     history = { repository.lookup(MEMOIRE, "app_fact_history", HISTORY, buildJsonObject { put("key", key) }) },
                     onSave = { value -> write("app_fact_set", factSetArgs(key, value)) },
+                    onForget = {
+                        factKey = null
+                        erase(factErasure(key), "Fait oublié · ${factLabel(key)}")
+                    },
                     onUnauthorized = unauthorized,
                     onClose = { factKey = null },
                 )
@@ -524,9 +566,11 @@ private fun <T> SearchField(
 @Composable
 private fun Journal(
     recent: List<JournalEntry>,
+    erased: Set<String>,
     revealed: Set<Long>,
     masked: Boolean,
     onReveal: (Long) -> Unit,
+    onDelete: (Long) -> Unit,
     search: suspend (String) -> List<JournalEntry>,
     onAdd: suspend (String) -> Boolean,
     onNote: (String) -> Unit,
@@ -538,7 +582,7 @@ private fun Journal(
     SectionHeader("Journal") { Pill(if (adding) "Fermer" else "Noter") { adding = !adding } }
     if (adding) Composer("Note", "Enregistrer", onNote) { text -> onAdd(text).also { if (it) adding = false } }
     SearchField("Chercher dans le journal", search, onNote, onUnauthorized) { results = it }
-    val shown = results ?: recent
+    val shown = (results ?: recent).filterNot { journalErasure(it.id).id in erased }
     if (shown.isEmpty()) Caption(if (results != null) "Aucune entrée trouvée." else "Journal vide pour l'instant.")
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         shown.forEach { e ->
@@ -561,6 +605,10 @@ private fun Journal(
                 } else {
                     Text(text, style = MaterialTheme.typography.bodyMedium, maxLines = 6, overflow = TextOverflow.Ellipsis)
                 }
+            }
+            // Visible seulement quand le texte l'est : une entrée sensible se révèle d'abord.
+            if (text != null) {
+                TextButton(onClick = { onDelete(e.id) }) { Text("Supprimer", color = MaterialTheme.colorScheme.error) }
             }
         }
     }
@@ -596,6 +644,8 @@ private fun Facts(facts: List<Fact>, onOpen: (Fact, LayoutCoordinates?) -> Unit)
 @Composable
 private fun Conversations(
     recent: List<ConversationSummary>,
+    erased: Set<String>,
+    onDelete: (Long) -> Unit,
     search: suspend (String) -> List<ConversationSummary>,
     onNote: (String) -> Unit,
     onUnauthorized: () -> Unit,
@@ -603,7 +653,7 @@ private fun Conversations(
     var results by remember { mutableStateOf<List<ConversationSummary>?>(null) }
     SectionHeader("Conversations")
     SearchField("Chercher dans les conversations", search, onNote, onUnauthorized) { results = it }
-    val shown = results ?: recent
+    val shown = (results ?: recent).filterNot { conversationErasure(it.id).id in erased }
     if (shown.isEmpty()) Caption(if (results != null) "Aucune conversation trouvée." else "Aucune conversation pour l'instant.")
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         shown.forEach { c ->
@@ -613,6 +663,7 @@ private fun Conversations(
                 if (c.topics.isNotEmpty()) Caption("Sujets : ${c.topics.joinToString(", ")}")
                 c.decisions.forEach { d -> Text("→ $d", style = MaterialTheme.typography.bodySmall) }
             }
+            TextButton(onClick = { onDelete(c.id) }) { Text("Supprimer", color = MaterialTheme.colorScheme.error) }
         }
     }
 }
@@ -625,6 +676,7 @@ private fun FactPanel(
     padding: PaddingValues,
     history: suspend () -> List<FactValue>,
     onSave: suspend (String) -> Boolean,
+    onForget: () -> Unit,
     onUnauthorized: () -> Unit,
     onClose: () -> Unit,
 ) {
@@ -699,6 +751,10 @@ private fun FactPanel(
                 enabled = !saving,
                 modifier = Modifier.fillMaxWidth(),
             ) { Text(if (saving) "Envoi…" else "Corriger") }
+            OutlinedButton(onClick = onForget, modifier = Modifier.fillMaxWidth()) {
+                Text("Oublier ce fait", color = MaterialTheme.colorScheme.error)
+            }
+            Caption("La valeur et tout son historique sont effacés.")
             SectionHeader("Historique")
             val v = values
             when {

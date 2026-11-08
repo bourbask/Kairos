@@ -23,7 +23,6 @@ import app.kairos.mobile.ui.finances.financesAfter
 import app.kairos.mobile.ui.marches.marchesAfter
 import app.kairos.mobile.ui.memoire.cacheable
 import app.kairos.mobile.ui.memoire.memoireAfter
-import app.kairos.mobile.ui.memoire.withoutIntention
 import kotlinx.serialization.DeserializationStrategy
 import java.io.File
 import java.time.LocalDate
@@ -242,9 +241,9 @@ class Repository(
         if (m.isSuccess) write(memoireFile, MemoireSnapshot.serializer(), cacheable(next))
     }
 
-    /** Retire une intention traitée sans attendre le module (relue à la prochaine actualisation). */
-    suspend fun dropIntention(id: Long) = memoireLock.withLock {
-        val next = _memoire.updateAndGet { withoutIntention(it, id) }
+    /** Retire un élément traité ou effacé sans attendre le module (relu à la prochaine actualisation). */
+    suspend fun dropFromMemoire(change: (MemoireSnapshot) -> MemoireSnapshot) = memoireLock.withLock {
+        val next = _memoire.updateAndGet(change)
         write(memoireFile, MemoireSnapshot.serializer(), cacheable(next))
     }
 

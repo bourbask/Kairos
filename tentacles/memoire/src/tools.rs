@@ -433,6 +433,33 @@ impl MemoryServer {
         json_out(json!({"message": "Fait enregistré."}))
     }
 
+    #[tool(description = "Supprimer définitivement une entrée du journal depuis l'application.")]
+    fn app_journal_delete(&self, Parameters(a): Parameters<IdArgs>) -> Out {
+        if !self.db()?.journal_delete(a.id).map_err(err)? {
+            return Err("entrée inconnue".into());
+        }
+        json_out(json!({"message": "Entrée supprimée."}))
+    }
+
+    #[tool(description = "Oublier un fait depuis l'application : valeur courante et historique.")]
+    fn app_fact_forget(&self, Parameters(a): Parameters<KeyArgs>) -> Out {
+        if is_persona(&a.key) {
+            return Err(PERSONA_REFUSED.into());
+        }
+        if self.db()?.fact_forget(a.key.trim()).map_err(err)? == 0 {
+            return Err("fait inconnu".into());
+        }
+        json_out(json!({"message": "Fait oublié."}))
+    }
+
+    #[tool(description = "Supprimer définitivement une conversation depuis l'application.")]
+    fn app_conversation_delete(&self, Parameters(a): Parameters<IdArgs>) -> Out {
+        if !self.db()?.conversation_delete(a.id).map_err(err)? {
+            return Err("conversation inconnue".into());
+        }
+        json_out(json!({"message": "Conversation supprimée."}))
+    }
+
     #[tool(description = "Rechercher dans les conversations pour l'application (30 résultats au plus).")]
     fn app_conversation_search(&self, Parameters(a): Parameters<AppQueryArgs>) -> Out {
         let found = self.db()?.conversation_search(&a.query, APP_LIMIT).map_err(err)?;
@@ -666,6 +693,38 @@ mod tests {
         assert_eq!(s.db().unwrap().fact_get(PERSONA_KEY).unwrap().unwrap().value, "calme");
         let a = FactSetArgs { key: "gout".into(), value: "thé".into(), provenance: "x".into() };
         assert!(s.fact_set(Parameters(a)).is_ok());
+    }
+
+    #[test]
+    fn app_erasure_tools() {
+        let s = srv();
+        let j = jw(&s, "à oublier", Sensitivity::Strategique);
+        assert!(js(s.app_journal_delete(Parameters(IdArgs { id: j })))["message"].is_string());
+        assert!(s.app_journal_delete(Parameters(IdArgs { id: j })).is_err());
+        assert!(js(s.app_memory())["journal"].as_array().unwrap().is_empty());
+
+        s.app_fact_set(Parameters(AppFactSetArgs { key: "k".into(), value: "a".into() })).unwrap();
+        s.app_fact_set(Parameters(AppFactSetArgs { key: "k".into(), value: "b".into() })).unwrap();
+        assert!(js(s.app_fact_forget(Parameters(KeyArgs { key: " k ".into() })))["message"].is_string());
+        assert!(js(s.app_fact_history(Parameters(KeyArgs { key: "k".into() }))).as_array().unwrap().is_empty());
+        assert!(s.app_fact_forget(Parameters(KeyArgs { key: "k".into() })).is_err());
+
+        s.db().unwrap().fact_set(PERSONA_KEY, "calme", "hote").unwrap();
+        assert!(s.app_fact_forget(Parameters(KeyArgs { key: "persona".into() })).is_err());
+        assert!(s.db().unwrap().fact_get(PERSONA_KEY).unwrap().is_some());
+
+        let c = NewConversation {
+            channel: "voix".into(),
+            device: "d".into(),
+            started_at: now_local(),
+            ended_at: now_local(),
+            transcript: "parlons du jardin".into(),
+            session_id: None,
+        };
+        let id = s.db().unwrap().conversation_ingest(&c).unwrap();
+        assert!(js(s.app_conversation_delete(Parameters(IdArgs { id })))["message"].is_string());
+        assert!(js(s.app_conversation_search(q("jardin"))).as_array().unwrap().is_empty());
+        assert!(s.app_conversation_delete(Parameters(IdArgs { id })).is_err());
     }
 
     #[test]
