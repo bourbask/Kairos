@@ -97,7 +97,7 @@ CREATE TABLE IF NOT EXISTS prefs (k TEXT PRIMARY KEY, v TEXT NOT NULL, updated_a
 ";
 
 /// Emplacements reconnus (le reste est refusé, pour garder un inventaire lisible).
-pub const LOCATIONS: [&str; 5] = ["frigo", "congelateur", "placard", "etagere", "corbeille"];
+pub const LOCATIONS: [&str; 7] = ["frigo", "congelateur", "placard", "etagere", "corbeille", "evier", "sdb"];
 
 /// Emplacement normalisé (« congélo », « Congélateur », « fruits » → valeur connue).
 pub fn location(s: &str) -> Result<String, String> {
@@ -108,6 +108,8 @@ pub fn location(s: &str) -> Result<String, String> {
         x if x.starts_with("plac") || x == "epicerie" || x == "cellier" => "placard",
         x if x.starts_with("etag") => "etagere",
         x if x.starts_with("corb") || x.starts_with("fruit") => "corbeille",
+        x if x.contains("evier") => "evier",
+        x if x == "sdb" || x.starts_with("salle de bain") || x == "bain" || x == "toilettes" => "sdb",
         _ => return Err(format!("Emplacement inconnu « {s} » : {}.", LOCATIONS.join(", "))),
     };
     Ok(l.to_string())
@@ -124,7 +126,7 @@ pub struct Line {
     /// Unité : g, kg, ml, cl, l, pièce (défaut), douzaine.
     #[serde(default)]
     pub unit: Option<String>,
-    /// frigo, congelateur, placard, etagere ou corbeille (fruits et légumes à l'air libre).
+    /// frigo, congelateur, placard, etagere, corbeille (fruits et légumes à l'air libre).
     #[serde(default)]
     pub location: Option<String>,
     /// Date imprimée (AAAA-MM-JJ), si connue ; sinon estimée d'après le produit et l'emplacement.
@@ -1142,6 +1144,9 @@ mod tests {
 
     #[test]
     fn locations_are_normalised() {
+        assert_eq!(location("Sous l'évier").unwrap(), "evier");
+        assert_eq!(location("salle de bain").unwrap(), "sdb");
+        assert_eq!(location("SDB").unwrap(), "sdb");
         assert_eq!(location("Congélo").unwrap(), "congelateur");
         assert_eq!(location("fruits et légumes").unwrap(), "corbeille");
         assert!(location("cave").is_err());

@@ -22,11 +22,16 @@ pub enum Nature {
     Boisson,
     Base,
     Plat,
+    /// Ménage et maison : jamais un aliment.
+    Entretien,
+    /// Soin du corps : jamais un aliment.
+    Hygiene,
 }
 
 use Nature::*;
 
-pub const ALL: [Nature; 11] = [Proteine, Legume, Fruit, Feculent, Laitier, Sucre, Condiment, Epice, Boisson, Base, Plat];
+pub const ALL: [Nature; 13] =
+    [Proteine, Legume, Fruit, Feculent, Laitier, Sucre, Condiment, Epice, Boisson, Base, Plat, Entretien, Hygiene];
 
 impl Nature {
     pub fn as_str(self) -> &'static str {
@@ -42,6 +47,8 @@ impl Nature {
             Boisson => "boisson",
             Base => "base",
             Plat => "plat",
+            Entretien => "entretien",
+            Hygiene => "hygiene",
         }
     }
 
@@ -65,11 +72,34 @@ impl Nature {
             Boisson => "Boissons",
             Base => "Bases de cuisine",
             Plat => "Plats et restes",
+            Entretien => "Entretien",
+            Hygiene => "Hygiène",
         }
+    }
+
+    /// Se mange ou se boit : seuls ces produits entrent dans repas, urgences et briefings.
+    pub fn is_food(self) -> bool {
+        !matches!(self, Entretien | Hygiene)
     }
 }
 
 const RULES: &[(&[&str], Nature)] = &[
+    (
+        &[
+            "liquide vaisselle", "vaisselle", "lessive", "eponge", "eponges", "javel", "nettoyant", "detergent",
+            "detartrant", "desinfectant", "adoucissant", "sac poubelle", "sacs poubelle", "papier toilette",
+            "essuie-tout", "essuie tout", "balai", "serpillere", "lingette", "lingettes", "degraissant",
+        ],
+        Entretien,
+    ),
+    (
+        &[
+            "shampooing", "shampoing", "gel douche", "dentifrice", "brosse a dents", "savon", "deodorant",
+            "apres-shampooing", "coton", "cotons", "rasoir", "mousse a raser", "serviette hygienique", "tampon",
+            "mouchoir", "mouchoirs", "demaquillant", "gel hydroalcoolique",
+        ],
+        Hygiene,
+    ),
     (
         &[
             "reste", "restes", "plat", "lasagne", "gratin", "hachis", "quiche", "pizza", "taboule", "sandwich", "wrap",
@@ -160,6 +190,8 @@ const RULES: &[(&[&str], Nature)] = &[
 
 /// Tags de catégorie anglais de la base produits, en complément des règles.
 const CATEGORY_TAGS: &[(&[&str], Nature)] = &[
+    (&["cleaning", "detergents", "dishwashing", "household", "laundry", "entretien", "droguerie"], Entretien),
+    (&["hygiene", "soaps", "shampoos", "toothpastes", "deodorants", "shower gels", "toilet paper", "cosmetics"], Hygiene),
     (&["pastries", "biscuits", "chocolates", "sweet spreads", "breakfast cereals"], Sucre),
     (&["breads", "pastas", "rices", "potatoes"], Feculent),
     (&["meats", "poultry", "chickens", "fishes", "seafood", "eggs", "legumes"], Proteine),
@@ -175,6 +207,15 @@ const CATEGORY_TAGS: &[(&[&str], Nature)] = &[
 
 /// Expressions dont le sens diffère de leurs mots : lues avant tout le reste.
 const PHRASES: &[(&str, Nature)] = &[
+    ("eau de javel", Entretien),
+    ("sel lave-vaisselle", Entretien),
+    ("sel lave vaisselle", Entretien),
+    ("lave-vaisselle", Entretien),
+    ("pate dentifrice", Hygiene),
+    ("lait corporel", Hygiene),
+    ("lait demaquillant", Hygiene),
+    ("creme hydratante", Hygiene),
+    ("eau micellaire", Hygiene),
     ("lait de coco", Base),
     ("creme de coco", Base),
     ("coconut milk", Base),
@@ -290,7 +331,7 @@ pub fn attrs(n: Nature, name: &str) -> Attrs {
             let cold = any(COLD_DISHES);
             Attrs { a_cuire: false, froid_ok: cold, transportable: cold }
         }
-        Condiment | Epice | Boisson | Base => Attrs { a_cuire: false, froid_ok: false, transportable: false },
+        Condiment | Epice | Boisson | Base | Entretien | Hygiene => Attrs { a_cuire: false, froid_ok: false, transportable: false },
     }
 }
 
@@ -410,6 +451,21 @@ mod tests {
         assert_eq!(from_name("Paprika fumé"), Some(Nature::Epice));
         assert_eq!(from_name("Sauce soja sucrée"), Some(Nature::Condiment));
         assert_eq!(from_name("Objet mystère"), None);
+    }
+
+    #[test]
+    fn cleaning_products_get_entretien() {
+        for n in ["Liquide vaisselle citron", "Lessive liquide", "Éponges x3", "Eau de Javel 2L", "Sac poubelle 30L",
+            "Papier toilette", "Essuie-tout", "Nettoyant multi-surfaces", "Sel lave-vaisselle"] {
+            assert_eq!(from_name(n), Some(Nature::Entretien), "{n}");
+        }
+        for n in ["Shampooing doux", "Gel douche", "Dentifrice menthe", "Savon de Marseille", "Déodorant"] {
+            assert_eq!(from_name(n), Some(Nature::Hygiene), "{n}");
+        }
+        assert_eq!(resolve(None, Some("cleaning products"), "Produit X"), Some(Nature::Entretien));
+        assert_eq!(resolve(None, Some("shampoos"), "Produit X"), Some(Nature::Hygiene));
+        assert_eq!(from_name("Selle d'agneau"), Some(Nature::Proteine));
+        assert!(!Nature::Entretien.is_food() && !Nature::Hygiene.is_food() && Nature::Plat.is_food());
     }
 
     #[test]

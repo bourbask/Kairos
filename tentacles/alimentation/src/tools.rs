@@ -301,10 +301,18 @@ fn expiry(l: &Lot) -> Option<chrono::NaiveDate> {
 /// Au-delà, une durée estimée décrit de l'épicerie sèche, pas du frais.
 const FRESH_SPAN_DAYS: i64 = 30;
 
+/// Entretien et hygiène : ni repas, ni urgence, ni briefing.
+fn non_food(l: &Lot) -> bool {
+    l.nature.is_some_and(|n| !n.is_food()) || matches!(l.location.as_str(), "evier" | "sdb")
+}
+
 /// Se gâte vraiment : DLC, produit gardé au frais (œufs, beurre), frais sans
 /// date lue (estimation courte) ou nature de date inconnue (prudence). Une DDM
 /// imprimée hors du frigo, ou estimée à long terme (riz, pâtes), n'est jamais urgente.
 fn perishable(l: &Lot) -> bool {
+    if non_food(l) {
+        return false;
+    }
     let short = || {
         let added = chrono::DateTime::from_timestamp(l.added_at, 0).map(|t| t.date_naive());
         matches!((expiry(l), added), (Some(e), Some(a)) if (e - a).num_days() <= FRESH_SPAN_DAYS)
@@ -313,8 +321,15 @@ fn perishable(l: &Lot) -> bool {
 }
 
 /// Zones du plan de la cuisine : valeur stockée, libellé affiché.
-const ZONES: [(&str, &str); 5] =
-    [("frigo", "Frigo"), ("congelateur", "Congélo"), ("placard", "Placard"), ("etagere", "Étagère"), ("corbeille", "Table")];
+const ZONES: [(&str, &str); 7] = [
+    ("frigo", "Frigo"),
+    ("congelateur", "Congélo"),
+    ("placard", "Placard"),
+    ("etagere", "Étagère"),
+    ("corbeille", "Table"),
+    ("evier", "Sous l'évier"),
+    ("sdb", "Salle de bain"),
+];
 
 /// Un produit rangé là, à cette date (ou sans), se gâte-t-il vraiment ?
 fn fresh(name: &str, loc: &str, given: Option<String>) -> bool {
@@ -330,7 +345,7 @@ fn fresh(name: &str, loc: &str, given: Option<String>) -> bool {
         estimated,
         opened: false,
         added_at: chrono::Utc::now().timestamp(),
-        nature: None,
+        nature: crate::nature::from_name(name),
     })
 }
 
@@ -500,7 +515,7 @@ impl FoodServer {
             .lots(None, None)
             .map_err(|e| e.to_string())?
             .into_iter()
-            .filter(|l| !perishable(l) && expiry(l).is_some_and(|d| d < today))
+            .filter(|l| !non_food(l) && !perishable(l) && expiry(l).is_some_and(|d| d < today))
             .collect();
         lots.sort_by(|a, b| expiry(a).cmp(&expiry(b)).then_with(|| a.product.cmp(&b.product)));
         lots.truncate(STALE_MAX);
@@ -1635,7 +1650,7 @@ mod tests {
         s.store.add(&item("Riz basmati", 1.0, "kg", "placard", None), "achat", None).unwrap();
         let j = v(s.app_inventory().await);
         let zones = j["zones"].as_array().unwrap();
-        assert_eq!(zones.len(), 5);
+        assert_eq!(zones.len(), 7);
         let z = |id: &str| zones.iter().find(|z| z["id"] == id).unwrap().clone();
         assert_eq!((z("frigo")["label"].clone(), z("frigo")["count"].clone(), z("frigo")["urgent"].clone()), ("Frigo".into(), 2.into(), 1.into()));
         assert_eq!(z("congelateur")["label"], "Congélo");
@@ -1648,6 +1663,51 @@ mod tests {
         assert_eq!((lots[2]["qty"].as_f64(), lots[2]["unit"].as_str()), (Some(1000.0), Some("g")));
         assert_eq!((lots[2]["expiry_kind"].as_str(), lots[2]["estimated"].as_bool()), (Some("ddm"), Some(true)));
         assert_eq!((lots[0]["location"].as_str(), lots[0]["estimated"].as_bool()), (Some("frigo"), Some(false)));
+    }
+
+    #[tokio::test]
+    async fn inventory_lists_new_zones() {
+        let s = server();
+        s.store.add(&item("Liquide vaisselle", 1.0, "pièce", "evier", None), "achat", None).unwrap();
+        s.store.add(&item("Shampooing", 2.0, "pièce", "sdb", None), "achat", None).unwrap();
+        let j = v(s.app_inventory().await);
+        let zones = j["zones"].as_array().unwrap();
+        let z = |id: &str| zones.iter().find(|z| z["id"] == id).unwrap().clone();
+        assert_eq!((z("evier")["label"].clone(), z("evier")["count"].clone()), ("Sous l'évier".into(), 1.into()));
+        assert_eq!((z("sdb")["label"].clone(), z("sdb")["count"].clone()), ("Salle de bain".into(), 1.into()));
+    }
+
+    #[test]
+    fn non_food_default_zone() {
+        assert_eq!(crate::bon::location("", "Liquide vaisselle"), "evier");
+        assert_eq!(crate::bon::location("", "Gel douche"), "sdb");
+        assert_eq!(crate::bon::location("hygiene", "Produit X"), "sdb");
+        assert_eq!(crate::bon::location("", "Riz basmati"), "placard");
+    }
+
+    #[tokio::test]
+    async fn non_food_never_in_meals_or_urgent() {
+        let s = server();
+        let t = s.today();
+        let past = Some((t - chrono::Duration::days(3)).to_string());
+        let soon = Some((t + chrono::Duration::days(1)).to_string());
+        s.store.add(&item("Liquide vaisselle", 1.0, "pièce", "evier", soon.clone()), "achat", None).unwrap();
+        s.store.add(&item("Dentifrice", 1.0, "pièce", "frigo", past), "achat", None).unwrap();
+        s.store.add(&item("Éponges", 3.0, "pièce", "placard", soon), "achat", None).unwrap();
+        assert!(!perishable(&lot(None, false, "evier", 365)));
+        assert!(!super::fresh("Gel douche", "frigo", None));
+        assert_eq!(s.urgent(30).unwrap().len(), 0);
+        assert_eq!(s.stale().unwrap().len(), 0);
+        let uf = s.use_first(Parameters(serde_json::from_value(serde_json::json!({"days": 30})).unwrap())).await.unwrap();
+        assert!(uf.starts_with("Rien à finir"), "{uf}");
+        let b = s.brief_section(Parameters(serde_json::from_value(serde_json::json!({"period": "matin"})).unwrap())).await.unwrap();
+        assert!(!b.contains("vaisselle") && !b.contains("Éponges"), "{b}");
+        let c = s.cards_json(&t.to_string()).unwrap();
+        assert!(!c.contains("vaisselle") && !c.contains("Dentifrice"), "{c}");
+        for slot in ["petit-dejeuner", "midi", "gouter", "soir"] {
+            let o = s.cook_options(Parameters(serde_json::from_value(serde_json::json!({"slot": slot})).unwrap())).await.unwrap();
+            assert!(!o.contains("vaisselle") && !o.contains("Éponges") && !o.contains("Dentifrice"), "{o}");
+        }
     }
 
     #[tokio::test]
