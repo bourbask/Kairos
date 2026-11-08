@@ -64,6 +64,11 @@ const APP_PROVENANCE: &str = "application";
 /// La personnalité de l'assistant ne se lit ni ne se modifie depuis l'application.
 const PERSONA_REFUSED: &str = "La personnalité de l'assistant ne se modifie pas d'ici.";
 
+/// La personnalité ne s'écrit que depuis l'hôte (`kairos-memoire persona`), jamais par un outil.
+fn is_persona(key: &str) -> bool {
+    key.trim().eq_ignore_ascii_case(PERSONA_KEY)
+}
+
 /// Sensibilité des notes saisies depuis l'application.
 const APP_SENSITIVITY: Sensitivity = Sensitivity::Commune;
 
@@ -234,6 +239,9 @@ impl MemoryServer {
 
     #[tool(description = "Enregistrer ou mettre à jour un fait stable sur l'utilisateur (l'historique est conservé).")]
     fn fact_set(&self, Parameters(a): Parameters<FactSetArgs>) -> Out {
+        if is_persona(&a.key) {
+            return Err(PERSONA_REFUSED.into());
+        }
         self.db()?.fact_set(&a.key, &a.value, &a.provenance).map_err(err)?;
         json_out(serde_json::json!({ "ok": true }))
     }
@@ -405,7 +413,7 @@ impl MemoryServer {
 
     #[tool(description = "Historique des valeurs d'un fait pour l'application, de la plus ancienne à la plus récente.")]
     fn app_fact_history(&self, Parameters(a): Parameters<KeyArgs>) -> Out {
-        if a.key.trim() == PERSONA_KEY {
+        if is_persona(&a.key) {
             return Err(PERSONA_REFUSED.into());
         }
         let h = self.db()?.fact_history(&a.key).map_err(err)?;
@@ -418,7 +426,7 @@ impl MemoryServer {
         if key.is_empty() || value.is_empty() {
             return Err("clé ou valeur vide".into());
         }
-        if key == PERSONA_KEY {
+        if is_persona(key) {
             return Err(PERSONA_REFUSED.into());
         }
         self.db()?.fact_set(key, value, APP_PROVENANCE).map_err(err)?;
@@ -645,6 +653,19 @@ mod tests {
         assert!(s.app_fact_set(Parameters(AppFactSetArgs { key: " persona ".into(), value: "ok".into() })).is_err());
         assert!(s.app_fact_history(Parameters(KeyArgs { key: PERSONA_KEY.into() })).is_err());
         assert_eq!(s.db().unwrap().fact_get(PERSONA_KEY).unwrap().unwrap().value, "calme");
+    }
+
+    #[test]
+    fn llm_fact_set_refuses_persona() {
+        let s = srv();
+        s.db().unwrap().fact_set(PERSONA_KEY, "calme", "hote").unwrap();
+        for k in ["persona", " persona ", "PERSONA"] {
+            let a = FactSetArgs { key: k.into(), value: "autre".into(), provenance: "x".into() };
+            assert!(s.fact_set(Parameters(a)).is_err(), "{k}");
+        }
+        assert_eq!(s.db().unwrap().fact_get(PERSONA_KEY).unwrap().unwrap().value, "calme");
+        let a = FactSetArgs { key: "gout".into(), value: "thé".into(), provenance: "x".into() };
+        assert!(s.fact_set(Parameters(a)).is_ok());
     }
 
     #[test]
