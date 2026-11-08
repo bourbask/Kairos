@@ -97,30 +97,24 @@ internal fun addArgs(name: String, barcode: String?, product: Product?, qty: Dou
     }
 
 /** Un plat cuisiné se compte en portions et se range au froid. */
-internal const val PORTIONS = "portions"
 internal val DISH_ZONES = listOf("frigo", "congelateur")
 private const val PORTIONS_MAX = 20
 
-/** Arguments de `app_add` pour un plat cuisiné : le module le range comme plat, jamais comme ingrédient. */
+/** Arguments de `app_add_dish` : le module range un plat, jamais un ingrédient. */
 internal fun dishArgs(name: String, portions: Int, zone: String): JsonObject = buildJsonObject {
     put("name", name.trim())
-    put("qty", portions.toDouble())
-    put("unit", PORTIONS)
+    put("portions", portions)
     put("location", zone)
 }
 
 /**
- * Plats prévus d'après les cartes repas du fil (« Midi · <plat> ») : ceux du jour,
+ * Plats prévus d'après les cartes repas du fil (champ `dish`) : ceux du jour,
  * puis des jours passés les plus proches, puis à venir ; sans doublon.
  */
 internal fun plannedDishes(days: List<Day>, today: String): List<String> {
     val (past, rest) = days.partition { it.day < today }
     val ordered = rest.filter { it.day == today } + past.sortedByDescending { it.day } + rest.filter { it.day > today }.sortedBy { it.day }
-    // ponytail: le plat se lit dans le titre de la carte ; un champ dédié si le titre change de forme.
-    return ordered.flatMap { it.cards }
-        .filter { it.module == "alimentation" && it.id.startsWith("repas-") }
-        .mapNotNull { it.title.substringAfter(" · ", "").trim().takeIf(String::isNotEmpty) }
-        .distinct()
+    return ordered.flatMap { it.cards }.mapNotNull { it.dish?.trim()?.takeIf(String::isNotEmpty) }.distinct()
 }
 
 /**
@@ -253,13 +247,13 @@ fun AddScreen(
         }
     }
 
-    fun send(args: JsonObject) {
+    fun send(tool: String, args: JsonObject) {
         if (busy || offline) return
         busy = true
         // Depuis appScope : un ajout parti n'est pas abandonné si le panneau se ferme.
         appScope.launch {
             try {
-                note = repository.maisonTool("app_add", args).ifBlank { "Ajouté." }
+                note = repository.maisonTool(tool, args).ifBlank { "Ajouté." }
                 added++
                 retryAt = SystemClock.uptimeMillis() + RETRY_MS
                 haptic.performHapticFeedback(HapticFeedbackType.Confirm)
@@ -281,7 +275,7 @@ fun AddScreen(
     }
 
     fun add(expiry: LocalDate?) {
-        send(addArgs(name, barcode, product, parseQty(qty), zone ?: return, expiry))
+        send("app_add", addArgs(name, barcode, product, parseQty(qty), zone ?: return, expiry))
     }
 
     fun choose(at: String) {
@@ -320,7 +314,6 @@ fun AddScreen(
                         BigTile("Plat cuisiné", Modifier.weight(1f), enabled = !offline && !busy) {
                             note = null
                             barcode = null
-                            name = dishes.firstOrNull().orEmpty().take(NAME_MAX)
                             step = AddStep.Dish
                         }
                     }
@@ -367,7 +360,7 @@ fun AddScreen(
                     enabled = !offline && !busy,
                     onName = { name = it.take(NAME_MAX) },
                     onPortions = { portions = it.coerceIn(1, PORTIONS_MAX) },
-                    onZone = { send(dishArgs(name, portions, it)) },
+                    onZone = { send("app_add_dish", dishArgs(name, portions, it)) },
                     onBack = ::restart,
                 )
             }
