@@ -66,6 +66,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
+import app.kairos.mobile.ui.kit.UndoWindows
 import app.kairos.mobile.data.ApiError
 import app.kairos.mobile.data.ConversationSummary
 import app.kairos.mobile.data.Fact
@@ -127,6 +128,7 @@ fun MemoireScreen(
     val scope = rememberCoroutineScope()
     val unauthorized by rememberUpdatedState(onUnauthorized)
     val snackbar = remember { SnackbarHostState() }
+    val undo = remember { UndoWindows(snackbar) }
     var refreshing by remember { mutableStateOf(false) }
     var hidden by remember { mutableStateOf(emptySet<Long>()) }
     var revealed by remember { mutableStateOf(emptySet<Long>()) }
@@ -155,9 +157,7 @@ fun MemoireScreen(
         onPauseOrDispose {}
     }
 
-    suspend fun undoWindow(text: String): Boolean = withTimeoutOrNull(UNDO_MS) {
-        snackbar.showSnackbar(text, actionLabel = "Annuler", duration = SnackbarDuration.Indefinite)
-    } == SnackbarResult.ActionPerformed
+    suspend fun undoWindow(text: String): Boolean = undo.open(text)
 
     fun notice(text: String) {
         scope.launch { snackbar.showSnackbar(text) }
