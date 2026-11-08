@@ -4,14 +4,19 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
-// Version unique du projet : celle du paquet racine du workspace Rust.
-val projectVersion: String = rootProject.file("../Cargo.toml").readLines()
-    .first { it.startsWith("version = ") }
-    .substringAfter('"').substringBefore('"')
+// Version de l'application : fixée par la CI de release (titre « Release X.Y.Z »,
+// variable KAIROS_VERSION) ; sinon le dernier tag vX.Y.Z ; sinon 0.0.0 (build local sans tag).
+val versionPattern = Regex("""^\d+\.\d+\.\d+$""")
+val projectVersion: String = System.getenv("KAIROS_VERSION")?.takeIf { versionPattern.matches(it) }
+    ?: runCatching {
+        providers.exec { commandLine("git", "describe", "--tags", "--abbrev=0", "--match", "v[0-9]*") }
+            .standardOutput.asText.get().trim().removePrefix("v")
+    }.getOrNull()?.takeIf { versionPattern.matches(it) }
+    ?: "0.0.0"
 
-// X.Y.Z → X*10000 + Y*100 + Z : toujours croissant d'une version à la suivante.
+// X.Y.Z → X*10000 + Y*100 + Z : toujours croissant d'une version à la suivante (au moins 1).
 val projectVersionCode: Int = projectVersion.split('.').map(String::toInt)
-    .let { (major, minor, patch) -> major * 10_000 + minor * 100 + patch }
+    .let { (major, minor, patch) -> maxOf(1, major * 10_000 + minor * 100 + patch) }
 
 // Signature de release lue dans l'environnement (secrets de la CI), jamais dans le dépôt.
 val releaseKeystore: String? = System.getenv("KAIROS_KEYSTORE")
