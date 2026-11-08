@@ -250,12 +250,20 @@ data class Cut(val poste: String? = null, val amount: Double = 0.0)
 @Serializable
 data class Affordability(val ok: Boolean = false, val after: Double = 0.0, val reason: String? = null, val cuts: List<Cut> = emptyList())
 
-/** Dernier état connu des finances ; [offline] = la dernière actualisation n'a pas tout rapporté. */
+/**
+ * Dernier état connu des finances, source par source (cycle, patrimoine).
+ * `*At` = dernière réponse complète de la source ; `*Issue` = pourquoi elle
+ * n'est pas à jour (hors ligne, module indisponible, réponse partielle), null si elle l'est.
+ */
 @Serializable
 data class FinancesSnapshot(
     val cycle: FinanceCycle? = null,
     val wealth: FinanceWealth? = null,
-    val fetchedAt: String? = null,
-    val offline: Boolean = false,
-    val reason: String? = null,
-)
+    val cycleAt: String? = null,
+    val wealthAt: String? = null,
+    val cycleIssue: String? = null,
+    val wealthIssue: String? = null,
+) {
+    val fetchedAt: String? get() = listOfNotNull(cycleAt, wealthAt).maxOrNull()
+    val offline: Boolean get() = cycleIssue != null || wealthIssue != null
+}

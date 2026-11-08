@@ -1,5 +1,7 @@
 package app.kairos.mobile.ui.finances
 
+import android.app.Activity
+import android.view.WindowManager
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -29,9 +31,12 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.PrimaryTabRow
+import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -47,6 +52,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -76,12 +82,10 @@ import app.kairos.mobile.ui.maison.ChevronBackIcon
 import app.kairos.mobile.ui.talk.IconButton
 import app.kairos.mobile.ui.theme.Motion
 import java.time.LocalDate
-import java.time.LocalDateTime
-import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
-private enum class Tab(val label: String) { Cycle("Cycle"), Wealth("Patrimoine") }
+private enum class Page(val label: String) { Cycle("Cycle"), Wealth("Patrimoine") }
 
 /**
  * Espace Finances : onglets Cycle (ouvert par défaut) et Patrimoine, tirer pour
@@ -102,15 +106,15 @@ fun FinancesScreen(
     val scope = rememberCoroutineScope()
     val unauthorized by rememberUpdatedState(onUnauthorized)
     var refreshing by remember { mutableStateOf(false) }
-    var tab by rememberSaveable { mutableStateOf(Tab.Cycle) }
+    var tab by rememberSaveable { mutableStateOf(Page.Cycle) }
     var affordOpen by rememberSaveable { mutableStateOf(false) }
 
-    fun refresh() {
+    fun refresh(force: Boolean = true) {
         if (refreshing) return
         refreshing = true
         scope.launch {
             try {
-                repository.refreshFinances()
+                repository.refreshFinances(force)
             } catch (_: ApiError.Unauthorized) {
                 unauthorized()
             } finally {
@@ -119,20 +123,28 @@ fun FinancesScreen(
         }
     }
     LifecycleResumeEffect(Unit) {
-        refresh()
+        // Retour rapide (autre application, écran éteint) : pas de nouvel appel.
+        refresh(force = false)
         onPauseOrDispose {}
+    }
+
+    // Montants visibles : ni capture d'écran ni aperçu dans les applications récentes.
+    val activity = LocalContext.current as? Activity
+    DisposableEffect(activity, masked) {
+        if (!masked) activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        onDispose { activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_SECURE) }
     }
 
     val cycle = snapshot.cycle
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         Column(Modifier.fillMaxSize().padding(top = padding.calculateTopPadding())) {
             Header(masked, onToggleMasked, onClose)
-            Row(Modifier.padding(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Tab.entries.forEach { t ->
-                    FilterChip(selected = tab == t, onClick = { tab = t }, label = { Text(t.label) })
+            PrimaryTabRow(selectedTabIndex = tab.ordinal, containerColor = MaterialTheme.colorScheme.background) {
+                Page.entries.forEach { t ->
+                    Tab(selected = tab == t, onClick = { tab = t }, text = { Text(t.label) })
                 }
             }
-            PullToRefreshBox(isRefreshing = refreshing, onRefresh = ::refresh, modifier = Modifier.fillMaxWidth().weight(1f)) {
+            PullToRefreshBox(isRefreshing = refreshing, onRefresh = { refresh() }, modifier = Modifier.fillMaxWidth().weight(1f)) {
                 AnimatedContent(tab, transitionSpec = { Motion.fadeThrough() }, label = "tab") { t ->
                     Column(
                         Modifier
@@ -141,25 +153,26 @@ fun FinancesScreen(
                             .padding(horizontal = 20.dp)
                             .padding(top = 8.dp, bottom = padding.calculateBottomPadding() + 88.dp),
                     ) {
-                        if (snapshot.offline) {
-                            val at = snapshot.fetchedAt?.let { runCatching { LocalDateTime.parse(it).format(SYNC) }.getOrNull() }
-                            StatusBanner(snapshot.reason ?: "Hors ligne", detail = at?.let { "Dernier état du $it" })
-                            Spacer(Modifier.height(8.dp))
+                        // Bandeaux de la source de cet onglet seulement.
+                        val source = if (t == Page.Cycle) {
+                            sourceBanner(snapshot.cycleIssue, snapshot.cycleAt)
+                        } else {
+                            sourceBanner(snapshot.wealthIssue, snapshot.wealthAt)
                         }
-                        val fresh = freshnessBanner(if (t == Tab.Cycle) cycle?.freshness else snapshot.wealth?.freshness)
-                        fresh?.let { (title, detail) ->
+                        val fresh = freshnessBanner(if (t == Page.Cycle) cycle?.freshness else snapshot.wealth?.freshness)
+                        listOfNotNull(source, fresh).forEach { (title, detail) ->
                             StatusBanner(title, detail = detail)
                             Spacer(Modifier.height(8.dp))
                         }
                         when (t) {
-                            Tab.Cycle -> cycle?.let { CycleContent(it, masked) } ?: Hint(snapshot.offline)
-                            Tab.Wealth -> snapshot.wealth?.let { WealthContent(it, masked) } ?: Hint(snapshot.offline)
+                            Page.Cycle -> cycle?.let { CycleContent(it, masked) } ?: Hint(snapshot.cycleIssue)
+                            Page.Wealth -> snapshot.wealth?.let { WealthContent(it, masked) } ?: Hint(snapshot.wealthIssue)
                         }
                     }
                 }
             }
         }
-        if (tab == Tab.Cycle && cycle != null) {
+        if (tab == Page.Cycle && cycle != null) {
             ExtendedFloatingActionButton(
                 onClick = { affordOpen = true },
                 modifier = Modifier
@@ -175,12 +188,10 @@ fun FinancesScreen(
     }
 }
 
-private val SYNC = DateTimeFormatter.ofPattern("dd/MM à HH:mm")
-
 @Composable
-private fun Hint(offline: Boolean) {
+private fun Hint(issue: String?) {
     Text(
-        if (offline) "Hors ligne, et rien en mémoire pour l'instant." else "Chargement…",
+        if (issue != null) "$issue, et rien en mémoire pour l'instant." else "Chargement…",
         style = MaterialTheme.typography.bodyMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(vertical = 24.dp),
@@ -426,6 +437,8 @@ private fun AffordPanel(repository: Repository, postes: List<String>, masked: Bo
             suffix = { Text("€") },
             singleLine = true,
             isError = invalid,
+            // Verrouillé pendant la vérification : le verdict reçu correspond toujours à la saisie.
+            enabled = !busy,
             supportingText = if (invalid) ({ Text("Un montant positif, par exemple 12,50") }) else null,
             visualTransformation = if (masked) PasswordVisualTransformation() else VisualTransformation.None,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
@@ -441,6 +454,7 @@ private fun AffordPanel(repository: Repository, postes: List<String>, masked: Bo
                             verdict = null
                         },
                         label = { Text(p) },
+                        enabled = !busy,
                     )
                 }
             }

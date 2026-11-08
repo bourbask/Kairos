@@ -1,6 +1,8 @@
 package app.kairos.mobile.data
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -39,6 +41,7 @@ class Repository(
     private val loadLock = Mutex()
     private val maisonLock = Mutex()
     private val financesLock = Mutex()
+    private var financesTried: Long? = null
     private var loaded = false
 
     private val _snapshot = MutableStateFlow(Snapshot())
@@ -106,13 +109,20 @@ class Repository(
     }
 
     /**
-     * Cycle et patrimoine ; ce qui a répondu remplace l'ancien, le reste est gardé
-     * hors ligne. Une actualisation à la fois, comme [refreshMaison].
+     * Cycle et patrimoine, en parallèle ; ce qui a répondu remplace l'ancien, le reste
+     * est gardé hors ligne. Une actualisation à la fois, comme [refreshMaison].
+     * Sans [force], ignorée si la précédente date de moins de [FINANCES_FRESH_MS].
      */
-    suspend fun refreshFinances() = financesLock.withLock {
+    suspend fun refreshFinances(force: Boolean = true) = financesLock.withLock {
+        val last = financesTried
+        if (!force && last != null && System.nanoTime() - last < FINANCES_FRESH_MS * 1_000_000) return@withLock
         load()
-        val cycle = attempt { api.tool(FINANCES, "app_finance_cycle", FinanceCycle.serializer()) }
-        val wealth = attempt { api.tool(FINANCES, "app_finance_wealth", FinanceWealth.serializer()) }
+        val (cycle, wealth) = coroutineScope {
+            val c = async { attempt { api.tool(FINANCES, "app_finance_cycle", FinanceCycle.serializer()) } }
+            val w = async { attempt { api.tool(FINANCES, "app_finance_wealth", FinanceWealth.serializer()) } }
+            c.await() to w.await()
+        }
+        financesTried = System.nanoTime()
         val next = financesAfter(_finances.value, cycle, wealth, LocalDateTime.now().withNano(0).toString())
         _finances.value = next
         if (cycle.isSuccess || wealth.isSuccess) write(financesFile, FinancesSnapshot.serializer(), next)
@@ -165,6 +175,7 @@ class Repository(
         _marks.value = emptyMap()
         _maison.value = MaisonSnapshot()
         _finances.value = FinancesSnapshot()
+        financesTried = null
         withContext(Dispatchers.IO) {
             maisonFile.delete()
             financesFile.delete()
@@ -192,6 +203,7 @@ class Repository(
         const val WEEK = 7
         const val ALIMENTATION = "alimentation"
         const val FINANCES = "finances"
+        const val FINANCES_FRESH_MS = 30_000L
         val ORDERS = ListSerializer(Order.serializer())
         val MARKS = MapSerializer(String.serializer(), MapSerializer(String.serializer(), Mark.serializer()))
     }

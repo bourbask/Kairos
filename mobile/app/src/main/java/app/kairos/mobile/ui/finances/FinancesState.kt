@@ -35,22 +35,64 @@ fun parseAmount(input: String): Double? {
     return s.replace(',', '.').toDoubleOrNull()?.takeIf { it > 0 && it <= AMOUNT_MAX }
 }
 
+/** Raison affichée quand une réponse n'a rapporté qu'une partie des sections. */
+const val PARTIAL = "Données partielles"
+
+/** Une source mise à jour : valeur, date de dernière réponse complète, problème éventuel. */
+private data class Source<T>(val value: T?, val at: String?, val issue: String?)
+
 /**
- * Nouvel état après une actualisation : ce qui a répondu remplace l'ancien, le
- * reste est gardé. Un échec marque l'état hors ligne, avec la raison quand le
- * serveur a répondu sans le module.
+ * Fusion d'une réponse avec l'état précédent. Échec : tout est gardé, avec la raison.
+ * Réussite : [fill] reprend les sections omises (source indisponible côté module)
+ * dans l'état précédent et dit s'il a dû le faire ; la réponse est alors partielle,
+ * et la date de dernière réponse complète ne bouge pas.
+ */
+private fun <T> merged(prev: T?, prevAt: String?, next: Result<T>, now: String, fill: (T, T) -> Pair<T, Boolean>): Source<T> {
+    val value = next.getOrElse { e -> return Source(prev, prevAt, issueOf(e)) }
+    val (out, partial) = if (prev == null) value to false else fill(value, prev)
+    return if (partial) Source(out, prevAt, PARTIAL) else Source(out, now, null)
+}
+
+private fun issueOf(e: Throwable): String =
+    (e as? ApiError.Server)?.let { if (it.outdated) ApiError.Server.OUTDATED else "Module indisponible" } ?: "Hors ligne"
+
+/** [new] s'il est là ; sinon [old], en notant dans [used] qu'une section a été reprise. */
+private class Fallback {
+    var used = false
+
+    fun <V> pick(new: V?, old: V?): V? {
+        if (new == null && old != null) used = true
+        return new ?: old
+    }
+}
+
+/**
+ * Nouvel état après une actualisation, source par source : ce qui a répondu
+ * remplace l'ancien section par section, le reste est gardé et signalé.
  */
 fun financesAfter(prev: FinancesSnapshot, cycle: Result<FinanceCycle>, wealth: Result<FinanceWealth>, now: String): FinancesSnapshot {
-    val error = (cycle.exceptionOrNull() ?: wealth.exceptionOrNull()) as? ApiError
-    val any = cycle.isSuccess || wealth.isSuccess
-    return FinancesSnapshot(
-        cycle = cycle.getOrNull() ?: prev.cycle,
-        wealth = wealth.getOrNull() ?: prev.wealth,
-        fetchedAt = if (any) now else prev.fetchedAt,
-        offline = cycle.isFailure || wealth.isFailure,
-        reason = (error as? ApiError.Server)?.let { if (it.outdated) ApiError.Server.OUTDATED else "Module indisponible" },
-    )
+    val c = merged(prev.cycle, prev.cycleAt, cycle, now) { new, old ->
+        val f = Fallback()
+        new.copy(alerts = f.pick(new.alerts, old.alerts), freshness = new.freshness ?: old.freshness) to f.used
+    }
+    val w = merged(prev.wealth, prev.wealthAt, wealth, now) { new, old ->
+        val f = Fallback()
+        new.copy(
+            netWorth = f.pick(new.netWorth, old.netWorth),
+            debt = f.pick(new.debt, old.debt),
+            history = f.pick(new.history, old.history),
+            loans = f.pick(new.loans, old.loans),
+            portfolio = f.pick(new.portfolio, old.portfolio),
+            // Fraîcheur bancaire portée par le cycle : reprise sans rendre la réponse partielle.
+            freshness = new.freshness ?: old.freshness,
+        ) to f.used
+    }
+    return FinancesSnapshot(c.value, w.value, c.at, w.at, c.issue, w.issue)
 }
+
+/** Bandeau d'une source pas à jour (titre, date de dernière réponse complète), ou null. */
+fun sourceBanner(issue: String?, at: String?): Pair<String, String?>? =
+    issue?.let { it to at?.let { a -> "Dernière mise à jour complète : ${syncLabel(a)}" } }
 
 /** Part consommée ; prévu nul et dépense engagée = dépassement maximal. */
 private fun pressure(e: Envelope): Double = when {
@@ -100,7 +142,7 @@ fun cycleProgress(start: String?, end: String?, today: LocalDate): Float? {
     return (ChronoUnit.DAYS.between(s, today).toFloat() / total).coerceIn(0f, 1f)
 }
 
-private val DIGITS = Regex("""\d+([\s  .,/:]*\d+)*""")
+private val DIGITS = Regex("""\p{Nd}+([\s  .,/:]*\p{Nd}+)*""")
 
 /**
  * Texte libre du module (alertes, raisons) : masqué, tout nombre est remplacé.

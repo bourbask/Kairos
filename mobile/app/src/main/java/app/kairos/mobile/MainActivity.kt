@@ -590,7 +590,7 @@ private fun KairosRoot(model: AppModel) {
                 val finances by session.repository.finances.collectAsState()
                 // Une actualisation à l'arrivée sur l'onglet : les chiffres des cartes sont à jour.
                 LaunchedEffect(Unit) {
-                    for (refresh in listOf(session.repository::refreshMaison, session.repository::refreshFinances)) {
+                    for (refresh in listOf<suspend () -> Unit>({ session.repository.refreshMaison() }, { session.repository.refreshFinances(force = false) })) {
                         launch {
                             try {
                                 refresh()

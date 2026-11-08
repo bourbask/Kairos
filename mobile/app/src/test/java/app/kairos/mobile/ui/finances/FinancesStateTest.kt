@@ -2,6 +2,10 @@ package app.kairos.mobile.ui.finances
 
 import app.kairos.mobile.data.ApiError
 import app.kairos.mobile.data.Envelope
+import app.kairos.mobile.data.FinanceAlert
+import app.kairos.mobile.data.Loan
+import app.kairos.mobile.data.NetWorthPoint
+import app.kairos.mobile.data.Portfolio
 import app.kairos.mobile.data.FinanceCycle
 import app.kairos.mobile.data.FinanceWealth
 import app.kairos.mobile.data.FinancesSnapshot
@@ -27,27 +31,68 @@ class FinancesStateTest {
 
     @Test
     fun offline_keeps_last_state() {
-        val cycle = FinanceCycle(available = 420.0, envelopes = listOf(Envelope("courses", 300.0, 120.0)))
+        val cycle = FinanceCycle(available = 420.0, envelopes = listOf(Envelope("courses", 300.0, 120.0)), alerts = emptyList())
         val wealth = FinanceWealth(netWorth = 10_000.0)
         val fresh = financesAfter(FinancesSnapshot(), Result.success(cycle), Result.success(wealth), "2026-11-08T08:00")
         assertFalse(fresh.offline)
         assertEquals(cycle, fresh.cycle)
+        assertEquals("2026-11-08T08:00", fresh.cycleAt)
 
-        // Serveur injoignable : tout est gardé, marqué hors ligne.
+        // Serveur injoignable : tout est gardé, chaque source marquée avec sa date.
         val down = financesAfter(fresh, Result.failure(ApiError.Offline), Result.failure(ApiError.Offline), "2026-11-08T09:00")
         assertTrue(down.offline)
         assertEquals(cycle, down.cycle)
         assertEquals(wealth, down.wealth)
-        assertEquals("2026-11-08T08:00", down.fetchedAt)
-        assertNull(down.reason)
+        assertEquals("Hors ligne", down.cycleIssue)
+        assertEquals("Hors ligne", down.wealthIssue)
+        assertEquals("2026-11-08T08:00", down.cycleAt)
+        assertEquals("2026-11-08T08:00", down.wealthAt)
+    }
 
-        // Un seul outil en échec : l'autre est rafraîchi, le reste gardé, raison donnée.
-        val newer = wealth.copy(netWorth = 11_000.0)
+    @Test
+    fun banner_only_for_the_failed_source() {
+        val fresh = financesAfter(FinancesSnapshot(), Result.success(FinanceCycle(available = 1.0)), Result.success(FinanceWealth(netWorth = 1.0)), "2026-11-08T08:00")
+        // Le module ne répond plus pour le cycle ; le patrimoine, lui, est à jour.
+        val newer = FinanceWealth(netWorth = 11_000.0)
         val partial = financesAfter(fresh, Result.failure(ApiError.Server(502, "x")), Result.success(newer), "2026-11-08T10:00")
-        assertTrue(partial.offline)
-        assertEquals(cycle, partial.cycle)
         assertEquals(newer, partial.wealth)
-        assertEquals("Module indisponible", partial.reason)
+        assertNull(partial.wealthIssue)
+        assertEquals("2026-11-08T10:00", partial.wealthAt)
+        assertEquals("Module indisponible", partial.cycleIssue)
+        assertEquals("2026-11-08T08:00", partial.cycleAt)
+
+        assertNull(sourceBanner(partial.wealthIssue, partial.wealthAt))
+        assertEquals(
+            "Module indisponible" to "Dernière mise à jour complète : 08/11 à 08:00",
+            sourceBanner(partial.cycleIssue, partial.cycleAt),
+        )
+        assertEquals("Hors ligne" to null, sourceBanner("Hors ligne", null))
+    }
+
+    @Test
+    fun all_empty_wealth_keeps_prev() {
+        val wealth = FinanceWealth(
+            netWorth = 5000.0,
+            debt = 2000.0,
+            history = listOf(NetWorthPoint("2026-10", 5000.0)),
+            loans = listOf(Loan("Prêt", 2000.0)),
+            portfolio = Portfolio(total = 100.0),
+        )
+        val cycle = FinanceCycle(available = 1.0, alerts = listOf(FinanceAlert("a", "T")))
+        val prev = financesAfter(FinancesSnapshot(), Result.success(cycle), Result.success(wealth), "2026-11-08T08:00")
+
+        // Réponse vide : chaque section reprend sa valeur précédente, signalée partielle.
+        val next = financesAfter(prev, Result.success(cycle.copy(alerts = null, available = 2.0)), Result.success(FinanceWealth()), "2026-11-08T09:00")
+        assertEquals(wealth, next.wealth)
+        assertEquals(PARTIAL, next.wealthIssue)
+        assertEquals("2026-11-08T08:00", next.wealthAt)
+        assertEquals(cycle.alerts, next.cycle!!.alerts)
+        assertEquals(2.0, next.cycle.available!!, 1e-9)
+        assertEquals(PARTIAL, next.cycleIssue)
+
+        // Rien de précédent à reprendre : la réponse vide est simplement à jour.
+        val first = financesAfter(FinancesSnapshot(), Result.success(FinanceCycle()), Result.success(FinanceWealth()), "2026-11-08T09:00")
+        assertFalse(first.offline)
     }
 
     @Test
@@ -108,5 +153,10 @@ class FinancesStateTest {
         assertFalse(t, t.any { it.isDigit() })
         assertEquals("Rien à signaler", maskDigits("Rien à signaler", masked = true))
         assertEquals("45 €", maskDigits("45 €", masked = false))
+        // Chiffres d'autres écritures.
+        for (other in listOf("٤٥ €", "４５,２０ €", "४५")) {
+            val m = maskDigits(other, masked = true)
+            assertFalse(m, m.any { it.isDigit() })
+        }
     }
 }
