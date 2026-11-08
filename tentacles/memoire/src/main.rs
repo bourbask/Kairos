@@ -14,6 +14,7 @@ async fn main() -> anyhow::Result<()> {
     if let [cmd, text] = args.as_slice()
         && cmd == "persona"
     {
+        anyhow::ensure!(!text.trim().is_empty(), "personnalité vide refusée");
         MemoryStore::open(&path)?.fact_set(PERSONA_KEY, text.trim(), "hote")?;
         println!("Personnalité enregistrée.");
         return Ok(());
@@ -24,7 +25,8 @@ async fn main() -> anyhow::Result<()> {
     let days: i64 = match std::env::var("MEMOIRE_TRANSCRIPT_RETENTION_DAYS") {
         Ok(v) if !v.is_empty() => v.parse().context("MEMOIRE_TRANSCRIPT_RETENTION_DAYS invalide")?,
         _ => 0,
-    };
+    }
+    .min(36_500);
     if days > 0 {
         let store = store.clone();
         tokio::spawn(async move {

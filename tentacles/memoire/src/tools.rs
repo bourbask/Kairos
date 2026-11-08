@@ -446,7 +446,9 @@ impl MemoryServer {
         if is_persona(&a.key) {
             return Err(PERSONA_REFUSED.into());
         }
-        if self.db()?.fact_forget(a.key.trim()).map_err(err)? == 0 {
+        // Clé telle qu'écrite (éventuellement avec espaces), sinon nettoyée.
+        let db = self.db()?;
+        if db.fact_forget(&a.key).map_err(err)? == 0 && db.fact_forget(a.key.trim()).map_err(err)? == 0 {
             return Err("fait inconnu".into());
         }
         json_out(json!({"message": "Fait oublié."}))

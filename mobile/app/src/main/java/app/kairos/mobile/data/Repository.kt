@@ -318,9 +318,17 @@ class Repository(
 
     private suspend fun <T> read(file: File, serializer: KSerializer<T>): T? = withContext(Dispatchers.IO) {
         runCatching {
-            // Illisible (ancien cache en clair, clé perdue) : effacé, traité comme absent.
-            val plain = codec.open(file.readBytes()) ?: return@runCatching null.also { file.delete() }
-            KairosJson.decodeFromString(serializer, plain)
+            val bytes = file.readBytes()
+            codec.open(bytes)?.let { return@runCatching KairosJson.decodeFromString(serializer, it) }
+            // Marques locales d'avant le chiffrement : le serveur ne peut pas les rendre, elles sont reprises
+            // puis réécrites chiffrées. Tout autre cache illisible est effacé et se recharge.
+            if (file == marksFile) {
+                runCatching { KairosJson.decodeFromString(serializer, String(bytes)) }.getOrNull()?.let { legacy ->
+                    write(file, serializer, legacy)
+                    return@runCatching legacy
+                }
+            }
+            null.also { file.delete() }
         }.getOrNull()
     }
 

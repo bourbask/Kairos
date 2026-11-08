@@ -68,8 +68,15 @@ fun keystoreKey(alias: String): SecretKey {
 }
 
 /** Chiffrement AES-GCM des caches hors ligne : IV puis chiffré. */
-class CacheCodec(private val key: () -> SecretKey) {
-    fun seal(plain: String): ByteArray {
+class CacheCodec(private val reset: () -> Unit = {}, private val key: () -> SecretKey) {
+    /** Clé inutilisable (invalidée, perdue) : régénérée une fois, sinon plus aucun cache ne s'écrirait. */
+    fun seal(plain: String): ByteArray = runCatching { sealWith(plain) }.getOrElse {
+        if (it !is java.security.GeneralSecurityException) throw it
+        reset()
+        sealWith(plain)
+    }
+
+    private fun sealWith(plain: String): ByteArray {
         val cipher = Cipher.getInstance(TRANSFORMATION).apply { init(Cipher.ENCRYPT_MODE, key()) }
         return cipher.iv + cipher.doFinal(plain.toByteArray())
     }
@@ -84,6 +91,9 @@ class CacheCodec(private val key: () -> SecretKey) {
 
     companion object {
         /** Clé de l'appareil, distincte de celle du jeton. */
-        val Device = CacheCodec { keystoreKey("kairos-cache") }
+        val Device = CacheCodec(
+            key = { keystoreKey("kairos-cache") },
+            reset = { KeyStore.getInstance(PROVIDER).apply { load(null) }.deleteEntry("kairos-cache") },
+        )
     }
 }

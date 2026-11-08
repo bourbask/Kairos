@@ -35,3 +35,8 @@ config/tete.toml
 
 # APK déposé par le déploiement
 /apk/
+
+# Réglages locaux du poste de développement
+/.claude/
+# Bases locales, où qu’lles soient
+*.db

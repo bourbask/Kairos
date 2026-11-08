@@ -33,7 +33,7 @@ ssh "$VPS_HOST" "mkdir -p '$KAIROS_DIR'"
 # secrets propres à une machine restent sur leur hôte, les fichiers d'exemple
 # suivent. Un fichier suivi supprimé localement est sauté.
 git -C "$ROOT" ls-files -z --cached --others --exclude-standard \
-  | while IFS= read -r -d '' f; do [ -e "$ROOT/$f" ] && printf '%s\0' "$f"; done \
+  | while IFS= read -r -d '' f; do if [ -e "$ROOT/$f" ]; then printf '%s\0' "$f"; fi; done \
   | tar czf - -C "$ROOT" --null -T - \
   | ssh "$VPS_HOST" "tar xzf - -C '$KAIROS_DIR'"
 

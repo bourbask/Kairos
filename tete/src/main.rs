@@ -18,9 +18,9 @@ use tokio::sync::RwLock;
 
 const LLM_ROUTING_PATH: &str = "config/llm.toml";
 const REFRESH_EVERY: Duration = Duration::from_secs(300);
-/// Au-delà, l'utilisateur est prévenu que la réponse arrive.
 /// Purge du journal de conversation : au démarrage, puis une fois par jour.
 const PURGE_EVERY: Duration = Duration::from_secs(24 * 3600);
+/// Au-delà, l'utilisateur est prévenu que la réponse arrive.
 const ACK_AFTER: Duration = Duration::from_secs(20);
 const ACK_MSG: &str = "Je regarde, ça peut prendre quelques minutes…";
 
@@ -167,7 +167,7 @@ async fn main() -> anyhow::Result<()> {
             }
             _ = tick.tick() => {
                 ctx.agent.end_session_if_idle(now(), &ctx.tentacles).await;
-                let days = ctx.cfg.chat_retention_days;
+                let days = ctx.cfg.chat_retention_days.min(36_500);
                 if days > 0 && last_purge.is_none_or(|t| t.elapsed() >= PURGE_EVERY) {
                     match ctx.state.purge_chat(now() - chrono::TimeDelta::days(days.into())) {
                         Ok(n) => tracing::info!(messages = n, "journal de conversation purgé"),

@@ -19,4 +19,14 @@ class CacheCodecTest {
         val other = KeyGenerator.getInstance("AES").apply { init(256) }.generateKey()
         assertNull(CacheCodec { other }.open(sealed))
     }
+
+    @Test
+    fun unusable_key_is_regenerated_once() {
+        var broken = true
+        var resets = 0
+        val good = KeyGenerator.getInstance("AES").apply { init(256) }.generateKey()
+        val codec = CacheCodec(key = { if (broken) throw java.security.UnrecoverableKeyException("clé") else good }, reset = { resets++; broken = false })
+        assertEquals("x", codec.open(codec.seal("x")))
+        assertEquals(1, resets)
+    }
 }

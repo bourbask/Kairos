@@ -134,11 +134,13 @@ class RepositoryTest {
         val api = KairosApi("http://127.0.0.1:1/", "t", OkHttpClient())
         Repository(api, dir, testCodec) { today }.mark("2026-11-08", "agenda/secret", Mark.Fait)
         assertFalse(File(dir, "marks.json").readText(Charsets.ISO_8859_1).contains("secret"))
-        // Ancien cache en clair : traité comme absent, sans erreur.
+        // Anciennes marques en clair (le serveur ne peut pas les rendre) : reprises puis chiffrées.
         File(dir, "marks.json").writeText("""{"2026-11-08":{"agenda/a":"Fait"}}""")
+        // Autre ancien cache en clair : traité comme absent et effacé, il se recharge.
         File(dir, "snapshot.json").writeText("x")
         val again = Repository(api, dir, testCodec) { today }.apply { load() }
-        assertEquals(emptyMap<String, Map<String, Mark>>(), again.marks.value)
+        assertEquals(mapOf("2026-11-08" to mapOf("agenda/a" to Mark.Fait)), again.marks.value)
+        assertFalse(File(dir, "marks.json").readText(Charsets.ISO_8859_1).contains("agenda/a"))
         assertEquals(Snapshot(), again.snapshot.value)
         assertFalse(File(dir, "snapshot.json").exists())
     }
