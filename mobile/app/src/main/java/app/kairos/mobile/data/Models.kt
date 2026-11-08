@@ -461,3 +461,65 @@ data class MemoireSnapshot(
     val fetchedAt: String? = null,
     val issue: String? = null,
 )
+
+/** Reprise en cours dans le lecteur ; [key] opaque, rendue telle quelle au module. */
+@Serializable
+data class ResumeItem(val key: String, val title: String = "", @SerialName("left_min") val leftMin: Int? = null)
+
+/** Élément prêt à regarder ; [subs] : `vf`, `st_fr`, `absents` ou `recherche`. */
+@Serializable
+data class ReadyItem(val key: String, val title: String = "", val kind: String = "", val subs: String = "", val minutes: Int? = null)
+
+/** Téléchargement ; [progress] entre 0 et 1, [state] : `en_cours`, `bloque`, `attente`, `pause`, `erreur`. */
+@Serializable
+data class DownloadItem(
+    val title: String = "",
+    val progress: Double = 0.0,
+    @SerialName("eta_min") val etaMin: Int? = null,
+    val state: String = "",
+    val why: String? = null,
+)
+
+@Serializable
+data class Downloads(val items: List<DownloadItem> = emptyList(), val paused: Boolean = false)
+
+/** Sortie suivie ; [day] AAAA-MM-JJ et [time] HH:MM à l'heure locale du module. */
+@Serializable
+data class Release(val day: String, val time: String? = null, val title: String = "", val what: String = "", val have: Boolean = false)
+
+@Serializable
+data class MediaRequest(val title: String = "", val state: String = "")
+
+/** Section tombée et sa raison, sans nom de service. */
+@Serializable
+data class SectionError(val section: String = "", val message: String = "")
+
+/** Vue de l'espace Médias (`app_medias`) ; une section null est tombée, sa raison est dans [errors]. */
+@Serializable
+data class Medias(
+    @SerialName("continue") val resume: List<ResumeItem>? = null,
+    val ready: List<ReadyItem>? = null,
+    val downloads: Downloads? = null,
+    val upcoming: List<Release>? = null,
+    val requests: List<MediaRequest>? = null,
+    val errors: List<SectionError> = emptyList(),
+)
+
+/** Résultat de recherche (`app_media_search`) ; [mediaType] : `tv` ou `movie`. */
+@Serializable
+data class MediaResult(
+    val id: Long,
+    @SerialName("media_type") val mediaType: String = "",
+    val title: String = "",
+    val year: Int? = null,
+    val have: Boolean = false,
+    val requested: Boolean = false,
+)
+
+/** Dernier état de l'espace Médias, gardé hors ligne. */
+@Serializable
+data class MediasSnapshot(
+    val medias: Medias? = null,
+    val fetchedAt: String? = null,
+    val issue: String? = null,
+)
