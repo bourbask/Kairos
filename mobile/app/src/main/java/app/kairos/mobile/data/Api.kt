@@ -2,6 +2,7 @@ package app.kairos.mobile.data
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.DeserializationStrategy
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -15,13 +16,29 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.coroutines.executeAsync
 import java.io.IOException
+import java.io.InterruptedIOException
 import java.time.LocalDate
 
 sealed class ApiError(message: String) : Exception(message) {
     /** Jeton refusé : l'appareil doit être appairé à nouveau. */
     data object Unauthorized : ApiError("Appareil non autorisé")
     data object Offline : ApiError("Serveur injoignable")
-    class Server(val code: Int, message: String) : ApiError(message)
+
+    /** Requête partie sans réponse à temps : elle a pu être appliquée. */
+    data object NoReply : ApiError("Pas de réponse du serveur")
+
+    /** [bare] : réponse sans raison (`message`) lisible. */
+    class Server(val code: Int, message: String, val bare: Boolean = false) : ApiError(message) {
+        /** 404 nu : la tête ne connaît pas la route, elle précède cette version de l'application. */
+        val outdated: Boolean get() = code == 404 && bare
+
+        /** Module hors d'atteinte, ou tête à mettre à jour. */
+        fun unavailable(): String = if (outdated) OUTDATED else "Module indisponible, réessaie plus tard"
+
+        companion object {
+            const val OUTDATED = "Serveur à mettre à jour"
+        }
+    }
 }
 
 /** Client de l'API de l'application (`/app/v1`). Le jeton n'est jamais journalisé. */
@@ -59,6 +76,15 @@ class KairosApi(baseUrl: String, private val token: String, private val client: 
         post(url("decisions").newBuilder().addPathSegment(module).addPathSegment(id).build(),
             buildJsonObject { put("choice", choice) }) { message(it) ?: "" }
 
+    /**
+     * Outil `app_*` d'un module, relayé tel quel par la tête ; [result] lit sa réponse.
+     * [ApiError.Server] : 422 = refus du module (avec sa raison), 404 / 503 = module absent ou déconnecté.
+     */
+    suspend fun <T> tool(module: String, name: String, result: DeserializationStrategy<T>, args: JsonObject = JsonObject(emptyMap())): T =
+        post(url("tools").newBuilder().addPathSegment(module).addPathSegment(name).build(), args) {
+            KairosJson.decodeFromString(result, it)
+        }
+
     private fun url(path: String) = root.newBuilder().addPathSegments(path).build()
 
     private suspend fun <T> get(url: HttpUrl, parse: (String) -> T): T =
@@ -72,12 +98,15 @@ class KairosApi(baseUrl: String, private val token: String, private val client: 
         val (code, text) = try {
             // Annulée avec la coroutine appelante (écran quitté, actualisation abandonnée).
             client.newCall(request).executeAsync().use { it.code to it.body.string() }
+        } catch (_: InterruptedIOException) {
+            // Délai dépassé : la requête a pu partir.
+            throw ApiError.NoReply
         } catch (_: IOException) {
             throw ApiError.Offline
         }
         when {
             code == 401 -> throw ApiError.Unauthorized
-            code !in 200..299 -> throw ApiError.Server(code, message(text) ?: "Erreur du serveur ($code)")
+            code !in 200..299 -> throw message(text).let { ApiError.Server(code, it ?: "Erreur du serveur ($code)", bare = it == null) }
             else -> try {
                 parse(text)
             } catch (e: IllegalArgumentException) {

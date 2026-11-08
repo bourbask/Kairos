@@ -86,6 +86,13 @@ CREATE TABLE IF NOT EXISTS meal_plan (
     note TEXT,
     PRIMARY KEY (day, slot)
 );
+CREATE TABLE IF NOT EXISTS order_lines (
+    order_id INTEGER NOT NULL,
+    idx INTEGER NOT NULL,
+    state TEXT NOT NULL,
+    at INTEGER NOT NULL,
+    PRIMARY KEY (order_id, idx)
+);
 CREATE TABLE IF NOT EXISTS prefs (k TEXT PRIMARY KEY, v TEXT NOT NULL, updated_at INTEGER NOT NULL);
 ";
 
@@ -129,6 +136,19 @@ pub struct Line {
     /// Prix payé pour la ligne, en euros.
     #[serde(default)]
     pub price: Option<f64>,
+}
+
+/// Produit déjà vu : nom, nature, emplacement habituel.
+pub type Known = (String, Option<Nature>, Option<String>);
+
+/// Produit déjà connu, vu par l'application (`Store::usual`).
+pub struct Usual {
+    pub name: String,
+    pub family: Family,
+    pub nature: Option<Nature>,
+    pub location: Option<String>,
+    /// Dernier apport, dans l'unité de base.
+    pub pack: Option<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -267,6 +287,10 @@ fn migrate(c: &Connection) -> rusqlite::Result<()> {
         // Correction manuelle seulement : sinon la nature est déduite à la lecture.
         c.execute_batch("ALTER TABLE products ADD COLUMN nature TEXT;")?;
     }
+    if !pcols.iter().any(|c| c == "location") {
+        // Dernier emplacement de rangement, gardé quand le stock est épuisé.
+        c.execute_batch("ALTER TABLE products ADD COLUMN location TEXT;")?;
+    }
     if !cols.iter().any(|c| c == "expiry_kind") {
         c.execute_batch(
             "ALTER TABLE lots ADD COLUMN expiry_kind TEXT;
@@ -286,7 +310,7 @@ fn date_note(exp: &str, kind: Kind, estimated: bool) -> String {
 }
 
 /// Date d'un nouveau lot : (date, nature, estimée).
-fn dating(name: &str, loc: &str, given: Option<String>) -> (String, Kind, bool) {
+pub(crate) fn dating(name: &str, loc: &str, given: Option<String>) -> (String, Kind, bool) {
     let (days, kind) = shelf::estimate(name, loc);
     match given {
         Some(d) => (d, kind, false),
@@ -472,6 +496,7 @@ impl Store {
             params![p.id, q, reason, now()],
         )
         .map_err(|e| e.to_string())?;
+        db.execute("UPDATE products SET location = ?2 WHERE id = ?1", params![p.id, loc]).map_err(|e| e.to_string())?;
         Ok(format!("{} : +{} ({loc}, {})", p.name, show(q, f), date_note(&exp, kind, est)))
     }
 
@@ -505,23 +530,7 @@ impl Store {
             }
             let used = have.min(q);
             q -= used;
-            if have - used <= 1e-9 {
-                tx.execute("DELETE FROM lots WHERE id = ?1", [id]).map_err(|e| e.to_string())?;
-            } else {
-                tx.execute("UPDATE lots SET qty = qty - ?2, opened = 1 WHERE id = ?1", params![id, used])
-                    .map_err(|e| e.to_string())?;
-                // Première ouverture : la date raccourcit pour les produits concernés.
-                if let (false, Some(d)) = (opened, opened_days) {
-                    let limit = in_days(d);
-                    if expiry.as_deref().is_none_or(|e| e > limit.as_str()) {
-                        tx.execute(
-                            "UPDATE lots SET expiry = ?2, expiry_kind = 'dlc', expiry_estimated = 1 WHERE id = ?1",
-                            params![id, limit],
-                        )
-                        .map_err(|e| e.to_string())?;
-                    }
-                }
-            }
+            Self::draw(&tx, id, have, used, opened, expiry.as_deref(), opened_days).map_err(|e| e.to_string())?;
         }
         let taken = asked - q.max(0.0);
         if taken > 0.0 {
@@ -538,6 +547,163 @@ impl Store {
             s.push_str(&format!(" — {} de plus que le stock connu", show(q, f)));
         }
         Ok((s, q.max(0.0)))
+    }
+
+    /// Retire `used` d'un lot qui en contient `have` : supprimé s'il est vide,
+    /// sinon marqué entamé, et sa date raccourcie à la première ouverture.
+    fn draw(
+        db: &Connection,
+        id: i64,
+        have: f64,
+        used: f64,
+        opened: bool,
+        expiry: Option<&str>,
+        opened_days: Option<i64>,
+    ) -> rusqlite::Result<()> {
+        if have - used <= 1e-9 {
+            db.execute("DELETE FROM lots WHERE id = ?1", [id])?;
+            return Ok(());
+        }
+        db.execute("UPDATE lots SET qty = qty - ?2, opened = 1 WHERE id = ?1", params![id, used])?;
+        if let (false, Some(d)) = (opened, opened_days) {
+            let limit = in_days(d);
+            if expiry.is_none_or(|e| e > limit.as_str()) {
+                db.execute(
+                    "UPDATE lots SET expiry = ?2, expiry_kind = 'dlc', expiry_estimated = 1 WHERE id = ?1",
+                    params![id, limit],
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Lot en stock et son produit, lus dans la transaction qui va l'écrire.
+    fn lot_in(db: &Connection, id: i64) -> Result<(Lot, i64), String> {
+        db.query_row(
+            "SELECT l.qty, l.opened, l.expiry, l.location, p.id, p.name, p.family, l.expiry_kind, l.expiry_estimated, l.added_at
+             FROM lots l JOIN products p ON p.id = l.product_id WHERE l.id = ?1 AND l.qty > 0",
+            [id],
+            |r| {
+                let lot = Lot {
+                    id,
+                    qty: r.get(0)?,
+                    opened: r.get::<_, i64>(1)? != 0,
+                    expiry: r.get(2)?,
+                    location: r.get(3)?,
+                    product: r.get(5)?,
+                    family: Family::parse(&r.get::<_, String>(6)?).unwrap_or(Family::Piece),
+                    kind: r.get::<_, Option<String>>(7)?.as_deref().and_then(Kind::parse),
+                    estimated: r.get::<_, i64>(8)? != 0,
+                    added_at: r.get(9)?,
+                    nature: None,
+                };
+                Ok((lot, r.get(4)?))
+            },
+        )
+        .optional()
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "Ce produit n'est plus en stock.".to_string())
+    }
+
+    /// Consomme un lot précis, en entier ou `qty` dans son unité de base.
+    pub fn use_lot(&self, id: i64, qty: Option<f64>) -> Result<String, String> {
+        if qty.is_some_and(|q| !(q.is_finite() && q > 0.0)) {
+            return Err("Quantité positive attendue.".to_string());
+        }
+        let mut db = self.db.lock().unwrap();
+        let tx = db.transaction().map_err(|e| e.to_string())?;
+        let (l, p) = Self::lot_in(&tx, id)?;
+        let used = qty.unwrap_or(l.qty).min(l.qty);
+        Self::draw(&tx, id, l.qty, used, l.opened, l.expiry.as_deref(), shelf::after_opening(&l.product))
+            .map_err(|e| e.to_string())?;
+        tx.execute(
+            "INSERT INTO movements (product_id, delta, reason, at) VALUES (?1, ?2, 'consommation', ?3)",
+            params![p, -used, now()],
+        )
+        .map_err(|e| e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok(format!("{} : -{} (reste {} dans ce lot)", l.product, show(used, l.family), show(l.qty - used, l.family)))
+    }
+
+    /// Corrige un lot précis : emplacement, quantité (unité de base), date imprimée.
+    pub fn update_lot(
+        &self,
+        id: i64,
+        to: Option<&str>,
+        qty: Option<f64>,
+        expiry: Option<&str>,
+    ) -> Result<String, String> {
+        let loc = to.filter(|x| !x.trim().is_empty()).map(location).transpose()?;
+        let given = expiry.filter(|e| !e.trim().is_empty()).map(date).transpose()?;
+        if qty.is_some_and(|q| !(q.is_finite() && q >= 0.0)) {
+            return Err("Quantité positive attendue.".to_string());
+        }
+        let mut db = self.db.lock().unwrap();
+        let tx = db.transaction().map_err(|e| e.to_string())?;
+        let (l, p) = Self::lot_in(&tx, id)?;
+        let mut done = Vec::new();
+        if let Some(loc) = &loc {
+            Self::move_lot(&tx, id, &l.location, l.expiry.clone(), loc, &given).map_err(|e| e.to_string())?;
+            tx.execute("UPDATE products SET location = ?2 WHERE id = ?1", params![p, loc]).map_err(|e| e.to_string())?;
+            done.push(format!("→ {loc}"));
+        } else if let Some(e) = &given {
+            tx.execute("UPDATE lots SET expiry = ?2, expiry_estimated = 0 WHERE id = ?1", params![id, e])
+                .map_err(|e| e.to_string())?;
+        }
+        if let Some(e) = &given {
+            done.push(format!("jusqu'au {e}"));
+        }
+        if let Some(q) = qty.filter(|q| (q - l.qty).abs() > 1e-9) {
+            if q <= 1e-9 {
+                tx.execute("DELETE FROM lots WHERE id = ?1", [id]).map_err(|e| e.to_string())?;
+            } else {
+                tx.execute("UPDATE lots SET qty = ?2 WHERE id = ?1", params![id, q]).map_err(|e| e.to_string())?;
+            }
+            tx.execute(
+                "INSERT INTO movements (product_id, delta, reason, at) VALUES (?1, ?2, 'correction', ?3)",
+                params![p, q - l.qty, now()],
+            )
+            .map_err(|e| e.to_string())?;
+            done.push(format!("{} → {}", show(l.qty, l.family), show(q, l.family)));
+        }
+        tx.commit().map_err(|e| e.to_string())?;
+        if done.is_empty() {
+            return Ok(format!("{} : rien à changer", l.product));
+        }
+        Ok(format!("{} : {}", l.product, done.join(", ")))
+    }
+
+    /// Change un lot d'emplacement. Sans date donnée : la congélation allonge,
+    /// la décongélation raccourcit. Rend la date retenue, le cas échéant.
+    fn move_lot(
+        db: &Connection,
+        id: i64,
+        from: &str,
+        old: Option<String>,
+        loc: &str,
+        given: &Option<String>,
+    ) -> rusqlite::Result<Option<(String, Kind, bool)>> {
+        let (exp, kind, est) = match (given, from == "congelateur", loc == "congelateur") {
+            (Some(e), ..) => (Some(e.clone()), None, false),
+            (None, false, true) => (Some(in_days(90)), Some(Kind::Ddm), true),
+            (None, true, false) => {
+                let limit = in_days(shelf::THAWED_DAYS);
+                (Some(old.filter(|o| *o < limit).unwrap_or(limit)), Some(Kind::Dlc), true)
+            }
+            (None, ..) => (None, None, false),
+        };
+        db.execute(
+            "UPDATE lots SET location = ?2,
+                expiry = COALESCE(?3, expiry),
+                expiry_kind = COALESCE(?4, expiry_kind),
+                expiry_estimated = CASE WHEN ?3 IS NULL THEN expiry_estimated ELSE ?5 END
+             WHERE id = ?1",
+            params![id, loc, exp, kind.map(Kind::as_str), est],
+        )?;
+        Ok(match (exp, kind) {
+            (Some(e), Some(k)) => Some((e, k, est)),
+            _ => None,
+        })
     }
 
     /// Fixe la quantité totale d'un produit (inventaire), en ajustant le lot le plus ancien.
@@ -608,31 +774,14 @@ impl Store {
         }
         let mut note = given.as_ref().map(|e| format!(", à consommer avant le {e}"));
         for (id, from, old) in lots {
-            // Sans date donnée : la congélation allonge, la décongélation raccourcit.
-            let (exp, kind, est) = match (&given, from == "congelateur", loc == "congelateur") {
-                (Some(e), ..) => (Some(e.clone()), None, false),
-                (None, false, true) => (Some(in_days(90)), Some(Kind::Ddm), true),
-                (None, true, false) => {
-                    let limit = in_days(shelf::THAWED_DAYS);
-                    (Some(old.filter(|o| *o < limit).unwrap_or(limit)), Some(Kind::Dlc), true)
-                }
-                (None, ..) => (None, None, false),
-            };
+            let set = Self::move_lot(&db, id, &from, old, &loc, &given).map_err(|e| e.to_string())?;
             if note.is_none()
-                && let (Some(e), Some(k)) = (&exp, kind)
+                && let Some((e, k, est)) = set
             {
-                note = Some(format!(", {}", date_note(e, k, est)));
+                note = Some(format!(", {}", date_note(&e, k, est)));
             }
-            db.execute(
-                "UPDATE lots SET location = ?2,
-                    expiry = COALESCE(?3, expiry),
-                    expiry_kind = COALESCE(?4, expiry_kind),
-                    expiry_estimated = CASE WHEN ?3 IS NULL THEN expiry_estimated ELSE ?5 END
-                 WHERE id = ?1",
-                params![id, loc, exp, kind.map(Kind::as_str), est],
-            )
-            .map_err(|e| e.to_string())?;
         }
+        db.execute("UPDATE products SET location = ?2 WHERE id = ?1", params![p.id, loc]).map_err(|e| e.to_string())?;
         Ok(format!("{} → {loc}{}", p.name, note.unwrap_or_default()))
     }
 
@@ -748,6 +897,88 @@ impl Store {
             })
         })?
         .collect()
+    }
+
+    /// Produit connu par code-barres : (nom, nature, emplacement habituel).
+    pub fn known(&self, barcode: &str) -> rusqlite::Result<Option<Known>> {
+        let db = self.db.lock().unwrap();
+        db.query_row(
+            "SELECT p.name, p.nature, p.category, COALESCE(p.location,
+                (SELECT location FROM lots WHERE product_id = p.id ORDER BY added_at DESC LIMIT 1))
+             FROM products p WHERE p.barcode = ?1",
+            [barcode],
+            |r| {
+                let name: String = r.get(0)?;
+                let manual = r.get::<_, Option<String>>(1)?.as_deref().and_then(Nature::parse);
+                let n = crate::nature::resolve(manual, r.get::<_, Option<String>>(2)?.as_deref(), &name);
+                Ok((name, n, r.get(3)?))
+            },
+        )
+        .optional()
+    }
+
+    /// Produit déjà connu (code-barres, sinon nom exact, le plus récent) : sa famille,
+    /// sa zone habituelle et son dernier apport, pour proposer la même quantité.
+    pub fn usual(&self, name: &str, barcode: Option<&str>) -> rusqlite::Result<Option<Usual>> {
+        let db = self.db.lock().unwrap();
+        db.query_row(
+            "SELECT p.name, p.family, p.nature, p.category, COALESCE(p.location,
+                (SELECT location FROM lots WHERE product_id = p.id ORDER BY added_at DESC LIMIT 1)),
+                (SELECT delta FROM movements WHERE product_id = p.id AND delta > 0 ORDER BY at DESC, id DESC LIMIT 1)
+             FROM products p WHERE p.barcode = ?2 OR p.folded = ?1 ORDER BY p.barcode = ?2 DESC, p.id DESC LIMIT 1",
+            params![fold(name.trim()), barcode],
+            |r| {
+                let name: String = r.get(0)?;
+                let manual = r.get::<_, Option<String>>(2)?.as_deref().and_then(Nature::parse);
+                let nature = crate::nature::resolve(manual, r.get::<_, Option<String>>(3)?.as_deref(), &name);
+                Ok(Usual {
+                    family: Family::parse(&r.get::<_, String>(1)?).unwrap_or(Family::Piece),
+                    name,
+                    nature,
+                    location: r.get(4)?,
+                    pack: r.get(5)?,
+                })
+            },
+        )
+        .optional()
+    }
+
+    /// Emplacement habituel d'un produit (code-barres, sinon nom exact), s'il a déjà été rangé.
+    pub fn usual_location(&self, name: &str, barcode: Option<&str>) -> rusqlite::Result<Option<String>> {
+        let db = self.db.lock().unwrap();
+        db.query_row(
+            "SELECT COALESCE(p.location,
+                (SELECT location FROM lots WHERE product_id = p.id ORDER BY added_at DESC LIMIT 1))
+             FROM products p WHERE p.barcode = ?2 OR p.folded = ?1 ORDER BY p.barcode = ?2 DESC LIMIT 1",
+            params![fold(name.trim()), barcode],
+            |r| r.get(0),
+        )
+        .optional()
+        .map(Option::flatten)
+    }
+
+    /// Lignes d'une commande déjà traitées (rangées ou en rupture), par index.
+    pub fn lines_done(&self, order: i64) -> rusqlite::Result<Vec<usize>> {
+        let db = self.db.lock().unwrap();
+        let mut st = db.prepare("SELECT idx FROM order_lines WHERE order_id = ?1")?;
+        st.query_map([order], |r| r.get::<_, i64>(0).map(|i| i as usize))?.collect()
+    }
+
+    /// Marque une ligne traitée ; false si elle l'était déjà.
+    pub fn claim_line(&self, order: i64, idx: usize, state: &str) -> rusqlite::Result<bool> {
+        let n = self.db.lock().unwrap().execute(
+            "INSERT OR IGNORE INTO order_lines (order_id, idx, state, at) VALUES (?1, ?2, ?3, ?4)",
+            params![order, idx as i64, state, now()],
+        )?;
+        Ok(n == 1)
+    }
+
+    pub fn release_line(&self, order: i64, idx: usize) -> rusqlite::Result<()> {
+        self.db
+            .lock()
+            .unwrap()
+            .execute("DELETE FROM order_lines WHERE order_id = ?1 AND idx = ?2", params![order, idx as i64])?;
+        Ok(())
     }
 
     pub fn mark_received(&self, id: i64) -> rusqlite::Result<()> {
@@ -993,5 +1224,39 @@ mod tests {
         assert_eq!(s.resolve("lait coco").unwrap().name, "Lait de coco");
         s.take(&line("lait coco", 400.0, "ml", ""), "repas", None).unwrap();
         assert_eq!(s.resolve("lait").unwrap().name, "Lait demi-écrémé", "seul encore en stock");
+    }
+
+    fn movements(s: &Store) -> (i64, f64) {
+        s.db.lock().unwrap().query_row("SELECT COUNT(*), COALESCE(SUM(delta), 0) FROM movements WHERE reason != 'achat'", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap()
+    }
+
+    #[test]
+    fn lot_use_twice_logs_one_movement() {
+        let s = Store::memory();
+        s.add(&line("Yaourts nature", 4.0, "pièce", "frigo"), "achat", None).unwrap();
+        let id = s.lots(None, None).unwrap()[0].id;
+        s.use_lot(id, None).unwrap();
+        assert_eq!(s.use_lot(id, None).unwrap_err(), "Ce produit n'est plus en stock.");
+        assert_eq!(movements(&s), (1, -4.0));
+    }
+
+    #[test]
+    fn concurrent_partial_uses_never_go_below_zero() {
+        let s = std::sync::Arc::new(Store::memory());
+        s.add(&line("Yaourts nature", 20.0, "pièce", "frigo"), "achat", None).unwrap();
+        let id = s.lots(None, None).unwrap()[0].id;
+        let hs: Vec<_> = (0..40)
+            .map(|_| {
+                let s = s.clone();
+                std::thread::spawn(move || {
+                    let _ = s.use_lot(id, Some(1.0));
+                    let _ = s.update_lot(id, None, None, Some("2030-01-01"));
+                })
+            })
+            .collect();
+        hs.into_iter().for_each(|h| h.join().unwrap());
+        let left: f64 = s.db.lock().unwrap().query_row("SELECT COALESCE(SUM(qty), 0) FROM lots", [], |r| r.get(0)).unwrap();
+        assert_eq!(left, 0.0);
+        assert_eq!(movements(&s).1, -20.0, "une sortie par unité réellement prise");
     }
 }

@@ -1,11 +1,8 @@
 package app.kairos.mobile.ui.decide
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.VectorConverter
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -66,6 +63,7 @@ import app.kairos.mobile.data.ApiError
 import app.kairos.mobile.data.Decision
 import app.kairos.mobile.ui.mascot.Mascot
 import app.kairos.mobile.ui.mascot.MascotState
+import app.kairos.mobile.ui.theme.Motion
 import java.util.Locale
 import kotlin.math.abs
 import kotlinx.coroutines.CancellationException
@@ -124,6 +122,7 @@ fun DeckScreen(
             when (e) {
                 ApiError.Unauthorized -> return unauthorized()
                 ApiError.Offline -> fail("Serveur injoignable : rien n'a été enregistré.")
+                ApiError.NoReply -> fail("Pas de réponse du serveur : réessaie.")
                 is ApiError.Server -> when (e.code) {
                     404 -> notice("Cette question n'existe plus.")
                     503 -> fail("Module indisponible, réessaie plus tard.")
@@ -155,8 +154,6 @@ fun DeckScreen(
             }
         }
     }
-    BackHandler(onBack = onClose)
-
     var area by remember { mutableStateOf(IntSize.Zero) }
     val width = area.width.toFloat().coerceAtLeast(1f)
     val height = area.height.toFloat()
@@ -165,8 +162,8 @@ fun DeckScreen(
     val flingSpeed = with(LocalDensity.current) { FLING_DP_S.dp.toPx() }
     fun direction(o: Offset, v: Offset = Offset.Zero) = swipeOf(o, v, threshold, flingSpeed)
 
-    suspend fun flingTo(target: Offset) = offset.animateTo(target, tween(220))
-    suspend fun back() = offset.animateTo(Offset.Zero, spring(dampingRatio = 0.6f, stiffness = 500f))
+    suspend fun flingTo(target: Offset) = offset.animateTo(target, Motion.fling())
+    suspend fun back() = offset.animateTo(Offset.Zero, Motion.settle())
 
     suspend fun commit(option: String) {
         flingTo(Offset(width * 1.4f, offset.value.y))
@@ -221,6 +218,7 @@ fun DeckScreen(
     ) {
         val progress by animateFloatAsState(
             if (deck.total == 0) 1f else deck.done.toFloat() / deck.total,
+            Motion.enter(),
             label = "progression",
         )
         LinearProgressIndicator(
@@ -424,7 +422,7 @@ private fun DecisionCard(
 }
 
 @Composable
-private fun BoxScope.Stamp(
+internal fun BoxScope.Stamp(
     text: String,
     color: Color,
     alpha: Float,

@@ -10,7 +10,10 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import java.time.LocalDate
+import java.util.concurrent.TimeUnit
 
 /** Exemple du contrat partagé, tel que la tête le relaie (avec `module`). */
 internal const val DAYS_JSON = """[{"day": "2026-11-08", "work": "repos", "cards": [
@@ -83,5 +86,69 @@ class ApiTest {
         val req = server.takeRequest()
         assertEquals("/app/v1/decisions/finances/op%201", req.url.encodedPath)
         assertEquals("""{"choice":"Loisirs"}""", req.body?.utf8())
+    }
+
+    @Test
+    fun api_tool_passthrough() = runBlocking {
+        server.enqueue(MockResponse.Builder().body(
+            """{"zones":[{"id":"frigo","label":"Frigo","count":1,"urgent":1}],
+               "lots":[{"id":4,"name":"Lait","qty":1000,"unit":"ml","label":"1 l","step":100,"location":"frigo",
+                        "expiry":"2026-11-09","expiry_kind":"dlc","estimated":false,"tone":"urgent"}]}""",
+        ).build())
+        val inv = api().tool("alimentation", "app_inventory", Inventory.serializer())
+        assertEquals(Lot(4, "Lait", 1000.0, "ml", "1 l", 100.0, "frigo", "2026-11-09", "dlc", false, Tone.Urgent), inv.lots.single())
+        val req = server.takeRequest()
+        assertEquals("/app/v1/tools/alimentation/app_inventory", req.url.encodedPath)
+        assertEquals("{}", req.body?.utf8())
+
+        server.enqueue(MockResponse.Builder().code(422).body("""{"message":"Lot 4 introuvable."}""").build())
+        try {
+            api().tool("alimentation", "app_lot_use", ToolMessage.serializer(), buildJsonObject { put("lot", 4) })
+            fail("422 attendu")
+        } catch (e: ApiError.Server) {
+            assertEquals(422 to "Lot 4 introuvable.", e.code to e.message)
+        }
+        assertEquals("""{"lot":4}""", server.takeRequest().body?.utf8())
+    }
+
+    private suspend fun failure(block: suspend () -> Unit): ApiError =
+        try {
+            block()
+            throw AssertionError("erreur attendue")
+        } catch (e: ApiError) {
+            e
+        }
+
+    @Test
+    fun api_tool_404_without_message_means_outdated_server() = runBlocking {
+        // Tête antérieure au passe-plat : 404 nu, sans raison.
+        server.enqueue(MockResponse.Builder().code(404).build())
+        val bare = failure { api().tool("alimentation", "app_inventory", Inventory.serializer()) } as ApiError.Server
+        assertEquals("Serveur à mettre à jour", bare.unavailable())
+        server.enqueue(MockResponse.Builder().code(404).body("""{"message":"module inconnu"}""").build())
+        val unknown = failure { api().tool("alimentation", "app_inventory", Inventory.serializer()) } as ApiError.Server
+        assertEquals("Module indisponible, réessaie plus tard", unknown.unavailable())
+        server.enqueue(MockResponse.Builder().code(503).build())
+        val down = failure { api().tool("alimentation", "app_inventory", Inventory.serializer()) } as ApiError.Server
+        assertEquals("Module indisponible, réessaie plus tard", down.unavailable())
+    }
+
+    @Test
+    fun api_timeout_is_no_reply() = runBlocking {
+        server.enqueue(MockResponse.Builder().headersDelay(2, TimeUnit.SECONDS).body("{}").build())
+        val slow = KairosApi(server.url("/").toString(), "t", OkHttpClient.Builder().readTimeout(200, TimeUnit.MILLISECONDS).build())
+        assertEquals(ApiError.NoReply, failure { slow.tool("alimentation", "app_add", ToolMessage.serializer()) })
+        server.close()
+        assertEquals(ApiError.Offline, failure { api().tool("alimentation", "app_add", ToolMessage.serializer()) })
+    }
+
+    @Test
+    fun api_product_contract() = runBlocking {
+        server.enqueue(MockResponse.Builder().body("""{"known":false}""").build())
+        assertEquals(false, api().tool("alimentation", "app_product", Product.serializer()).known)
+        server.enqueue(MockResponse.Builder().body(
+            """{"known":true,"name":"Riz","nature":null,"fresh":false,"location":"placard","unit":"g","qty":1000}""",
+        ).build())
+        assertEquals(Product(true, "Riz", null, false, "placard", "g", 1000.0), api().tool("alimentation", "app_product", Product.serializer()))
     }
 }

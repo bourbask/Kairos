@@ -12,11 +12,6 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -44,6 +39,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.DefaultLifecycleObserver
@@ -57,8 +54,22 @@ import app.kairos.mobile.data.Credentials
 import app.kairos.mobile.data.KairosApi
 import app.kairos.mobile.data.Repository
 import app.kairos.mobile.data.SecureStore
+import app.kairos.mobile.ui.KairosButtonCorner
 import app.kairos.mobile.ui.Shell
+import app.kairos.mobile.ui.overlay.Origin
+import app.kairos.mobile.ui.overlay.Overlay
+import app.kairos.mobile.ui.overlay.overlayAnchor
+import app.kairos.mobile.ui.overlay.rememberOverlayState
+import app.kairos.mobile.ui.overlay.underOverlays
 import app.kairos.mobile.ui.decide.DeckScreen
+import app.kairos.mobile.ui.maison.MaisonActionCorner
+import app.kairos.mobile.ui.maison.MaisonScreen
+import app.kairos.mobile.ui.maison.AddScreen
+import app.kairos.mobile.ui.maison.UnpackScreen
+import app.kairos.mobile.ui.maison.UnpackState
+import app.kairos.mobile.ui.overlay.anchorTo
+import app.kairos.mobile.data.Order
+import app.kairos.mobile.ui.spaces.SpacesScreen
 import app.kairos.mobile.ui.pairing.PairingScreen
 import app.kairos.mobile.ui.talk.ChatScreen
 import app.kairos.mobile.ui.talk.Conversation
@@ -74,6 +85,7 @@ import app.kairos.mobile.ui.settings.SettingsScreen
 import app.kairos.mobile.ui.settings.maskAddress
 import app.kairos.mobile.data.Settings
 import androidx.compose.runtime.DisposableEffect
+import app.kairos.mobile.ui.today.DecisionsPeekCorner
 import app.kairos.mobile.ui.today.TodayScreen
 import app.kairos.mobile.voice.Speech
 import app.kairos.mobile.voice.Tts
@@ -291,6 +303,7 @@ class AppModel(app: Application) : AndroidViewModel(app) {
         when (e) {
             ApiError.Unauthorized -> "Code refusé par le serveur. Génère-en un nouveau."
             ApiError.Offline -> "Serveur injoignable. Le téléphone est-il sur le bon réseau ?"
+            ApiError.NoReply -> "Le serveur ne répond pas, réessaie."
             is ApiError.Server -> "Le serveur a répondu : ${e.message}"
         }
     } catch (_: Exception) {
@@ -332,6 +345,9 @@ private fun KairosRoot(model: AppModel) {
     var decisionsOpen by rememberSaveable { mutableStateOf(false) }
     var chatOpen by rememberSaveable { mutableStateOf(false) }
     var settingsOpen by rememberSaveable { mutableStateOf(false) }
+    var maisonOpen by rememberSaveable { mutableStateOf(false) }
+    var unpackOrder by rememberSaveable { mutableStateOf<Long?>(null) }
+    var adding by rememberSaveable { mutableStateOf(false) }
     var focusInput by remember { mutableStateOf(false) }
     var askMic by remember { mutableStateOf(false) }
     var askedNotifications by rememberSaveable { mutableStateOf(false) }
@@ -384,8 +400,18 @@ private fun KairosRoot(model: AppModel) {
     }
 
     val mascot = mascotFor(talk.mode, conversation.busy || conversation.awaiting, conversation.decisions, conversation.unread)
-    Box(Modifier.fillMaxSize()) {
+    val deck = rememberOverlayState(decisionsOpen, Origin.Anchor)
+    val chat = rememberOverlayState(chatOpen, Origin.Anchor)
+    val settings = rememberOverlayState(settingsOpen, Origin.End)
+    val unpack = rememberOverlayState(unpackOrder != null, Origin.Anchor)
+    val add = rememberOverlayState(adding, Origin.Anchor)
+    val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+    val primary = MaterialTheme.colorScheme.primary
+    // Fond révélé quand l'écran principal recule sous un panneau.
+    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.outlineVariant)) {
         Shell(
+            modifier = Modifier.underOverlays(rtl, deck, chat, settings, unpack, add),
+            kairosModifier = Modifier.overlayAnchor(chat, KairosButtonCorner),
             mascotState = mascot,
             onTap = {
                 focusInput = false
@@ -402,10 +428,43 @@ private fun KairosRoot(model: AppModel) {
                     onOpenDecisions = { decisionsOpen = true },
                     onOpenSettings = { settingsOpen = true },
                     onUnauthorized = model::unauthorized,
+                    decisionsAnchor = Modifier.overlayAnchor(deck, DecisionsPeekCorner),
                 )
             },
+            spaces = { padding ->
+                val maison by session.repository.maison.collectAsState()
+                // Une actualisation à l'arrivée sur l'onglet : les chiffres de la carte Maison sont à jour.
+                LaunchedEffect(Unit) {
+                    try {
+                        session.repository.refreshMaison()
+                    } catch (_: ApiError.Unauthorized) {
+                        model.unauthorized()
+                    }
+                }
+                SpacesScreen(
+                    padding = padding,
+                    maison = maison,
+                    maisonOpen = maisonOpen,
+                    onOpenMaison = { maisonOpen = true },
+                    onCloseMaison = { maisonOpen = false },
+                ) {
+                    MaisonScreen(
+                        repository = session.repository,
+                        padding = padding,
+                        appScope = model.viewModelScope,
+                        onClose = { maisonOpen = false },
+                        onUnpack = { order, at ->
+                            at?.let { unpack.anchorTo(it, MaisonActionCorner) }
+                            unpackOrder = order.id
+                        },
+                        onAdd = { adding = true },
+                        onUnauthorized = model::unauthorized,
+                        addAnchor = Modifier.overlayAnchor(add, MaisonActionCorner),
+                    )
+                }
+            },
         )
-        if (decisionsOpen) {
+        Overlay(deck, decisionsOpen, onClose = { decisionsOpen = false }, anchorColor = primary) {
             val snapshot by session.repository.snapshot.collectAsState()
             DeckScreen(
                 decisions = snapshot.decisions,
@@ -428,11 +487,43 @@ private fun KairosRoot(model: AppModel) {
                 onClose = { decisionsOpen = false },
             )
         }
-        AnimatedVisibility(
-            visible = chatOpen,
-            enter = slideInVertically { it / 3 } + fadeIn(),
-            exit = slideOutVertically { it / 3 } + fadeOut(),
-        ) {
+        Overlay(unpack, unpackOrder != null, onClose = { unpackOrder = null }, anchorColor = primary) {
+            val maison by session.repository.maison.collectAsState()
+            // Gardée telle qu'ouverte : rangée entièrement, elle quitte la liste mais reste affichée jusqu'à la fermeture.
+            var order by remember { mutableStateOf<Order?>(null) }
+            LaunchedEffect(unpackOrder, maison.orders) {
+                val id = unpackOrder ?: return@LaunchedEffect
+                if (order?.id == id) return@LaunchedEffect
+                val found = maison.orders.firstOrNull { it.id == id }
+                // Commande disparue entre-temps (rangée ailleurs) : rien à montrer.
+                if (found == null) unpackOrder = null else order = found
+            }
+            order?.let { shown ->
+                UnpackScreen(
+                    order = shown,
+                    offline = maison.offline,
+                    repository = session.repository,
+                    appScope = model.viewModelScope,
+                    onUnauthorized = model::unauthorized,
+                    onNotice = { scope.launch { snackbar.showSnackbar(it) } },
+                    onClose = { unpackOrder = null },
+                    others = maison.orders.count { o -> o.id != shown.id && o.lines.any { !it.done } },
+                    onOther = { UnpackState.nextOrder(maison.orders, shown.id)?.let { unpackOrder = it.id } },
+                )
+            }
+        }
+        Overlay(add, adding, onClose = { adding = false }, anchorColor = primary) {
+            val maison by session.repository.maison.collectAsState()
+            AddScreen(
+                api = session.api,
+                repository = session.repository,
+                offline = maison.offline,
+                appScope = model.viewModelScope,
+                onUnauthorized = model::unauthorized,
+                onClose = { adding = false },
+            )
+        }
+        Overlay(chat, chatOpen, onClose = { chatOpen = false }, anchorColor = primary) {
             ChatScreen(
                 conversation = conversation,
                 mascot = mascot,
@@ -442,7 +533,7 @@ private fun KairosRoot(model: AppModel) {
                 onClose = { chatOpen = false },
             )
         }
-        if (settingsOpen) {
+        Overlay(settings, settingsOpen, onClose = { settingsOpen = false }) {
             SettingsScreen(
                 theme = model.theme,
                 onTheme = model::changeTheme,

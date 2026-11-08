@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import app.kairos.mobile.data.Day
 import app.kairos.mobile.data.Mark
 import app.kairos.mobile.data.Snapshot
+import app.kairos.mobile.ui.theme.Motion
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -117,7 +118,7 @@ private fun DayBlock(day: Day, marks: Map<String, Mark>, expanded: String?, onTo
                             modifier = Modifier.weight(1f),
                         )
                     }
-                    AnimatedVisibility(expanded == key) {
+                    AnimatedVisibility(expanded == key, enter = Motion.expand, exit = Motion.collapse) {
                         Column(Modifier.padding(start = 48.dp, top = 4.dp)) {
                             card.body?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = muted) }
                             card.detail?.let {

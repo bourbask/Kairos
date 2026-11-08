@@ -15,8 +15,10 @@ use crate::config::TentacleEntry;
 pub const TOOL_RESULT_MAX_CHARS: usize = 8000;
 pub const TOOL_TIMEOUT: Duration = Duration::from_secs(20);
 const TRUNCATED: &str = "… [tronqué]";
-/// Outils réservés à l'API de l'application : jamais proposés au moteur.
-pub const APP_TOOLS: [&str; 3] = ["cards", "decisions", "decide"];
+/// Outils réservés à l'API de l'application (conventions et préfixe `app_`) : jamais proposés au moteur.
+pub fn is_app_tool(name: &str) -> bool {
+    matches!(name, "cards" | "decisions" | "decide") || name.starts_with("app_")
+}
 
 type Client = RunningService<RoleClient, ()>;
 
@@ -95,7 +97,7 @@ impl Tentacles {
             .filter(|t| !t.private)
             .filter_map(|t| t.link.as_ref().map(|(_, tools)| (t, tools)))
             .flat_map(|(t, tools)| {
-                tools.iter().filter(|tool| !APP_TOOLS.contains(&tool.name.as_ref())).map(|tool| ToolSpec {
+                tools.iter().filter(|tool| !is_app_tool(&tool.name)).map(|tool| ToolSpec {
                     name: format!("{}__{}", t.name, tool.name),
                     description: tool.description.as_deref().unwrap_or_default().to_string(),
                     input_schema: plain_schema(serde_json::Value::Object((*tool.input_schema).clone())),
@@ -282,5 +284,15 @@ mod tests {
     fn ordinary_schema_unchanged() {
         let s = json!({"type": "object", "properties": {"n": {"type": ["integer", "null"]}}, "required": ["n"]});
         assert_eq!(plain_schema(s.clone()), s);
+    }
+
+    #[test]
+    fn app_prefixed_tools_hidden_from_engine() {
+        for t in ["cards", "decisions", "decide", "app_inventory", "app_add"] {
+            assert!(super::is_app_tool(t), "{t}");
+        }
+        for t in ["stock_set", "meal_plan_set", "apple"] {
+            assert!(!super::is_app_tool(t), "{t}");
+        }
     }
 }

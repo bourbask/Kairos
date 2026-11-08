@@ -15,6 +15,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.MotionDurationScale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -45,7 +46,8 @@ fun Mascot(state: MascotState, size: Dp, onBackground: Color, modifier: Modifier
         frame = 0
         while (true) {
             delay(frameMillis(state))
-            frame++
+            // Animations retirées dans les réglages du système : le personnage reste immobile.
+            if (coroutineContext[MotionDurationScale]?.scaleFactor != 0f) frame++
         }
     }
     // Respiration : léger flottement continu, sous le pixel.

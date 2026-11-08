@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 
 use crate::config::{WorkMode, WorkRhythm};
 use crate::state::{QuietScope, State};
-use crate::tentacles::{APP_TOOLS, Tentacles};
+use crate::tentacles::{Tentacles, is_app_tool};
 
 pub const MAX_TOOL_ROUNDS: usize = 8;
 const MAX_TURNS: usize = 40;
@@ -275,7 +275,7 @@ async fn execute(call: &ToolCall, tentacles: &Tentacles, state: &State) -> Resul
     // Les outils des tentacules sont toujours préfixés `<tentacule>__`.
     if call.name.contains("__") {
         // Un outil privé ou réservé à l'application n'est jamais proposé au moteur : un appel deviné est refusé.
-        let app_tool = call.name.rsplit_once("__").is_some_and(|(_, t)| APP_TOOLS.contains(&t));
+        let app_tool = call.name.rsplit_once("__").is_some_and(|(_, t)| is_app_tool(t));
         if app_tool || tentacles.private_names().iter().any(|n| call.name.strip_prefix(n.as_str()).is_some_and(|r| r.starts_with("__"))) {
             return Err(format!("outil inconnu : {}", call.name));
         }

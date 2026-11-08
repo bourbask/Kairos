@@ -133,7 +133,7 @@ fn clean(designation: &str) -> Vec<String> {
         .collect()
 }
 
-fn location(rayon: &str, name: &str) -> &'static str {
+pub(crate) fn location(rayon: &str, name: &str) -> &'static str {
     let n = fold(name);
     if rayon.contains("surgel") {
         return "congelateur";

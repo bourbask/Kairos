@@ -29,7 +29,8 @@
         android:usesCleartextTraffic="true"
         android:supportsRtl="true"
         android:icon="@mipmap/ic_launcher"
-        android:theme="@style/Theme.Kairos">
+        android:theme="@style/Theme.Kairos"
+        android:enableOnBackInvokedCallback="true">
         <activity
             android:name=".MainActivity"
             android:exported="true"

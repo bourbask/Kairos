@@ -20,6 +20,15 @@ impl Family {
         }
     }
 
+    /// Unité de base, telle que l'application l'affiche.
+    pub fn base(self) -> &'static str {
+        match self {
+            Family::Masse => "g",
+            Family::Volume => "ml",
+            Family::Piece => "pièce",
+        }
+    }
+
     pub fn parse(s: &str) -> Option<Family> {
         match s {
             "masse" => Some(Family::Masse),
@@ -45,6 +54,20 @@ pub fn parse_unit(u: &str) -> Option<(Family, f64)> {
         "douzaine" | "douzaines" => (Family::Piece, 12.0),
         _ => return None,
     })
+}
+
+/// Contenance annoncée (« 500 g », « 6 x 1 l ») → (famille, quantité de base) ;
+/// masse ou volume seulement, une contenance en pièces n'est pas fiable.
+pub fn pack(s: &str) -> Option<(Family, f64)> {
+    let s = s.trim().to_lowercase().replace(',', ".");
+    let (times, rest) = match s.split_once(['x', '×']) {
+        Some((n, rest)) if n.trim().parse::<f64>().is_ok() => (n.trim().parse::<f64>().ok()?, rest.trim()),
+        _ => (1.0, s.as_str()),
+    };
+    let i = rest.find(|c: char| !(c.is_ascii_digit() || c == '.')).unwrap_or(rest.len());
+    let q: f64 = rest[..i].parse().ok()?;
+    let (f, k) = parse_unit(rest[i..].trim())?;
+    (f != Family::Piece && q > 0.0 && times > 0.0).then_some((f, times * q * k))
 }
 
 fn num(x: f64) -> String {
@@ -99,5 +122,15 @@ mod tests {
         assert_eq!(show(1.0, Family::Piece), "1 pièce");
         assert_eq!(fold("Œufs plein air"), "oufs plein air");
         assert_eq!(fold("oeufs"), fold("Œufs"));
+    }
+
+    #[test]
+    fn pack_sizes() {
+        assert_eq!(pack("500 g"), Some((Family::Masse, 500.0)));
+        assert_eq!(pack("1,5 L"), Some((Family::Volume, 1500.0)));
+        assert_eq!(pack("6 x 1 l"), Some((Family::Volume, 6000.0)));
+        assert_eq!(pack("75cl"), Some((Family::Volume, 750.0)));
+        assert_eq!(pack("6"), None, "pièces : pas de contenance");
+        assert_eq!(pack("environ 1 kg"), None);
     }
 }

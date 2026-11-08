@@ -1,0 +1,175 @@
+package app.kairos.mobile.ui.maison
+
+import app.kairos.mobile.data.Inventory
+import app.kairos.mobile.data.Lot
+import app.kairos.mobile.data.MaisonSnapshot
+import app.kairos.mobile.data.Order
+import app.kairos.mobile.data.OrderLine
+import app.kairos.mobile.data.Tone
+import app.kairos.mobile.data.Zone
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import java.time.LocalDate
+
+class MaisonStateTest {
+
+    private val champignons = Lot(1, "Champignons", 250.0, "g", "250 g", 50.0, "frigo", "2026-11-09", tone = Tone.Urgent)
+    private val soupe = Lot(2, "Soupe carcasse", 2.0, "pièce", "2 pièces", 1.0, "frigo", "2026-11-10", tone = Tone.Attention)
+    private val riz = Lot(3, "Riz", 1000.0, "g", "1 kg", 100.0, "placard")
+
+    private fun snapshot(offline: Boolean = false) = MaisonSnapshot(
+        inventory = Inventory(
+            zones = listOf(Zone("frigo", "Frigo", 2, 1), Zone("placard", "Placard", 1, 0)),
+            lots = listOf(champignons, soupe, riz),
+        ),
+        orders = listOf(
+            Order(7, "drive", lines = listOf(OrderLine(0, "Lait", done = true), OrderLine(1, "Œufs"))),
+            Order(8, "drive", lines = listOf(OrderLine(0, "Pain", done = true))),
+        ),
+        fetchedAt = "2026-11-08T08:00",
+        offline = offline,
+    )
+
+    @Test
+    fun zones_from_inventory() {
+        val s = MaisonState(snapshot())
+        // Les cinq zones, dans l'ordre du plan, même celles que le serveur n'a pas citées.
+        assertEquals(listOf("frigo", "congelateur", "placard", "etagere", "corbeille"), s.zones.map { it.id })
+        assertEquals(listOf("Frigo", "Congélo", "Placard", "Étagère", "Table"), s.zones.map { it.label })
+        val frigo = s.zones.first()
+        assertEquals(2 to 1, frigo.count to frigo.urgent)
+        assertEquals(1, s.zones.first { it.id == "placard" }.count)
+        assertEquals(3, s.total)
+        // Zone ouverte d'office : celle qui a des urgences ; stock trié comme le serveur l'a rendu.
+        assertEquals("frigo", s.zone)
+        assertEquals(listOf("Champignons", "Soupe carcasse"), s.lotsIn(s.zone).map { it.name })
+        // Seules les commandes qui ont encore des lignes à ranger.
+        assertEquals(listOf(7L), s.orders.map { it.id })
+    }
+
+    @Test
+    fun banner_shows_latest_order() {
+        fun order(id: Long, pickup: String?) = Order(id, "drive", pickup, listOf(OrderLine(0, "Pain")))
+        val s = MaisonState(snapshot().copy(orders = listOf(order(4, "2026-11-10"), order(9, "2026-11-08"), order(6, "2026-11-10"))))
+        // Retrait le plus tardif, puis la dernière enregistrée ; les autres en nombre.
+        assertEquals(6L, s.banner?.id)
+        assertEquals(2, s.orders.size - 1)
+        assertEquals("retrait 10/11", pickupLabel("2026-11-10"))
+        assertNull(pickupLabel(null))
+        assertNull(pickupLabel("bientôt"))
+        assertNull(MaisonState(snapshot().copy(orders = emptyList())).banner)
+    }
+
+    @Test
+    fun swipe_left_consumes_after_undo_window() {
+        val s = MaisonState(snapshot())
+        val use = s.consume(champignons)!!
+        assertEquals(listOf("Soupe carcasse"), s.lotsIn("frigo").map { it.name })
+        assertEquals(0, s.zones.first().urgent)
+        assertTrue(s.canUndo)
+
+        assertTrue(s.undo())
+        assertEquals(2, s.lotsIn("frigo").size)
+        assertFalse(s.dispatch(use))
+
+        val again = s.consume(champignons)!!
+        assertTrue(s.dispatch(again))
+        assertFalse(s.canUndo)
+        assertFalse(s.undo())
+        assertEquals("app_lot_use" to """{"lot":1}""", again.tool to again.args.toString())
+
+        // Confirmé : le lot reste parti, même avant l'actualisation.
+        s.confirmed(again)
+        assertEquals(1, s.lotsIn("frigo").size)
+        // Une actualisation qui le rend encore (serveur en retard) ne le fait pas revenir tant qu'une action est en vol.
+        val pending = s.consume(soupe)!!
+        s.load(snapshot())
+        assertTrue(s.lotsIn("frigo").none { it.id == soupe.id })
+        assertTrue(s.dispatch(pending))
+    }
+
+    @Test
+    fun move_updates_zone_locally_then_server() {
+        val s = MaisonState(snapshot())
+        val move = s.move(champignons, "congelateur")!!
+        assertEquals("congelateur", s.lots.first { it.id == 1L }.location)
+        assertEquals(1 to 1, s.zones.first { it.id == "congelateur" }.let { it.count to it.urgent })
+        assertEquals(1, s.zones.first().count)
+        // Pas de fenêtre d'annulation : part tout de suite.
+        assertFalse(s.canUndo)
+        assertTrue(s.dispatch(move))
+        assertEquals("app_lot_update" to """{"lot":1,"location":"congelateur"}""", move.tool to move.args.toString())
+        // Même zone, ou zone inconnue : rien à faire.
+        assertNull(s.move(riz, "placard"))
+        assertNull(s.move(riz, "garage"))
+
+        s.confirmed(move)
+        assertEquals("congelateur", s.lots.first { it.id == 1L }.location)
+    }
+
+    @Test
+    fun quantity_steps_and_zero_consumes() {
+        val s = MaisonState(snapshot())
+        val more = s.setQty(riz, 1100.0)!!
+        assertEquals("1,1 kg", s.lots.first { it.id == 3L }.label)
+        assertEquals("""{"lot":3,"qty":1100.0}""", more.args.toString())
+        assertNull(s.setQty(soupe, 2.0))
+        assertTrue(s.setQty(soupe, 0.0) is LotAction.Use)
+        assertTrue(s.canUndo)
+    }
+
+    @Test
+    fun server_refusal_restores_lot_with_message() {
+        val s = MaisonState(snapshot())
+        val move = s.move(riz, "etagere")!!
+        s.dispatch(move)
+        s.refused(move, "Lot 3 introuvable.")
+        assertEquals("placard", s.lots.first { it.id == 3L }.location)
+        assertEquals("Lot 3 introuvable.", s.message)
+
+        val use = s.consume(champignons)!!
+        s.dispatch(use)
+        s.refused(use, "Serveur injoignable : rien n'a été enregistré.")
+        assertEquals(listOf("Champignons", "Soupe carcasse"), s.lotsIn("frigo").map { it.name })
+        assertEquals("Serveur injoignable : rien n'a été enregistré.", s.message)
+        s.consumeMessage()
+        assertNull(s.message)
+    }
+
+    @Test
+    fun maison_offline_disables_actions() {
+        val s = MaisonState(snapshot(offline = true))
+        assertFalse(s.canAct)
+        // Lecture seule avec le dernier état.
+        assertEquals(3, s.total)
+        assertNull(s.consume(champignons))
+        assertNull(s.move(champignons, "placard"))
+        assertNull(s.setQty(riz, 900.0))
+        assertEquals(3, s.lots.size)
+
+        s.load(snapshot(offline = false))
+        assertTrue(s.canAct)
+        // Fermer l'écran envoie ce qui attendait la fin de la fenêtre d'annulation.
+        val use = s.consume(champignons)!!
+        assertEquals(listOf(use), s.flush())
+        assertFalse(s.canUndo)
+    }
+
+    @Test
+    fun readable_quantities_and_dates() {
+        assertEquals("950 g", formatQty(950.0, "g"))
+        assertEquals("1,25 kg", formatQty(1250.0, "g"))
+        assertEquals("1,5 l", formatQty(1500.0, "ml"))
+        assertEquals("1 pièce", formatQty(1.0, "pièce"))
+        assertEquals("3 pièces", formatQty(3.0, "pièce"))
+        val today = LocalDate.of(2026, 11, 8)
+        assertEquals("demain", expiryText(champignons, today))
+        assertEquals("2 j", expiryText(soupe, today))
+        assertEquals("~19/11", expiryText(riz.copy(expiry = "2026-11-19", estimated = true), today))
+        assertEquals("passée", expiryText(riz.copy(expiry = "2026-11-01"), today))
+        assertNull(expiryText(riz, today))
+    }
+}

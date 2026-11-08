@@ -4,13 +4,6 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animate
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
-import androidx.compose.animation.shrinkVertically
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.Orientation
@@ -96,6 +89,7 @@ import app.kairos.mobile.data.Snapshot
 import app.kairos.mobile.data.Tone
 import app.kairos.mobile.ui.mascot.Mascot
 import app.kairos.mobile.ui.mascot.MascotState
+import app.kairos.mobile.ui.theme.Motion
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.LocalDate
@@ -119,6 +113,7 @@ fun TodayScreen(
     onOpenDecisions: () -> Unit,
     onOpenSettings: () -> Unit,
     onUnauthorized: () -> Unit,
+    decisionsAnchor: Modifier = Modifier,
 ) {
     val snapshot by repository.snapshot.collectAsState()
     val marks by repository.marks.collectAsState()
@@ -177,10 +172,7 @@ fun TodayScreen(
         ) {
             AnimatedContent(
                 targetState = week,
-                transitionSpec = {
-                    (fadeIn() + scaleIn(initialScale = if (targetState) 1.08f else 0.92f)) togetherWith
-                        (fadeOut() + scaleOut(targetScale = if (targetState) 0.92f else 1.08f))
-                },
+                transitionSpec = { Motion.zoom(outward = targetState) },
                 label = "zoom",
             ) { isWeek ->
                 if (isWeek) {
@@ -201,6 +193,7 @@ fun TodayScreen(
                         onWeek = { week = true },
                         onSettings = onOpenSettings,
                         onOpenDecisions = onOpenDecisions,
+                        decisionsAnchor = decisionsAnchor,
                         onMark = ::markWithUndo,
                         onUnmark = { day, card -> scope.launch { repository.mark(day, card.key, null) } },
                     )
@@ -235,6 +228,7 @@ private fun DayContent(
     onWeek: () -> Unit,
     onSettings: () -> Unit,
     onOpenDecisions: () -> Unit,
+    decisionsAnchor: Modifier,
     onMark: (String, Card, Mark) -> Unit,
     onUnmark: (String, Card) -> Unit,
 ) {
@@ -253,7 +247,7 @@ private fun DayContent(
         if (snapshot.offline) item(key = "offline") { OfflineBanner(snapshot.fetchedAt, onRefresh) }
         item(key = "header") { Header(now, tomorrow?.work, onWeek, onRefresh, onSettings) }
         if (snapshot.decisions.isNotEmpty()) {
-            item(key = "decisions") { DecisionsPeek(snapshot.decisions.size, onOpenDecisions) }
+            item(key = "decisions") { DecisionsPeek(snapshot.decisions.size, onOpenDecisions, decisionsAnchor) }
         }
         item(key = "label") { SectionLabel("Fil du jour") }
         if (items.isEmpty()) {
@@ -349,10 +343,13 @@ internal fun SectionLabel(text: String) {
     )
 }
 
+/** Coins de la carte de tête de l'aperçu (la pile de décisions en naît). */
+internal val DecisionsPeekCorner = 18.dp
+
 /** Aperçu de la pile : trois cartes décalées, celle du dessus en couleur principale. */
 @Composable
-private fun DecisionsPeek(count: Int, onOpen: () -> Unit) {
-    val shape = RoundedCornerShape(18.dp)
+private fun DecisionsPeek(count: Int, onOpen: () -> Unit, anchor: Modifier) {
+    val shape = RoundedCornerShape(DecisionsPeekCorner)
     val surface = MaterialTheme.colorScheme.surface
     val line = MaterialTheme.colorScheme.outlineVariant
     Box(
@@ -378,7 +375,7 @@ private fun DecisionsPeek(count: Int, onOpen: () -> Unit) {
             shape = shape,
             color = MaterialTheme.colorScheme.primary,
             contentColor = MaterialTheme.colorScheme.onPrimary,
-            modifier = Modifier
+            modifier = anchor
                 .fillMaxWidth()
                 .height(66.dp)
                 .shadow(8.dp, shape, ambientColor = MaterialTheme.colorScheme.primary, spotColor = MaterialTheme.colorScheme.primary),
@@ -513,7 +510,7 @@ private fun ItemCard(
                     card.chips.forEach { ChipView(it) }
                 }
             }
-            AnimatedVisibility(expanded, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
+            AnimatedVisibility(expanded, enter = Motion.expand, exit = Motion.collapse) {
                 Column(Modifier.padding(top = 10.dp)) {
                     card.detail?.let {
                         Text(it, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(bottom = 10.dp))
@@ -553,15 +550,20 @@ private fun Color.darken(): Color =
     if (red + green + blue > 2.2f) this else Color(red * 0.64f, green * 0.62f, blue * 0.6f, alpha)
 
 /**
- * Glissement horizontal : → positif (fait), ← négatif (plus tard). Le libellé
- * de l'action apparaît sous la carte pendant le geste ; vibration au seuil.
+ * Glissement horizontal : → positif ([rightLabel]), ← négatif ([leftLabel]). Le libellé
+ * de l'action apparaît sous l'élément pendant le geste ; vibration au seuil.
+ * [rightStays] : → ouvre un choix sur place, l'élément revient au lieu de partir.
  */
 @Composable
-private fun SwipeRow(
+internal fun SwipeRow(
     enabled: Boolean,
     onRight: () -> Unit,
     onLeft: () -> Unit,
     modifier: Modifier = Modifier,
+    rightLabel: String = "Fait ✓",
+    leftLabel: String = "Plus tard",
+    leftColor: Color = MaterialTheme.colorScheme.tertiary,
+    rightStays: Boolean = false,
     content: @Composable () -> Unit,
 ) {
     val right by rememberUpdatedState(onRight)
@@ -580,13 +582,13 @@ private fun SwipeRow(
                 Modifier
                     .matchParentSize()
                     .clip(MaterialTheme.shapes.medium)
-                    .background(if (positive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary)
+                    .background(if (positive) MaterialTheme.colorScheme.primary else leftColor)
                     .padding(horizontal = 18.dp),
                 horizontalArrangement = if (positive) Arrangement.Start else Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    if (positive) "Fait ✓" else "Plus tard",
+                    if (positive) rightLabel else leftLabel,
                     color = Color.White,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.alpha((abs(dx) / threshold).coerceIn(0.35f, 1f)),
@@ -610,11 +612,12 @@ private fun SwipeRow(
                     onDragStopped = { velocity ->
                         val fling = abs(velocity) > 2000f && abs(dx) > width * 0.12f && velocity * dx > 0
                         val commit = armed || fling
-                        val target = if (commit) (if (dx > 0) width.toFloat() else -width.toFloat()) else 0f
+                        val positive = dx > 0
+                        val target = if (!commit || (rightStays && positive)) 0f else if (positive) width.toFloat() else -width.toFloat()
                         scope.launch {
-                            animate(dx, target, initialVelocity = velocity) { v, _ -> dx = v }
+                            animate(dx, target, initialVelocity = velocity, animationSpec = Motion.settle()) { v, _ -> dx = v }
                             if (commit) {
-                                if (target > 0) right() else left()
+                                if (positive) right() else left()
                             }
                             dx = 0f
                             armed = false
