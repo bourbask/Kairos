@@ -69,6 +69,7 @@ fn env(url: String) -> GatewayEnv {
     GatewayEnv {
         bind: "127.0.0.1:0".parse().unwrap(),
         app_bind: None,
+        app_apk_dir: None,
         inbound_token: "in".into(),
         outbound_url: url,
         outbound_token: "jeton-sortant".into(),

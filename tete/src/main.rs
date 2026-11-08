@@ -88,6 +88,7 @@ async fn main() -> anyhow::Result<()> {
             inbox: inbox.clone(),
             rhythm: Arc::new(cfg.work.clone()),
             decision_count: Arc::default(),
+            apk_dir: cfg.gateway.app_apk_dir.clone(),
         };
         let entries = cfg.tentacles.clone();
         tokio::spawn(async move {

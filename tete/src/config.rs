@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use chrono::{NaiveTime, Weekday};
@@ -95,6 +95,8 @@ pub struct GatewayEnv {
     pub bind: SocketAddr,
     /// Écoute de l'API de l'application ; absente = API désactivée.
     pub app_bind: Option<SocketAddr>,
+    /// Dossier de l'APK servi à l'application ; absent = aucune mise à jour proposée.
+    pub app_apk_dir: Option<PathBuf>,
     pub inbound_token: String,
     pub outbound_url: String,
     pub outbound_token: String,
@@ -121,6 +123,7 @@ impl std::fmt::Debug for GatewayEnv {
         f.debug_struct("GatewayEnv")
             .field("bind", &self.bind)
             .field("app_bind", &self.app_bind)
+            .field("app_apk_dir", &self.app_apk_dir)
             .field("inbound_token", &"***")
             .field("outbound_url", &self.outbound_url)
             .field("outbound_token", &"***")
@@ -132,6 +135,7 @@ fn no_gateway() -> GatewayEnv {
     GatewayEnv {
         bind: "0.0.0.0:8090".parse().expect("adresse valide"),
         app_bind: None,
+        app_apk_dir: None,
         inbound_token: String::new(),
         outbound_url: String::new(),
         outbound_token: String::new(),
@@ -203,6 +207,7 @@ impl HeadConfig {
         cfg.gateway = GatewayEnv {
             bind,
             app_bind,
+            app_apk_dir: env("TETE_APP_APK_DIR").filter(|v| !v.is_empty()).map(PathBuf::from),
             inbound_token: required(&env, "TETE_INBOUND_TOKEN")?,
             outbound_url: required(&env, "TETE_OUTBOUND_URL")?,
             outbound_token: required(&env, "TETE_OUTBOUND_TOKEN")?,
@@ -242,6 +247,14 @@ mod tests {
         assert!(c.tentacles.is_empty());
         assert_eq!(c.gateway.bind.to_string(), "0.0.0.0:8090");
         assert_eq!(c.gateway.app_bind, None);
+        assert_eq!(c.gateway.app_apk_dir, None);
+    }
+
+    #[test]
+    fn app_apk_dir_is_optional() {
+        let env = [GATEWAY[0], GATEWAY[1], GATEWAY[2], ("TETE_APP_APK_DIR", "/app/apk")];
+        let c = HeadConfig::from_parts("", env_of(&env)).unwrap();
+        assert_eq!(c.gateway.app_apk_dir.as_deref(), Some(Path::new("/app/apk")));
     }
 
     #[test]

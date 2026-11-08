@@ -97,7 +97,7 @@ CREATE TABLE IF NOT EXISTS prefs (k TEXT PRIMARY KEY, v TEXT NOT NULL, updated_a
 ";
 
 /// Emplacements reconnus (le reste est refusé, pour garder un inventaire lisible).
-pub const LOCATIONS: [&str; 5] = ["frigo", "congelateur", "placard", "etagere", "corbeille"];
+pub const LOCATIONS: [&str; 7] = ["frigo", "congelateur", "placard", "etagere", "corbeille", "evier", "sdb"];
 
 /// Emplacement normalisé (« congélo », « Congélateur », « fruits » → valeur connue).
 pub fn location(s: &str) -> Result<String, String> {
@@ -108,6 +108,8 @@ pub fn location(s: &str) -> Result<String, String> {
         x if x.starts_with("plac") || x == "epicerie" || x == "cellier" => "placard",
         x if x.starts_with("etag") => "etagere",
         x if x.starts_with("corb") || x.starts_with("fruit") => "corbeille",
+        x if x.contains("evier") => "evier",
+        x if x == "sdb" || x.starts_with("salle de bain") || x == "bain" || x == "toilettes" => "sdb",
         _ => return Err(format!("Emplacement inconnu « {s} » : {}.", LOCATIONS.join(", "))),
     };
     Ok(l.to_string())
@@ -124,7 +126,8 @@ pub struct Line {
     /// Unité : g, kg, ml, cl, l, pièce (défaut), douzaine.
     #[serde(default)]
     pub unit: Option<String>,
-    /// frigo, congelateur, placard, etagere ou corbeille (fruits et légumes à l'air libre).
+    /// frigo, congelateur, placard, etagere, corbeille (fruits et légumes à l'air libre),
+    /// evier (sous l'évier : entretien) ou sdb (salle de bain : hygiène).
     #[serde(default)]
     pub location: Option<String>,
     /// Date imprimée (AAAA-MM-JJ), si connue ; sinon estimée d'après le produit et l'emplacement.
@@ -182,6 +185,21 @@ impl Lot {
     pub fn show(&self) -> String {
         show(self.qty, self.family)
     }
+}
+
+/// Produit dont la fiche reste à compléter (`Store::incomplete`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Incomplete {
+    pub id: i64,
+    pub name: String,
+    pub family: Family,
+    pub nature: Option<Nature>,
+    /// Contenance encore inconnue (compté en pièces faute de mieux).
+    pub size_unknown: bool,
+    /// En stock, dans l'unité de base.
+    pub stock: f64,
+    /// Dernière entrée en stock, sinon création (horodatage).
+    pub added_at: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -291,6 +309,10 @@ fn migrate(c: &Connection) -> rusqlite::Result<()> {
         // Dernier emplacement de rangement, gardé quand le stock est épuisé.
         c.execute_batch("ALTER TABLE products ADD COLUMN location TEXT;")?;
     }
+    if !pcols.iter().any(|c| c == "size_unknown") {
+        // Créé en pièces sans fiche : la contenance reste à demander.
+        c.execute_batch("ALTER TABLE products ADD COLUMN size_unknown INTEGER NOT NULL DEFAULT 0;")?;
+    }
     if !cols.iter().any(|c| c == "expiry_kind") {
         c.execute_batch(
             "ALTER TABLE lots ADD COLUMN expiry_kind TEXT;
@@ -380,7 +402,29 @@ impl Store {
 
     /// Un seul produit pour ce nom : exact, sinon unique, sinon le seul en stock.
     pub fn resolve(&self, query: &str) -> Result<Product, String> {
+        self.pick(query, self.find(query).map_err(|e| e.to_string())?)
+    }
+
+    /// Comme [`Self::resolve`], sans jamais retenir un plat : un ingrédient n'est pas un reste.
+    fn resolve_ingredient(&self, query: &str) -> Result<Product, String> {
         let found = self.find(query).map_err(|e| e.to_string())?;
+        let found = {
+            let db = self.db.lock().unwrap();
+            let mut keep = Vec::new();
+            for p in found {
+                let n: Option<String> = db
+                    .query_row("SELECT nature FROM products WHERE id = ?1", [p.id], |r| r.get(0))
+                    .map_err(|e| e.to_string())?;
+                if n.as_deref() != Some(Nature::Plat.as_str()) {
+                    keep.push(p);
+                }
+            }
+            keep
+        };
+        self.pick(query, found)
+    }
+
+    fn pick(&self, query: &str, found: Vec<Product>) -> Result<Product, String> {
         match found.len() {
             0 => Err(format!("Aucun produit « {} » dans l'inventaire.", query.trim())),
             1 => Ok(found[0].clone()),
@@ -404,6 +448,85 @@ impl Store {
         db.execute("UPDATE products SET nature = ?2 WHERE id = ?1", params![p.id, n.as_str()])
             .map_err(|e| e.to_string())?;
         Ok(format!("Nature de {} : {}.", p.name, n.as_str()))
+    }
+
+    /// Produits à compléter : en stock sans nature, ou en attente de contenance.
+    pub fn incomplete(&self) -> rusqlite::Result<Vec<Incomplete>> {
+        let db = self.db.lock().unwrap();
+        let mut st = db.prepare(
+            "SELECT p.id, p.name, p.family, p.nature, p.category, p.size_unknown,
+                    COALESCE((SELECT SUM(qty) FROM lots WHERE product_id = p.id AND qty > 0), 0),
+                    COALESCE((SELECT MAX(added_at) FROM lots WHERE product_id = p.id), p.created_at)
+             FROM products p ORDER BY p.id",
+        )?;
+        let rows = st.query_map([], |r| {
+            let name: String = r.get(1)?;
+            let manual = r.get::<_, Option<String>>(3)?.as_deref().and_then(Nature::parse);
+            Ok(Incomplete {
+                id: r.get(0)?,
+                family: Family::parse(&r.get::<_, String>(2)?).unwrap_or(Family::Piece),
+                nature: crate::nature::resolve(manual, r.get::<_, Option<String>>(4)?.as_deref(), &name),
+                name,
+                size_unknown: r.get::<_, i64>(5)? != 0,
+                stock: r.get(6)?,
+                added_at: r.get(7)?,
+            })
+        })?;
+        let all: Vec<Incomplete> = rows.collect::<rusqlite::Result<_>>()?;
+        Ok(all.into_iter().filter(|p| (p.nature.is_none() && p.stock > 0.0) || p.size_unknown).collect())
+    }
+
+    /// Nature d'un produit désigné par son identifiant.
+    pub fn set_nature_of(&self, id: i64, n: Nature) -> rusqlite::Result<()> {
+        self.db.lock().unwrap().execute("UPDATE products SET nature = ?2 WHERE id = ?1", params![id, n.as_str()])?;
+        Ok(())
+    }
+
+    /// Marque un produit compté en pièces : sa contenance sera demandée.
+    pub fn flag_size_unknown(&self, name: &str) -> rusqlite::Result<()> {
+        self.db.lock().unwrap().execute(
+            "UPDATE products SET size_unknown = 1 WHERE folded = ?1 AND family = 'piece'",
+            [fold(name.trim())],
+        )?;
+        Ok(())
+    }
+
+    /// Fixe la contenance d'un produit compté en pièces. `None` : il reste à
+    /// l'unité. Sinon il passe dans la famille de la contenance et ses lots et
+    /// mouvements sont convertis (n pièces → n × contenance), pour que le stock
+    /// ne change pas de sens.
+    pub fn set_size(&self, id: i64, size: Option<(Family, f64)>) -> Result<(), String> {
+        let mut db = self.db.lock().unwrap();
+        let tx = db.transaction().map_err(|e| e.to_string())?;
+        let (fam, folded): (String, String) = tx
+            .query_row("SELECT family, folded FROM products WHERE id = ?1 AND size_unknown = 1", [id], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .optional()
+            .map_err(|e| e.to_string())?
+            .ok_or("Contenance déjà connue.")?;
+        if let Some((f, k)) = size {
+            if fam != Family::Piece.as_str() || !(k.is_finite() && k > 0.0) {
+                return Err("Contenance impossible pour ce produit.".into());
+            }
+            let twin: bool = tx
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM products WHERE folded = ?1 AND family = ?2 AND id != ?3)",
+                    params![folded, f.as_str(), id],
+                    |r| r.get(0),
+                )
+                .map_err(|e| e.to_string())?;
+            if twin {
+                return Err(format!("Un produit du même nom est déjà compté en {}.", f.base()));
+            }
+            tx.execute("UPDATE lots SET qty = qty * ?2 WHERE product_id = ?1", params![id, k]).map_err(|e| e.to_string())?;
+            tx.execute("UPDATE movements SET delta = delta * ?2 WHERE product_id = ?1", params![id, k])
+                .map_err(|e| e.to_string())?;
+            tx.execute("UPDATE products SET family = ?2 WHERE id = ?1", params![id, f.as_str()])
+                .map_err(|e| e.to_string())?;
+        }
+        tx.execute("UPDATE products SET size_unknown = 0 WHERE id = ?1", [id]).map_err(|e| e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())
     }
 
     /// Produits en stock dont la nature reste inconnue, par nom.
@@ -483,12 +606,28 @@ impl Store {
         if p.family != f {
             return Err(format!("{} est compté en {} : unité incompatible.", p.name, p.family.as_str()));
         }
-        let (exp, kind, est) = dating(&p.name, &loc, exp);
+        self.stock_lot(&p, q, &loc, exp, reason, order, l.price)
+    }
+
+    /// Nouveau lot d'un produit connu, et son mouvement d'entrée.
+    #[allow(clippy::too_many_arguments)]
+    fn stock_lot(
+        &self,
+        p: &Product,
+        q: f64,
+        loc: &str,
+        exp: Option<String>,
+        reason: &str,
+        order: Option<i64>,
+        price: Option<f64>,
+    ) -> Result<String, String> {
+        let f = p.family;
+        let (exp, kind, est) = dating(&p.name, loc, exp);
         let db = self.db.lock().unwrap();
         db.execute(
             "INSERT INTO lots (product_id, qty, location, expiry, expiry_kind, expiry_estimated, added_at, order_id, price)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-            params![p.id, q, loc, exp, kind.as_str(), est, now(), order, l.price],
+            params![p.id, q, loc, exp, kind.as_str(), est, now(), order, price],
         )
         .map_err(|e| e.to_string())?;
         db.execute(
@@ -503,7 +642,8 @@ impl Store {
     /// Sortie de stock : lots entamés d'abord, puis ceux qui périment le plus tôt.
     /// Rend (ligne lisible, quantité manquante dans l'unité de base).
     pub fn take(&self, l: &Line, reason: &str, meal: Option<i64>) -> Result<(String, f64), String> {
-        let p = self.resolve(&l.name)?;
+        // Rattaché à un repas : ingrédient de recette, jamais un plat déjà cuisiné.
+        let p = if meal.is_some() { self.resolve_ingredient(&l.name)? } else { self.resolve(&l.name)? };
         let (f, mut q) = qty_in(l)?;
         if p.family != f {
             return Err(format!("{} est compté en {} : unité incompatible.", p.name, p.family.as_str()));
@@ -845,6 +985,54 @@ impl Store {
         Ok(db.last_insert_rowid())
     }
 
+    /// Note un repas sauf s'il en existe déjà un ce jour-là à ce moment : `None` alors.
+    pub fn add_meal_once(
+        &self,
+        day: &str,
+        slot: &str,
+        name: &str,
+        place: &str,
+        notes: Option<&str>,
+    ) -> rusqlite::Result<Option<i64>> {
+        let db = self.db.lock().unwrap();
+        let n = db.execute(
+            "INSERT INTO meals (day, slot, name, place, notes, at)
+             SELECT ?1, ?2, ?3, ?4, ?5, ?6 WHERE NOT EXISTS (SELECT 1 FROM meals WHERE day = ?1 AND slot = ?2)",
+            params![day, slot, name, place, notes, now()],
+        )?;
+        Ok((n > 0).then(|| db.last_insert_rowid()))
+    }
+
+    /// Portions d'un plat cuisiné mises au frigo. Le plat est un produit à part,
+    /// de nature `plat` : un ingrédient du même nom n'est jamais retagué.
+    pub fn add_dish(&self, dish: &str, portions: f64) -> Result<String, String> {
+        let name = dish.trim();
+        let p = {
+            let db = self.db.lock().unwrap();
+            let plat = Nature::Plat.as_str();
+            let found = db
+                .query_row(
+                    "SELECT id, name, family, barcode FROM products WHERE folded = ?1 AND family = ?2 AND nature = ?3",
+                    params![fold(name), Family::Piece.as_str(), plat],
+                    Self::product_row,
+                )
+                .optional()
+                .map_err(|e| e.to_string())?;
+            match found {
+                Some(p) => p,
+                None => {
+                    db.execute(
+                        "INSERT INTO products (name, folded, family, nature, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+                        params![name, fold(name), Family::Piece.as_str(), plat, now()],
+                    )
+                    .map_err(|e| e.to_string())?;
+                    Product { id: db.last_insert_rowid(), name: name.to_string(), family: Family::Piece, barcode: None }
+                }
+            }
+        };
+        self.stock_lot(&p, portions, "frigo", None, "reste", None, None)
+    }
+
     /// Repas depuis une date : (jour, moment, plat, lieu).
     pub fn meals_since(&self, day: &str) -> rusqlite::Result<Vec<(String, String, String, String)>> {
         let db = self.db.lock().unwrap();
@@ -1119,6 +1307,9 @@ mod tests {
 
     #[test]
     fn locations_are_normalised() {
+        assert_eq!(location("Sous l'évier").unwrap(), "evier");
+        assert_eq!(location("salle de bain").unwrap(), "sdb");
+        assert_eq!(location("SDB").unwrap(), "sdb");
         assert_eq!(location("Congélo").unwrap(), "congelateur");
         assert_eq!(location("fruits et légumes").unwrap(), "corbeille");
         assert!(location("cave").is_err());
@@ -1154,6 +1345,15 @@ mod tests {
         assert!(t.contains("reste 0 pièce") && t.contains("5 pièces de plus que le stock connu"), "{t}");
         assert_eq!(short, 5.0);
         assert!(s.lots(None, None).unwrap().is_empty());
+    }
+
+    #[test]
+    fn recipe_ingredient_never_takes_a_dish() {
+        let s = Store::memory();
+        s.add_dish("Tomates farcies", 3.0).unwrap();
+        let e = s.take(&line("tomates", 2.0, "pièce", ""), "repas", Some(1)).unwrap_err();
+        assert!(e.contains("Aucun produit"), "{e}");
+        assert_eq!(s.lots(None, Some("tomates")).unwrap()[0].qty, 3.0, "le plat reste entier");
     }
 
     #[test]
