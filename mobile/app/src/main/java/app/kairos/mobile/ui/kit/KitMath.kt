@@ -42,11 +42,14 @@ fun amountText(value: Double, masked: Boolean, cents: Boolean = true): String =
 /** Ton d'une valeur face à sa limite : neutre, attention, urgent. */
 enum class Tone { Neutral, Attention, Urgent }
 
-/** ≤ 80 % neutre, > 80 % attention, > 100 % urgent. Limite nulle : tout usage est un dépassement. */
+/**
+ * ≤ 80 % neutre, > 80 % attention, > 100 % urgent. Limite nulle : tout usage est un dépassement.
+ * Comparaison sans division ni facteur 0,8 (non représentable) : la frontière exacte reste neutre.
+ */
 fun barTone(value: Double, limit: Double): Tone = when {
     limit <= 0 -> if (value > 0) Tone.Urgent else Tone.Neutral
     value > limit -> Tone.Urgent
-    value > limit * 0.8 -> Tone.Attention
+    value * 5 > limit * 4 -> Tone.Attention
     else -> Tone.Neutral
 }
 

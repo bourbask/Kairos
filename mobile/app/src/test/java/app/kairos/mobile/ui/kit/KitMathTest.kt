@@ -43,6 +43,10 @@ class KitMathTest {
     fun bar_tone_thresholds() {
         assertEquals(Tone.Neutral, barTone(0.0, 100.0))
         assertEquals(Tone.Neutral, barTone(80.0, 100.0))
+        // Exactement 80 % reste neutre, quelle que soit l'échelle (centimes compris).
+        assertEquals(Tone.Neutral, barTone(160.0, 200.0))
+        assertEquals(Tone.Neutral, barTone(0.24, 0.3))
+        assertEquals(Tone.Neutral, barTone(56.0, 70.0))
         assertEquals(Tone.Attention, barTone(80.01, 100.0))
         assertEquals(Tone.Attention, barTone(100.0, 100.0))
         assertEquals(Tone.Urgent, barTone(100.01, 100.0))

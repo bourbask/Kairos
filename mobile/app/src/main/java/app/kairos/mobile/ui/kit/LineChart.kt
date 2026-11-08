@@ -1,10 +1,10 @@
 package app.kairos.mobile.ui.kit
 
 import androidx.compose.animation.core.Animatable
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.material3.MaterialTheme
@@ -13,6 +13,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Path
@@ -29,7 +30,8 @@ import app.kairos.mobile.ui.theme.Motion
 /**
  * Courbe d'une série (ex. une valeur par mois), sans axe chiffré : la forme seule,
  * le dernier point marqué. [startLabel] / [endLabel] bornent l'axe horizontal.
- * La courbe se dessine de gauche à droite à chaque nouvelle série.
+ * La courbe se dessine de gauche à droite à la première apparition seulement ;
+ * un rafraîchissement la met à jour sans rejouer l'animation.
  */
 @Composable
 fun LineChart(
@@ -43,36 +45,42 @@ fun LineChart(
     masked: Boolean = LocalAmountsMasked.current,
 ) {
     val reveal = remember { Animatable(0f) }
-    LaunchedEffect(values) {
-        reveal.snapTo(0f)
-        reveal.animateTo(1f, Motion.enter(Motion.OverlayEnterMs))
-    }
+    LaunchedEffect(Unit) { reveal.animateTo(1f, Motion.enter()) }
     val line = MaterialTheme.colorScheme.primary
     val area = line.copy(alpha = 0.16f)
-    val points = linePoints(values)
+    val points = remember(values) { linePoints(values) }
     Column(modifier.fillMaxWidth().clearAndSetSemantics { contentDescription = describeLine(label, values, format, masked) }) {
-        Canvas(Modifier.fillMaxWidth().height(height)) {
-            if (points.isEmpty()) return@Canvas
-            val pad = 4.dp.toPx()
-            val w = size.width - 2 * pad
-            val h = size.height - 2 * pad
-            val pts = points.map { (x, y) -> Offset(pad + x * w, pad + (1 - y) * h) }
-            val stroke = Path().apply {
-                moveTo(pts[0].x, pts[0].y)
-                pts.drop(1).forEach { lineTo(it.x, it.y) }
-            }
-            val fillPath = Path().apply {
-                addPath(stroke)
-                lineTo(pts.last().x, size.height)
-                lineTo(pts[0].x, size.height)
-                close()
-            }
-            clipRect(right = size.width * reveal.value) {
-                drawPath(fillPath, Brush.verticalGradient(listOf(area, area.copy(alpha = 0f))))
-                drawPath(stroke, line, style = Stroke(2.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
-            }
-            if (reveal.value == 1f) drawCircle(line, 4.dp.toPx(), pts.last())
-        }
+        Spacer(
+            Modifier.fillMaxWidth().height(height).drawWithCache {
+                val pad = 4.dp.toPx()
+                val w = size.width - 2 * pad
+                val h = size.height - 2 * pad
+                val pts = points.map { (x, y) -> Offset(pad + x * w, pad + (1 - y) * h) }
+                val stroke = Path().apply {
+                    pts.firstOrNull()?.let { moveTo(it.x, it.y) }
+                    pts.drop(1).forEach { lineTo(it.x, it.y) }
+                }
+                val fillPath = Path().apply {
+                    addPath(stroke)
+                    if (pts.isNotEmpty()) {
+                        lineTo(pts.last().x, size.height)
+                        lineTo(pts[0].x, size.height)
+                        close()
+                    }
+                }
+                val brush = Brush.verticalGradient(listOf(area, area.copy(alpha = 0f)))
+                val style = Stroke(2.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+                val dot = 4.dp.toPx()
+                onDrawBehind {
+                    if (pts.isEmpty()) return@onDrawBehind
+                    clipRect(right = size.width * reveal.value) {
+                        drawPath(fillPath, brush)
+                        drawPath(stroke, line, style = style)
+                    }
+                    if (reveal.value == 1f) drawCircle(line, dot, pts.last())
+                }
+            },
+        )
         if (startLabel != null || endLabel != null) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(startLabel.orEmpty(), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)

@@ -13,6 +13,7 @@ import app.kairos.mobile.ui.theme.Motion
 /**
  * Chiffre clé et son libellé. [value] arrive déjà formaté (voir [amountText]
  * pour un montant masquable) ; un changement de valeur passe en fondu enchaîné.
+ * Pas de masquage propre, par conception : c'est à l'appelant de fournir un texte déjà masqué.
  */
 @Composable
 fun Metric(value: String, label: String, modifier: Modifier = Modifier, tone: Tone? = null, caption: String? = null) {

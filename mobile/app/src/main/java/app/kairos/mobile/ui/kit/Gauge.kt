@@ -21,7 +21,8 @@ import kotlin.math.roundToInt
 
 /**
  * Progression horizontale [progress] (0 à 1), avec un repère facultatif [marker]
- * (ex. aujourd'hui dans une période). Proportions seules, jamais de montant.
+ * (ex. aujourd'hui dans une période). Proportions seules, jamais de montant :
+ * pas de masquage, par conception (annoncée en pourcentage).
  */
 @Composable
 fun Gauge(progress: Float, label: String, modifier: Modifier = Modifier, marker: Float? = null, tone: Tone = Tone.Neutral) {

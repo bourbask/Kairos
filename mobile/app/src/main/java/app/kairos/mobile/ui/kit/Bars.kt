@@ -47,7 +47,12 @@ fun Bar(
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text(label, style = MaterialTheme.typography.bodyMedium)
             Text(
-                "${shown(value)} / ${shown(limit)}",
+                // Le ton se lit aussi sans la couleur.
+                "${shown(value)} / ${shown(limit)}" + when (tone) {
+                    Tone.Neutral -> ""
+                    Tone.Attention -> " !"
+                    Tone.Urgent -> " ⚠"
+                },
                 style = MaterialTheme.typography.bodySmall,
                 color = if (tone == Tone.Neutral) MaterialTheme.colorScheme.onSurfaceVariant else color,
             )

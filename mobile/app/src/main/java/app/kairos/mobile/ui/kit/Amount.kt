@@ -6,6 +6,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.TextStyle
 
 /** Masquage des montants, fourni une fois par l'écran d'espace et lu par tous les composants. */
@@ -21,5 +23,6 @@ fun Amount(
     style: TextStyle = LocalTextStyle.current,
     color: Color = Color.Unspecified,
 ) {
-    Text(amountText(value, masked, cents), modifier, color = color, style = style, maxLines = 1)
+    val m = if (masked) modifier.clearAndSetSemantics { contentDescription = "montant masqué" } else modifier
+    Text(amountText(value, masked, cents), m, color = color, style = style, maxLines = 1)
 }
