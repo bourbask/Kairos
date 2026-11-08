@@ -12,6 +12,7 @@ fn required(name: &str) -> anyhow::Result<String> {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    tracing_subscriber::fmt().with_writer(std::io::stderr).with_max_level(tracing::Level::WARN).init();
     let env = TentacleEnv::from_env("FINANCES")?;
     let url = required("FINANCES_API_URL")?;
     let valid = reqwest::Url::parse(&url).is_ok_and(|u| matches!(u.scheme(), "http" | "https") && u.has_host());

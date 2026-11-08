@@ -1375,6 +1375,8 @@ dependencies = [
  "tentacle-common",
  "thiserror",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

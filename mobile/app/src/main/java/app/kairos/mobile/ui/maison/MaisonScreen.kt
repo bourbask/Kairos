@@ -506,7 +506,7 @@ private fun Header(total: Int, urgent: Int, onClose: () -> Unit, modifier: Modif
 
 /** Chevron de retour, dessiné comme ceux de la conversation ; inversé en écriture de droite à gauche. */
 @Composable
-private fun ChevronBackIcon(color: Color) {
+internal fun ChevronBackIcon(color: Color) {
     val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     Canvas(Modifier.size(22.dp).graphicsLayer { scaleX = if (rtl) -1f else 1f }) {
         val s = 2.2.dp.toPx()

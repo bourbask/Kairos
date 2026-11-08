@@ -1,6 +1,8 @@
 package app.kairos.mobile.data
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -13,6 +15,9 @@ import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import app.kairos.mobile.ui.finances.financesAfter
 import java.io.File
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -32,8 +37,11 @@ class Repository(
     private val snapshotFile = File(dir, "snapshot.json")
     private val marksFile = File(dir, "marks.json")
     private val maisonFile = File(dir, "maison.json")
+    private val financesFile = File(dir, "finances.json")
     private val loadLock = Mutex()
     private val maisonLock = Mutex()
+    private val financesLock = Mutex()
+    private var financesTried: Long? = null
     private var loaded = false
 
     private val _snapshot = MutableStateFlow(Snapshot())
@@ -45,11 +53,15 @@ class Repository(
     private val _maison = MutableStateFlow(MaisonSnapshot())
     val maison: StateFlow<MaisonSnapshot> = _maison.asStateFlow()
 
+    private val _finances = MutableStateFlow(FinancesSnapshot())
+    val finances: StateFlow<FinancesSnapshot> = _finances.asStateFlow()
+
     /** Relit l'état enregistré (une seule fois) ; appelé d'office par [refresh] et [mark]. */
     suspend fun load() = loadLock.withLock {
         if (loaded) return@withLock
         read(snapshotFile, Snapshot.serializer())?.let { saved -> _snapshot.update { if (it.fetchedAt == null) saved else it } }
         read(maisonFile, MaisonSnapshot.serializer())?.let { saved -> _maison.update { if (it.fetchedAt == null) saved else it } }
+        read(financesFile, FinancesSnapshot.serializer())?.let { saved -> _finances.update { if (it.fetchedAt == null) saved else it } }
         val savedMarks = read(marksFile, MARKS).orEmpty()
         _marks.update { current -> (savedMarks + current).filterKeys { it >= today().toString() } }
         loaded = true
@@ -96,6 +108,41 @@ class Repository(
         }
     }
 
+    /**
+     * Cycle et patrimoine, en parallèle ; ce qui a répondu remplace l'ancien, le reste
+     * est gardé hors ligne. Une actualisation à la fois, comme [refreshMaison].
+     * Sans [force], ignorée si la précédente date de moins de [FINANCES_FRESH_MS].
+     */
+    suspend fun refreshFinances(force: Boolean = true) = financesLock.withLock {
+        val last = financesTried
+        if (!force && last != null && System.nanoTime() - last < FINANCES_FRESH_MS * 1_000_000) return@withLock
+        load()
+        val (cycle, wealth) = coroutineScope {
+            val c = async { attempt { api.tool(FINANCES, "app_finance_cycle", FinanceCycle.serializer()) } }
+            val w = async { attempt { api.tool(FINANCES, "app_finance_wealth", FinanceWealth.serializer()) } }
+            c.await() to w.await()
+        }
+        financesTried = System.nanoTime()
+        val next = financesAfter(_finances.value, cycle, wealth, LocalDateTime.now().withNano(0).toString())
+        _finances.value = next
+        if (cycle.isSuccess || wealth.isSuccess) write(financesFile, FinancesSnapshot.serializer(), next)
+    }
+
+    /** Verdict « puis-je me permettre » pour [amount] euros, sur [poste] s'il est donné. */
+    suspend fun afford(amount: Double, poste: String?): Affordability =
+        api.tool(FINANCES, "app_afford", Affordability.serializer(), buildJsonObject {
+            put("amount", amount)
+            poste?.let { put("poste", it) }
+        })
+
+    /** Échec réseau ou module rendu en valeur ; [ApiError.Unauthorized] remonte. */
+    private suspend fun <T> attempt(block: suspend () -> T): Result<T> = try {
+        Result.success(block())
+    } catch (e: ApiError) {
+        if (e is ApiError.Unauthorized) throw e
+        Result.failure(e)
+    }
+
     /** Écrit dans l'inventaire ; rend le message du module. */
     suspend fun maisonTool(name: String, args: JsonObject): String = tool(ALIMENTATION, name, args)
 
@@ -127,8 +174,11 @@ class Repository(
         _snapshot.value = Snapshot()
         _marks.value = emptyMap()
         _maison.value = MaisonSnapshot()
+        _finances.value = FinancesSnapshot()
+        financesTried = null
         withContext(Dispatchers.IO) {
             maisonFile.delete()
+            financesFile.delete()
             snapshotFile.delete()
             marksFile.delete()
         }
@@ -152,6 +202,8 @@ class Repository(
     private companion object {
         const val WEEK = 7
         const val ALIMENTATION = "alimentation"
+        const val FINANCES = "finances"
+        const val FINANCES_FRESH_MS = 30_000L
         val ORDERS = ListSerializer(Order.serializer())
         val MARKS = MapSerializer(String.serializer(), MapSerializer(String.serializer(), Mark.serializer()))
     }

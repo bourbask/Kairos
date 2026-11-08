@@ -30,7 +30,11 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import app.kairos.mobile.data.FinancesSnapshot
 import app.kairos.mobile.data.MaisonSnapshot
+import app.kairos.mobile.ui.kit.Amount
+import app.kairos.mobile.ui.kit.Tone
+import app.kairos.mobile.ui.kit.barTone
 import app.kairos.mobile.ui.overlay.Origin
 import app.kairos.mobile.ui.overlay.Overlay
 import app.kairos.mobile.ui.overlay.overlayAnchor
@@ -50,15 +54,21 @@ fun SpacesScreen(
     maisonOpen: Boolean,
     onOpenMaison: () -> Unit,
     onCloseMaison: () -> Unit,
+    finances: FinancesSnapshot,
+    financesOpen: Boolean,
+    onOpenFinances: () -> Unit,
+    onCloseFinances: () -> Unit,
+    financesContent: @Composable () -> Unit,
     maisonContent: @Composable () -> Unit,
 ) {
     val overlay = rememberOverlayState(maisonOpen, Origin.Anchor)
+    val financesOverlay = rememberOverlayState(financesOpen, Origin.Anchor)
     val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.outlineVariant)) {
         Column(
             Modifier
                 .fillMaxSize()
-                .underOverlays(rtl, overlay)
+                .underOverlays(rtl, overlay, financesOverlay)
                 .background(MaterialTheme.colorScheme.background)
                 .padding(padding)
                 .padding(horizontal = 20.dp, vertical = 20.dp),
@@ -68,6 +78,8 @@ fun SpacesScreen(
             Text("MODULES", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(8.dp))
             MaisonCard(maison, onOpenMaison, Modifier.overlayAnchor(overlay, CardCorner))
+            Spacer(Modifier.height(12.dp))
+            FinancesCard(finances, onOpenFinances, Modifier.overlayAnchor(financesOverlay, CardCorner))
             Spacer(Modifier.height(16.dp))
             Text(
                 "D'autres espaces viendront ici.",
@@ -77,6 +89,9 @@ fun SpacesScreen(
         }
         Overlay(overlay, maisonOpen, onClose = onCloseMaison, anchorColor = MaterialTheme.colorScheme.surface) {
             maisonContent()
+        }
+        Overlay(financesOverlay, financesOpen, onClose = onCloseFinances, anchorColor = MaterialTheme.colorScheme.surface) {
+            financesContent()
         }
     }
 }
@@ -114,6 +129,57 @@ private fun MaisonCard(maison: MaisonSnapshot, onClick: () -> Unit, modifier: Mo
             }
             Text("›", style = MaterialTheme.typography.headlineSmall, color = colors.onSurfaceVariant)
         }
+    }
+}
+
+@Composable
+private fun FinancesCard(finances: FinancesSnapshot, onClick: () -> Unit, modifier: Modifier) {
+    val colors = MaterialTheme.colorScheme
+    val cycle = finances.cycle
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(CardCorner),
+        color = colors.surface,
+        border = BorderStroke(1.dp, colors.outlineVariant),
+        modifier = modifier.fillMaxWidth(),
+    ) {
+        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            CoinsIcon(colors.primary, colors.primaryContainer)
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text("Finances", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                val available = cycle?.available
+                if (available == null) {
+                    Text("Budget du cycle et patrimoine", style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant)
+                } else {
+                    Row {
+                        Text("Reste à vivre ", style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant)
+                        Amount(available, cents = false, style = MaterialTheme.typography.bodyMedium, color = colors.onSurface)
+                    }
+                }
+                val over = cycle?.envelopes.orEmpty().count { barTone(it.spent, it.planned) == Tone.Urgent }
+                if (over > 0) {
+                    Text(
+                        "$over enveloppe${if (over > 1) "s" else ""} dépassée${if (over > 1) "s" else ""}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colors.error,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+            }
+            Text("›", style = MaterialTheme.typography.headlineSmall, color = colors.onSurfaceVariant)
+        }
+    }
+}
+
+/** Pile de pièces. */
+@Composable
+private fun CoinsIcon(line: Color, fill: Color) = Canvas(Modifier.size(44.dp).background(fill, RoundedCornerShape(12.dp)).padding(9.dp)) {
+    val h = size.height / 5
+    val r = CornerRadius(h / 2)
+    for (i in 0 until 4) {
+        val inset = if (i % 2 == 0) 0f else size.width * 0.08f
+        drawRoundRect(line.copy(alpha = 1f - i * 0.18f), Offset(inset, size.height - (i + 1) * (h + 1.dp.toPx())), Size(size.width - inset * 2, h), r)
     }
 }
 
