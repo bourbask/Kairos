@@ -80,6 +80,8 @@ impl State {
     }
 
     fn init(conn: Connection) -> Result<Self> {
+        // Une suppression efface aussi le contenu sur le disque.
+        conn.pragma_update(None, "secure_delete", "ON")?;
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS work_override (
                  day INTEGER PRIMARY KEY, mode TEXT NOT NULL);
@@ -152,6 +154,11 @@ impl State {
             params![at.format(TS).to_string(), role, source, text],
         )?;
         Ok(self.conn.last_insert_rowid())
+    }
+
+    /// Oublie les messages antérieurs à `before` ; rend leur nombre.
+    pub fn purge_chat(&self, before: NaiveDateTime) -> Result<usize> {
+        Ok(self.conn.execute("DELETE FROM chat_log WHERE at < ?1", params![before.format(TS).to_string()])?)
     }
 
     /// Entrées après `after` (ou les `limit` dernières), en ordre chronologique.
@@ -440,6 +447,17 @@ mod tests {
         assert_eq!(s.interruptions_on(d(3)).unwrap(), 2);
         assert_eq!(s.interruptions_on(d(4)).unwrap(), 1);
         assert_eq!(s.interruptions_on(d(5)).unwrap(), 0);
+    }
+
+    #[test]
+    fn journal_de_conversation_purge() {
+        let s = State::open_in_memory().unwrap();
+        let t0 = NaiveDate::from_ymd_opt(2026, 1, 1).unwrap().and_hms_opt(8, 0, 0).unwrap();
+        s.log_chat("user", "app", "ancien", t0).unwrap();
+        s.log_chat("user", "app", "récent", t0 + TimeDelta::days(100)).unwrap();
+        assert_eq!(s.purge_chat(t0 + TimeDelta::days(10)).unwrap(), 1);
+        let left: Vec<_> = s.chat_since(None, 10).unwrap().into_iter().map(|e| e.text).collect();
+        assert_eq!(left, ["récent"]);
     }
 
     #[test]

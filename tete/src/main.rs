@@ -19,6 +19,8 @@ use tokio::sync::RwLock;
 const LLM_ROUTING_PATH: &str = "config/llm.toml";
 const REFRESH_EVERY: Duration = Duration::from_secs(300);
 /// Au-delà, l'utilisateur est prévenu que la réponse arrive.
+/// Purge du journal de conversation : au démarrage, puis une fois par jour.
+const PURGE_EVERY: Duration = Duration::from_secs(24 * 3600);
 const ACK_AFTER: Duration = Duration::from_secs(20);
 const ACK_MSG: &str = "Je regarde, ça peut prendre quelques minutes…";
 
@@ -116,6 +118,7 @@ async fn main() -> anyhow::Result<()> {
     let mut tick = tokio::time::interval(Duration::from_secs(60));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut last_refresh = tokio::time::Instant::now();
+    let mut last_purge: Option<tokio::time::Instant> = None;
     tracing::info!(tentacules = ctx.cfg.tentacles.len(), "tête prête");
 
     loop {
@@ -164,6 +167,14 @@ async fn main() -> anyhow::Result<()> {
             }
             _ = tick.tick() => {
                 ctx.agent.end_session_if_idle(now(), &ctx.tentacles).await;
+                let days = ctx.cfg.chat_retention_days;
+                if days > 0 && last_purge.is_none_or(|t| t.elapsed() >= PURGE_EVERY) {
+                    match ctx.state.purge_chat(now() - chrono::TimeDelta::days(days.into())) {
+                        Ok(n) => tracing::info!(messages = n, "journal de conversation purgé"),
+                        Err(e) => tracing::warn!("purge du journal de conversation : {e}"),
+                    }
+                    last_purge = Some(tokio::time::Instant::now());
+                }
                 if last_refresh.elapsed() >= REFRESH_EVERY {
                     ctx.tentacles.refresh().await;
                     last_refresh = tokio::time::Instant::now();
