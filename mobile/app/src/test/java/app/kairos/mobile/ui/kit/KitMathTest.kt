@@ -78,4 +78,62 @@ class KitMathTest {
         assertEquals(listOf(0f, 0f), donutWeights(listOf(0.0, 0.0)))
         assertTrue(donutWeights(emptyList()).isEmpty())
     }
+
+    private fun block(title: String, start: String, end: String, allDay: Boolean = false) =
+        TimeBlock(title, minuteOf(start), minuteOf(end), allDay = allDay)
+
+    private fun minuteOf(hhmm: String) = hhmm.split(":").let { it[0].toInt() * 60 + it[1].toInt() }
+
+    @Test
+    fun blocks_positioned_by_minutes() {
+        // Plage 7 h – 23 h : 960 minutes.
+        val placed = timelineLayout(
+            listOf(block("A", "09:00", "10:00"), block("Tôt", "06:00", "07:30"), block("Tard", "23:30", "23:59")),
+            7, 23,
+        ).placed
+        val a = placed.single { it.index == 0 }
+        assertEquals(120f / 960, a.top, 1e-6f)
+        assertEquals(180f / 960, a.bottom, 1e-6f)
+        // Débordement rogné à la plage ; bloc hors plage absent.
+        val early = placed.single { it.index == 1 }
+        assertEquals(0f, early.top, 1e-6f)
+        assertEquals(30f / 960, early.bottom, 1e-6f)
+        assertTrue(placed.none { it.index == 2 })
+        assertEquals(0.5f, minuteFraction(15 * 60, 7, 23), 1e-6f)
+        assertEquals("1 h 30", durationText(90))
+        assertEquals("45 min", durationText(45))
+        assertEquals("2 h", durationText(120))
+    }
+
+    @Test
+    fun overlapping_events_side_by_side() {
+        val placed = timelineLayout(
+            listOf(block("A", "09:00", "10:00"), block("B", "09:30", "11:00"), block("C", "11:00", "12:00")),
+            7, 23,
+        ).placed.associateBy { it.index }
+        assertEquals(0 to 2, placed.getValue(0).column to placed.getValue(0).columns)
+        assertEquals(1 to 2, placed.getValue(1).column to placed.getValue(1).columns)
+        // Bloc qui touche sans chevaucher : pleine largeur.
+        assertEquals(0 to 1, placed.getValue(2).column to placed.getValue(2).columns)
+    }
+
+    @Test
+    fun now_line_only_today() {
+        val day = java.time.LocalDate.of(2026, 11, 8)
+        assertEquals(0.5f, nowFraction(day, day.atTime(15, 0), 7, 23)!!, 1e-6f)
+        assertEquals(null, nowFraction(day.plusDays(1), day.atTime(15, 0), 7, 23))
+        assertEquals(null, nowFraction(day, day.atTime(6, 0), 7, 23))
+    }
+
+    @Test
+    fun all_day_events_on_top() {
+        val layout = timelineLayout(
+            listOf(block("Réunion", "10:00", "11:00"), block("Congé", "00:00", "00:00", allDay = true)),
+            7, 23,
+        )
+        assertEquals(listOf("Congé"), layout.allDay.map { it.title })
+        assertEquals(listOf(0), layout.placed.map { it.index })
+        assertEquals("Congé, toute la journée", describeBlock(layout.allDay.single()))
+        assertEquals("Réunion, de 10 h à 11 h", describeBlock(block("Réunion", "10:00", "11:00")))
+    }
 }

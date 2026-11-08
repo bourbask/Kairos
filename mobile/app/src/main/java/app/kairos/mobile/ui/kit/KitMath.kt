@@ -4,6 +4,8 @@ import java.math.BigDecimal
 import java.math.RoundingMode
 import java.text.DecimalFormat
 import java.text.DecimalFormatSymbols
+import java.time.LocalDate
+import java.time.LocalDateTime
 import java.util.Locale
 import kotlin.math.roundToInt
 
@@ -112,4 +114,104 @@ fun describeDonut(label: String, parts: List<Pair<String, Double>>, format: (Dou
         if (masked) name else "$name ${format(v)} (${(weights[i] * 100).roundToInt()} %)"
     }
     return "$label : ${items.joinToString(", ")}"
+}
+
+/* Frise horaire : minutes depuis minuit, placement relatif à la plage [startHour, endHour]. */
+
+/** Famille visuelle d'un bloc, pour distinguer deux sources sans nommer laquelle. */
+enum class BlockKind { Primary, Secondary }
+
+/** Bloc de la frise, bornes en minutes depuis minuit ; [allDay] l'affiche en ligne du haut. */
+data class TimeBlock(
+    val title: String,
+    val start: Int,
+    val end: Int,
+    val subtitle: String? = null,
+    val tone: Tone = Tone.Neutral,
+    val kind: BlockKind = BlockKind.Primary,
+    val allDay: Boolean = false,
+)
+
+/** Plage mise en valeur (ex. créneau libre), avec son libellé affiché. */
+data class TimeSpan(val start: Int, val end: Int, val label: String)
+
+/** Bloc placé : [top] / [bottom] dans [0, 1] de la plage, colonne [column] sur [columns]. */
+data class PlacedBlock(val index: Int, val top: Float, val bottom: Float, val column: Int, val columns: Int)
+
+data class TimelineLayout(val allDay: List<TimeBlock>, val placed: List<PlacedBlock>)
+
+/** Position verticale d'une minute dans la plage, bornée à [0, 1]. */
+fun minuteFraction(minute: Int, startHour: Int, endHour: Int): Float {
+    val span = (endHour - startHour) * 60
+    return if (span <= 0) 0f else ((minute - startHour * 60).toFloat() / span).coerceIn(0f, 1f)
+}
+
+/**
+ * Sépare les blocs « journée » et place les autres. Les blocs qui se chevauchent
+ * (bornes qui se touchent exclues) forment un groupe partagé en colonnes côte à côte ;
+ * chacun prend la première colonne libre. Un bloc hors de la plage est omis.
+ */
+fun timelineLayout(blocks: List<TimeBlock>, startHour: Int, endHour: Int): TimelineLayout {
+    val timed = blocks.withIndex()
+        .filter { !it.value.allDay && minuteFraction(it.value.start, startHour, endHour) < minuteFraction(it.value.end, startHour, endHour) }
+        .sortedWith(compareBy({ it.value.start }, { -it.value.end }))
+    val placed = mutableListOf<PlacedBlock>()
+    var group = mutableListOf<Pair<IndexedValue<TimeBlock>, Int>>()
+    val columnEnds = mutableListOf<Int>()
+    var groupEnd = Int.MIN_VALUE
+    fun flush() {
+        val n = columnEnds.size
+        group.forEach { (b, col) ->
+            placed += PlacedBlock(
+                b.index,
+                minuteFraction(b.value.start, startHour, endHour),
+                minuteFraction(b.value.end, startHour, endHour),
+                col,
+                n,
+            )
+        }
+        group = mutableListOf()
+        columnEnds.clear()
+        groupEnd = Int.MIN_VALUE
+    }
+    for (b in timed) {
+        if (b.value.start >= groupEnd) flush()
+        val free = columnEnds.indexOfFirst { it <= b.value.start }
+        val col = if (free >= 0) free else columnEnds.size.also { columnEnds += 0 }
+        columnEnds[col] = b.value.end
+        group += b to col
+        groupEnd = maxOf(groupEnd, b.value.end)
+    }
+    flush()
+    return TimelineLayout(blocks.filter { it.allDay }, placed.sortedBy { it.index })
+}
+
+/** Position du trait de l'heure, seulement si [day] est aujourd'hui et l'heure dans la plage. */
+fun nowFraction(day: LocalDate, now: LocalDateTime, startHour: Int, endHour: Int): Float? {
+    if (now.toLocalDate() != day) return null
+    val minute = now.hour * 60 + now.minute
+    return if (minute < startHour * 60 || minute > endHour * 60) null else minuteFraction(minute, startHour, endHour)
+}
+
+/** « 9 h », « 9 h 05 ». */
+fun clockText(minute: Int): String {
+    val h = minute / 60
+    val m = minute % 60
+    return if (m == 0) "$h h" else "$h h ${m.toString().padStart(2, '0')}"
+}
+
+/** « 45 min », « 2 h », « 1 h 30 ». */
+fun durationText(minutes: Int): String {
+    val h = minutes / 60
+    val m = minutes % 60
+    return when {
+        h == 0 -> "$m min"
+        m == 0 -> "$h h"
+        else -> "$h h ${m.toString().padStart(2, '0')}"
+    }
+}
+
+fun describeBlock(b: TimeBlock): String {
+    val time = if (b.allDay) "toute la journée" else "de ${clockText(b.start)} à ${clockText(b.end)}"
+    return listOfNotNull(b.title, time, b.subtitle).joinToString(", ")
 }
