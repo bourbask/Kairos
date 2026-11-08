@@ -2,6 +2,7 @@ package app.kairos.mobile.data
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.DeserializationStrategy
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -58,6 +59,15 @@ class KairosApi(baseUrl: String, private val token: String, private val client: 
     suspend fun decide(module: String, id: String, choice: String): String =
         post(url("decisions").newBuilder().addPathSegment(module).addPathSegment(id).build(),
             buildJsonObject { put("choice", choice) }) { message(it) ?: "" }
+
+    /**
+     * Outil `app_*` d'un module, relayé tel quel par la tête ; [result] lit sa réponse.
+     * [ApiError.Server] : 422 = refus du module (avec sa raison), 404 / 503 = module absent ou déconnecté.
+     */
+    suspend fun <T> tool(module: String, name: String, result: DeserializationStrategy<T>, args: JsonObject = JsonObject(emptyMap())): T =
+        post(url("tools").newBuilder().addPathSegment(module).addPathSegment(name).build(), args) {
+            KairosJson.decodeFromString(result, it)
+        }
 
     private fun url(path: String) = root.newBuilder().addPathSegments(path).build()
 

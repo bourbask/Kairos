@@ -217,6 +217,47 @@ struct LookupArgs {
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
+struct AppLotArgs {
+    /// Identifiant du lot (app_inventory).
+    lot: i64,
+    /// Quantité consommée, unité du lot ; absente : tout le lot.
+    qty: Option<f64>,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+struct AppLotUpdateArgs {
+    lot: i64,
+    location: Option<String>,
+    /// Quantité restante, unité du lot.
+    qty: Option<f64>,
+    /// AAAA-MM-JJ.
+    expiry: Option<String>,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+struct AppOrderLineArgs {
+    order: i64,
+    index: usize,
+    /// Zone de rangement ; absente : celle proposée par app_orders.
+    location: Option<String>,
+    /// AAAA-MM-JJ.
+    expiry: Option<String>,
+    /// true : rupture, rien en stock.
+    missing: Option<bool>,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+struct AppAddArgs {
+    name: Option<String>,
+    barcode: Option<String>,
+    qty: f64,
+    unit: Option<String>,
+    location: String,
+    /// AAAA-MM-JJ.
+    expiry: Option<String>,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
 struct CardsArgs {
     /// Jour (AAAA-MM-JJ) ; aujourd'hui par défaut.
     day: Option<String>,
@@ -251,6 +292,32 @@ fn perishable(l: &Lot) -> bool {
         matches!((expiry(l), added), (Some(e), Some(a)) if (e - a).num_days() <= FRESH_SPAN_DAYS)
     };
     l.kind != Some(Kind::Ddm) || l.location == "frigo" || (l.estimated && short())
+}
+
+/// Zones du plan de la cuisine : valeur stockée, libellé affiché.
+const ZONES: [(&str, &str); 5] =
+    [("frigo", "Frigo"), ("congelateur", "Congélo"), ("placard", "Placard"), ("etagere", "Étagère"), ("corbeille", "Table")];
+
+/// Un produit rangé là, à cette date (ou sans), se gâte-t-il vraiment ?
+fn fresh(name: &str, loc: &str, given: Option<String>) -> bool {
+    let (exp, kind, estimated) = crate::store::dating(name, loc, given);
+    perishable(&Lot {
+        id: 0,
+        product: name.to_string(),
+        family: crate::units::Family::Piece,
+        qty: 0.0,
+        location: loc.to_string(),
+        expiry: Some(exp),
+        kind: Some(kind),
+        estimated,
+        opened: false,
+        added_at: chrono::Utc::now().timestamp(),
+        nature: None,
+    })
+}
+
+fn message(m: String) -> Out {
+    Ok(serde_json::json!({ "message": m }).to_string())
 }
 
 /// « - lun. 09/11 midi : Farfalle (boîte) ».
@@ -390,10 +457,23 @@ impl FoodServer {
         Ok(lots)
     }
 
+    /// `neutre`, `attention` (≤ 3 j) ou `urgent` (≤ 1 j) ; seuls les périssables pressent.
+    fn tone(&self, l: &Lot) -> &'static str {
+        match expiry(l).filter(|_| perishable(l)).map(|d| (d - self.today()).num_days()) {
+            Some(n) if n <= 1 => "urgent",
+            Some(n) if n <= 3 => "attention",
+            _ => "neutre",
+        }
+    }
+
     /// Complète une ligne depuis la base produits quand seul le code-barres est connu.
     async fn complete(&self, mut l: Line) -> Result<Line, String> {
         if l.name.trim().is_empty() {
             let code = l.barcode.clone().ok_or("Ni nom ni code-barres.")?;
+            if let Some((name, ..)) = self.store.known(&code).map_err(|e| e.to_string())? {
+                l.name = name;
+                return Ok(l);
+            }
             let p =
                 self.off.lookup(&code).await?.ok_or_else(|| format!("Code-barres {code} inconnu : donner le nom."))?;
             l.name = match p.brand {
@@ -523,7 +603,15 @@ impl FoodServer {
             let n = crate::units::fold(&l.name);
             missing.iter().any(|m| m.split_whitespace().all(|w| n.contains(w)))
         };
-        let (out, keep): (Vec<&Line>, Vec<&Line>) = o.lines.iter().partition(|l| is_missing(l));
+        // Lignes déjà traitées depuis l'application : ni rangées ni comptées deux fois.
+        let done = self.store.lines_done(o.id).map_err(|e| e.to_string())?;
+        let (out, keep): (Vec<&Line>, Vec<&Line>) = o
+            .lines
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !done.contains(i))
+            .map(|(_, l)| l)
+            .partition(|l| is_missing(l));
         if !a.confirm.unwrap_or(false) {
             let mut s = format!("Commande {} : {} ligne(s) à mettre en stock. {PREVIEW}", o.id, keep.len());
             for l in &out {
@@ -531,13 +619,19 @@ impl FoodServer {
             }
             return Ok(s);
         }
-        let mut done = Vec::new();
-        for l in keep {
-            done.push(self.store.add(l, "achat", Some(o.id))?);
+        let mut stocked = Vec::new();
+        for (i, l) in o.lines.iter().enumerate().filter(|(i, _)| !done.contains(i)) {
+            let missing = is_missing(l);
+            // Même réservation que l'application : une ligne n'entre en stock qu'une fois.
+            if self.store.claim_line(o.id, i, if missing { "rupture" } else { "rangee" }).map_err(|e| e.to_string())?
+                && !missing
+            {
+                stocked.push(self.store.add(l, "achat", Some(o.id))?);
+            }
         }
         self.store.mark_received(o.id).map_err(|e| e.to_string())?;
         let mut s =
-            format!("Commande {} réceptionnée : {} produit(s) en stock.\n- {}", o.id, done.len(), done.join("\n- "));
+            format!("Commande {} réceptionnée : {} produit(s) en stock.\n- {}", o.id, stocked.len(), stocked.join("\n- "));
         for l in out {
             s.push_str(&format!("\n- rupture, non stockée : {}", l.name));
         }
@@ -1005,6 +1099,173 @@ impl FoodServer {
         Ok(l.join("\n"))
     }
 
+    #[tool(description = "Application : stock par zone et lots, triés par urgence (JSON).")]
+    async fn app_inventory(&self) -> Out {
+        use serde_json::json;
+        let mut lots = self.store.lots(None, None).map_err(|e| e.to_string())?;
+        let rank = |t: &str| match t {
+            "urgent" => 0,
+            "attention" => 1,
+            _ => 2,
+        };
+        lots.sort_by_key(|l| (rank(self.tone(l)), expiry(l).is_none(), expiry(l), l.product.clone()));
+        let zones: Vec<_> = ZONES
+            .iter()
+            .map(|(id, label)| {
+                let here = lots.iter().filter(|l| l.location == *id);
+                let count = here.clone().count();
+                let urgent = here.filter(|l| self.tone(l) == "urgent").count();
+                json!({"id": id, "label": label, "count": count, "urgent": urgent})
+            })
+            .collect();
+        use crate::units::Family;
+        let unit = |f| match f {
+            Family::Masse => "g",
+            Family::Volume => "ml",
+            Family::Piece => "pièce",
+        };
+        // Pas du +/− de l'application, dans l'unité de base.
+        let step = |l: &Lot| match l.family {
+            Family::Piece => 1,
+            _ if l.qty >= 1000.0 => 100,
+            _ if l.qty >= 100.0 => 50,
+            _ => 10,
+        };
+        let lots: Vec<_> = lots
+            .iter()
+            .map(|l| {
+                json!({
+                    "id": l.id, "name": l.product, "qty": l.qty, "unit": unit(l.family), "label": l.show(),
+                    "step": step(l), "location": l.location,
+                    "expiry": l.expiry, "expiry_kind": l.kind.map(Kind::as_str), "estimated": l.estimated,
+                    "tone": self.tone(l),
+                })
+            })
+            .collect();
+        Ok(json!({"zones": zones, "lots": lots}).to_string())
+    }
+
+    #[tool(description = "Application : consommer un lot, en entier ou en partie.")]
+    async fn app_lot_use(&self, Parameters(a): Parameters<AppLotArgs>) -> Out {
+        message(self.store.use_lot(a.lot, a.qty)?)
+    }
+
+    #[tool(description = "Application : corriger un lot (zone, quantité, date).")]
+    async fn app_lot_update(&self, Parameters(a): Parameters<AppLotUpdateArgs>) -> Out {
+        message(self.store.update_lot(a.lot, a.location.as_deref(), a.qty, a.expiry.as_deref())?)
+    }
+
+    /// Zone proposée pour une ligne de commande : habituelle, sinon prévue à l'import.
+    fn proposed(&self, l: &Line) -> Result<String, String> {
+        if let Some(loc) = self.store.usual_location(&l.name, l.barcode.as_deref()).map_err(|e| e.to_string())? {
+            return Ok(loc);
+        }
+        Ok(Store::check_in(l)?.2)
+    }
+
+    #[tool(description = "Application : commandes à ranger, ligne par ligne (JSON).")]
+    async fn app_orders(&self) -> Out {
+        use serde_json::json;
+        let mut out = Vec::new();
+        for o in self.store.orders(true).map_err(|e| e.to_string())? {
+            let done = self.store.lines_done(o.id).map_err(|e| e.to_string())?;
+            let mut lines = Vec::new();
+            for (i, l) in o.lines.iter().enumerate() {
+                let loc = self.proposed(l)?;
+                lines.push(json!({
+                    "index": i, "name": l.name, "qty": l.qty,
+                    "label": Store::check_in(l).map(|(f, q, ..)| show(q, f)).unwrap_or_else(|_| l.qty.to_string()),
+                    "unit": l.unit.as_deref().filter(|u| !u.trim().is_empty()).unwrap_or("pièce"),
+                    "location": loc, "fresh": fresh(&l.name, &loc, l.expiry.clone()), "done": done.contains(&i),
+                }));
+            }
+            out.push(json!({"id": o.id, "store": o.store, "pickup": o.pickup, "lines": lines}));
+        }
+        Ok(serde_json::Value::Array(out).to_string())
+    }
+
+    #[tool(description = "Application : ranger une ligne de commande, ou la déclarer en rupture.")]
+    async fn app_order_line(&self, Parameters(a): Parameters<AppOrderLineArgs>) -> Out {
+        let pending = self.store.orders(true).map_err(|e| e.to_string())?;
+        let o = pending.into_iter().find(|o| o.id == a.order).ok_or(format!("Commande {} : pas à ranger.", a.order))?;
+        let line = o.lines.get(a.index).ok_or(format!("Commande {} : pas de ligne {}.", o.id, a.index))?;
+        let missing = a.missing.unwrap_or(false);
+        let mut l = line.clone();
+        if !missing {
+            l.location = Some(match a.location.as_deref().filter(|x| !x.trim().is_empty()) {
+                Some(x) => crate::store::location(x)?,
+                None => self.proposed(line)?,
+            });
+            if let Some(e) = a.expiry.as_deref().filter(|e| !e.trim().is_empty()) {
+                l.expiry = Some(date(e)?);
+            }
+            Store::check_in(&l)?;
+        }
+        // La ligne est réservée avant d'écrire le stock : un second envoi est refusé.
+        // ponytail: réservation et écriture du stock hors d'une même transaction ;
+        // un arrêt entre les deux laisse la ligne traitée sans stock. Une seule
+        // transaction si cela arrive en pratique.
+        if !self.store.claim_line(o.id, a.index, if missing { "rupture" } else { "rangee" }).map_err(|e| e.to_string())? {
+            return Err(format!("{} : déjà traité.", line.name));
+        }
+        let msg = if missing {
+            format!("{} : rupture, non stocké.", line.name)
+        } else {
+            match self.store.add(&l, "achat", Some(o.id)) {
+                Ok(m) => m,
+                Err(e) => {
+                    self.store.release_line(o.id, a.index).map_err(|e| e.to_string())?;
+                    return Err(e);
+                }
+            }
+        };
+        let remaining = o.lines.len() - self.store.lines_done(o.id).map_err(|e| e.to_string())?.len();
+        if remaining == 0 {
+            self.store.mark_received(o.id).map_err(|e| e.to_string())?;
+        }
+        Ok(serde_json::json!({"message": msg, "remaining": remaining}).to_string())
+    }
+
+    #[tool(description = "Application : produit par code-barres, connu localement ou de la base ouverte (JSON).")]
+    async fn app_product(&self, Parameters(a): Parameters<LookupArgs>) -> Out {
+        let code = a.barcode.trim();
+        let (name, nature, loc) = match self.store.known(code).map_err(|e| e.to_string())? {
+            Some((name, nature, loc)) => {
+                let loc = loc.unwrap_or_else(|| crate::bon::location("", &name).to_string());
+                (name, nature, loc)
+            }
+            None => {
+                let p = self.off.lookup(code).await?.ok_or_else(|| format!("Code-barres {code} inconnu."))?;
+                let name = match &p.brand {
+                    Some(b) => format!("{} ({b})", p.name),
+                    None => p.name.clone(),
+                };
+                let cat = p.category.as_deref().map(crate::units::fold).unwrap_or_default();
+                let nature = crate::nature::resolve(None, p.category.as_deref(), &p.name);
+                (name.clone(), nature, crate::bon::location(&cat, &name).to_string())
+            }
+        };
+        Ok(serde_json::json!({
+            "name": name, "nature": nature.map(Nature::as_str), "fresh": fresh(&name, &loc, None), "location": loc,
+        })
+        .to_string())
+    }
+
+    #[tool(description = "Application : ajouter au stock hors commande (comme stock_add).")]
+    async fn app_add(&self, Parameters(a): Parameters<AppAddArgs>) -> Out {
+        let l = Line {
+            name: a.name.unwrap_or_default(),
+            qty: a.qty,
+            unit: a.unit,
+            location: Some(a.location),
+            expiry: a.expiry,
+            barcode: a.barcode.map(|b| b.trim().to_string()).filter(|b| !b.is_empty()),
+            price: None,
+        };
+        let l = self.complete(l).await?;
+        message(self.store.add(&l, "ajout", None)?)
+    }
+
     #[tool(description = "Cartes JSON du jour pour l'application (repas, boîte, produits à finir).")]
     async fn cards(&self, Parameters(a): Parameters<CardsArgs>) -> Out {
         let day = a.day.filter(|d| !d.trim().is_empty()).unwrap_or_else(|| self.today().to_string());
@@ -1191,5 +1452,191 @@ mod tests {
         assert!(c[0]["body"].as_str().unwrap().contains("hampignons"));
         assert_eq!(c[0]["chips"][0]["tone"], "urgent");
         assert!(c[0].get("time").is_none());
+    }
+
+    fn v(out: Result<String, String>) -> serde_json::Value {
+        serde_json::from_str(&out.unwrap()).unwrap()
+    }
+
+    fn item(name: &str, qty: f64, unit: &str, loc: &str, expiry: Option<String>) -> crate::store::Line {
+        crate::store::Line {
+            name: name.into(),
+            qty,
+            unit: Some(unit.into()),
+            location: Some(loc.into()),
+            expiry,
+            ..Default::default()
+        }
+    }
+
+    fn lot_id(s: &FoodServer, q: &str) -> i64 {
+        s.store.lots(None, Some(q)).unwrap()[0].id
+    }
+
+    /// Commande à retirer : biscuits prévus au placard, yaourts au frigo.
+    fn order(s: &FoodServer) -> i64 {
+        let lines = [item("Biscuits sablés", 1.0, "pièce", "placard", None), item("Yaourts nature", 8.0, "pièce", "frigo", None)];
+        s.store.add_order("drive", Some("R1"), Some("2026-11-10"), None, &lines).unwrap()
+    }
+
+    fn line_args(order: i64, index: usize, extra: serde_json::Value) -> Parameters<super::AppOrderLineArgs> {
+        let mut a = serde_json::json!({"order": order, "index": index});
+        a.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        Parameters(serde_json::from_value(a).unwrap())
+    }
+
+    use rmcp::handler::server::wrapper::Parameters;
+
+    #[tokio::test]
+    async fn app_inventory_groups_zones_and_tones() {
+        let s = server();
+        let t = s.today();
+        let at = |n: i64| Some((t + chrono::Duration::days(n)).to_string());
+        s.store.add(&item("Champignons", 1.0, "pièce", "frigo", at(1)), "achat", None).unwrap();
+        s.store.add(&item("Yaourts nature", 8.0, "pièce", "frigo", at(3)), "achat", None).unwrap();
+        s.store.add(&item("Riz basmati", 1.0, "kg", "placard", None), "achat", None).unwrap();
+        let j = v(s.app_inventory().await);
+        let zones = j["zones"].as_array().unwrap();
+        assert_eq!(zones.len(), 5);
+        let z = |id: &str| zones.iter().find(|z| z["id"] == id).unwrap().clone();
+        assert_eq!((z("frigo")["label"].clone(), z("frigo")["count"].clone(), z("frigo")["urgent"].clone()), ("Frigo".into(), 2.into(), 1.into()));
+        assert_eq!(z("congelateur")["label"], "Congélo");
+        assert_eq!(z("corbeille")["label"], "Table");
+        assert_eq!(z("placard")["count"], 1);
+        let lots = j["lots"].as_array().unwrap();
+        let names: Vec<_> = lots.iter().map(|l| (l["name"].as_str().unwrap(), l["tone"].as_str().unwrap())).collect();
+        assert_eq!(names, [("Champignons", "urgent"), ("Yaourts nature", "attention"), ("Riz basmati", "neutre")]);
+        assert!(lots[0]["id"].is_i64());
+        assert_eq!((lots[2]["qty"].as_f64(), lots[2]["unit"].as_str()), (Some(1000.0), Some("g")));
+        assert_eq!((lots[2]["expiry_kind"].as_str(), lots[2]["estimated"].as_bool()), (Some("ddm"), Some(true)));
+        assert_eq!((lots[0]["location"].as_str(), lots[0]["estimated"].as_bool()), (Some("frigo"), Some(false)));
+    }
+
+    #[tokio::test]
+    async fn app_orders_proposes_usual_zone() {
+        let s = server();
+        s.store.add(&item("Biscuits sablés", 1.0, "pièce", "etagere", None), "ajout", None).unwrap();
+        s.store.take(&item("biscuits", 1.0, "pièce", "", None), "consommation", None).unwrap();
+        let id = order(&s);
+        let j = v(s.app_orders().await);
+        assert_eq!(j.as_array().unwrap().len(), 1);
+        assert_eq!((j[0]["id"].as_i64(), j[0]["store"].as_str(), j[0]["pickup"].as_str()), (Some(id), Some("drive"), Some("2026-11-10")));
+        let l = &j[0]["lines"];
+        assert_eq!((l[0]["index"].as_u64(), l[0]["name"].as_str()), (Some(0), Some("Biscuits sablés")));
+        assert_eq!(l[0]["location"], "etagere", "zone habituelle, même sans lot en stock");
+        assert_eq!(l[1]["location"], "frigo", "zone prévue à l'import");
+        assert_eq!((l[0]["fresh"].as_bool(), l[1]["fresh"].as_bool()), (Some(false), Some(true)));
+        assert_eq!((l[1]["qty"].as_f64(), l[1]["unit"].as_str(), l[1]["done"].as_bool()), (Some(8.0), Some("pièce"), Some(false)));
+    }
+
+    #[tokio::test]
+    async fn order_line_puts_into_stock_with_expiry() {
+        let s = server();
+        let id = order(&s);
+        let j = v(s.app_order_line(line_args(id, 1, serde_json::json!({"expiry": "2030-01-15"}))).await);
+        assert_eq!(j["remaining"], 1);
+        assert!(j["message"].as_str().unwrap().contains("Yaourts nature"), "{j}");
+        let lots = s.store.lots(None, Some("yaourts")).unwrap();
+        assert_eq!((lots.len(), lots[0].expiry.as_deref(), lots[0].estimated), (1, Some("2030-01-15"), false));
+        assert_eq!(v(s.app_orders().await)[0]["lines"][1]["done"], true);
+        // La réception par conversation ne remet pas en stock ce qui est déjà rangé.
+        s.order_receive(Parameters(serde_json::from_value(serde_json::json!({"confirm": true})).unwrap())).await.unwrap();
+        assert_eq!(s.store.lots(None, Some("yaourts")).unwrap().len(), 1);
+        assert_eq!(s.store.lots(None, Some("biscuits")).unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn order_line_missing_skips() {
+        let s = server();
+        let id = order(&s);
+        let j = v(s.app_order_line(line_args(id, 0, serde_json::json!({"missing": true}))).await);
+        assert_eq!(j["remaining"], 1);
+        assert!(s.store.lots(None, None).unwrap().is_empty());
+        assert_eq!(v(s.app_orders().await)[0]["lines"][0]["done"], true);
+    }
+
+    #[tokio::test]
+    async fn order_line_twice_refused() {
+        let s = server();
+        let id = order(&s);
+        s.app_order_line(line_args(id, 1, serde_json::json!({"location": "congelateur"}))).await.unwrap();
+        let e = s.app_order_line(line_args(id, 1, serde_json::json!({}))).await.unwrap_err();
+        assert!(e.contains("déjà"), "{e}");
+        let lots = s.store.lots(None, Some("yaourts")).unwrap();
+        assert_eq!((lots.len(), lots[0].qty, lots[0].location.as_str()), (1, 8.0, "congelateur"));
+        assert!(s.app_order_line(line_args(id, 7, serde_json::json!({}))).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn order_completes_when_all_lines_done() {
+        let s = server();
+        let id = order(&s);
+        s.app_order_line(line_args(id, 0, serde_json::json!({"missing": true}))).await.unwrap();
+        let j = v(s.app_order_line(line_args(id, 1, serde_json::json!({}))).await);
+        assert_eq!(j["remaining"], 0);
+        assert!(s.store.orders(true).unwrap().is_empty());
+        assert_eq!(s.store.orders(false).unwrap()[0].status, "retiree");
+        assert_eq!(s.app_orders().await.unwrap(), "[]");
+        let e = s.app_order_line(line_args(id, 1, serde_json::json!({}))).await.unwrap_err();
+        assert_eq!(e, format!("Commande {id} : pas à ranger."));
+    }
+
+    #[tokio::test]
+    async fn order_receive_claims_its_lines() {
+        let s = server();
+        let id = order(&s);
+        s.order_receive(Parameters(serde_json::from_value(serde_json::json!({"confirm": true})).unwrap())).await.unwrap();
+        assert_eq!(s.store.lines_done(id).unwrap().len(), 2, "chaque ligne réservée, comme depuis l'application");
+    }
+
+    #[tokio::test]
+    async fn app_quantities_have_label_and_step() {
+        let s = server();
+        s.store.add(&item("Riz basmati", 1.0, "kg", "placard", None), "achat", None).unwrap();
+        s.store.add(&item("Lait demi-écrémé", 50.0, "cl", "placard", None), "achat", None).unwrap();
+        s.store.add(&item("Citrons", 3.0, "pièce", "corbeille", None), "achat", None).unwrap();
+        let j = v(s.app_inventory().await);
+        let get = |n: &str| j["lots"].as_array().unwrap().iter().find(|l| l["name"] == n).unwrap().clone();
+        assert_eq!((get("Riz basmati")["label"].clone(), get("Riz basmati")["step"].clone()), ("1 kg".into(), 100.into()));
+        assert_eq!((get("Lait demi-écrémé")["label"].clone(), get("Lait demi-écrémé")["step"].clone()), ("500 ml".into(), 50.into()));
+        assert_eq!((get("Citrons")["label"].clone(), get("Citrons")["step"].clone()), ("3 pièces".into(), 1.into()));
+        order(&s);
+        assert_eq!(v(s.app_orders().await)[0]["lines"][1]["label"], "8 pièces");
+    }
+
+    #[tokio::test]
+    async fn lot_use_partial_and_full() {
+        let s = server();
+        s.store.add(&item("Yaourts nature", 8.0, "pièce", "frigo", None), "achat", None).unwrap();
+        let id = lot_id(&s, "yaourts");
+        let args = |q: Option<f64>| Parameters(super::AppLotArgs { lot: id, qty: q });
+        let j = v(s.app_lot_use(args(Some(3.0))).await);
+        assert!(j["message"].as_str().unwrap().contains("Yaourts nature"), "{j}");
+        assert_eq!(s.store.lots(None, None).unwrap()[0].qty, 5.0);
+        v(s.app_lot_use(args(None)).await);
+        assert!(s.store.lots(None, None).unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn lot_use_unknown_lot() {
+        let s = server();
+        let e = s.app_lot_use(Parameters(super::AppLotArgs { lot: 999, qty: None })).await.unwrap_err();
+        assert!(e.contains("plus en stock"), "{e}");
+    }
+
+    #[tokio::test]
+    async fn lot_update_moves_and_dates() {
+        let s = server();
+        s.store.add(&item("Cuisses de poulet", 4.0, "pièce", "frigo", None), "achat", None).unwrap();
+        s.store.add(&item("Cuisses de poulet", 2.0, "pièce", "frigo", None), "achat", None).unwrap();
+        let id = s.store.lots(None, None).unwrap().iter().find(|l| l.qty == 4.0).unwrap().id;
+        let a = serde_json::json!({"lot": id, "location": "congélo", "qty": 3, "expiry": "2027-03-01"});
+        v(s.app_lot_update(Parameters(serde_json::from_value(a).unwrap())).await);
+        let lots = s.store.lots(None, None).unwrap();
+        let moved = lots.iter().find(|l| l.id == id).unwrap();
+        assert_eq!((moved.location.as_str(), moved.qty, moved.expiry.as_deref(), moved.estimated), ("congelateur", 3.0, Some("2027-03-01"), false));
+        assert_eq!(lots.iter().filter(|l| l.location == "frigo").count(), 1, "l'autre lot ne bouge pas");
+        let gone = serde_json::json!({"lot": 999, "qty": 1});
+        assert!(s.app_lot_update(Parameters(serde_json::from_value(gone).unwrap())).await.is_err());
     }
 }

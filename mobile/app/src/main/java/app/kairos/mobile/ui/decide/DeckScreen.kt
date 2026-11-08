@@ -421,7 +421,7 @@ private fun DecisionCard(
 }
 
 @Composable
-private fun BoxScope.Stamp(
+internal fun BoxScope.Stamp(
     text: String,
     color: Color,
     alpha: Float,

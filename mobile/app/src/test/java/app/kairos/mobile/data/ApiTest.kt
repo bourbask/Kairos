@@ -10,6 +10,8 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import java.time.LocalDate
 
 /** Exemple du contrat partagé, tel que la tête le relaie (avec `module`). */
@@ -83,5 +85,28 @@ class ApiTest {
         val req = server.takeRequest()
         assertEquals("/app/v1/decisions/finances/op%201", req.url.encodedPath)
         assertEquals("""{"choice":"Loisirs"}""", req.body?.utf8())
+    }
+
+    @Test
+    fun api_tool_passthrough() = runBlocking {
+        server.enqueue(MockResponse.Builder().body(
+            """{"zones":[{"id":"frigo","label":"Frigo","count":1,"urgent":1}],
+               "lots":[{"id":4,"name":"Lait","qty":1000,"unit":"ml","label":"1 l","step":100,"location":"frigo",
+                        "expiry":"2026-11-09","expiry_kind":"dlc","estimated":false,"tone":"urgent"}]}""",
+        ).build())
+        val inv = api().tool("alimentation", "app_inventory", Inventory.serializer())
+        assertEquals(Lot(4, "Lait", 1000.0, "ml", "1 l", 100.0, "frigo", "2026-11-09", "dlc", false, Tone.Urgent), inv.lots.single())
+        val req = server.takeRequest()
+        assertEquals("/app/v1/tools/alimentation/app_inventory", req.url.encodedPath)
+        assertEquals("{}", req.body?.utf8())
+
+        server.enqueue(MockResponse.Builder().code(422).body("""{"message":"Lot 4 introuvable."}""").build())
+        try {
+            api().tool("alimentation", "app_lot_use", ToolMessage.serializer(), buildJsonObject { put("lot", 4) })
+            fail("422 attendu")
+        } catch (e: ApiError.Server) {
+            assertEquals(422 to "Lot 4 introuvable.", e.code to e.message)
+        }
+        assertEquals("""{"lot":4}""", server.takeRequest().body?.utf8())
     }
 }

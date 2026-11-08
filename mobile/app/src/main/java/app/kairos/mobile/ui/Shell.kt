@@ -2,7 +2,6 @@ package app.kairos.mobile.ui
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -28,7 +27,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -91,6 +89,7 @@ fun Shell(
     onDrag: (Offset) -> Unit = {},
     onSpeak: () -> Unit = {},
     today: @Composable (PaddingValues) -> Unit = { TodayPlaceholder(it) },
+    spaces: @Composable (PaddingValues) -> Unit = {},
     kairosModifier: Modifier = Modifier,
     modifier: Modifier = Modifier,
 ) {
@@ -103,7 +102,7 @@ fun Shell(
         AnimatedContent(tab, transitionSpec = { Motion.fadeThrough() }, label = "onglet") {
             when (it) {
                 Tab.Aujourdhui -> today(padding)
-                Tab.Espaces -> SpacesPlaceholder(padding)
+                Tab.Espaces -> spaces(padding)
             }
         }
         Dock(
@@ -273,34 +272,5 @@ private fun TodayPlaceholder(padding: PaddingValues) {
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-    }
-}
-
-@Composable
-private fun SpacesPlaceholder(padding: PaddingValues) {
-    Column(Modifier.padding(padding).padding(horizontal = 24.dp, vertical = 20.dp)) {
-        Text("Espaces", style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.onBackground)
-        Spacer(Modifier.height(20.dp))
-        Text(
-            "MODULES",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(Modifier.height(8.dp))
-        Surface(
-            shape = MaterialTheme.shapes.large,
-            color = MaterialTheme.colorScheme.surface,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("Bientôt", style = MaterialTheme.typography.titleMedium)
-                Text(
-                    "Chaque module aura ici son espace.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
     }
 }

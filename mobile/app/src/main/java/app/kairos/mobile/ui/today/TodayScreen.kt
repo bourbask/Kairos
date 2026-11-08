@@ -550,15 +550,20 @@ private fun Color.darken(): Color =
     if (red + green + blue > 2.2f) this else Color(red * 0.64f, green * 0.62f, blue * 0.6f, alpha)
 
 /**
- * Glissement horizontal : → positif (fait), ← négatif (plus tard). Le libellé
- * de l'action apparaît sous la carte pendant le geste ; vibration au seuil.
+ * Glissement horizontal : → positif ([rightLabel]), ← négatif ([leftLabel]). Le libellé
+ * de l'action apparaît sous l'élément pendant le geste ; vibration au seuil.
+ * [rightStays] : → ouvre un choix sur place, l'élément revient au lieu de partir.
  */
 @Composable
-private fun SwipeRow(
+internal fun SwipeRow(
     enabled: Boolean,
     onRight: () -> Unit,
     onLeft: () -> Unit,
     modifier: Modifier = Modifier,
+    rightLabel: String = "Fait ✓",
+    leftLabel: String = "Plus tard",
+    leftColor: Color = MaterialTheme.colorScheme.tertiary,
+    rightStays: Boolean = false,
     content: @Composable () -> Unit,
 ) {
     val right by rememberUpdatedState(onRight)
@@ -577,13 +582,13 @@ private fun SwipeRow(
                 Modifier
                     .matchParentSize()
                     .clip(MaterialTheme.shapes.medium)
-                    .background(if (positive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary)
+                    .background(if (positive) MaterialTheme.colorScheme.primary else leftColor)
                     .padding(horizontal = 18.dp),
                 horizontalArrangement = if (positive) Arrangement.Start else Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    if (positive) "Fait ✓" else "Plus tard",
+                    if (positive) rightLabel else leftLabel,
                     color = Color.White,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.alpha((abs(dx) / threshold).coerceIn(0.35f, 1f)),
@@ -607,11 +612,12 @@ private fun SwipeRow(
                     onDragStopped = { velocity ->
                         val fling = abs(velocity) > 2000f && abs(dx) > width * 0.12f && velocity * dx > 0
                         val commit = armed || fling
-                        val target = if (commit) (if (dx > 0) width.toFloat() else -width.toFloat()) else 0f
+                        val positive = dx > 0
+                        val target = if (!commit || (rightStays && positive)) 0f else if (positive) width.toFloat() else -width.toFloat()
                         scope.launch {
                             animate(dx, target, initialVelocity = velocity, animationSpec = Motion.settle()) { v, _ -> dx = v }
                             if (commit) {
-                                if (target > 0) right() else left()
+                                if (positive) right() else left()
                             }
                             dx = 0f
                             armed = false

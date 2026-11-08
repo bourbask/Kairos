@@ -75,3 +75,64 @@ data class Snapshot(
 /** État local d'un élément du fil, propre à l'appareil. */
 @Serializable
 enum class Mark { Fait, PlusTard }
+
+/** Zone de la maison, telle que le module la compte. */
+@Serializable
+data class Zone(val id: String, val label: String, val count: Int = 0, val urgent: Int = 0)
+
+/**
+ * Lot en stock. [qty] / [unit] en unité de base (g, ml, pièce) pour le calcul ;
+ * [label] = quantité lisible ; [step] = pas du +/−.
+ */
+@Serializable
+data class Lot(
+    val id: Long,
+    val name: String,
+    val qty: Double = 0.0,
+    val unit: String = "",
+    val label: String = "",
+    val step: Double = 1.0,
+    val location: String = "",
+    val expiry: String? = null,
+    @SerialName("expiry_kind") val expiryKind: String? = null,
+    val estimated: Boolean = false,
+    val tone: Tone = Tone.Neutre,
+)
+
+@Serializable
+data class Inventory(val zones: List<Zone> = emptyList(), val lots: List<Lot> = emptyList())
+
+@Serializable
+data class OrderLine(
+    val index: Int,
+    val name: String,
+    val qty: Double = 0.0,
+    val unit: String = "",
+    val label: String = "",
+    val location: String = "",
+    val fresh: Boolean = false,
+    val done: Boolean = false,
+)
+
+/** Commande retirée, à ranger ligne par ligne. */
+@Serializable
+data class Order(val id: Long, val store: String = "", val pickup: String? = null, val lines: List<OrderLine> = emptyList())
+
+/** Produit retrouvé par son code-barres ; [location] = zone habituelle. */
+@Serializable
+data class Product(val name: String, val nature: String? = null, val fresh: Boolean = false, val location: String = "")
+
+/** Réponse d'un outil d'écriture. */
+@Serializable
+data class ToolMessage(val message: String = "")
+
+/** Dernier état connu de la maison ; [offline] = la dernière actualisation a échoué. */
+@Serializable
+data class MaisonSnapshot(
+    val inventory: Inventory = Inventory(),
+    val orders: List<Order> = emptyList(),
+    val fetchedAt: String? = null,
+    val offline: Boolean = false,
+    /** Raison de la lecture seule quand le serveur répond mais pas le module. */
+    val reason: String? = null,
+)

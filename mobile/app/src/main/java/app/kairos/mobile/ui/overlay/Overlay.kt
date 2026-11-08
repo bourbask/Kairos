@@ -88,6 +88,12 @@ fun Modifier.overlayAnchor(state: OverlayState, corner: Dp): Modifier = onGlobal
     state.anchorCorner = corner
 }
 
+/** Plusieurs éléments ouvrent le même panneau : celui qu'on vient de toucher devient son origine. */
+fun OverlayState.anchorTo(coordinates: LayoutCoordinates, corner: Dp) {
+    anchor = coordinates
+    anchorCorner = corner
+}
+
 /**
  * Écran recouvert par des panneaux : il recule (transformation de conteneur)
  * ou glisse en parallaxe (panneau venu du bord), arrondi pendant le mouvement.

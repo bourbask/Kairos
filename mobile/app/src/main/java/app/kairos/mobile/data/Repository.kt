@@ -9,8 +9,10 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.KSerializer
+import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.serializer
+import kotlinx.serialization.json.JsonObject
 import java.io.File
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -29,7 +31,9 @@ class Repository(
 ) {
     private val snapshotFile = File(dir, "snapshot.json")
     private val marksFile = File(dir, "marks.json")
+    private val maisonFile = File(dir, "maison.json")
     private val loadLock = Mutex()
+    private val maisonLock = Mutex()
     private var loaded = false
 
     private val _snapshot = MutableStateFlow(Snapshot())
@@ -38,10 +42,14 @@ class Repository(
     private val _marks = MutableStateFlow<Map<String, Map<String, Mark>>>(emptyMap())
     val marks: StateFlow<Map<String, Map<String, Mark>>> = _marks.asStateFlow()
 
+    private val _maison = MutableStateFlow(MaisonSnapshot())
+    val maison: StateFlow<MaisonSnapshot> = _maison.asStateFlow()
+
     /** Relit l'état enregistré (une seule fois) ; appelé d'office par [refresh] et [mark]. */
     suspend fun load() = loadLock.withLock {
         if (loaded) return@withLock
         read(snapshotFile, Snapshot.serializer())?.let { saved -> _snapshot.update { if (it.fetchedAt == null) saved else it } }
+        read(maisonFile, MaisonSnapshot.serializer())?.let { saved -> _maison.update { if (it.fetchedAt == null) saved else it } }
         val savedMarks = read(marksFile, MARKS).orEmpty()
         _marks.update { current -> (savedMarks + current).filterKeys { it >= today().toString() } }
         loaded = true
@@ -69,6 +77,29 @@ class Repository(
         }
     }
 
+    /**
+     * Inventaire et commandes à ranger ; même règle hors ligne que [refresh].
+     * Une actualisation à la fois : une réponse ancienne n'écrase jamais une plus récente.
+     */
+    suspend fun refreshMaison() = maisonLock.withLock {
+        load()
+        try {
+            val inventory = api.tool(ALIMENTATION, "app_inventory", Inventory.serializer())
+            val orders = api.tool(ALIMENTATION, "app_orders", ORDERS)
+            val fresh = MaisonSnapshot(inventory, orders, LocalDateTime.now().withNano(0).toString(), offline = false)
+            _maison.value = fresh
+            write(maisonFile, MaisonSnapshot.serializer(), fresh)
+        } catch (e: ApiError) {
+            if (e is ApiError.Unauthorized) throw e
+            val reason = if (e is ApiError.Server) "Module indisponible" else null
+            _maison.update { it.copy(offline = true, reason = reason) }
+        }
+    }
+
+    /** Écrit dans l'inventaire ; rend le message du module. */
+    suspend fun maisonTool(name: String, args: JsonObject): String =
+        api.tool(ALIMENTATION, name, ToolMessage.serializer(), args).message
+
     /** Pose ou retire ([mark] = null) la marque de l'élément [key] du jour [day]. */
     suspend fun mark(day: String, key: String, mark: Mark?) {
         load()
@@ -92,7 +123,9 @@ class Repository(
     suspend fun clear() {
         _snapshot.value = Snapshot()
         _marks.value = emptyMap()
+        _maison.value = MaisonSnapshot()
         withContext(Dispatchers.IO) {
+            maisonFile.delete()
             snapshotFile.delete()
             marksFile.delete()
         }
@@ -115,6 +148,8 @@ class Repository(
 
     private companion object {
         const val WEEK = 7
+        const val ALIMENTATION = "alimentation"
+        val ORDERS = ListSerializer(Order.serializer())
         val MARKS = MapSerializer(String.serializer(), MapSerializer(String.serializer(), Mark.serializer()))
     }
 }

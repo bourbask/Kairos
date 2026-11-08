@@ -68,6 +68,7 @@ dependencies {
     implementation(libs.camera.view)
     implementation(libs.camera.mlkit)
     implementation(libs.mlkit.barcode)
+    implementation(libs.mlkit.text)
     implementation(libs.work.runtime)
     implementation(libs.lifecycle.process)
     debugImplementation(libs.compose.ui.tooling)
