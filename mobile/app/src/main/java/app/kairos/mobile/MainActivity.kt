@@ -85,6 +85,7 @@ import app.kairos.mobile.ui.agenda.AgendaScreen
 import java.time.LocalDate
 import app.kairos.mobile.ui.finances.FinancesScreen
 import app.kairos.mobile.ui.marches.MarchesScreen
+import app.kairos.mobile.ui.memoire.laterIds
 import app.kairos.mobile.ui.memoire.MemoireScreen
 import app.kairos.mobile.ui.kit.LocalAmountsMasked
 import app.kairos.mobile.ui.pairing.PairingScreen
@@ -598,6 +599,7 @@ private fun KairosRoot(model: AppModel) {
                 val agenda by session.repository.agenda.collectAsState()
                 val marches by session.repository.marches.collectAsState()
                 val memoire by session.repository.memoire.collectAsState()
+                val marks by session.repository.marks.collectAsState()
                 // Une actualisation à l'arrivée sur l'onglet : les chiffres des cartes sont à jour.
                 LaunchedEffect(Unit) {
                     val refreshes = listOf<suspend () -> Unit>(
@@ -618,6 +620,7 @@ private fun KairosRoot(model: AppModel) {
                     }
                 }
                 SpacesScreen(
+                    memoireLater = laterIds(marks[LocalDate.now().toString()].orEmpty().keys),
                     padding = padding,
                     maison = maison,
                     maisonOpen = maisonOpen,

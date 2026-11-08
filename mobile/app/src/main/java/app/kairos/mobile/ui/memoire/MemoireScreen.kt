@@ -193,15 +193,16 @@ fun MemoireScreen(
             }
             when (out) {
                 is DoneOutcome.Done -> {
-                    // Refusée, échue ou déjà traitée : elle quitte la liste ; acceptée, elle revient marquée.
-                    if (state == REFUSE || out.message == STALE) repository.dropIntention(i.id)
+                    // Traitée (acceptée, refusée, échue) : le module ne la renvoie plus, elle quitte la liste.
+                    repository.dropIntention(i.id)
                     try {
                         repository.refreshMemoire()
                     } catch (_: ApiError.Unauthorized) {
                         return@launch unauthorized()
                     }
                     if (repository.memoire.value.issue == null) hidden = hidden - i.id
-                    snackbar.showSnackbar(out.message)
+                    // Seul l'imprévu s'annonce : un message de confirmation retarderait l'annulation du geste suivant.
+                    if (out.message == STALE) snackbar.showSnackbar(out.message)
                 }
                 is DoneOutcome.Refused -> snackbar.showSnackbar(out.message)
                 else -> Unit
@@ -354,7 +355,9 @@ private fun rememberDictation(prompt: String, onText: (String) -> Unit, onNote: 
                 Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
                     .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                     .putExtra(RecognizerIntent.EXTRA_LANGUAGE, "fr-FR")
-                    .putExtra(RecognizerIntent.EXTRA_PROMPT, prompt),
+                    .putExtra(RecognizerIntent.EXTRA_PROMPT, prompt)
+                    // Notes personnelles : reconnaissance sur l'appareil quand elle est disponible.
+                    .putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true),
             )
         } catch (_: ActivityNotFoundException) {
             onNote("Pas de dictée sur ce téléphone : écris plutôt.")
@@ -436,15 +439,13 @@ private fun Intentions(
 @Composable
 private fun IntentionRow(i: Intention, now: LocalDateTime, onAccept: (Intention) -> Unit, onRefuse: (Intention) -> Unit, onLater: (Intention) -> Unit) {
     val colors = MaterialTheme.colorScheme
-    val accepted = i.state == ACCEPT
     SwipeRow(
         enabled = true,
-        onRight = { if (!accepted) onAccept(i) },
+        onRight = { onAccept(i) },
         onLeft = { onRefuse(i) },
-        rightLabel = if (accepted) "Déjà acceptée" else "Accepter ✓",
+        rightLabel = "Accepter ✓",
         leftLabel = "Refuser",
         leftColor = colors.error,
-        rightStays = accepted,
     ) {
         Surface(
             shape = RoundedCornerShape(RowCorner),
@@ -459,11 +460,11 @@ private fun IntentionRow(i: Intention, now: LocalDateTime, onAccept: (Intention)
                     Text(
                         listOfNotNull(timeLeft(i.expires, now), stateLabel(i.state).ifBlank { null }).joinToString(" · "),
                         style = MaterialTheme.typography.labelMedium,
-                        color = if (accepted) colors.primary else colors.onSurfaceVariant,
+                        color = colors.onSurfaceVariant,
                     )
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    if (!accepted) TextButton(onClick = { onAccept(i) }) { Text("Accepter") }
+                    TextButton(onClick = { onAccept(i) }) { Text("Accepter") }
                     TextButton(onClick = { onRefuse(i) }) { Text("Refuser", color = colors.error) }
                     TextButton(onClick = { onLater(i) }) { Text("Plus tard") }
                 }

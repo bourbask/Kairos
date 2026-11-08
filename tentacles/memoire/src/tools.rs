@@ -61,6 +61,9 @@ fn now_local() -> NaiveDateTime {
 const APP_LIMIT: u32 = 30;
 const APP_MAX_DAYS: i64 = 3650;
 const APP_PROVENANCE: &str = "application";
+/// La personnalité de l'assistant ne se lit ni ne se modifie depuis l'application.
+const PERSONA_REFUSED: &str = "La personnalité de l'assistant ne se modifie pas d'ici.";
+
 /// Sensibilité des notes saisies depuis l'application.
 const APP_SENSITIVITY: Sensitivity = Sensitivity::Commune;
 
@@ -331,6 +334,7 @@ impl MemoryServer {
             .facts_list("")
             .map_err(err)?
             .iter()
+            .filter(|f| f.key != PERSONA_KEY)
             .map(|f| json!({"key": f.key, "value": f.value, "updated": f.updated_at}))
             .collect();
         let conversations: Vec<Value> =
@@ -401,6 +405,9 @@ impl MemoryServer {
 
     #[tool(description = "Historique des valeurs d'un fait pour l'application, de la plus ancienne à la plus récente.")]
     fn app_fact_history(&self, Parameters(a): Parameters<KeyArgs>) -> Out {
+        if a.key.trim() == PERSONA_KEY {
+            return Err(PERSONA_REFUSED.into());
+        }
         let h = self.db()?.fact_history(&a.key).map_err(err)?;
         json_out(h.iter().map(|f| json!({"value": f.value, "at": f.updated_at})).collect::<Vec<_>>())
     }
@@ -410,6 +417,9 @@ impl MemoryServer {
         let (key, value) = (a.key.trim(), a.value.trim());
         if key.is_empty() || value.is_empty() {
             return Err("clé ou valeur vide".into());
+        }
+        if key == PERSONA_KEY {
+            return Err(PERSONA_REFUSED.into());
         }
         self.db()?.fact_set(key, value, APP_PROVENANCE).map_err(err)?;
         json_out(json!({"message": "Fait enregistré."}))
@@ -625,6 +635,16 @@ mod tests {
             assert!(s.app_fact_set(Parameters(AppFactSetArgs { key: k.into(), value: v.into() })).is_err());
         }
         assert!(js(s.app_memory())["facts"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn persona_hidden_from_app() {
+        let s = srv();
+        s.db().unwrap().fact_set(PERSONA_KEY, "calme", "test").unwrap();
+        assert!(js(s.app_memory())["facts"].as_array().unwrap().is_empty());
+        assert!(s.app_fact_set(Parameters(AppFactSetArgs { key: " persona ".into(), value: "ok".into() })).is_err());
+        assert!(s.app_fact_history(Parameters(KeyArgs { key: PERSONA_KEY.into() })).is_err());
+        assert_eq!(s.db().unwrap().fact_get(PERSONA_KEY).unwrap().unwrap().value, "calme");
     }
 
     #[test]

@@ -93,6 +93,7 @@ fun SpacesScreen(
     onOpenMemoire: () -> Unit,
     onCloseMemoire: () -> Unit,
     memoireContent: @Composable () -> Unit,
+    memoireLater: Set<Long> = emptySet(),
     maisonContent: @Composable () -> Unit,
 ) {
     val overlay = rememberOverlayState(maisonOpen, Origin.Anchor)
@@ -122,7 +123,7 @@ fun SpacesScreen(
             Spacer(Modifier.height(12.dp))
             MarchesCard(marches, onOpenMarches, Modifier.overlayAnchor(marchesOverlay, CardCorner))
             Spacer(Modifier.height(12.dp))
-            MemoireCard(memoire, onOpenMemoire, Modifier.overlayAnchor(memoireOverlay, CardCorner))
+            MemoireCard(memoire, memoireLater, onOpenMemoire, Modifier.overlayAnchor(memoireOverlay, CardCorner))
             Spacer(Modifier.height(16.dp))
             Text(
                 "D'autres espaces viendront ici.",
@@ -298,10 +299,10 @@ private fun MarchesCard(marches: MarchesSnapshot, onClick: () -> Unit, modifier:
 
 /** Intentions à traiter et la plus proche de l'échéance. */
 @Composable
-private fun MemoireCard(memoire: MemoireSnapshot, onClick: () -> Unit, modifier: Modifier) {
+private fun MemoireCard(memoire: MemoireSnapshot, later: Set<Long>, onClick: () -> Unit, modifier: Modifier) {
     val colors = MaterialTheme.colorScheme
     val now = LocalDateTime.now()
-    val open = memoire.memory?.intentions?.let { openIntentions(it, now) }
+    val open = memoire.memory?.intentions?.let { openIntentions(it, now, later) }
     Surface(
         onClick = onClick,
         shape = RoundedCornerShape(CardCorner),
