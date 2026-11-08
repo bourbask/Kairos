@@ -132,6 +132,60 @@ pub struct RuleResult {
     pub applied: bool,
 }
 
+/// Réponses du backend de patrimoine : lecture tolérante (champs absents à zéro, inconnus ignorés),
+/// chaque section de l'écran étant facultative.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct NetWorth {
+    pub net_of_debt: f64,
+    pub debt: f64,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct Snapshot {
+    pub month: String,
+    pub net_worth: f64,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct Snapshots {
+    pub snapshots: Vec<Snapshot>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct Loan {
+    pub name: String,
+    pub balance: f64,
+    pub payment: Option<f64>,
+    pub payoff_month: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct Loans {
+    pub loans: Vec<Loan>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct Instrument {
+    pub name: String,
+    pub cost: f64,
+    pub bucket: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct Portfolio {
+    pub total_cost: f64,
+    pub instruments: Vec<Instrument>,
+    pub by_bucket: BTreeMap<String, f64>,
+    pub bucket_weights: BTreeMap<String, f64>,
+}
+
 /// Nature d'une erreur HTTP, sans son texte : il peut citer l'adresse appelée.
 fn kind(e: &reqwest::Error) -> &'static str {
     if e.is_timeout() {
@@ -234,5 +288,21 @@ impl FinanceApi {
             .post(format!("{}/api/rules", self.base))
             .json(&serde_json::json!({"payee": payee, "poste": poste}));
         self.send(req).await
+    }
+
+    pub async fn networth(&self) -> Result<NetWorth, ApiError> {
+        self.get("/api/networth", &[]).await
+    }
+
+    pub async fn snapshots(&self) -> Result<Snapshots, ApiError> {
+        self.get("/api/snapshots", &[]).await
+    }
+
+    pub async fn loans(&self) -> Result<Loans, ApiError> {
+        self.get("/api/loans", &[]).await
+    }
+
+    pub async fn portfolio(&self) -> Result<Portfolio, ApiError> {
+        self.get("/api/portfolio", &[]).await
     }
 }
