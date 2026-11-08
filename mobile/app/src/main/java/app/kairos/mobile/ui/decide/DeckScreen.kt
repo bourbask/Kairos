@@ -400,7 +400,7 @@ private fun DecisionCard(
                         color = MaterialTheme.colorScheme.onPrimaryContainer,
                     )
                     if (p != null) {
-                        Text(p.label, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        Text(p.label, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer)
                         p.reason?.let {
                             Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onPrimaryContainer)
                         }
