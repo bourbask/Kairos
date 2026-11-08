@@ -15,6 +15,8 @@ use crate::config::TentacleEntry;
 pub const TOOL_RESULT_MAX_CHARS: usize = 8000;
 pub const TOOL_TIMEOUT: Duration = Duration::from_secs(20);
 const TRUNCATED: &str = "… [tronqué]";
+/// Outils réservés à l'API de l'application : jamais proposés au moteur.
+pub const APP_TOOLS: [&str; 3] = ["cards", "decisions", "decide"];
 
 type Client = RunningService<RoleClient, ()>;
 
@@ -93,13 +95,25 @@ impl Tentacles {
             .filter(|t| !t.private)
             .filter_map(|t| t.link.as_ref().map(|(_, tools)| (t, tools)))
             .flat_map(|(t, tools)| {
-                tools.iter().map(|tool| ToolSpec {
+                tools.iter().filter(|tool| !APP_TOOLS.contains(&tool.name.as_ref())).map(|tool| ToolSpec {
                     name: format!("{}__{}", t.name, tool.name),
                     description: tool.description.as_deref().unwrap_or_default().to_string(),
                     input_schema: plain_schema(serde_json::Value::Object((*tool.input_schema).clone())),
                 })
             })
             .collect()
+    }
+
+    /// Vrai si un tentacule connecté expose l'outil préfixé `nom__outil`.
+    pub fn exposes(&self, prefixed: &str) -> bool {
+        self.list.iter().any(|t| {
+            prefixed.strip_prefix(t.name.as_str()).and_then(|r| r.strip_prefix("__")).is_some_and(|tool| t.exposes(tool))
+        })
+    }
+
+    /// `Some(connecté)` si `name` est configuré, `None` sinon.
+    pub fn connected(&self, name: &str) -> Option<bool> {
+        self.list.iter().find(|t| t.name == name).map(|t| t.link.is_some())
     }
 
     /// Mots-clés déclarés du tentacule qui préfixe `tool` (`nom__outil`).
@@ -159,11 +173,13 @@ impl Tentacles {
         max_chars: usize,
         include_private: bool,
     ) -> Vec<(String, Result<String, String>)> {
-        let mut out = Vec::new();
-        for t in self.list.iter().filter(|t| t.exposes(tool) && (include_private || !t.private)) {
-            out.push((t.name.clone(), call_on(t, tool, args.clone(), max_chars).await));
-        }
-        out
+        // En parallèle : un tentacule lent ne retarde pas les autres (ordre de la configuration conservé).
+        let calls = self
+            .list
+            .iter()
+            .filter(|t| t.exposes(tool) && (include_private || !t.private))
+            .map(|t| async { (t.name.clone(), call_on(t, tool, args.clone(), max_chars).await) });
+        futures::future::join_all(calls).await
     }
 }
 

@@ -126,7 +126,7 @@ async fn setup() -> (String, Log) {
 }
 
 #[tokio::test]
-async fn lists_nine_tools() {
+async fn lists_eleven_tools() {
     let (url, _) = setup().await;
     let body = json!({"jsonrpc":"2.0","id":1,"method":"tools/list"});
     let v: Value = reqwest::Client::new().post(&url)
@@ -140,7 +140,7 @@ async fn lists_nine_tools() {
         }
     }
     names.sort();
-    assert_eq!(names, ["alerts","brief_section","can_afford","can_save","classify","cycle_status","dashboard","next_envelopes","unclassified"]);
+    assert_eq!(names, ["alerts","brief_section","can_afford","can_save","classify","cycle_status","dashboard","decide","decisions","next_envelopes","unclassified"]);
 }
 
 #[tokio::test]

@@ -87,7 +87,7 @@ struct ReceiveArgs {
 
 #[derive(Deserialize, schemars::JsonSchema)]
 struct StockArgs {
-    /// frigo, congelateur, placard ou corbeille.
+    /// frigo, congelateur, placard, etagere ou corbeille.
     location: Option<String>,
     /// Mots du nom de produit.
     query: Option<String>,
@@ -103,7 +103,7 @@ struct UseFirstArgs {
 struct MoveArgs {
     /// Produit à déplacer.
     name: String,
-    /// frigo, congelateur, placard ou corbeille.
+    /// frigo, congelateur, placard, etagere ou corbeille.
     to: String,
     /// Nouvelle date limite (AAAA-MM-JJ), ex. après congélation.
     expiry: Option<String>,
@@ -217,6 +217,12 @@ struct LookupArgs {
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
+struct CardsArgs {
+    /// Jour (AAAA-MM-JJ) ; aujourd'hui par défaut.
+    day: Option<String>,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
 struct BriefArgs {
     /// Contrat commun des sections de brief.
     #[allow(dead_code)]
@@ -275,6 +281,56 @@ impl FoodServer {
 
     fn today(&self) -> chrono::NaiveDate {
         chrono::Utc::now().with_timezone(&self.settings.tz).date_naive()
+    }
+
+    /// Cartes du jour pour l'application : repas planifiés, rappel de boîte, produits à finir.
+    fn cards_json(&self, day: &str) -> Result<String, String> {
+        use crate::nature::Slot;
+        use serde_json::json;
+        let d = chrono::NaiveDate::parse_from_str(&date(day)?, "%Y-%m-%d").map_err(|e| e.to_string())?;
+        let meals = self.store.plan(&d.to_string(), &d.to_string()).map_err(|e| e.to_string())?;
+        let mut cards = Vec::new();
+        for m in &meals {
+            let (slot, label, time) = match m.slot {
+                Slot::Midi => ("midi", "Midi", "12:15"),
+                Slot::Soir => ("soir", "Soir", "19:00"),
+                _ => continue,
+            };
+            let recipe = self.store.recipe(&m.dish).map_err(|e| e.to_string())?;
+            let body = match m.kind {
+                crate::plan::MealKind::Leftover => Some("reste".to_string()),
+                _ => recipe.as_ref().and_then(|r| r.timing()),
+            };
+            let mut c = json!({
+                "id": format!("repas-{d}-{slot}"), "kind": "info", "time": time,
+                "title": format!("{label} · {}", m.dish),
+            });
+            if let Some(b) = body {
+                c["body"] = b.into();
+            }
+            if let Some(r) = &recipe {
+                c["detail"] = crate::plan::recipe_text(r, None).into();
+            }
+            cards.push(c);
+            if m.slot == Slot::Soir && m.note.as_deref() == Some(crate::plan::BOX_NOTE) {
+                cards.push(json!({
+                    "id": format!("box-{d}"), "kind": "info", "time": "20:00",
+                    "title": "Box de demain", "body": crate::plan::BOX_NOTE,
+                }));
+            }
+        }
+        // ponytail: l'urgence se calcule depuis aujourd'hui, donc seulement pour le jour courant.
+        if d == self.today() {
+            let urgent = self.urgent(1)?;
+            if !urgent.is_empty() {
+                let names = urgent.iter().map(|l| l.product.as_str()).collect::<Vec<_>>().join(", ");
+                cards.push(json!({
+                    "id": format!("a-finir-{d}"), "kind": "info", "title": "À finir vite",
+                    "body": names, "chips": [{"text": "urgent", "tone": "urgent"}],
+                }));
+            }
+        }
+        serde_json::to_string(&cards).map_err(|e| e.to_string())
     }
 
     fn lot_line(&self, l: &Lot) -> String {
@@ -530,7 +586,7 @@ impl FoodServer {
     }
 
     #[tool(
-        description = "Lister le stock du logement par emplacement (frigo, congélateur, placard, corbeille), les plus urgents d'abord. Base pour proposer des recettes avec ce qui reste."
+        description = "Lister le stock du logement par emplacement (frigo, congélateur, placard, étagère, corbeille), les plus urgents d'abord. Base pour proposer des recettes avec ce qui reste."
     )]
     async fn stock(&self, Parameters(a): Parameters<StockArgs>) -> Out {
         let loc = a.location.as_deref().map(crate::store::location).transpose()?;
@@ -949,6 +1005,12 @@ impl FoodServer {
         Ok(l.join("\n"))
     }
 
+    #[tool(description = "Cartes JSON du jour pour l'application (repas, boîte, produits à finir).")]
+    async fn cards(&self, Parameters(a): Parameters<CardsArgs>) -> Out {
+        let day = a.day.filter(|d| !d.trim().is_empty()).unwrap_or_else(|| self.today().to_string());
+        self.cards_json(&day)
+    }
+
     #[tool(description = "Section alimentation d'un briefing : produits à finir sous 2 jours et commande à retirer.")]
     async fn brief_section(&self, Parameters(_a): Parameters<BriefArgs>) -> Out {
         let mut out = Vec::new();
@@ -982,7 +1044,12 @@ impl ServerHandler for FoodServer {
 
 #[cfg(test)]
 mod tests {
-    use super::{perishable, pressing};
+    use super::{FoodServer, Settings, perishable, pressing};
+    use crate::nature::Slot;
+    use crate::off::Off;
+    use crate::plan::{BOX_NOTE, Meal, MealKind};
+    use crate::store::{Ingredient, Recipe, Store};
+    use std::sync::Arc;
     use crate::shelf::Kind;
     use crate::store::Lot;
     use crate::units::Family;
@@ -1040,5 +1107,89 @@ mod tests {
         assert!(!pressing(d("2028-05-01"), d("2027-05-01"), today, 4));
         // Date dépassée : toujours remonté.
         assert!(pressing(d("2027-05-01"), d("2026-05-01"), today, 0));
+    }
+
+    fn server() -> FoodServer {
+        let settings = Arc::new(Settings { tz: chrono_tz::UTC, caldav: None });
+        FoodServer::new(Arc::new(Store::memory()), Arc::new(Off::new("http://localhost")), settings)
+    }
+
+    fn meal(day: &str, slot: Slot, dish: &str, kind: MealKind, note: Option<&str>) -> Meal {
+        Meal { day: d(day), slot, dish: dish.into(), kind, from: d(day), note: note.map(Into::into) }
+    }
+
+    fn cards(s: &FoodServer, day: &str) -> Vec<serde_json::Value> {
+        serde_json::from_str(&s.cards_json(day).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn cards_for_planned_day() {
+        let s = server();
+        s.store
+            .set_recipe(&Recipe {
+                title: "Soupe de carcasse".into(),
+                portions: 2,
+                prep_minutes: Some(10),
+                cook_minutes: None,
+                ingredients: Vec::<Ingredient>::new(),
+                steps: vec!["Mijoter.".into()],
+            })
+            .unwrap();
+        let day = "2026-11-08";
+        let plan = [
+            meal(day, Slot::Midi, "Pâtes", MealKind::Leftover, None),
+            meal(day, Slot::Soir, "Soupe de carcasse", MealKind::Cook, None),
+        ];
+        s.store.replace_plan(day, day, &plan).unwrap();
+        let c = cards(&s, day);
+        assert_eq!(c.len(), 2);
+        assert_eq!(c[0]["id"], "repas-2026-11-08-midi");
+        assert_eq!(c[0]["time"], "12:15");
+        assert_eq!(c[0]["title"], "Midi · Pâtes");
+        assert_eq!(c[0]["body"], "reste");
+        assert!(c[0].get("detail").is_none());
+        assert_eq!(c[1]["id"], "repas-2026-11-08-soir");
+        assert_eq!(c[1]["time"], "19:00");
+        assert_eq!(c[1]["kind"], "info");
+        assert!(c[1]["body"].as_str().unwrap().contains("10 min"));
+        assert!(c[1]["detail"].as_str().unwrap().contains("Mijoter."));
+    }
+
+    #[test]
+    fn cards_box_note() {
+        let s = server();
+        let day = "2026-11-08";
+        s.store.replace_plan(day, day, &[meal(day, Slot::Soir, "Riz", MealKind::Cook, Some(BOX_NOTE))]).unwrap();
+        let c = cards(&s, day);
+        assert_eq!(c.len(), 2);
+        assert_eq!(c[1]["id"], "box-2026-11-08");
+        assert_eq!(c[1]["time"], "20:00");
+        assert_eq!(c[1]["title"], "Box de demain");
+    }
+
+    #[test]
+    fn cards_empty_day_is_empty_array() {
+        assert_eq!(server().cards_json("2026-11-08").unwrap(), "[]");
+    }
+
+    #[test]
+    fn cards_urgent_product_today() {
+        let s = server();
+        let today = s.today();
+        let mut l = crate::store::Line {
+            name: "Champignons".into(),
+            qty: 1.0,
+            unit: Some("pièce".into()),
+            location: Some("frigo".into()),
+            ..Default::default()
+        };
+        l.expiry = Some((today + chrono::Duration::days(1)).to_string());
+        s.store.add(&l, "achat", None).unwrap();
+        let c = cards(&s, &today.to_string());
+        assert_eq!(c.len(), 1);
+        assert_eq!(c[0]["title"], "À finir vite");
+        assert!(c[0]["body"].as_str().unwrap().contains("hampignons"));
+        assert_eq!(c[0]["chips"][0]["tone"], "urgent");
+        assert!(c[0].get("time").is_none());
     }
 }

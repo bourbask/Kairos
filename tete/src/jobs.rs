@@ -158,6 +158,22 @@ pub async fn run(job: Job, now: NaiveDateTime, ctx: &mut Ctx) -> anyhow::Result<
     }
 }
 
+/// Journalise une sortie de Kairos (un échec de journal ne bloque rien).
+fn log_reply(state: &State, text: &str) {
+    let at = chrono::Utc::now().with_timezone(&kairos::calendar::USER_TZ).naive_local();
+    if let Err(e) = state.log_chat("kairos", "kairos", text, at) {
+        tracing::warn!("journal de conversation : écriture impossible : {e}");
+    }
+}
+
+/// Point d'envoi sortant : journalise, puis envoie. Le journal ne dépend pas du salon,
+/// donc un texte journalisé ici ne l'est jamais une seconde fois (renvoi compris).
+/// Seule exception : la recopie d'un message de l'application, déjà journalisé à l'entrée.
+pub async fn say(outbound: &Outbound, state: &State, text: &str) -> anyhow::Result<()> {
+    log_reply(state, text);
+    outbound.send(text).await
+}
+
 async fn brief(key: &str, period: &str, title: &str, now: NaiveDateTime, ctx: &Ctx) -> anyhow::Result<()> {
     // Marqué avant tout envoi : un brief par jour au plus, même si l'état devient illisible.
     ctx.state.set_last_run(key, run_day(key, now, &ctx.cfg))?;
@@ -310,7 +326,7 @@ async fn suggestion(now: NaiveDateTime, ctx: &mut Ctx) -> anyhow::Result<()> {
         return Ok(());
     }
     // Non envoyée : périmée, abandonnée, hors budget.
-    match ctx.outbound.send(text).await {
+    match say(&ctx.outbound, &ctx.state, text).await {
         Ok(()) => ctx.state.record_interruption(now)?,
         Err(e) => tracing::warn!(erreur = %format!("{e:#}"), "suggestion non envoyée, abandonnée"),
     }
@@ -331,14 +347,25 @@ async fn flush(now: NaiveDateTime, ctx: &Ctx) -> anyhow::Result<()> {
     if pending.is_empty() {
         return Ok(());
     }
-    let text = pending.into_iter().map(|(_, body)| body).collect::<Vec<_>>().join("\n\n");
-    deliver(&text, now, ctx).await
+    // Les renvois sont déjà journalisés ; les sorties retenues ne le sont qu'à leur première émission.
+    let held: Vec<&str> = pending.iter().filter(|(k, _)| k != RETRY).map(|(_, b)| b.as_str()).collect();
+    if !held.is_empty() {
+        log_reply(&ctx.state, &held.join("\n\n"));
+    }
+    let text = pending.iter().map(|(_, body)| body.as_str()).collect::<Vec<_>>().join("\n\n");
+    send_or_requeue(&text, now, ctx).await
 }
 
-/// Envoi sans perte : un échec remet le texte en file.
+/// Envoi sans perte : journalisé une fois, un échec remet le texte en file.
+pub async fn deliver(text: &str, now: NaiveDateTime, ctx: &Ctx) -> anyhow::Result<()> {
+    log_reply(&ctx.state, text);
+    send_or_requeue(text, now, ctx).await
+}
+
+/// Envoi d'un texte déjà journalisé ; un échec le remet en file, sans nouveau journal.
 // ponytail: renvoi à chaque vidage tant que la passerelle refuse, sans limite d'essais ni d'âge ;
 // ajouter une expiration si des messages trop anciens finissent par partir.
-async fn deliver(text: &str, now: NaiveDateTime, ctx: &Ctx) -> anyhow::Result<()> {
+async fn send_or_requeue(text: &str, now: NaiveDateTime, ctx: &Ctx) -> anyhow::Result<()> {
     if let Err(e) = ctx.outbound.send(text).await {
         tracing::warn!(erreur = %format!("{e:#}"), "envoi impossible, message remis en file");
         ctx.state.enqueue(RETRY, text, now)?;

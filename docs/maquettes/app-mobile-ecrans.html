@@ -1,0 +1,250 @@
+<style>
+  .kz{--bg:#F7F5EF;--surf:#FFFFFF;--tint:#E3EDDA;--ink:#1F2620;--mut:#6B746A;--line:#E4E1D8;--fern:#4F7942;--fernD:#2F4A28;--amb:#D9952B;--brick:#B8463A;--sh:0 1px 2px rgba(31,38,32,.06),0 4px 14px rgba(31,38,32,.06)}
+  .kz.dark{--bg:#121712;--surf:#1B221B;--tint:#243324;--ink:#E6EBE3;--mut:#9AA597;--line:#2A332A;--fern:#7FAF6E;--fernD:#B9D8AA;--amb:#E8AE4E;--brick:#E07A6C;--sh:none}
+  .wrap{display:flex;gap:26px;justify-content:center;flex-wrap:wrap;margin-top:8px}
+  .col{display:flex;flex-direction:column;align-items:center;gap:8px;width:262px}
+  .ph{width:262px;height:540px;background:var(--bg);color:var(--ink);border-radius:30px;border:7px solid #1d1f1d;overflow:hidden;position:relative;font:12px/1.35 system-ui,sans-serif;cursor:pointer}
+  .ph.selected{outline:3px solid #4F7942;outline-offset:3px}
+  .cap{font-size:11.5px;color:#555;line-height:1.45;width:100%}
+  .cap b{color:#2F4A28}
+  .g{display:inline-block;background:#E3EDDA;color:#2F4A28;border-radius:6px;padding:0 5px;font-weight:600;font-size:10.5px}
+  .sb{display:flex;justify-content:space-between;padding:8px 16px 0;font-size:10px;color:var(--mut)}
+  .pad{padding:6px 14px}
+  .hello{font-size:19px;font-weight:700;letter-spacing:-.01em;margin:4px 0 0}
+  .sub{color:var(--mut);font-size:11.5px}
+  .peek{margin:10px 14px 4px;position:relative;height:66px}
+  .peek .p{position:absolute;left:0;right:0;border-radius:16px;background:var(--surf);box-shadow:var(--sh);border:1px solid var(--line)}
+  .peek .p1{top:12px;left:14px;right:14px;height:50px;opacity:.6}
+  .peek .p2{top:6px;left:7px;right:7px;height:54px;opacity:.85}
+  .peek .p3{top:0;height:58px;padding:9px 12px;display:flex;align-items:center;gap:10px;background:var(--fern);color:#fff;border:0}
+  .peek .p3 .n{font-size:22px;font-weight:800}
+  .lbl{font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--mut);margin:12px 14px 6px;font-weight:600}
+  .tl{margin:0 14px;position:relative;padding-left:14px}
+  .tl:before{content:"";position:absolute;left:4px;top:6px;bottom:6px;width:2px;background:var(--line)}
+  .it{position:relative;background:var(--surf);border:1px solid var(--line);border-radius:14px;padding:8px 10px;margin-bottom:7px;box-shadow:var(--sh)}
+  .it:before{content:"";position:absolute;left:-14px;top:13px;width:10px;height:10px;border-radius:50%;background:var(--bg);border:2px solid var(--fern)}
+  .it.now:before{background:var(--fern)}
+  .it .h{display:flex;justify-content:space-between;font-weight:650}
+  .it .h span{color:var(--mut);font-weight:500;font-size:10.5px}
+  .it .d{color:var(--mut);font-size:11px}
+  .chip{display:inline-block;font-size:10px;border-radius:20px;padding:1px 7px;margin-top:4px;background:var(--tint);color:var(--fernD);font-weight:600}
+  .chip.a{background:#F6E6C8;color:#8A5A10}
+  .dark .chip.a{background:#3a2f1a;color:var(--amb)}
+  .dock{position:absolute;left:0;right:0;bottom:0;height:86px;background:linear-gradient(to top,var(--bg) 70%,transparent);display:flex;align-items:flex-end;justify-content:space-between;padding:0 26px 14px}
+  .dock .t{font-size:10px;color:var(--mut);text-align:center;width:54px}
+  .dock .t.on{color:var(--fern);font-weight:700}
+  .dock .t i{display:block;font-style:normal;font-size:17px;margin-bottom:1px}
+  .kb{width:66px;height:66px;border-radius:22px;background:var(--fern);display:flex;align-items:center;justify-content:center;box-shadow:0 6px 18px rgba(79,121,66,.35);margin-bottom:-2px}
+  .kb svg{width:44px;height:44px}
+  /* deck */
+  .deckbg{position:absolute;inset:0;background:var(--bg)}
+  .prog{display:flex;gap:4px;padding:10px 14px 0}.prog i{flex:1;height:3px;border-radius:2px;background:var(--line)}.prog i.on{background:var(--fern)}
+  .dcard{position:absolute;left:16px;right:16px;top:70px;height:300px;background:var(--surf);border-radius:22px;box-shadow:0 10px 30px rgba(31,38,32,.12);border:1px solid var(--line);padding:16px;transform:rotate(-4deg) translateX(18px)}
+  .dcard .tag{font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--mut);font-weight:600}
+  .dcard .amt{font-size:34px;font-weight:800;letter-spacing:-.02em;margin:10px 0 0}
+  .dcard .who{color:var(--mut)}
+  .dcard .prop{margin-top:16px;background:var(--tint);border-radius:14px;padding:10px 12px;color:var(--fernD)}
+  .dcard .prop b{font-size:15px;display:block;color:var(--ink)}
+  .stamp{position:absolute;top:18px;right:14px;border:3px solid var(--fern);color:var(--fern);font-weight:900;font-size:16px;padding:2px 8px;border-radius:8px;transform:rotate(12deg);opacity:.85}
+  .under{position:absolute;left:24px;right:24px;top:80px;height:290px;background:var(--surf);border-radius:22px;border:1px solid var(--line);opacity:.55}
+  .alts{position:absolute;left:14px;right:14px;bottom:96px;display:flex;gap:6px;flex-wrap:wrap;justify-content:center}
+  .alts span{background:var(--surf);border:1px solid var(--line);border-radius:20px;padding:5px 10px;font-size:11px}
+  .hint{position:absolute;left:0;right:0;bottom:62px;display:flex;justify-content:space-between;padding:0 18px;font-size:10.5px;color:var(--mut)}
+  /* maison */
+  .plan{margin:8px 12px 0;height:205px;background:var(--surf);border-radius:18px;border:1px solid var(--line);position:relative;box-shadow:var(--sh);overflow:hidden}
+  .zone{position:absolute;border-radius:10px;display:flex;flex-direction:column;justify-content:flex-end;padding:5px 7px;font-size:10.5px;font-weight:650;border:1.5px solid var(--line);background:var(--bg)}
+  .zone small{font-weight:500;color:var(--mut);font-size:9.5px}
+  .zone.sel{border-color:var(--fern);background:var(--tint)}
+  .zone .b{position:absolute;top:5px;right:6px;width:16px;height:16px;border-radius:50%;background:var(--brick);color:#fff;font-size:9px;display:flex;align-items:center;justify-content:center}
+  .sheet{position:absolute;left:0;right:0;bottom:0;top:262px;background:var(--surf);border-radius:22px 22px 0 0;box-shadow:0 -6px 20px rgba(31,38,32,.10);padding:8px 14px}
+  .grab{width:36px;height:4px;border-radius:2px;background:var(--line);margin:0 auto 8px}
+  .row{display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--line)}
+  .row .q{display:flex;align-items:center;gap:6px;color:var(--mut)}
+  .row .q b{display:inline-flex;width:20px;height:20px;border-radius:7px;background:var(--bg);align-items:center;justify-content:center;color:var(--ink)}
+  .urg{color:var(--brick);font-weight:650}
+  .swl{position:relative;overflow:hidden;border-radius:10px;margin:0 -4px}
+  .swl .bgr{position:absolute;inset:0;background:var(--brick);color:#fff;display:flex;align-items:center;justify-content:flex-end;padding-right:10px;font-size:10.5px;font-weight:600}
+  .swl .row{position:relative;background:var(--surf);transform:translateX(-62px);padding-left:4px;padding-right:4px}
+  .fab{position:absolute;right:14px;bottom:96px;background:var(--fern);color:#fff;border-radius:16px;padding:10px 12px;font-weight:700;font-size:11.5px;box-shadow:0 6px 16px rgba(79,121,66,.35)}
+  /* talk */
+  .talk{position:absolute;inset:0;background:var(--bg)}
+  .thread{padding:10px 14px}
+  .msg{max-width:80%;padding:8px 11px;border-radius:16px;margin-bottom:8px}
+  .me{margin-left:auto;background:var(--fern);color:#fff;border-bottom-right-radius:4px}
+  .ka{background:var(--surf);border:1px solid var(--line);border-bottom-left-radius:4px}
+  .live{position:absolute;left:0;right:0;bottom:0;height:210px;background:var(--surf);border-radius:24px 24px 0 0;box-shadow:0 -6px 20px rgba(31,38,32,.10);display:flex;flex-direction:column;align-items:center;padding-top:14px}
+  .wave{display:flex;gap:3px;align-items:center;height:30px;margin:6px 0}
+  .wave i{width:4px;border-radius:2px;background:var(--fern);animation:w 1s ease-in-out infinite}
+  @keyframes w{0%,100%{height:6px}50%{height:26px}}
+  .tr{font-size:13px;padding:0 20px;text-align:center}
+  .lock{position:absolute;right:22px;top:-46px;width:34px;height:60px;border-radius:17px;background:var(--surf);border:1px solid var(--line);display:flex;flex-direction:column;align-items:center;justify-content:space-between;padding:6px 0;font-size:12px;color:var(--mut)}
+  .cancel{position:absolute;left:18px;bottom:40px;font-size:10.5px;color:var(--mut)}
+  .pal{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin:6px 0 2px}
+  .sw{display:flex;flex-direction:column;align-items:center;font-size:10px;color:#555;gap:3px}
+  .sw i{width:46px;height:34px;border-radius:9px;border:1px solid #0001}
+  @keyframes blink{0%,92%,100%{transform:scaleY(1)}95%{transform:scaleY(.1)}}
+  @keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-.5px)}}
+  @keyframes hair{0%,100%{transform:translateX(0)}50%{transform:translateX(.5px)}}
+  .blink{animation:blink 4s infinite;transform-origin:center;transform-box:fill-box}
+  .bob{animation:bob 1.8s ease-in-out infinite}
+  .hair{animation:hair 1.2s ease-in-out infinite}
+  table.gest{border-collapse:collapse;font-size:12px;margin:8px auto;max-width:860px;width:100%}
+  table.gest td,table.gest th{border-bottom:1px solid #e4e1d8;padding:6px 8px;text-align:left;vertical-align:top}
+  table.gest th{font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:#6B746A}
+</style>
+
+<svg width="0" height="0" style="position:absolute">
+  <defs>
+    <symbol id="kai" viewBox="0 0 16 16" shape-rendering="crispEdges">
+      <g class="bob">
+        <rect x="3" y="5" width="10" height="8" fill="#F7F5EF"/>
+        <rect x="3" y="5" width="10" height="1" fill="#DCE8D2"/>
+        <g class="hair"><rect x="6" y="3" width="3" height="2" fill="#F7F5EF"/><rect x="8" y="2" width="3" height="1" fill="#F7F5EF"/><rect x="10" y="1" width="2" height="1" fill="#F7F5EF"/></g>
+        <g class="blink"><rect x="5" y="8" width="2" height="2" fill="#1F2620"/><rect x="9" y="8" width="2" height="2" fill="#1F2620"/></g>
+        <rect x="4" y="13" width="2" height="1" fill="#F7F5EF"/><rect x="10" y="13" width="2" height="1" fill="#F7F5EF"/>
+        <rect x="2" y="12" width="2" height="1" fill="#DCE8D2"/><rect x="12" y="12" width="2" height="1" fill="#DCE8D2"/>
+      </g>
+    </symbol>
+    <symbol id="kaiG" viewBox="0 0 16 16" shape-rendering="crispEdges">
+      <g class="bob">
+        <rect x="3" y="5" width="10" height="8" fill="#4F7942"/>
+        <g class="hair"><rect x="6" y="3" width="3" height="2" fill="#4F7942"/><rect x="8" y="2" width="3" height="1" fill="#4F7942"/><rect x="10" y="1" width="2" height="1" fill="#4F7942"/></g>
+        <g class="blink"><rect x="5" y="8" width="2" height="2" fill="#1F2620"/><rect x="9" y="8" width="2" height="2" fill="#1F2620"/></g>
+        <rect x="4" y="13" width="2" height="1" fill="#4F7942"/><rect x="10" y="13" width="2" height="1" fill="#4F7942"/>
+        <rect x="2" y="12" width="2" height="1" fill="#A9C79A"/><rect x="12" y="12" width="2" height="1" fill="#A9C79A"/>
+      </g>
+    </symbol>
+  </defs>
+</svg>
+
+<h2>V2 : clair par défaut, vert fougère, gestes au pouce</h2>
+<p class="subtitle">Personnage : pixel, mèche en avant et petites ailes aux pieds (les deux attributs du Kairos grec, pour le lore). Palette ci-dessous. Clique les écrans qui te vont, commente dans le terminal.</p>
+
+<div class="pal">
+  <div class="sw"><i style="background:#4F7942"></i>Fougère</div>
+  <div class="sw"><i style="background:#2F4A28"></i>Sous-bois</div>
+  <div class="sw"><i style="background:#E3EDDA"></i>Pousse</div>
+  <div class="sw"><i style="background:#F7F5EF"></i>Papier</div>
+  <div class="sw"><i style="background:#1F2620"></i>Encre</div>
+  <div class="sw"><i style="background:#D9952B"></i>Ambre · attention</div>
+  <div class="sw"><i style="background:#B8463A"></i>Brique · urgent</div>
+</div>
+
+<div class="wrap">
+
+  <!-- 1 AUJOURD'HUI -->
+  <div class="col">
+  <div class="ph kz" data-choice="aujourdhui" onclick="toggleSelect(this)">
+    <div class="sb"><span>8:12</span><span>dim. 8 nov.</span></div>
+    <div class="pad"><div class="hello">Bonjour</div><div class="sub">Demain · journée chargée · 9° pluie l'après-midi</div></div>
+    <div class="peek"><div class="p p1"></div><div class="p p2"></div>
+      <div class="p p3"><div class="n">4</div><div><b>décisions en attente</b><br><span style="opacity:.85;font-size:11px">≈ 1 min · glisse pour trier</span></div></div></div>
+    <div class="lbl">Fil du jour</div>
+    <div class="tl">
+      <div class="it now"><div class="h">Midi · Soupe de carcasse <span>12:15</span></div><div class="d">Frigo, réchauffer 5 min</div></div>
+      <div class="it"><div class="h">Soir · Poêlée de légumes <span>19:00</span></div><div class="d">25 min</div><span class="chip a">légumes à finir</span></div>
+      <div class="it"><div class="h">Box de demain <span>20:00</span></div><div class="d">Mettre une boîte du congélo au frigo</div></div>
+    </div>
+    <div class="dock"><div class="t on"><i>◉</i>Aujourd'hui</div><div class="kb"><svg><use href="#kai"/></svg></div><div class="t"><i>▦</i>Espaces</div></div>
+  </div>
+  <div class="cap"><b>Aujourd'hui.</b> Le fil du jour en ordre chronologique, l'heure en cours en haut. <span class="g">tap</span> sur un élément : il se déplie. <span class="g">glisser →</span> : fait. <span class="g">glisser ←</span> : plus tard. <span class="g">pincer</span> : la semaine entière, <span class="g">écarter</span> pour revenir. La pile verte mène aux décisions.</div>
+  </div>
+
+  <!-- 2 DÉCIDER -->
+  <div class="col">
+  <div class="ph kz" data-choice="decider" onclick="toggleSelect(this)">
+    <div class="deckbg"></div>
+    <div class="prog"><i class="on"></i><i></i><i></i><i></i></div>
+    <div class="sb" style="padding-top:6px"><span>Finances</span><span>1 / 4</span></div>
+    <div class="under"></div>
+    <div class="dcard">
+      <div class="stamp">OUI</div>
+      <div class="tag">Dépense à classer</div>
+      <div class="amt">12,34 €</div>
+      <div class="who">Paiement carte · lun. 2 mars</div>
+      <div class="prop"><span style="font-size:10.5px">Kairos propose</span><b>Alimentation</b>Même montant que la commande du 02/03</div>
+    </div>
+    <div class="alts"><span>Maison</span><span>Loisirs</span><span>Santé</span><span>…</span></div>
+    <div class="hint"><span>← autre</span><span>↑ plus tard</span><span>oui →</span></div>
+    <div class="dock"><div class="t">↓<br>fermer</div><div class="kb"><svg><use href="#kai"/></svg></div><div class="t">⟲<br>annuler</div></div>
+  </div>
+  <div class="cap"><b>Décider.</b> Une carte, une seule question. <span class="g">→</span> : valider la proposition de Kairos. <span class="g">←</span> : la refuser, les autres choix apparaissent sous le pouce. <span class="g">↑</span> : plus tard. <span class="g">↓</span> : fermer la pile. Vibration au seuil. <b>Annuler</b> est toujours visible.</div>
+  </div>
+
+  <!-- 3 MAISON -->
+  <div class="col">
+  <div class="ph kz" data-choice="maison" onclick="toggleSelect(this)">
+    <div class="sb"><span>Maison</span><span>51 produits</span></div>
+    <div class="plan">
+      <div class="zone sel" style="left:8px;top:8px;width:72px;height:118px"><div class="b">2</div>Frigo<small>14</small></div>
+      <div class="zone" style="left:8px;top:132px;width:72px;height:64px">Congélo<small>6 boîtes</small></div>
+      <div class="zone" style="left:88px;top:8px;width:150px;height:44px">Placard<small>23</small></div>
+      <div class="zone" style="left:88px;top:58px;width:150px;height:34px">Étagère<small>8</small></div>
+      <div class="zone" style="left:120px;top:110px;width:90px;height:72px;border-radius:40px;align-items:center;justify-content:center">Table<small>fruits · pain</small></div>
+    </div>
+    <div class="sheet">
+      <div class="grab"></div>
+      <div style="display:flex;justify-content:space-between;font-weight:700;margin-bottom:2px"><span>Frigo</span><span style="color:var(--mut);font-weight:500;font-size:10.5px">trié par urgence</span></div>
+      <div class="row"><span class="urg">Légumes</span><span class="q"><span class="urg">demain</span><b>1</b></span></div>
+      <div class="swl"><div class="bgr">consommé</div><div class="row"><span class="urg">Soupe carcasse</span><span class="q"><span class="urg">2 j</span><b>2</b></span></div></div>
+      <div class="row"><span>Carottes</span><span class="q">~8 j<b>3</b></span></div>
+      <div class="row"><span>Œufs</span><span class="q">19/11<b>4</b></span></div>
+    </div>
+    <div class="fab">▦ Déballer les courses</div>
+    <div class="dock" style="height:70px"><div class="t"><i>◉</i>Aujourd'hui</div><div class="kb"><svg><use href="#kai"/></svg></div><div class="t on"><i>▦</i>Espaces</div></div>
+  </div>
+  <div class="cap"><b>Maison.</b> Le plan de ta cuisine. <span class="g">tap</span> sur une zone : son stock s'affiche dans le panneau du bas, <span class="g">glisser ↑</span> pour l'agrandir. Sur un produit : <span class="g">glisser ←</span> consommé, <span class="g">→</span> déplacer, <span class="g">tap</span> sur la quantité pour la changer. <b>Déballer</b> : la caméra reste ouverte, chaque scan va dans la zone choisie en bas, puis photo de la date si besoin.</div>
+  </div>
+
+  <!-- 4 PARLER -->
+  <div class="col">
+  <div class="ph kz" data-choice="parler" onclick="toggleSelect(this)">
+    <div class="talk">
+      <div class="sb"><span>Kairos</span><span>maison · 8b</span></div>
+      <div class="thread">
+        <div class="msg ka">Tu as 4 décisions en attente. On les fait maintenant ?</div>
+        <div class="msg me">plus tard</div>
+        <div class="msg ka">OK, je te les remets ce soir après le repas.</div>
+      </div>
+      <div class="live">
+        <div class="lock">🔒<span style="font-size:10px">↑</span></div>
+        <svg width="44" height="44"><use href="#kaiG"/></svg>
+        <div class="wave"><i style="animation-delay:0s"></i><i style="animation-delay:.1s"></i><i style="animation-delay:.2s"></i><i style="animation-delay:.3s"></i><i style="animation-delay:.15s"></i><i style="animation-delay:.25s"></i><i style="animation-delay:.05s"></i></div>
+        <div class="tr">« j'ai fini la soupe, et ajoute du lait à la liste… »</div>
+        <div class="cancel">← glisser pour annuler</div>
+      </div>
+    </div>
+  </div>
+  <div class="cap"><b>Parler.</b> Kairos est le bouton central, sur tous les écrans. <span class="g">appui long</span> : tu parles, tu relâches et c'est envoyé (comme un message vocal). <span class="g">glisser ↑</span> en parlant : mains libres verrouillé. <span class="g">glisser ←</span> : annuler. <span class="g">tap</span> : la conversation écrite (le même fil que dans le client de messagerie).</div>
+  </div>
+
+  <!-- 5 DARK -->
+  <div class="col">
+  <div class="ph kz dark" data-choice="sombre" onclick="toggleSelect(this)">
+    <div class="sb"><span>22:41</span><span>dim. 8 nov.</span></div>
+    <div class="pad"><div class="hello">Bonsoir</div><div class="sub">Demain · réveil 7:00</div></div>
+    <div class="lbl">Ce soir</div>
+    <div class="tl">
+      <div class="it now"><div class="h">Box de demain <span>maintenant</span></div><div class="d">Dhal → congélo vers frigo</div><span class="chip">1 geste →</span></div>
+      <div class="it"><div class="h">Demain · Rendez-vous <span>8:30</span></div><div class="d">Pluie à partir de 15h</div></div>
+    </div>
+    <div class="dock"><div class="t on"><i>◉</i>Aujourd'hui</div><div class="kb" style="background:#7FAF6E"><svg><use href="#kai"/></svg></div><div class="t"><i>▦</i>Espaces</div></div>
+  </div>
+  <div class="cap"><b>Sombre automatique.</b> Le thème passe en sombre selon la luminosité ambiante, avec un écart entre les seuils d'allumage et d'extinction pour éviter le clignotement. Désactivable dans les paramètres : clair, sombre, auto.</div>
+  </div>
+
+</div>
+
+<h3 style="margin-top:22px">Règles de gestes (ce que j'utilise et ce que j'écarte)</h3>
+<table class="gest">
+<tr><th>Geste</th><th>Usage</th><th>Pourquoi</th></tr>
+<tr><td>Tap</td><td>ouvrir, déplier</td><td>évident, tout le monde le comprend</td></tr>
+<tr><td>Glisser ← → sur un élément</td><td>trier : fait/oui ou plus tard/non</td><td>sens constant partout : → = positif, ← = négatif</td></tr>
+<tr><td>Glisser ↑ ↓ sur une pile ou un panneau</td><td>plus tard / fermer / agrandir</td><td>pouce naturel, panneaux du bas</td></tr>
+<tr><td>Appui long sur Kairos</td><td>parler</td><td>talkie-walkie, déjà connu</td></tr>
+<tr><td>Pincer / écarter</td><td>zoom sur le temps (jour ↔ semaine), zoom sur le plan</td><td>seulement là où il y a de l'espace, toujours doublé d'un bouton</td></tr>
+<tr><td style="color:#B8463A">Double / triple tap</td><td>écarté</td><td>invisible, et le triple tap est réservé à la loupe d'accessibilité d'Android</td></tr>
+<tr><td style="color:#B8463A">Glisser depuis le bord</td><td>écarté</td><td>c'est le geste « retour » d'Android : conflit</td></tr>
+<tr><td style="color:#B8463A">Secouer</td><td>écarté</td><td>se déclenche par erreur dans un sac</td></tr>
+</table>
+<p class="subtitle">Chaque geste a un équivalent visible : rien n'est caché derrière un geste seul.</p>

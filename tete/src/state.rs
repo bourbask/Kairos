@@ -52,6 +52,18 @@ fn parse_mode(s: &str) -> Option<WorkMode> {
     }
 }
 
+/// Ligne du journal de conversation.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ChatEntry {
+    pub id: i64,
+    pub at: String,
+    pub role: String,
+    pub source: String,
+    pub text: String,
+}
+
+const CHAT_MAX: u32 = 200;
+
 pub struct State {
     conn: Connection,
 }
@@ -82,9 +94,88 @@ impl State {
              CREATE TABLE IF NOT EXISTS last_run (
                  job TEXT PRIMARY KEY, day TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS seen_alerts (
-                 id TEXT PRIMARY KEY, at TEXT NOT NULL);",
+                 id TEXT PRIMARY KEY, at TEXT NOT NULL);
+             CREATE TABLE IF NOT EXISTS chat_log (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 at TEXT NOT NULL, role TEXT NOT NULL,
+                 source TEXT NOT NULL, text TEXT NOT NULL);
+             CREATE TABLE IF NOT EXISTS devices (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 name TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE,
+                 at TEXT NOT NULL, revoked INTEGER NOT NULL DEFAULT 0);
+             CREATE UNIQUE INDEX IF NOT EXISTS devices_active_name
+                 ON devices(name) WHERE revoked = 0;",
         )?;
         Ok(Self { conn })
+    }
+
+    /// Enregistre un appareil ; erreur si un appareil actif porte déjà ce nom.
+    pub fn add_device(&self, name: &str, token_hash: &str, at: NaiveDateTime) -> Result<()> {
+        let res = self.conn.execute(
+            "INSERT INTO devices (name, token_hash, at) VALUES (?1, ?2, ?3)",
+            params![name, token_hash, at.format(TS).to_string()],
+        );
+        match res {
+            Ok(_) => Ok(()),
+            Err(rusqlite::Error::SqliteFailure(e, _)) if e.code == rusqlite::ErrorCode::ConstraintViolation => {
+                bail!("un appareil actif porte déjà le nom « {name} » : le révoquer d'abord (tete revoke {name})")
+            }
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Révoque l'appareil actif de ce nom ; faux s'il n'y en a pas.
+    pub fn revoke_device(&self, name: &str) -> Result<bool> {
+        let n = self.conn.execute("UPDATE devices SET revoked = 1 WHERE name = ?1 AND revoked = 0", params![name])?;
+        Ok(n > 0)
+    }
+
+    /// Nom de l'appareil non révoqué dont le jeton a cette empreinte.
+    pub fn device_for(&self, token_hash: &str) -> Result<Option<String>> {
+        Ok(self
+            .conn
+            .query_row("SELECT name FROM devices WHERE token_hash = ?1 AND revoked = 0", params![token_hash], |r| r.get(0))
+            .optional()?)
+    }
+
+    /// (nom, date, révoqué), du plus ancien au plus récent.
+    pub fn devices(&self) -> Result<Vec<(String, String, bool)>> {
+        let mut st = self.conn.prepare("SELECT name, at, revoked FROM devices ORDER BY id")?;
+        let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get::<_, i64>(2)? != 0)))?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Ajoute une entrée au journal de conversation ; rend son identifiant.
+    pub fn log_chat(&self, role: &str, source: &str, text: &str, at: NaiveDateTime) -> Result<i64> {
+        self.conn.execute(
+            "INSERT INTO chat_log (at, role, source, text) VALUES (?1, ?2, ?3, ?4)",
+            params![at.format(TS).to_string(), role, source, text],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    /// Entrées après `after` (ou les `limit` dernières), en ordre chronologique.
+    pub fn chat_since(&self, after: Option<i64>, limit: u32) -> Result<Vec<ChatEntry>> {
+        let limit = limit.min(CHAT_MAX);
+        let map = |r: &rusqlite::Row| {
+            Ok(ChatEntry { id: r.get(0)?, at: r.get(1)?, role: r.get(2)?, source: r.get(3)?, text: r.get(4)? })
+        };
+        let mut rows = match after {
+            Some(id) => self
+                .conn
+                .prepare("SELECT id, at, role, source, text FROM chat_log WHERE id > ?1 ORDER BY id LIMIT ?2")?
+                .query_map(params![id, limit], map)?
+                .collect::<rusqlite::Result<Vec<_>>>()?,
+            None => self
+                .conn
+                .prepare("SELECT id, at, role, source, text FROM chat_log ORDER BY id DESC LIMIT ?1")?
+                .query_map(params![limit], map)?
+                .collect::<rusqlite::Result<Vec<_>>>()?,
+        };
+        if after.is_none() {
+            rows.reverse();
+        }
+        Ok(rows)
     }
 
     pub fn set_work_day(&self, day: Weekday, mode: WorkMode) -> Result<()> {
@@ -257,6 +348,30 @@ mod tests {
             end: NaiveTime::from_hms_opt(18, 0, 0).unwrap(),
             days: HashMap::from([(Weekday::Mon, WorkMode::OnSite)]),
         }
+    }
+
+    #[test]
+    fn chat_log_roundtrip() {
+        let s = State::open_in_memory().unwrap();
+        let t = dt("2026-11-08 10:00:00");
+        let id1 = s.log_chat("user", "app", "un", t).unwrap();
+        s.log_chat("kairos", "kairos", "deux", t).unwrap();
+        s.log_chat("user", "salon", "trois", t).unwrap();
+        let last = s.chat_since(None, 2).unwrap();
+        assert_eq!(last.iter().map(|e| e.text.as_str()).collect::<Vec<_>>(), ["deux", "trois"]);
+        let next = s.chat_since(Some(id1), 50).unwrap();
+        assert_eq!(next.iter().map(|e| e.text.as_str()).collect::<Vec<_>>(), ["deux", "trois"]);
+        assert_eq!(next[0].role, "kairos");
+    }
+
+    #[test]
+    fn chat_limit_is_capped() {
+        let s = State::open_in_memory().unwrap();
+        for i in 0..250 {
+            s.log_chat("user", "app", &i.to_string(), dt("2026-11-08 10:00:00")).unwrap();
+        }
+        assert_eq!(s.chat_since(None, 1000).unwrap().len(), 200);
+        assert_eq!(s.chat_since(Some(0), 1000).unwrap().len(), 200);
     }
 
     #[test]

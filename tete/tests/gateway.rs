@@ -2,7 +2,7 @@ use axum::{Json, Router, http::HeaderMap, routing::post};
 use serde_json::{Value, json};
 use std::net::SocketAddr;
 use tete::config::GatewayEnv;
-use tete::gateway::{MAX_INPUT_CHARS, Outbound, inbound_router};
+use tete::gateway::{Inbox, MAX_INPUT_CHARS, Outbound, inbound_router};
 use tokio::sync::mpsc;
 
 async fn serve(app: Router) -> SocketAddr {
@@ -23,7 +23,7 @@ async fn post_msg(addr: SocketAddr, token: Option<&str>, body: Value) -> u16 {
 #[tokio::test]
 async fn refuse_sans_bon_jeton() {
     let (tx, mut rx) = mpsc::channel(16);
-    let addr = serve(inbound_router(tx, "secret".into())).await;
+    let addr = serve(inbound_router(Inbox::new(tx), "secret".into())).await;
     assert_eq!(post_msg(addr, None, json!({"text": "a"})).await, 401);
     assert_eq!(post_msg(addr, Some("autre"), json!({"text": "a"})).await, 401);
     assert!(rx.try_recv().is_err());
@@ -32,15 +32,15 @@ async fn refuse_sans_bon_jeton() {
 #[tokio::test]
 async fn accepte_et_transmet() {
     let (tx, mut rx) = mpsc::channel(16);
-    let addr = serve(inbound_router(tx, "secret".into())).await;
+    let addr = serve(inbound_router(Inbox::new(tx), "secret".into())).await;
     assert_eq!(post_msg(addr, Some("secret"), json!({"text": "bonjour"})).await, 202);
-    assert_eq!(rx.recv().await.unwrap(), "bonjour");
+    assert_eq!(rx.recv().await.unwrap().text, "bonjour");
 }
 
 #[tokio::test]
 async fn texte_vide_refuse() {
     let (tx, mut rx) = mpsc::channel(16);
-    let addr = serve(inbound_router(tx, "secret".into())).await;
+    let addr = serve(inbound_router(Inbox::new(tx), "secret".into())).await;
     assert_eq!(post_msg(addr, Some("secret"), json!({"text": ""})).await, 400);
     assert_eq!(post_msg(addr, Some("secret"), json!({"text": " \n\t "})).await, 400);
     assert!(rx.try_recv().is_err());
@@ -49,16 +49,16 @@ async fn texte_vide_refuse() {
 #[tokio::test]
 async fn texte_tronque() {
     let (tx, mut rx) = mpsc::channel(16);
-    let addr = serve(inbound_router(tx, "secret".into())).await;
+    let addr = serve(inbound_router(Inbox::new(tx), "secret".into())).await;
     let long = "é".repeat(10_000);
     assert_eq!(post_msg(addr, Some("secret"), json!({"text": long})).await, 202);
-    assert_eq!(rx.recv().await.unwrap().chars().count(), MAX_INPUT_CHARS);
+    assert_eq!(rx.recv().await.unwrap().text.chars().count(), MAX_INPUT_CHARS);
 }
 
 #[tokio::test]
 async fn corps_trop_gros_et_file_pleine() {
     let (tx, _rx) = mpsc::channel(1);
-    let addr = serve(inbound_router(tx, "secret".into())).await;
+    let addr = serve(inbound_router(Inbox::new(tx), "secret".into())).await;
     let big = "a".repeat(70 * 1024);
     assert_eq!(post_msg(addr, Some("secret"), json!({"text": big})).await, 413);
     assert_eq!(post_msg(addr, Some("secret"), json!({"text": "1"})).await, 202);
@@ -68,6 +68,7 @@ async fn corps_trop_gros_et_file_pleine() {
 fn env(url: String) -> GatewayEnv {
     GatewayEnv {
         bind: "127.0.0.1:0".parse().unwrap(),
+        app_bind: None,
         inbound_token: "in".into(),
         outbound_url: url,
         outbound_token: "jeton-sortant".into(),

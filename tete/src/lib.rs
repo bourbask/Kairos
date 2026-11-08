@@ -6,3 +6,5 @@ pub mod policy;
 pub mod agent;
 pub mod jobs;
 pub mod commands;
+pub mod devices;
+pub mod app_api;

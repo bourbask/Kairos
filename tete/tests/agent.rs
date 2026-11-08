@@ -76,6 +76,11 @@ impl Fake {
     fn echo(&self, Parameters(e): Parameters<Echo>) -> Result<String, String> {
         Ok(format!("écho:{}", e.text))
     }
+
+    #[tool(description = "Action réservée à l'application.")]
+    fn decide(&self, Parameters(_): Parameters<Empty>) -> Result<String, String> {
+        Ok("décidé".into())
+    }
 }
 
 #[tool_handler(router = self.tool_router)]
@@ -260,6 +265,18 @@ async fn private_tentacle_tool_refused_in_conversation() {
     assert!(!names.contains(&"t__echo"));
     let tools = tool_messages(&s.requests[1]);
     assert_ne!(tools[0]["content"], "écho:x");
+}
+
+#[tokio::test]
+async fn app_tool_refused_in_conversation() {
+    let (t, _) = tentacle("AG_APP").await;
+    let (router, shared) = llm(vec![call("c1", "t__decide", json!({})), text("fini")]).await;
+    let state = State::open_in_memory().unwrap();
+    let mut agent = Agent::new(router, IDLE);
+    assert_eq!(agent.reply("classe", at(9, 0), &t, &state).await, "fini");
+    let s = shared.lock().unwrap();
+    let tools = tool_messages(&s.requests[1]);
+    assert_ne!(tools[0]["content"], "décidé");
 }
 
 #[tokio::test]

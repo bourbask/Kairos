@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Fond de fenêtre et d'écran de démarrage au ton du papier : pas d'éclair blanc au lancement. -->
+    <style name="Theme.Kairos" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/papier</item>
+        <item name="android:windowSplashScreenBackground">@color/papier</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
+        <item name="android:windowSplashScreenIconBackgroundColor">@color/fougere</item>
+    </style>
+</resources>

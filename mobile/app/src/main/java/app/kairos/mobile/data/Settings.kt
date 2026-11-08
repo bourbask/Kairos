@@ -1,0 +1,37 @@
+package app.kairos.mobile.data
+
+import android.content.Context
+import androidx.datastore.preferences.core.booleanPreferencesKey
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.preferencesDataStore
+import app.kairos.mobile.ui.theme.ThemeMode
+import kotlinx.coroutines.flow.first
+
+private val Context.settingsStore by preferencesDataStore("reglages")
+
+/** Réglages de l'application (thème, lecture vocale), persistés. */
+class Settings(private val context: Context) {
+    data class Values(val theme: ThemeMode = ThemeMode.Clair, val speakReplies: Boolean = false)
+
+    suspend fun load(): Values {
+        val p = context.settingsStore.data.first()
+        return Values(
+            theme = p[THEME]?.let { runCatching { ThemeMode.valueOf(it) }.getOrNull() } ?: ThemeMode.Clair,
+            speakReplies = p[SPEAK] ?: false,
+        )
+    }
+
+    suspend fun saveTheme(mode: ThemeMode) {
+        context.settingsStore.edit { it[THEME] = mode.name }
+    }
+
+    suspend fun saveSpeakReplies(on: Boolean) {
+        context.settingsStore.edit { it[SPEAK] = on }
+    }
+
+    private companion object {
+        val THEME = stringPreferencesKey("theme")
+        val SPEAK = booleanPreferencesKey("lecture-reponses")
+    }
+}

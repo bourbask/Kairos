@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 
 use crate::config::{WorkMode, WorkRhythm};
 use crate::state::{QuietScope, State};
-use crate::tentacles::Tentacles;
+use crate::tentacles::{APP_TOOLS, Tentacles};
 
 pub const MAX_TOOL_ROUNDS: usize = 8;
 const MAX_TURNS: usize = 40;
@@ -130,11 +130,7 @@ impl Agent {
         self.last = Some(now);
         self.history.push(ChatTurn::User(msg.to_string()));
 
-        let mode = |d: NaiveDateTime| match state.work_mode(d.weekday(), &self.rhythm) {
-            WorkMode::OnSite => "sur site",
-            WorkMode::Remote => "télétravail",
-            WorkMode::Off => "repos",
-        };
+        let mode = |d: NaiveDateTime| state.work_mode(d.weekday(), &self.rhythm).label();
         let rhythm = format!("Rythme : aujourd'hui {}, demain {}.", mode(now), mode(now + TimeDelta::days(1)));
         let system = system_prompt(&self.persona, now, &rhythm);
         let out = match run_tools_loop(
@@ -278,8 +274,9 @@ pub async fn run_tools_loop(
 async fn execute(call: &ToolCall, tentacles: &Tentacles, state: &State) -> Result<String, String> {
     // Les outils des tentacules sont toujours préfixés `<tentacule>__`.
     if call.name.contains("__") {
-        // Un outil privé n'est jamais proposé au moteur : un appel deviné est refusé.
-        if tentacles.private_names().iter().any(|n| call.name.strip_prefix(n.as_str()).is_some_and(|r| r.starts_with("__"))) {
+        // Un outil privé ou réservé à l'application n'est jamais proposé au moteur : un appel deviné est refusé.
+        let app_tool = call.name.rsplit_once("__").is_some_and(|(_, t)| APP_TOOLS.contains(&t));
+        if app_tool || tentacles.private_names().iter().any(|n| call.name.strip_prefix(n.as_str()).is_some_and(|r| r.starts_with("__"))) {
             return Err(format!("outil inconnu : {}", call.name));
         }
         return tentacles.call(&call.name, call.arguments.clone()).await;

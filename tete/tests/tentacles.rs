@@ -42,6 +42,12 @@ impl Fake {
         Ok("x".repeat(20_000))
     }
 
+    #[tool(description = "Lent.")]
+    async fn slow(&self, Parameters(_): Parameters<Any>) -> Result<String, String> {
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+        Ok(self.label.to_string())
+    }
+
     #[tool(description = "Échec.")]
     fn fail(&self, Parameters(_): Parameters<Any>) -> Result<String, String> {
         Err("boom".into())
@@ -149,4 +155,74 @@ async fn private_tentacle_tools_hidden_but_callable() {
     assert!(!names.iter().any(|n| n.starts_with("p__")), "{names:?}");
     assert_eq!(t.private_names(), vec!["p".to_string()]);
     assert_eq!(t.call("p__echo", json!({"x": 2})).await.unwrap(), "p:2");
+}
+
+#[derive(Clone)]
+struct AppTools {
+    tool_router: ToolRouter<Self>,
+}
+
+#[tool_router]
+impl AppTools {
+    fn new() -> Self {
+        Self { tool_router: Self::tool_router() }
+    }
+    #[tool(description = "Cartes.")]
+    fn cards(&self, Parameters(_): Parameters<Any>) -> Result<String, String> {
+        Ok("[]".into())
+    }
+    #[tool(description = "Décisions.")]
+    fn decisions(&self, Parameters(_): Parameters<Any>) -> Result<String, String> {
+        Ok("[]".into())
+    }
+    #[tool(description = "Décider.")]
+    fn decide(&self, Parameters(_): Parameters<Any>) -> Result<String, String> {
+        Ok("ok".into())
+    }
+    #[tool(description = "Écho.")]
+    fn echo(&self, Parameters(_): Parameters<Any>) -> Result<String, String> {
+        Ok("e".into())
+    }
+}
+
+#[tool_handler(router = self.tool_router)]
+impl ServerHandler for AppTools {
+    fn get_info(&self) -> ServerConfig {
+        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
+    }
+}
+
+#[tokio::test]
+async fn app_tools_hidden_from_engine() {
+    set("TT_APP", "secret");
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/mcp", l.local_addr().unwrap());
+    tokio::spawn(tentacle_common::serve_listener(l, "secret".into(), AppTools::new));
+    let t = Tentacles::connect(&[entry("a", &url, "TT_APP")]).await;
+    let names: Vec<_> = t.tool_specs().into_iter().map(|s| s.name).collect();
+    assert_eq!(names, vec!["a__echo".to_string()]);
+    // Toujours joignables pour l'API de l'application.
+    assert!(t.exposes("a__decide"));
+    assert_eq!(t.call_conventional("cards", json!({})).await.len(), 1);
+}
+
+#[tokio::test]
+async fn tentacles_are_called_concurrently() {
+    set("TT_SLOW", "secret");
+    let entries: Vec<_> = futures_entries().await;
+    let t = Tentacles::connect(&entries).await;
+    let start = std::time::Instant::now();
+    let res = t.call_conventional("slow", json!({})).await;
+    let names: Vec<_> = res.iter().map(|(n, r)| (n.as_str(), r.as_deref().unwrap())).collect();
+    // Ordre de la configuration conservé ; durée d'un seul appel, pas de leur somme.
+    assert_eq!(names, [("a", "a"), ("b", "b"), ("c", "c")]);
+    assert!(start.elapsed() < std::time::Duration::from_millis(1000), "{:?}", start.elapsed());
+}
+
+async fn futures_entries() -> Vec<TentacleEntry> {
+    let mut v = Vec::new();
+    for l in ["a", "b", "c"] {
+        v.push(entry(l, &spawn(l, "secret").await, "TT_SLOW"));
+    }
+    v
 }

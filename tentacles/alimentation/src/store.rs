@@ -90,7 +90,7 @@ CREATE TABLE IF NOT EXISTS prefs (k TEXT PRIMARY KEY, v TEXT NOT NULL, updated_a
 ";
 
 /// Emplacements reconnus (le reste est refusé, pour garder un inventaire lisible).
-pub const LOCATIONS: [&str; 4] = ["frigo", "congelateur", "placard", "corbeille"];
+pub const LOCATIONS: [&str; 5] = ["frigo", "congelateur", "placard", "etagere", "corbeille"];
 
 /// Emplacement normalisé (« congélo », « Congélateur », « fruits » → valeur connue).
 pub fn location(s: &str) -> Result<String, String> {
@@ -99,6 +99,7 @@ pub fn location(s: &str) -> Result<String, String> {
         x if x.starts_with("frig") || x == "refrigerateur" => "frigo",
         x if x.starts_with("congel") || x == "freezer" => "congelateur",
         x if x.starts_with("plac") || x == "epicerie" || x == "cellier" => "placard",
+        x if x.starts_with("etag") => "etagere",
         x if x.starts_with("corb") || x.starts_with("fruit") => "corbeille",
         _ => return Err(format!("Emplacement inconnu « {s} » : {}.", LOCATIONS.join(", "))),
     };
@@ -116,7 +117,7 @@ pub struct Line {
     /// Unité : g, kg, ml, cl, l, pièce (défaut), douzaine.
     #[serde(default)]
     pub unit: Option<String>,
-    /// frigo, congelateur, placard ou corbeille (fruits et légumes à l'air libre).
+    /// frigo, congelateur, placard, etagere ou corbeille (fruits et légumes à l'air libre).
     #[serde(default)]
     pub location: Option<String>,
     /// Date imprimée (AAAA-MM-JJ), si connue ; sinon estimée d'après le produit et l'emplacement.
@@ -890,6 +891,13 @@ mod tests {
         assert_eq!(location("Congélo").unwrap(), "congelateur");
         assert_eq!(location("fruits et légumes").unwrap(), "corbeille");
         assert!(location("cave").is_err());
+    }
+
+    #[test]
+    fn etagere_location_accepted() {
+        assert_eq!(location("Étagère").unwrap(), "etagere");
+        assert_eq!(location("etagere").unwrap(), "etagere");
+        assert_eq!(location("etageres").unwrap(), "etagere");
     }
 
     #[test]

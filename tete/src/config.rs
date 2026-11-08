@@ -12,7 +12,7 @@ use anyhow::{Context, Result, bail};
 use chrono::{NaiveTime, Weekday};
 use serde::Deserialize;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TentacleEntry {
     /// Préfixe des outils du tentacule, choisi par l'opérateur.
@@ -65,6 +65,17 @@ pub enum WorkMode {
     Off,
 }
 
+impl WorkMode {
+    /// Libellé affiché (consigne du moteur, application).
+    pub fn label(self) -> &'static str {
+        match self {
+            WorkMode::OnSite => "sur site",
+            WorkMode::Remote => "télétravail",
+            WorkMode::Off => "repos",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct WorkRhythm {
@@ -82,6 +93,8 @@ impl Default for WorkRhythm {
 
 pub struct GatewayEnv {
     pub bind: SocketAddr,
+    /// Écoute de l'API de l'application ; absente = API désactivée.
+    pub app_bind: Option<SocketAddr>,
     pub inbound_token: String,
     pub outbound_url: String,
     pub outbound_token: String,
@@ -107,6 +120,7 @@ impl std::fmt::Debug for GatewayEnv {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("GatewayEnv")
             .field("bind", &self.bind)
+            .field("app_bind", &self.app_bind)
             .field("inbound_token", &"***")
             .field("outbound_url", &self.outbound_url)
             .field("outbound_token", &"***")
@@ -117,6 +131,7 @@ impl std::fmt::Debug for GatewayEnv {
 fn no_gateway() -> GatewayEnv {
     GatewayEnv {
         bind: "0.0.0.0:8090".parse().expect("adresse valide"),
+        app_bind: None,
         inbound_token: String::new(),
         outbound_url: String::new(),
         outbound_token: String::new(),
@@ -181,8 +196,13 @@ impl HeadConfig {
             Some(v) => v.parse().context("TETE_BIND invalide")?,
             None => no_gateway().bind,
         };
+        let app_bind = match env("TETE_APP_BIND").filter(|v| !v.is_empty()) {
+            Some(v) => Some(v.parse().context("TETE_APP_BIND invalide")?),
+            None => None,
+        };
         cfg.gateway = GatewayEnv {
             bind,
+            app_bind,
             inbound_token: required(&env, "TETE_INBOUND_TOKEN")?,
             outbound_url: required(&env, "TETE_OUTBOUND_URL")?,
             outbound_token: required(&env, "TETE_OUTBOUND_TOKEN")?,
@@ -221,6 +241,16 @@ mod tests {
         assert!(c.work.days.is_empty());
         assert!(c.tentacles.is_empty());
         assert_eq!(c.gateway.bind.to_string(), "0.0.0.0:8090");
+        assert_eq!(c.gateway.app_bind, None);
+    }
+
+    #[test]
+    fn app_bind_is_optional() {
+        let env = [GATEWAY[0], GATEWAY[1], GATEWAY[2], ("TETE_APP_BIND", "0.0.0.0:8091")];
+        let c = HeadConfig::from_parts("", env_of(&env)).unwrap();
+        assert_eq!(c.gateway.app_bind.unwrap().to_string(), "0.0.0.0:8091");
+        let env = [GATEWAY[0], GATEWAY[1], GATEWAY[2], ("TETE_APP_BIND", "nope")];
+        assert!(HeadConfig::from_parts("", env_of(&env)).is_err());
     }
 
     #[test]
