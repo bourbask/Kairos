@@ -7,6 +7,7 @@
 //! « (k produits) », puis une ligne par article : désignation, quantité,
 //! prix unitaire et total, séparés par des blancs.
 
+use crate::nature::Nature;
 use crate::store::Line;
 use crate::units::fold;
 
@@ -135,6 +136,11 @@ fn clean(designation: &str) -> Vec<String> {
 
 pub(crate) fn location(rayon: &str, name: &str) -> &'static str {
     let n = fold(name);
+    match crate::nature::from_name(name).or_else(|| crate::nature::from_category(rayon)) {
+        Some(Nature::Entretien) => return "evier",
+        Some(Nature::Hygiene) => return "sdb",
+        _ => {}
+    }
     if rayon.contains("surgel") {
         return "congelateur";
     }

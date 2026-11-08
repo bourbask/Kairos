@@ -22,7 +22,7 @@ class MaisonStateTest {
 
     private fun snapshot(offline: Boolean = false) = MaisonSnapshot(
         inventory = Inventory(
-            zones = listOf(Zone("frigo", "Frigo", 2, 1), Zone("placard", "Placard", 1, 0)),
+            zones = SERVER_ZONES,
             lots = listOf(champignons, soupe, riz),
         ),
         orders = listOf(
@@ -36,9 +36,9 @@ class MaisonStateTest {
     @Test
     fun zones_from_inventory() {
         val s = MaisonState(snapshot())
-        // Les cinq zones, dans l'ordre du plan, même celles que le serveur n'a pas citées.
-        assertEquals(listOf("frigo", "congelateur", "placard", "etagere", "corbeille"), s.zones.map { it.id })
-        assertEquals(listOf("Frigo", "Congélo", "Placard", "Étagère", "Table"), s.zones.map { it.label })
+        // Les zones du serveur, dans son ordre ; compteurs recalculés sur les lots affichés.
+        assertEquals(SERVER_ZONES.map { it.id }, s.zones.map { it.id })
+        assertEquals(SERVER_ZONES.map { it.label }, s.zones.map { it.label })
         val frigo = s.zones.first()
         assertEquals(2 to 1, frigo.count to frigo.urgent)
         assertEquals(1, s.zones.first { it.id == "placard" }.count)
@@ -48,6 +48,29 @@ class MaisonStateTest {
         assertEquals(listOf("Champignons", "Soupe carcasse"), s.lotsIn(s.zone).map { it.name })
         // Seules les commandes qui ont encore des lignes à ranger.
         assertEquals(listOf(7L), s.orders.map { it.id })
+    }
+
+    @Test
+    fun zones_from_server_layout() {
+        val lessive = Lot(4, "Lessive", 1.0, "pièce", "1 pièce", 1.0, "evier")
+        val s = MaisonState(snapshot().let { it.copy(inventory = it.inventory.copy(lots = it.inventory.lots + lessive)) })
+        assertEquals(7, s.zones.size)
+        assertEquals("Sous l'évier" to 1, s.zones.first { it.id == "evier" }.let { it.label to it.count })
+        // Les nouvelles zones sont des destinations ; une zone que le serveur ne donne pas, non.
+        assertEquals("sdb", (s.move(riz, "sdb") as LotAction.Update).location)
+        assertNull(s.move(riz, "garage"))
+        // Serveur muet sur les zones (ancien, ou rien en mémoire) : plan par défaut.
+        assertEquals(ZONES.map { it.first }, MaisonState(MaisonSnapshot()).zones.map { it.id })
+        assertEquals(ZONES, zonesOf(Inventory()))
+        assertEquals("sdb" to "Salle de bain", zonesOf(snapshot().inventory).last())
+        // Grille : trois colonnes au plus, rangées équilibrées, les plus pleines en haut.
+        assertEquals(listOf(3, 2, 2), planRows(7))
+        assertEquals(listOf(3, 3, 2), planRows(8))
+        assertEquals(listOf(3, 2), planRows(5))
+        assertEquals(listOf(3, 3), planRows(6))
+        assertEquals(listOf(2, 2), planRows(4))
+        assertEquals(listOf(1), planRows(1))
+        assertEquals(emptyList<Int>(), planRows(0))
     }
 
     @Test
@@ -208,3 +231,13 @@ class MaisonStateTest {
         assertNull(expiryText(riz, today))
     }
 }
+
+private val SERVER_ZONES = listOf(
+    Zone("frigo", "Frigo", 2, 1),
+    Zone("congelateur", "Congélo"),
+    Zone("placard", "Placard", 1, 0),
+    Zone("etagere", "Étagère"),
+    Zone("corbeille", "Table"),
+    Zone("evier", "Sous l'évier"),
+    Zone("sdb", "Salle de bain"),
+)

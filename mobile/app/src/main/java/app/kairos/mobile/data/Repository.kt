@@ -97,8 +97,11 @@ class Repository(
     }
 
     /** Écrit dans l'inventaire ; rend le message du module. */
-    suspend fun maisonTool(name: String, args: JsonObject): String =
-        api.tool(ALIMENTATION, name, ToolMessage.serializer(), args).message
+    suspend fun maisonTool(name: String, args: JsonObject): String = tool(ALIMENTATION, name, args)
+
+    /** Outil d'écriture `app_*` d'un module ; rend son message. */
+    suspend fun tool(module: String, name: String, args: JsonObject): String =
+        api.tool(module, name, ToolMessage.serializer(), args).message
 
     /** Pose ou retire ([mark] = null) la marque de l'élément [key] du jour [day]. */
     suspend fun mark(day: String, key: String, mark: Mark?) {

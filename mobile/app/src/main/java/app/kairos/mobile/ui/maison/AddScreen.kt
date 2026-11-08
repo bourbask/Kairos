@@ -26,6 +26,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -125,6 +126,8 @@ fun AddScreen(
     val haptic = LocalHapticFeedback.current
     val unauthorized by rememberUpdatedState(onUnauthorized)
     val today = remember { LocalDate.now() }
+    val maison by repository.maison.collectAsState()
+    val zones = zonesOf(maison.inventory)
     var step by remember { mutableStateOf(AddStep.Scan) }
     var barcode by remember { mutableStateOf<String?>(null) }
     var product by remember { mutableStateOf<Product?>(null) }
@@ -296,14 +299,14 @@ fun AddScreen(
                         Text("Où le ranges-tu ?", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text(name, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold, maxLines = 3, overflow = TextOverflow.Ellipsis)
                     }
-                    ZoneGrid(proposed = product?.location, enabled = !offline && !busy, onZone = ::choose) { m ->
+                    ZoneGrid(zones, proposed = product?.location, enabled = !offline && !busy, onZone = ::choose) { m ->
                         BigTile("← Autre", m, enabled = !busy, color = MaterialTheme.colorScheme.onSurfaceVariant, onClick = ::restart)
                     }
                     Spacer(Modifier.padding(4.dp))
                 }
                 AddStep.Date -> DateStep(
                     name = name,
-                    zone = zone,
+                    zone = zoneLabel(zone, zones),
                     today = today,
                     enabled = !offline && !busy,
                     onDate = ::add,

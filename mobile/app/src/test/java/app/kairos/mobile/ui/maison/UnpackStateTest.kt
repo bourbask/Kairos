@@ -73,6 +73,18 @@ class UnpackStateTest {
     }
 
     @Test
+    fun zones_loaded_after_opening_are_accepted() {
+        val lessive = OrderLine(4, "Lessive", location = "evier")
+        val s = UnpackState(Order(8, "drive", lines = listOf(lessive)))
+        // Ouvert avant que le serveur ait donné ses zones : « sous l'évier » inconnu.
+        assertNull(s.proposed)
+        assertNull(s.place("evier"))
+        s.zones = ZONES + ("evier" to "Sous l'évier")
+        assertEquals("evier", s.proposed)
+        assertEquals("evier", s.place()!!.location)
+    }
+
+    @Test
     fun missing_line_skips() {
         val s = UnpackState(order)
         val stow = s.missing()!!

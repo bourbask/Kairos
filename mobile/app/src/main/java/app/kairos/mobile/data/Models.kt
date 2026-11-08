@@ -3,6 +3,8 @@ package app.kairos.mobile.data
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
 
 /** Lecture tolérante : champs inconnus ignorés, valeurs inattendues ramenées au défaut. */
 internal val KairosJson = Json {
@@ -32,10 +34,25 @@ data class Card(
     val chips: List<Chip> = emptyList(),
     val detail: String? = null,
     val module: String = "",
+    /** Action « fait » du module ; absente = simple marque locale. */
+    val done: CardDone? = null,
 ) {
     /** Identifiant unique dans le fil : deux modules peuvent émettre le même `id`. */
     val key: String get() = "$module/$id"
 }
+
+/** Outil `app_*` du module à lancer quand la carte est faite. */
+@Serializable
+data class CardDone(val tool: String, val args: JsonObject = JsonObject(emptyMap()), val choices: DoneChoices? = null)
+
+/** Valeur demandée avant l'action, ajoutée aux arguments sous [key]. */
+@Serializable
+data class DoneChoices(
+    val label: String = "",
+    val key: String,
+    val options: List<JsonElement> = emptyList(),
+    val default: JsonElement? = null,
+)
 
 @Serializable
 data class Day(val day: String, val work: String? = null, val cards: List<Card> = emptyList())
@@ -149,3 +166,7 @@ data class MaisonSnapshot(
     /** Raison de la lecture seule quand le serveur répond mais pas le module. */
     val reason: String? = null,
 )
+
+/** Dernier APK déposé sur la tête (`GET /app/v1/app`). */
+@Serializable
+data class AppRelease(val version: String, val size: Long)
