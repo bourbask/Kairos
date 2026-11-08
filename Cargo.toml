@@ -1,10 +1,10 @@
 [package]
 name = "kairos"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 
 [workspace]
-members = [".", "tete", "crates/tentacle-common", "tentacles/memoire", "tentacles/agenda", "tentacles/finances"]
+members = [".", "tete", "crates/tentacle-common", "tentacles/memoire", "tentacles/agenda", "tentacles/finances", "tentacles/medias", "tentacles/documents", "tentacles/alimentation", "tentacles/marches"]
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }

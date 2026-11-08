@@ -76,6 +76,11 @@ impl Fake {
     fn echo(&self, Parameters(e): Parameters<Echo>) -> Result<String, String> {
         Ok(format!("écho:{}", e.text))
     }
+
+    #[tool(description = "Action réservée à l'application.")]
+    fn decide(&self, Parameters(_): Parameters<Empty>) -> Result<String, String> {
+        Ok("décidé".into())
+    }
 }
 
 #[tool_handler(router = self.tool_router)]
@@ -86,6 +91,10 @@ impl ServerHandler for Fake {
 }
 
 async fn tentacle(env: &str) -> (Tentacles, Arc<Rec>) {
+    tentacle_with(env, false).await
+}
+
+async fn tentacle_with(env: &str, private: bool) -> (Tentacles, Arc<Rec>) {
     unsafe { std::env::set_var(env, "secret") };
     let ingested = Arc::new(Rec::default());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -95,7 +104,7 @@ async fn tentacle(env: &str) -> (Tentacles, Arc<Rec>) {
         rec: rec.clone(),
         tool_router: Fake::tool_router(),
     }));
-    let t = Tentacles::connect(&[TentacleEntry { name: "t".into(), url, token_env: env.into() }]).await;
+    let t = Tentacles::connect(&[TentacleEntry { name: "t".into(), url, token_env: env.into(), private, keywords: vec![] }]).await;
     (t, ingested)
 }
 
@@ -142,6 +151,10 @@ async fn llm(replies: Vec<Value>) -> (LlmRouter, Shared) {
 /// Seuls `usages` sont déclarés ; la voie auto-hébergée pointe aussi sur le
 /// moteur factice, comme quand l'environnement la renseigne.
 async fn llm_for(usages: &[&str], replies: Vec<Value>) -> (LlmRouter, Shared) {
+    llm_tweaked(usages, replies, |_| {}).await
+}
+
+async fn llm_tweaked(usages: &[&str], replies: Vec<Value>, tweak: impl FnOnce(&mut LlmRoutingConfig)) -> (LlmRouter, Shared) {
     let shared: Shared = Arc::new(Mutex::new(Script { replies: replies.into(), ..Default::default() }));
     let app = Router::new().route("/v1/chat/completions", post(completions)).with_state(shared.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -156,13 +169,16 @@ async fn llm_for(usages: &[&str], replies: Vec<Value>) -> (LlmRouter, Shared) {
         },
         placement: Placement::SelfHosted,
         daily_token_cap: None,
+        fallback: None,
+        max_tools: None,
     };
-    let config = LlmRoutingConfig {
+    let mut config = LlmRoutingConfig {
         self_hosted: Some(engine.llm.clone()),
         engines: HashMap::from([("e".into(), engine)]),
         usages: usages.iter().map(|u| (u.to_string(), "e".to_string())).collect(),
         ..Default::default()
     };
+    tweak(&mut config);
     (LlmRouter::from_config(config), shared)
 }
 
@@ -195,6 +211,72 @@ async fn simple_text_reply_with_persona_and_tools() {
     assert!(names.contains(&"t__echo"));
     assert!(names.contains(&"quiet"));
     assert!(names.contains(&"set_work_day"));
+}
+
+#[tokio::test]
+async fn unreachable_engine_falls_back_with_capped_tools() {
+    let (t, _) = tentacle("AG_FB").await;
+    let (router, shared) = llm_tweaked(&["conversation"], vec![text("ok")], |c| {
+        let mut maison = c.engines["e"].clone();
+        maison.llm.endpoint = "http://127.0.0.1:9".into();
+        maison.fallback = Some("e".into());
+        c.engines.get_mut("e").unwrap().max_tools = Some(1);
+        c.engines.insert("maison".into(), maison);
+        c.usages.insert("conversation".into(), "maison".into());
+    })
+    .await;
+    let state = State::open_in_memory().unwrap();
+    let mut agent = Agent::new(router, IDLE);
+    assert_eq!(agent.reply("mets en sourdine demain", at(9, 0), &t, &state).await, "ok");
+
+    let s = shared.lock().unwrap();
+    let names: Vec<&str> =
+        s.requests[0]["tools"].as_array().unwrap().iter().map(|t| t["function"]["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["quiet"]);
+}
+
+#[tokio::test]
+async fn system_prompt_states_work_rhythm() {
+    let (t, _) = tentacle("AG_RY").await;
+    let (router, shared) = llm(vec![text("ok")]).await;
+    let state = State::open_in_memory().unwrap();
+    let rhythm = WorkRhythm {
+        days: HashMap::from([(Weekday::Mon, WorkMode::OnSite), (Weekday::Tue, WorkMode::Remote)]),
+        ..Default::default()
+    };
+    let mut agent = Agent::new(router, IDLE).with_rhythm(rhythm);
+    agent.reply("salut", at(9, 0), &t, &state).await; // 2026-11-02 = lundi
+    let s = shared.lock().unwrap();
+    let system = s.requests[0]["messages"][0]["content"].as_str().unwrap();
+    assert!(system.contains("Rythme : aujourd'hui sur site, demain télétravail."), "{system}");
+}
+
+#[tokio::test]
+async fn private_tentacle_tool_refused_in_conversation() {
+    let (t, _) = tentacle_with("AG_P1", true).await;
+    let (router, shared) = llm(vec![call("c1", "t__echo", json!({"text": "x"})), text("fini")]).await;
+    let state = State::open_in_memory().unwrap();
+    let mut agent = Agent::new(router, IDLE);
+    assert_eq!(agent.reply("écho x", at(9, 0), &t, &state).await, "fini");
+
+    let s = shared.lock().unwrap();
+    let names: Vec<&str> =
+        s.requests[0]["tools"].as_array().unwrap().iter().map(|t| t["function"]["name"].as_str().unwrap()).collect();
+    assert!(!names.contains(&"t__echo"));
+    let tools = tool_messages(&s.requests[1]);
+    assert_ne!(tools[0]["content"], "écho:x");
+}
+
+#[tokio::test]
+async fn app_tool_refused_in_conversation() {
+    let (t, _) = tentacle("AG_APP").await;
+    let (router, shared) = llm(vec![call("c1", "t__decide", json!({})), text("fini")]).await;
+    let state = State::open_in_memory().unwrap();
+    let mut agent = Agent::new(router, IDLE);
+    assert_eq!(agent.reply("classe", at(9, 0), &t, &state).await, "fini");
+    let s = shared.lock().unwrap();
+    let tools = tool_messages(&s.requests[1]);
+    assert_ne!(tools[0]["content"], "décidé");
 }
 
 #[tokio::test]

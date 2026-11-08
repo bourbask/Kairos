@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use chrono::{Duration, NaiveDate};
 use rmcp::{
     ServerHandler,
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
@@ -37,6 +38,40 @@ impl FinanceServer {
             let valid = cycle.envelopes.keys().cloned().collect::<Vec<_>>().join(", ");
             format!("Poste inconnu « {} ». Postes valides : {valid}.", clean_payee(p))
         })
+    }
+
+    /// Chemin commun à `classify` et `decide` : mêmes garde-fous avant d'écrire la règle.
+    async fn classify_rule(&self, payee: &str, poste: &str, whole_group_ok: bool) -> Out {
+        if !(3..=100).contains(&payee.trim().chars().count()) {
+            return Err("Le motif doit faire entre 3 et 100 caractères.".to_string());
+        }
+        let pattern = clean_payee(payee);
+        if is_generic(&pattern) {
+            return Err("Motif trop générique (mots bancaires ou chiffres seuls) : indique le nom du commerçant.".to_string());
+        }
+        let poste = self.poste(poste).await?;
+        let ops = self.api.unclassified().await.map_err(api_err)?;
+        let needle = pattern.to_lowercase();
+        let n = matching(&ops, &needle);
+        if n == 0 {
+            return Err("Ce motif ne figure dans aucune dépense sans catégorie.".to_string());
+        }
+        if !whole_group_ok && ops.len() >= 3 && n == ops.len() {
+            return Err("Motif trop large : il couvrirait toutes les dépenses sans catégorie.".to_string());
+        }
+        let r = self.api.create_rule(&pattern, &poste).await.map_err(api_err)?;
+        let state = if r.created { "enregistrée" } else { "mise à jour" };
+        // Relecture : seul ce qui reste à classer prouve que la règle reconnaît le libellé.
+        let left = match self.api.unclassified().await {
+            Ok(ops) => match matching(&ops, &needle) {
+                0 => " ; il reste 0 opération(s) correspondante(s) à classer.".to_string(),
+                k => format!(
+                    " ; il reste {k} opération(s) correspondante(s) à classer. ⚠ La règle ne les a pas reconnues : précise un autre motif."
+                ),
+            },
+            Err(_) => " ; ⚠ opérations restantes non vérifiables.".to_string(),
+        };
+        Ok(format!("Règle {state} : {pattern} → {poste}{left}"))
     }
 }
 
@@ -91,6 +126,41 @@ fn is_generic(pattern: &str) -> bool {
         .all(is_generic_token)
 }
 
+/// Motif d'un commerçant : libellé nettoyé sans mots génériques en tête ni en queue ; `None` s'il n'en reste rien.
+/// Reste une sous-chaîne du libellé nettoyé, donc reconnue par les garde-fous de `classify`.
+fn merchant_pattern(payee: &str) -> Option<String> {
+    let cleaned = clean_payee(payee);
+    let tokens: Vec<&str> = cleaned.split(' ').collect();
+    let generic = |t: &&str| is_generic(t);
+    let start = tokens.iter().position(|t| !generic(t))?;
+    let end = tokens.iter().rposition(|t| !generic(t))?;
+    let pattern = tokens[start..=end].join(" ");
+    (pattern.chars().count() >= 3).then_some(pattern)
+}
+
+/// Opérations regroupées par commerçant (sans tenir compte de la casse) : (motif, total signé, nombre,
+/// date la plus récente), la plus récente d'abord.
+fn merchant_groups(ops: &[crate::api::Operation]) -> Vec<(String, f64, usize, NaiveDate)> {
+        let mut groups: Vec<(String, f64, usize, NaiveDate)> = Vec::new();
+        for o in ops {
+            let (Some(pattern), Ok(date)) =
+                (merchant_pattern(&o.payee), NaiveDate::parse_from_str(&o.date, "%Y-%m-%d"))
+            else {
+                continue;
+            };
+            match groups.iter_mut().find(|g| g.0.to_lowercase() == pattern.to_lowercase()) {
+                Some(g) => {
+                    g.1 += o.amount;
+                    g.2 += 1;
+                    g.3 = g.3.max(date);
+                }
+                None => groups.push((pattern, o.amount, 1, date)),
+            }
+        }
+    groups.sort_by_key(|g| std::cmp::Reverse(g.3));
+    groups
+}
+
 /// Un montant se valide avant tout appel : strictement positif et fini.
 fn check_amount(a: f64) -> Result<(), String> {
     if a.is_finite() && a > 0.0 {
@@ -113,6 +183,11 @@ struct SaveArgs {
 struct ClassifyArgs {
     payee: String,
     poste: String,
+}
+#[derive(Deserialize, schemars::JsonSchema)]
+struct DecideArgs {
+    id: String,
+    choice: String,
 }
 #[derive(Deserialize, schemars::JsonSchema)]
 struct BriefArgs {
@@ -156,36 +231,42 @@ impl FinanceServer {
 
     #[tool(description = "Enregistrer une règle de classement : un motif (nom du commerçant, 3 caractères au moins) présent dans un libellé de la liste des dépenses sans catégorie, vers un poste.")]
     async fn classify(&self, Parameters(a): Parameters<ClassifyArgs>) -> Out {
-        if !(3..=100).contains(&a.payee.trim().chars().count()) {
-            return Err("Le motif doit faire entre 3 et 100 caractères.".to_string());
-        }
-        let pattern = clean_payee(&a.payee);
-        if is_generic(&pattern) {
-            return Err("Motif trop générique (mots bancaires ou chiffres seuls) : indique le nom du commerçant.".to_string());
-        }
-        let poste = self.poste(&a.poste).await?;
+        self.classify_rule(&a.payee, &a.poste, false).await
+    }
+
+    #[tool(description = "Lister les décisions de classement en attente (une par commerçant), au format JSON, pour l'application.")]
+    async fn decisions(&self) -> Out {
+        let cycle = self.api.cycle().await.map_err(api_err)?;
         let ops = self.api.unclassified().await.map_err(api_err)?;
-        let needle = pattern.to_lowercase();
-        let n = matching(&ops, &needle);
-        if n == 0 {
-            return Err("Ce motif ne figure dans aucune dépense sans catégorie.".to_string());
+        let alternatives: Vec<_> =
+            cycle.envelopes.keys().map(|p| json!({"id": p, "label": p})).collect();
+        let groups = merchant_groups(&ops);
+        let items: Vec<_> = groups
+            .iter()
+            .map(|(pattern, total, n, last)| {
+                json!({
+                    "id": pattern,
+                    "title": "Dépense à classer",
+                    "headline": format!("{:.2} €", total.abs()).replace('.', ","),
+                    "subtitle": format!("{pattern} · {n} opération(s) · {}", last.format("%d/%m")),
+                    "proposal": null,
+                    "alternatives": alternatives,
+                    "expires": (*last + Duration::days(30)).format("%Y-%m-%d").to_string(),
+                })
+            })
+            .collect();
+        serde_json::to_string(&items).map_err(|e| e.to_string())
+    }
+
+    #[tool(description = "Classer une décision de l'application : id = motif de la décision, choice = poste existant.")]
+    async fn decide(&self, Parameters(a): Parameters<DecideArgs>) -> Out {
+        let ops = self.api.unclassified().await.map_err(api_err)?;
+        let id = clean_payee(&a.id).to_lowercase();
+        if !merchant_groups(&ops).iter().any(|g| g.0.to_lowercase() == id) {
+            return Err("Décision inconnue ou déjà traitée.".to_string());
         }
-        if ops.len() >= 3 && n == ops.len() {
-            return Err("Motif trop large : il couvrirait toutes les dépenses sans catégorie.".to_string());
-        }
-        let r = self.api.create_rule(&pattern, &poste).await.map_err(api_err)?;
-        let state = if r.created { "enregistrée" } else { "mise à jour" };
-        // Relecture : seul ce qui reste à classer prouve que la règle reconnaît le libellé.
-        let left = match self.api.unclassified().await {
-            Ok(ops) => match matching(&ops, &needle) {
-                0 => " ; il reste 0 opération(s) correspondante(s) à classer.".to_string(),
-                k => format!(
-                    " ; il reste {k} opération(s) correspondante(s) à classer. ⚠ La règle ne les a pas reconnues : précise un autre motif."
-                ),
-            },
-            Err(_) => " ; ⚠ opérations restantes non vérifiables.".to_string(),
-        };
-        Ok(format!("Règle {state} : {pattern} → {poste}{left}"))
+        // L'id vient de `decisions` : un commerçant unique peut couvrir toutes les opérations.
+        self.classify_rule(&a.id, &a.choice, true).await
     }
 
     #[tool(description = "Obtenir le résumé du budget avec le lien du tableau de bord s'il existe.")]

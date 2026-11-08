@@ -15,6 +15,8 @@ use crate::config::TentacleEntry;
 pub const TOOL_RESULT_MAX_CHARS: usize = 8000;
 pub const TOOL_TIMEOUT: Duration = Duration::from_secs(20);
 const TRUNCATED: &str = "… [tronqué]";
+/// Outils réservés à l'API de l'application : jamais proposés au moteur.
+pub const APP_TOOLS: [&str; 3] = ["cards", "decisions", "decide"];
 
 type Client = RunningService<RoleClient, ()>;
 
@@ -22,6 +24,8 @@ struct Tentacle {
     name: String,
     url: String,
     token_env: String,
+    private: bool,
+    keywords: Vec<String>,
     link: Option<(Client, Vec<Tool>)>,
 }
 
@@ -64,7 +68,7 @@ impl Tentacles {
     pub async fn connect(entries: &[TentacleEntry]) -> Tentacles {
         let mut list: Vec<Tentacle> = entries
             .iter()
-            .map(|e| Tentacle { name: e.name.clone(), url: e.url.clone(), token_env: e.token_env.clone(), link: None })
+            .map(|e| Tentacle { name: e.name.clone(), url: e.url.clone(), token_env: e.token_env.clone(), private: e.private, keywords: e.keywords.clone(), link: None })
             .collect();
         for t in &mut list {
             t.connect().await;
@@ -88,15 +92,40 @@ impl Tentacles {
     pub fn tool_specs(&self) -> Vec<ToolSpec> {
         self.list
             .iter()
+            .filter(|t| !t.private)
             .filter_map(|t| t.link.as_ref().map(|(_, tools)| (t, tools)))
             .flat_map(|(t, tools)| {
-                tools.iter().map(|tool| ToolSpec {
+                tools.iter().filter(|tool| !APP_TOOLS.contains(&tool.name.as_ref())).map(|tool| ToolSpec {
                     name: format!("{}__{}", t.name, tool.name),
                     description: tool.description.as_deref().unwrap_or_default().to_string(),
-                    input_schema: serde_json::Value::Object((*tool.input_schema).clone()),
+                    input_schema: plain_schema(serde_json::Value::Object((*tool.input_schema).clone())),
                 })
             })
             .collect()
+    }
+
+    /// Vrai si un tentacule connecté expose l'outil préfixé `nom__outil`.
+    pub fn exposes(&self, prefixed: &str) -> bool {
+        self.list.iter().any(|t| {
+            prefixed.strip_prefix(t.name.as_str()).and_then(|r| r.strip_prefix("__")).is_some_and(|tool| t.exposes(tool))
+        })
+    }
+
+    /// `Some(connecté)` si `name` est configuré, `None` sinon.
+    pub fn connected(&self, name: &str) -> Option<bool> {
+        self.list.iter().find(|t| t.name == name).map(|t| t.link.is_some())
+    }
+
+    /// Mots-clés déclarés du tentacule qui préfixe `tool` (`nom__outil`).
+    pub fn keywords_of(&self, tool: &str) -> &[String] {
+        self.list
+            .iter()
+            .find(|t| tool.strip_prefix(t.name.as_str()).is_some_and(|r| r.starts_with("__")))
+            .map_or(&[], |t| t.keywords.as_slice())
+    }
+
+    pub fn private_names(&self) -> Vec<String> {
+        self.list.iter().filter(|t| t.private).map(|t| t.name.clone()).collect()
     }
 
     pub async fn call(&self, prefixed: &str, args: serde_json::Value) -> Result<String, String> {
@@ -122,6 +151,11 @@ impl Tentacles {
         self.call_conventional_limited(tool, args, TOOL_RESULT_MAX_CHARS).await
     }
 
+    /// Comme `call_conventional`, tentacules privés exclus : rien ne leur est demandé.
+    pub async fn call_conventional_public(&self, tool: &str, args: serde_json::Value) -> Vec<(String, Result<String, String>)> {
+        self.call_each(tool, args, TOOL_RESULT_MAX_CHARS, false).await
+    }
+
     /// Comme `call_conventional`, avec une borne de résultat explicite (voir `call_limited`).
     pub async fn call_conventional_limited(
         &self,
@@ -129,11 +163,23 @@ impl Tentacles {
         args: serde_json::Value,
         max_chars: usize,
     ) -> Vec<(String, Result<String, String>)> {
-        let mut out = Vec::new();
-        for t in self.list.iter().filter(|t| t.exposes(tool)) {
-            out.push((t.name.clone(), call_on(t, tool, args.clone(), max_chars).await));
-        }
-        out
+        self.call_each(tool, args, max_chars, true).await
+    }
+
+    async fn call_each(
+        &self,
+        tool: &str,
+        args: serde_json::Value,
+        max_chars: usize,
+        include_private: bool,
+    ) -> Vec<(String, Result<String, String>)> {
+        // En parallèle : un tentacule lent ne retarde pas les autres (ordre de la configuration conservé).
+        let calls = self
+            .list
+            .iter()
+            .filter(|t| t.exposes(tool) && (include_private || !t.private))
+            .map(|t| async { (t.name.clone(), call_on(t, tool, args.clone(), max_chars).await) });
+        futures::future::join_all(calls).await
     }
 }
 
@@ -162,5 +208,79 @@ fn truncate(s: String, max_chars: usize) -> String {
     match s.char_indices().nth(max_chars) {
         Some((i, _)) => format!("{}{TRUNCATED}", &s[..i]),
         None => s,
+    }
+}
+
+/// Remplace les sous-schémas booléens (`true` = « toute valeur ») par `{}` :
+/// même sens, mais certains moteurs n'acceptent que des objets comme schéma
+/// de paramètre. Les mots-clés booléens légitimes (`additionalProperties`…)
+/// sont conservés. Retire aussi ce qui coûte des jetons sans guider le
+/// moteur : `$schema`, `format`, `default: null`.
+pub fn plain_schema(v: serde_json::Value) -> serde_json::Value {
+    use serde_json::Value;
+    fn schema(v: Value) -> Value {
+        match v {
+            Value::Bool(_) => Value::Object(Default::default()),
+            Value::Object(m) => Value::Object(
+                m.into_iter()
+                    .filter(|(k, v)| !matches!(k.as_str(), "$schema" | "format") && !(k == "default" && v.is_null()))
+                    .map(|(k, v)| {
+                        let v = match (k.as_str(), v) {
+                            ("properties" | "$defs" | "definitions", Value::Object(p)) => {
+                                Value::Object(p.into_iter().map(|(n, s)| (n, schema(s))).collect())
+                            }
+                            ("items" | "not", s) => schema(s),
+                            ("anyOf" | "oneOf" | "allOf", Value::Array(a)) => Value::Array(a.into_iter().map(schema).collect()),
+                            (_, v) => v,
+                        };
+                        (k, v)
+                    })
+                    .collect(),
+            ),
+            other => other,
+        }
+    }
+    schema(v)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::plain_schema;
+    use serde_json::json;
+
+    #[test]
+    fn boolean_subschemas_become_empty_objects() {
+        let s = json!({"type": "object", "properties": {
+            "any": true,
+            "list": {"type": "array", "items": true},
+            "opt": {"anyOf": [true, {"type": "null"}]},
+            "nested": {"type": "object", "properties": {"deep": true}, "additionalProperties": false}
+        }, "$defs": {"X": true}});
+        let out = plain_schema(s);
+        assert_eq!(out["properties"]["any"], json!({}));
+        assert_eq!(out["properties"]["list"]["items"], json!({}));
+        assert_eq!(out["properties"]["opt"]["anyOf"][0], json!({}));
+        assert_eq!(out["properties"]["nested"]["properties"]["deep"], json!({}));
+        // mot-clé booléen légitime : conservé
+        assert_eq!(out["properties"]["nested"]["additionalProperties"], json!(false));
+        assert_eq!(out["$defs"]["X"], json!({}));
+    }
+
+    #[test]
+    fn token_heavy_keywords_dropped() {
+        let s = json!({"$schema": "x", "type": "object", "properties": {
+            "p": {"type": ["number", "null"], "format": "double", "default": null},
+            "d": {"type": "integer", "default": 3}
+        }});
+        let out = plain_schema(s);
+        assert!(out.get("$schema").is_none());
+        assert_eq!(out["properties"]["p"], json!({"type": ["number", "null"]}));
+        assert_eq!(out["properties"]["d"]["default"], json!(3));
+    }
+
+    #[test]
+    fn ordinary_schema_unchanged() {
+        let s = json!({"type": "object", "properties": {"n": {"type": ["integer", "null"]}}, "required": ["n"]});
+        assert_eq!(plain_schema(s.clone()), s);
     }
 }

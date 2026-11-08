@@ -1,0 +1,136 @@
+# Tentacules hébergés sur le poste de travail, à côté de leurs données :
+# - medias : dans le réseau Docker de la stack média (services joints par leur nom) ;
+# - documents : dossier de documents synchronisé localement ; écritures (déplacer,
+#   renommer, corbeille) seulement si DOCUMENTS_WRITE=1, jamais d'écrasement ;
+# - documents-backup : copie quotidienne de ce dossier, sans jamais rien effacer
+#   (fichiers modifiés ou supprimés rangés dans archives/<date>) ;
+# - alimentation-depot : surveille un dossier dédié, réservé aux bons de commande,
+#   et envoie chaque bon PDF au module alimentation ; un autre PDF déposé par
+#   erreur est lu sur place puis ignoré ;
+# - ollama : modèle local sur l'accélérateur du poste (extraction des faits), non publié.
+#
+#   cp medias.env.example medias.env ; cp documents.env.example documents.env
+#   cp alimentation-depot.env.example alimentation-depot.env   # puis remplir (hors dépôt)
+#   .env : MEDIAS_NETWORK, MEDIAS_IP, DOCUMENTS_SOURCE_DIR, DOCUMENTS_BACKUP_DIR, DEPOT_SOURCE_DIR
+#   docker compose up -d --build
+#
+# Publiés sur la boucle locale seulement ; l'accès MCP exige le jeton porteur.
+name: kairos-pc
+
+# Journaux des conteneurs bornés (taille et nombre de fichiers).
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "3"
+
+services:
+  medias:
+    logging: *logging
+    build:
+      context: ../..
+      dockerfile: deploy/pc/Dockerfile
+    image: kairos-pc:local
+    restart: unless-stopped
+    mem_limit: 64m
+    env_file:
+      - path: medias.env
+        required: true
+    environment:
+      MEDIAS_BIND: 0.0.0.0:8095
+      MEDIAS_DB: /data/medias.db
+    volumes:
+      - medias-data:/data
+    ports:
+      - "${MEDIAS_BIND_ADDR:-127.0.0.1}:${MEDIAS_BIND_PORT:-8095}:8095"
+    networks:
+      media:
+        # Adresse fixe : sans elle, Docker attribue la première libre du réseau
+        # et peut prendre au démarrage une adresse réservée par la stack média.
+        ipv4_address: ${MEDIAS_IP:?adresse IP fixe sur le réseau de la stack média}
+
+  documents:
+    logging: *logging
+    build:
+      context: ../..
+      dockerfile: deploy/pc/Dockerfile
+    image: kairos-pc:local
+    restart: unless-stopped
+    mem_limit: 256m
+    entrypoint: ["/app/kairos-documents"]
+    env_file:
+      - path: documents.env
+        required: true
+    environment:
+      DOCUMENTS_BIND: 0.0.0.0:8096
+      DOCUMENTS_ROOT: /docs
+      DOCUMENTS_DB: /data/documents.db
+      DOCUMENTS_OLLAMA_URL: http://ollama:11434
+    volumes:
+      # Lecture-écriture : sans DOCUMENTS_WRITE=1, le tentacule n'écrit rien.
+      - "${DOCUMENTS_SOURCE_DIR:?dossier des documents}:/docs"
+      - documents-data:/data
+    ports:
+      - "${DOCUMENTS_BIND_ADDR:-127.0.0.1}:${DOCUMENTS_BIND_PORT:-8097}:8096"
+
+  ollama:
+    logging: *logging
+    image: ollama/ollama:0.6.8
+    restart: unless-stopped
+    environment:
+      # Libère la mémoire de l'accélérateur peu après la dernière extraction.
+      OLLAMA_KEEP_ALIVE: 5m
+    volumes:
+      - ollama-models:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  documents-backup:
+    logging: *logging
+    image: rclone/rclone:1.68.2
+    restart: unless-stopped
+    mem_limit: 128m
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        while true; do
+          rclone sync /source /backup/courant --backup-dir "/backup/archives/$$(date +%F)" --log-level NOTICE
+          sleep 86400
+        done
+    volumes:
+      - "${DOCUMENTS_SOURCE_DIR:?dossier des documents}:/source:ro"
+      - "${DOCUMENTS_BACKUP_DIR:?dossier de sauvegarde}:/backup"
+
+  alimentation-depot:
+    logging: *logging
+    image: kairos-pc:local
+    restart: unless-stopped
+    mem_limit: 64m
+    entrypoint: ["/app/kairos-alimentation-depot"]
+    env_file:
+      - path: alimentation-depot.env
+        required: true
+    environment:
+      DEPOT_DIR: /depot
+      DEPOT_STATE: /data/depot.json
+    volumes:
+      - "${DEPOT_SOURCE_DIR:?dossier dédié aux bons de commande}:/depot:ro"
+      - depot-data:/data
+
+volumes:
+  medias-data: {}
+  documents-data: {}
+  depot-data: {}
+  ollama-models:
+    # Nom fixe : les modèles téléchargés survivent à un renommage du projet.
+    name: kairos-ollama
+
+networks:
+  media:
+    external: true
+    name: ${MEDIAS_NETWORK:?nom du réseau Docker de la stack média}

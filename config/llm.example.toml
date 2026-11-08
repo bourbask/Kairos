@@ -48,6 +48,8 @@ protocol = "openai-compatible"
 # api_key = ""
 # api_key_header = ""
 # daily_token_cap =     # jetons (entrée + sortie) par jour local ; atteint = refus avant envoi ; absent = illimité
+# fallback = ""         # moteur pris si celui-ci ne répond pas (machine éteinte) ; placement revérifié
+# max_tools =           # outils proposés par appel, les plus proches du message ; absent = tous
 #
 # En-têtes fixes envoyés tels quels (protocole "messages" notamment).
 # [engines.<nom>.headers]

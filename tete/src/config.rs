@@ -12,7 +12,7 @@ use anyhow::{Context, Result, bail};
 use chrono::{NaiveTime, Weekday};
 use serde::Deserialize;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TentacleEntry {
     /// Préfixe des outils du tentacule, choisi par l'opérateur.
@@ -20,6 +20,14 @@ pub struct TentacleEntry {
     pub url: String,
     /// Nom de la variable d'environnement portant le jeton.
     pub token_env: String,
+    /// Données tenues hors de tout moteur : outils absents de la conversation,
+    /// section de brief jointe telle quelle.
+    #[serde(default)]
+    pub private: bool,
+    /// Mots qui, présents dans le message, désignent ce tentacule : ses outils
+    /// passent en tête quand le moteur limite le nombre d'outils par appel.
+    #[serde(default)]
+    pub keywords: Vec<String>,
 }
 
 fn t(h: u32, m: u32) -> NaiveTime {
@@ -57,7 +65,18 @@ pub enum WorkMode {
     Off,
 }
 
-#[derive(Debug, Deserialize)]
+impl WorkMode {
+    /// Libellé affiché (consigne du moteur, application).
+    pub fn label(self) -> &'static str {
+        match self {
+            WorkMode::OnSite => "sur site",
+            WorkMode::Remote => "télétravail",
+            WorkMode::Off => "repos",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct WorkRhythm {
     pub start: NaiveTime,
@@ -74,6 +93,8 @@ impl Default for WorkRhythm {
 
 pub struct GatewayEnv {
     pub bind: SocketAddr,
+    /// Écoute de l'API de l'application ; absente = API désactivée.
+    pub app_bind: Option<SocketAddr>,
     pub inbound_token: String,
     pub outbound_url: String,
     pub outbound_token: String,
@@ -88,6 +109,8 @@ pub struct HeadConfig {
     pub interruptions_per_day: u32,
     pub suggestion_every_minutes: u32,
     pub session_idle_minutes: u32,
+    /// Tentacule qui reçoit les commandes directes ; toujours traité comme privé.
+    pub commands_tentacle: String,
     #[serde(skip, default = "no_gateway")]
     pub gateway: GatewayEnv,
 }
@@ -97,6 +120,7 @@ impl std::fmt::Debug for GatewayEnv {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("GatewayEnv")
             .field("bind", &self.bind)
+            .field("app_bind", &self.app_bind)
             .field("inbound_token", &"***")
             .field("outbound_url", &self.outbound_url)
             .field("outbound_token", &"***")
@@ -107,6 +131,7 @@ impl std::fmt::Debug for GatewayEnv {
 fn no_gateway() -> GatewayEnv {
     GatewayEnv {
         bind: "0.0.0.0:8090".parse().expect("adresse valide"),
+        app_bind: None,
         inbound_token: String::new(),
         outbound_url: String::new(),
         outbound_token: String::new(),
@@ -122,6 +147,7 @@ impl Default for HeadConfig {
             interruptions_per_day: 2,
             suggestion_every_minutes: 120,
             session_idle_minutes: 30,
+            commands_tentacle: "marches".into(),
             gateway: no_gateway(),
         }
     }
@@ -158,6 +184,10 @@ impl HeadConfig {
                 bail!("nom de tentacule en double : « {n} »");
             }
         }
+        // Le destinataire des commandes directes reste hors de tout moteur, déclaré privé ou non.
+        for e in &mut cfg.tentacles {
+            e.private |= e.name == cfg.commands_tentacle;
+        }
         for e in &cfg.tentacles {
             required(&env, &e.token_env)
                 .with_context(|| format!("jeton du tentacule « {} »", e.name))?;
@@ -166,8 +196,13 @@ impl HeadConfig {
             Some(v) => v.parse().context("TETE_BIND invalide")?,
             None => no_gateway().bind,
         };
+        let app_bind = match env("TETE_APP_BIND").filter(|v| !v.is_empty()) {
+            Some(v) => Some(v.parse().context("TETE_APP_BIND invalide")?),
+            None => None,
+        };
         cfg.gateway = GatewayEnv {
             bind,
+            app_bind,
             inbound_token: required(&env, "TETE_INBOUND_TOKEN")?,
             outbound_url: required(&env, "TETE_OUTBOUND_URL")?,
             outbound_token: required(&env, "TETE_OUTBOUND_TOKEN")?,
@@ -206,6 +241,16 @@ mod tests {
         assert!(c.work.days.is_empty());
         assert!(c.tentacles.is_empty());
         assert_eq!(c.gateway.bind.to_string(), "0.0.0.0:8090");
+        assert_eq!(c.gateway.app_bind, None);
+    }
+
+    #[test]
+    fn app_bind_is_optional() {
+        let env = [GATEWAY[0], GATEWAY[1], GATEWAY[2], ("TETE_APP_BIND", "0.0.0.0:8091")];
+        let c = HeadConfig::from_parts("", env_of(&env)).unwrap();
+        assert_eq!(c.gateway.app_bind.unwrap().to_string(), "0.0.0.0:8091");
+        let env = [GATEWAY[0], GATEWAY[1], GATEWAY[2], ("TETE_APP_BIND", "nope")];
+        assert!(HeadConfig::from_parts("", env_of(&env)).is_err());
     }
 
     #[test]
@@ -251,6 +296,17 @@ mod tests {
         }
         let twice = format!("{}{}", one("a"), one("a"));
         assert!(HeadConfig::from_parts(&twice, env_of(&env)).is_err());
+    }
+
+    #[test]
+    fn commands_tentacle_is_private() {
+        let toml = "commands_tentacle = \"m\"\n\
+                    [[tentacles]]\nname = \"m\"\nurl = \"http://a.invalid\"\ntoken_env = \"A_TOKEN\"\n\
+                    [[tentacles]]\nname = \"o\"\nurl = \"http://b.invalid\"\ntoken_env = \"A_TOKEN\"\n";
+        let env = [GATEWAY[0], GATEWAY[1], GATEWAY[2], ("A_TOKEN", "a")];
+        let c = HeadConfig::from_parts(toml, env_of(&env)).unwrap();
+        assert!(c.tentacles[0].private);
+        assert!(!c.tentacles[1].private);
     }
 
     #[test]

@@ -1,0 +1,25 @@
+[package]
+name = "kairos-documents"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = "0.10"
+anyhow = "1"
+tentacle-common = { path = "../../crates/tentacle-common" }
+rmcp = { version = "3.8", features = ["server", "macros"] }
+schemars = "1"
+tokio = { version = "1", features = ["full"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+reqwest = { version = "0.12", features = ["json"] }
+
+[[bin]]
+name = "kairos-documents"
+path = "src/main.rs"
+
+[dev-dependencies]
+reqwest = { version = "0.12", features = ["json"] }
+serde_json = "1"

@@ -158,18 +158,45 @@ pub async fn run(job: Job, now: NaiveDateTime, ctx: &mut Ctx) -> anyhow::Result<
     }
 }
 
+/// Journalise une sortie de Kairos (un échec de journal ne bloque rien).
+fn log_reply(state: &State, text: &str) {
+    let at = chrono::Utc::now().with_timezone(&kairos::calendar::USER_TZ).naive_local();
+    if let Err(e) = state.log_chat("kairos", "kairos", text, at) {
+        tracing::warn!("journal de conversation : écriture impossible : {e}");
+    }
+}
+
+/// Point d'envoi sortant : journalise, puis envoie. Le journal ne dépend pas du salon,
+/// donc un texte journalisé ici ne l'est jamais une seconde fois (renvoi compris).
+/// Seule exception : la recopie d'un message de l'application, déjà journalisé à l'entrée.
+pub async fn say(outbound: &Outbound, state: &State, text: &str) -> anyhow::Result<()> {
+    log_reply(state, text);
+    outbound.send(text).await
+}
+
 async fn brief(key: &str, period: &str, title: &str, now: NaiveDateTime, ctx: &Ctx) -> anyhow::Result<()> {
     // Marqué avant tout envoi : un brief par jour au plus, même si l'état devient illisible.
     ctx.state.set_last_run(key, run_day(key, now, &ctx.cfg))?;
     send_brief(period, title, now, ctx).await
 }
 
-/// Sections non vides, dans l'ordre de la configuration.
-async fn brief_sections(period: &str, ctx: &Ctx) -> Vec<String> {
-    let mut sections = Vec::new();
-    for (name, res) in ctx.tentacles.call_conventional("brief_section", json!({"period": period})).await {
+/// Sections non vides, dans l'ordre de la configuration : celles des tentacules
+/// non privés, puis celles des privés, qui ne doivent atteindre aucun moteur.
+/// Sans `include_private`, les privés ne sont pas appelés : lire leur section
+/// la consomme.
+async fn brief_sections(period: &str, include_private: bool, ctx: &Ctx) -> (Vec<String>, Vec<String>) {
+    let private = ctx.tentacles.private_names();
+    let mut sections = (Vec::new(), Vec::new());
+    let args = json!({"period": period});
+    let all = if include_private {
+        ctx.tentacles.call_conventional("brief_section", args).await
+    } else {
+        ctx.tentacles.call_conventional_public("brief_section", args).await
+    };
+    for (name, res) in all {
+        let side = if private.contains(&name) { &mut sections.1 } else { &mut sections.0 };
         match res {
-            Ok(s) if !s.trim().is_empty() => sections.push(s.trim().to_string()),
+            Ok(s) if !s.trim().is_empty() => side.push(s.trim().to_string()),
             Ok(_) => {}
             Err(e) => tracing::warn!(tentacule = %name, erreur = %e, "section de brief indisponible"),
         }
@@ -178,16 +205,22 @@ async fn brief_sections(period: &str, ctx: &Ctx) -> Vec<String> {
 }
 
 async fn send_brief(period: &str, title: &str, now: NaiveDateTime, ctx: &Ctx) -> anyhow::Result<()> {
-    let sections = brief_sections(period, ctx).await;
-    if sections.is_empty() {
-        return Ok(());
-    }
+    // Sortie décidée d'abord : une section lue est consommée, elle ne doit pas être jetée.
     let out = outlet(Spontaneous::Brief, now, ctx).await;
     if out == Outlet::Drop {
         return Ok(());
     }
-    let raw = format!("{title}\n\n{}", sections.join("\n\n"));
-    let text = reword(&raw, ctx).await.unwrap_or(raw);
+    let (sections, private) = brief_sections(period, true, ctx).await;
+    if sections.is_empty() && private.is_empty() {
+        return Ok(());
+    }
+    let text = if sections.is_empty() {
+        title.to_string()
+    } else {
+        let raw = format!("{title}\n\n{}", sections.join("\n\n"));
+        reword(&raw, ctx).await.unwrap_or(raw)
+    };
+    let text = [text].into_iter().chain(private).collect::<Vec<_>>().join("\n\n");
     if out == Outlet::Written {
         deliver(&text, now, ctx).await
     } else {
@@ -197,7 +230,7 @@ async fn send_brief(period: &str, title: &str, now: NaiveDateTime, ctx: &Ctx) ->
 
 /// Reformulation par le moteur `brief` ; absent ou en échec → `None` (texte brut).
 async fn reword(raw: &str, ctx: &Ctx) -> Option<String> {
-    let client = engine(ctx.agent.router(), "brief", Urgency::Deferred).ok()?;
+    let client = engine(ctx.agent.router(), "brief", Urgency::Deferred).await.ok()?;
     match chat(&client, Urgency::Deferred, BRIEF_PROMPT, &[ChatTurn::User(raw.to_string())], &[]).await {
         Ok(r) => r.text.map(|t| plain(&t)).filter(|t| !t.trim().is_empty()).filter(|t| {
             let kept = faithful(raw, t);
@@ -268,14 +301,14 @@ async fn suggestion(now: NaiveDateTime, ctx: &mut Ctx) -> anyhow::Result<()> {
     if outlet(Spontaneous::Suggestion, now, ctx).await != Outlet::Written {
         return Ok(());
     }
-    let Ok(client) = engine(ctx.agent.router(), "suggestion", Urgency::Deferred) else {
+    let Ok(client) = engine(ctx.agent.router(), "suggestion", Urgency::Deferred).await else {
         return Ok(());
     };
     let period = if now.time() < NaiveTime::from_hms_opt(14, 0, 0).expect("heure valide") { "matin" } else { "soir" };
     let context = format!(
         "Nous sommes le {}, heure locale.\n\n{}",
         now.format("%Y-%m-%d %H:%M"),
-        brief_sections(period, ctx).await.join("\n\n")
+        brief_sections(period, false, ctx).await.0.join("\n\n")
     );
     let text = match chat(&client, Urgency::Deferred, SUGGESTION_PROMPT, &[ChatTurn::User(context.clone())], &[]).await {
         Ok(r) => plain(&r.text.unwrap_or_default()),
@@ -293,7 +326,7 @@ async fn suggestion(now: NaiveDateTime, ctx: &mut Ctx) -> anyhow::Result<()> {
         return Ok(());
     }
     // Non envoyée : périmée, abandonnée, hors budget.
-    match ctx.outbound.send(text).await {
+    match say(&ctx.outbound, &ctx.state, text).await {
         Ok(()) => ctx.state.record_interruption(now)?,
         Err(e) => tracing::warn!(erreur = %format!("{e:#}"), "suggestion non envoyée, abandonnée"),
     }
@@ -314,14 +347,25 @@ async fn flush(now: NaiveDateTime, ctx: &Ctx) -> anyhow::Result<()> {
     if pending.is_empty() {
         return Ok(());
     }
-    let text = pending.into_iter().map(|(_, body)| body).collect::<Vec<_>>().join("\n\n");
-    deliver(&text, now, ctx).await
+    // Les renvois sont déjà journalisés ; les sorties retenues ne le sont qu'à leur première émission.
+    let held: Vec<&str> = pending.iter().filter(|(k, _)| k != RETRY).map(|(_, b)| b.as_str()).collect();
+    if !held.is_empty() {
+        log_reply(&ctx.state, &held.join("\n\n"));
+    }
+    let text = pending.iter().map(|(_, body)| body.as_str()).collect::<Vec<_>>().join("\n\n");
+    send_or_requeue(&text, now, ctx).await
 }
 
-/// Envoi sans perte : un échec remet le texte en file.
+/// Envoi sans perte : journalisé une fois, un échec remet le texte en file.
+pub async fn deliver(text: &str, now: NaiveDateTime, ctx: &Ctx) -> anyhow::Result<()> {
+    log_reply(&ctx.state, text);
+    send_or_requeue(text, now, ctx).await
+}
+
+/// Envoi d'un texte déjà journalisé ; un échec le remet en file, sans nouveau journal.
 // ponytail: renvoi à chaque vidage tant que la passerelle refuse, sans limite d'essais ni d'âge ;
 // ajouter une expiration si des messages trop anciens finissent par partir.
-async fn deliver(text: &str, now: NaiveDateTime, ctx: &Ctx) -> anyhow::Result<()> {
+async fn send_or_requeue(text: &str, now: NaiveDateTime, ctx: &Ctx) -> anyhow::Result<()> {
     if let Err(e) = ctx.outbound.send(text).await {
         tracing::warn!(erreur = %format!("{e:#}"), "envoi impossible, message remis en file");
         ctx.state.enqueue(RETRY, text, now)?;
@@ -416,7 +460,7 @@ struct Summary {
 /// Une conversation non résumée (lecture, moteur ou sortie en échec) reste
 /// pour la nuit suivante ; les autres sont traitées.
 async fn summaries(ctx: &Ctx) -> anyhow::Result<()> {
-    let Ok(client) = engine(ctx.agent.router(), "resume_conversation", Urgency::Deferred) else {
+    let Ok(client) = engine(ctx.agent.router(), "resume_conversation", Urgency::Deferred).await else {
         return Ok(());
     };
     let lists = ctx.tentacles.call_conventional("conversations_unsummarized", json!({"limit": SUMMARY_BATCH})).await;
