@@ -160,7 +160,7 @@ corbeille) depuis l'application.
 - **Échéances** (en tête) : retards d'abord, puis les 90 prochains jours,
   datées, avec le temps restant (couleur ambre sous 30 jours, brique en
   retard) ; type, organisme et motif (fin, résiliation, renouvellement,
-  expiration, contrôle). Nature privée : seulement « document privé », le type
+  expiration, contrôle). Nature privée : seulement « document privé », le motif
   et la date.
 - **Chercher** : champ de recherche plein texte ; résultats avec nom, nature,
   date et un court passage autour des mots cherchés. Aucun résultat d'une
