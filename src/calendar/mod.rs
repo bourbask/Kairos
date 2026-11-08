@@ -137,7 +137,9 @@ pub fn tasks_to_ics(tasks: &[Task]) -> Option<String> {
 }
 
 /// Escape ICS text: inverse de `unescape_ics` (\\, puis ; , et \n, dans cet ordre).
+/// Les caractères de contrôle (`\r` compris) sont retirés, sauf `\n` (échappé) et la tabulation.
 pub fn escape_ics(s: &str) -> String {
+    let s: String = s.chars().filter(|c| !c.is_control() || matches!(c, '\n' | '\t')).collect();
     s.replace('\\', "\\\\")
         .replace(';', "\\;")
         .replace(',', "\\,")
@@ -338,6 +340,13 @@ fn xml_unescape(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn escape_ics_drops_control_chars() {
+        let e = escape_ics("a\r\nDTSTART:1\u{0}b\tc;d");
+        assert_eq!(e, "a\\nDTSTART:1b\tc\\;d");
+        assert!(!e.contains('\r'));
+    }
     use crate::models::Task;
 
     fn make_task(id: i64, title: &str, due: Option<NaiveDate>) -> Task {
