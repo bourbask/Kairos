@@ -415,3 +415,44 @@ data class MarchesSnapshot(
     val fetchedAt: String? = null,
     val issue: String? = null,
 )
+
+/** Intention à traiter : proposée ou acceptée, avec son échéance. */
+@Serializable
+data class Intention(val id: Long, val what: String = "", val expires: String? = null, val state: String = "", val constraints: String? = null)
+
+/** Entrée du journal ; [sensitive] : masquée par défaut, jamais gardée hors ligne. */
+@Serializable
+data class JournalEntry(val id: Long, val at: String = "", val kind: String = "", val text: String = "", val sensitive: Boolean = false)
+
+/** Fait connu sur l'utilisateur ; le préfixe de [key] en donne le thème. */
+@Serializable
+data class Fact(val key: String, val value: String = "", val updated: String? = null)
+
+@Serializable
+data class FactValue(val value: String = "", val at: String = "")
+
+@Serializable
+data class ConversationSummary(
+    val id: Long,
+    val at: String = "",
+    val summary: String? = null,
+    val topics: List<String> = emptyList(),
+    val decisions: List<String> = emptyList(),
+)
+
+/** Vue de la mémoire pour l'application (`app_memory`). */
+@Serializable
+data class Memory(
+    val intentions: List<Intention> = emptyList(),
+    val journal: List<JournalEntry> = emptyList(),
+    val facts: List<Fact> = emptyList(),
+    val conversations: List<ConversationSummary> = emptyList(),
+)
+
+/** Dernier état de l'espace Mémoire, gardé hors ligne sans les entrées sensibles. */
+@Serializable
+data class MemoireSnapshot(
+    val memory: Memory? = null,
+    val fetchedAt: String? = null,
+    val issue: String? = null,
+)
