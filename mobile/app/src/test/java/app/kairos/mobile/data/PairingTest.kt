@@ -12,6 +12,13 @@ class PairingTest {
     }
 
     @Test
+    fun parse_accepts_capitalised_scheme_and_spaces() {
+        // Saisie au clavier : majuscule automatique et espaces parasites.
+        val c = Pairing.parse("  Kairos://Pair?url=http%3A%2F%2Fh%3A1&token=abc ").getOrThrow()
+        assertEquals("abc", c.token)
+    }
+
+    @Test
     fun parse_rejects_other_scheme() {
         assertTrue(Pairing.parse("https://pair?url=http%3A%2F%2Fh&token=abc").isFailure)
         assertTrue(Pairing.parse("kairos://autre?url=http%3A%2F%2Fh&token=abc").isFailure)

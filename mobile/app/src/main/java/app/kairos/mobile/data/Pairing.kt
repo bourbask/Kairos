@@ -12,7 +12,7 @@ data class Credentials(val baseUrl: String, val token: String) {
 object Pairing {
     fun parse(uri: String): Result<Credentials> = runCatching {
         val u = URI(uri.trim())
-        require(u.scheme == "kairos" && u.host == "pair") { "Ce n'est pas un code d'appairage Kairos." }
+        require(u.scheme.equals("kairos", ignoreCase = true) && u.host.equals("pair", ignoreCase = true)) { "Ce n'est pas un code d'appairage Kairos." }
         val params = (u.rawQuery ?: "").split('&').filter { '=' in it }.associate {
             val (k, v) = it.split('=', limit = 2)
             k to URLDecoder.decode(v, Charsets.UTF_8)
