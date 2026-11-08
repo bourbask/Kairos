@@ -573,7 +573,7 @@ impl FoodServer {
                 None => {
                     let mut alts: Vec<_> = crate::nature::ALL
                         .into_iter()
-                        .filter(|n| n.is_food())
+                        .filter(|n| n.is_food() && *n != Nature::Plat)
                         .map(|n| opt(&format!("alimentaire:{}", n.as_str()), &format!("Alimentaire · {}", n.label())))
                         .collect();
                     alts.extend([Nature::Entretien, Nature::Hygiene].map(|n| opt(n.as_str(), n.label())));
@@ -2312,6 +2312,7 @@ mod tests {
         let alts: Vec<&str> = d[0]["alternatives"].as_array().unwrap().iter().map(|a| a["id"].as_str().unwrap()).collect();
         assert!(alts.contains(&"alimentaire:legume") && alts.contains(&"entretien") && alts.contains(&"hygiene"), "{alts:?}");
         assert!(!alts.contains(&"alimentaire:entretien"));
+        assert!(!alts.contains(&"alimentaire:plat"), "un plat naît d'un repas cuisiné, pas d'un achat");
         let exp = chrono::NaiveDate::parse_from_str(d[0]["expires"].as_str().unwrap(), "%Y-%m-%d").unwrap();
         assert_eq!(exp, s.today() + chrono::Duration::days(30));
         decide(&s, &format!("produit-{id}-nature"), "entretien").await.unwrap();
