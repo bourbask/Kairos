@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -159,7 +160,8 @@ private fun TabItem(label: String, selected: Boolean, onClick: () -> Unit, icon:
     val color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
     Column(
         Modifier
-            .width(80.dp)
+            // Largeur minimale seulement : un libellé agrandi (police 1,3×) ne se coupe pas.
+            .widthIn(min = 80.dp)
             .selectable(selected = selected, onClick = onClick, role = Role.Tab)
             .padding(vertical = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -170,6 +172,8 @@ private fun TabItem(label: String, selected: Boolean, onClick: () -> Unit, icon:
             label,
             color = color,
             style = MaterialTheme.typography.labelMedium,
+            maxLines = 1,
+            softWrap = false,
         )
     }
 }
