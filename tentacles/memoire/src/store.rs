@@ -261,9 +261,12 @@ fn norme(v: &str) -> String {
     v.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
 }
 
+/// Début du texte de toute question de confirmation.
+const QUESTION_DEBUT: &str = "Confirmer : ";
+
 /// Début du texte d'une question de confirmation sur `key`.
 fn question_prefixe(key: &str) -> String {
-    format!("Confirmer : {key} = ")
+    format!("{QUESTION_DEBUT}{key} = ")
 }
 
 /// Référence du souvenir d'une déduction.
@@ -1221,10 +1224,18 @@ impl MemoryStore {
     }
 
     /// Efface pour de bon les synthèses fondues non annuelles et les déductions
-    /// dont la récupérabilité est passée sous `SEUIL_OUBLI`, index compris.
-    /// Renvoie le nombre de souvenirs effacés.
+    /// dont la récupérabilité est passée sous `SEUIL_OUBLI`, index compris,
+    /// puis les questions de confirmation closes échues depuis plus d'une durée
+    /// de vie. Renvoie le nombre de souvenirs effacés.
     pub fn oublier(&self, maintenant: NaiveDateTime) -> Result<u32> {
         let tx = self.conn.unchecked_transaction()?;
+        // Un refus ne bloque la question que jusqu'à son échéance : passé une
+        // durée de vie de plus, il n'a plus d'effet.
+        tx.execute(
+            "DELETE FROM intentions WHERE state IN ('refusee','acceptee','expiree')
+             AND expires_at <= ?2 AND substr(what, 1, length(?1)) = ?1",
+            params![QUESTION_DEBUT, ts(maintenant - chrono::Duration::days(QUESTION_JOURS))],
+        )?;
         let candidats = {
             let mut st = tx.prepare(
                 "SELECT s.nature, s.ref, s.stabilite, s.dernier_rappel, s.ancre FROM souvenirs s
@@ -2799,6 +2810,33 @@ mod tests {
         s.fact_set_at("animal", "chat", "utilisateur", m).unwrap();
         s.fact_forget("animal").unwrap();
         assert_eq!(compte(&s, "SELECT COUNT(*) FROM intentions"), 1);
+    }
+
+    #[test]
+    fn forget_purges_old_closed_questions() {
+        let s = store();
+        let m = jour(2026, 11, 1);
+        s.fact_set_at("animal", "chat", "utilisateur", t()).unwrap();
+        // Questions closes échues depuis plus d'une durée de vie : purgées.
+        for etat in [IntentionState::Refusee, IntentionState::Expiree, IntentionState::Acceptee] {
+            let id = s.intention_create("Confirmer : animaux = deux ?", "", m - Duration::days(15)).unwrap();
+            s.intention_set_state(id, etat).unwrap();
+        }
+        // Intention ordinaire ancienne : hors périmètre.
+        s.intention_create("Appeler Exemple", "", m - Duration::days(30)).unwrap();
+        // Refus récent : gardé, il bloque toujours la même question.
+        s.appliquer_extraction(d(1), &[indice("animal", "chien")], m).unwrap();
+        let id = s.intentions_open(m).unwrap()[0].id;
+        s.intention_set_state(id, IntentionState::Refusee).unwrap();
+        let plus_tard = m + Duration::days(2);
+        s.oublier(plus_tard).unwrap();
+        assert_eq!(compte(&s, "SELECT COUNT(*) FROM intentions WHERE what LIKE 'Confirmer : animaux%'"), 0);
+        assert_eq!(compte(&s, "SELECT COUNT(*) FROM intentions WHERE what = 'Appeler Exemple'"), 1);
+        assert_eq!(compte(&s, "SELECT COUNT(*) FROM intentions WHERE state = 'refusee'"), 1);
+        assert_eq!(s.appliquer_extraction(d(3), &[indice("animal", "chien")], plus_tard).unwrap().questions, 0);
+        // Une durée de vie après son échéance, le refus est purgé à son tour.
+        s.oublier(m + Duration::days(15)).unwrap();
+        assert_eq!(compte(&s, "SELECT COUNT(*) FROM intentions WHERE state = 'refusee'"), 0);
     }
 
     #[test]
