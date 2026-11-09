@@ -147,6 +147,17 @@ struct KeyArgs {
     key: String,
 }
 #[derive(Deserialize, schemars::JsonSchema)]
+struct RappelArgs {
+    /// Sujet du rappel ; absent pour un rappel général.
+    message: Option<String>,
+}
+#[derive(Deserialize, schemars::JsonSchema)]
+struct FactAnchorArgs {
+    key: String,
+    /// `true` pour toujours retenir le fait, `false` pour ne plus le forcer.
+    ancre: bool,
+}
+#[derive(Deserialize, schemars::JsonSchema)]
 struct FactSetArgs {
     key: String,
     value: String,
@@ -249,6 +260,24 @@ impl MemoryServer {
     #[tool(description = "Lister les faits connus, éventuellement sous un préfixe de clé, pour voir ce qui est déjà su.")]
     fn facts_list(&self, Parameters(a): Parameters<PrefixArgs>) -> Out {
         json_out(self.db()?.facts_list(a.prefix.as_deref().unwrap_or("")).map_err(err)?)
+    }
+
+    #[tool(description = "Usage interne de la tête : rappeler les souvenirs les plus utiles, éventuellement selon un message.")]
+    fn rappel(&self, Parameters(a): Parameters<RappelArgs>) -> Out {
+        let r = self.db()?.rappel(a.message.as_deref(), now_local(), 12).map_err(err)?;
+        json_out(r)
+    }
+
+    #[tool(description = "Quand l'utilisateur demande de toujours retenir (ou de ne plus forcer) un fait.")]
+    fn fact_anchor(&self, Parameters(a): Parameters<FactAnchorArgs>) -> Out {
+        if is_persona(&a.key) {
+            return Err(PERSONA_REFUSED.into());
+        }
+        if !self.db()?.ancrer("fait", a.key.trim(), a.ancre).map_err(err)? {
+            return json_out(json!({"message": "Fait inconnu : rien n'a été modifié."}));
+        }
+        let m = if a.ancre { "Fait ancré : il sera toujours rappelé." } else { "Fait désancré : il n'est plus forcé." };
+        json_out(json!({"message": m}))
     }
 
     #[tool(description = "Lire la personnalité de l'assistant, au début d'une conversation.")]
@@ -527,6 +556,30 @@ mod tests {
 
     fn set_state(s: &MemoryServer, id: i64, st: &str) -> Out {
         s.app_intention_set(Parameters(AppIntentionSetArgs { id, state: st.into() }))
+    }
+
+    #[test]
+    fn rappel_tool_shape() {
+        let s = srv();
+        s.db().unwrap().fact_set("cafe", "noir", "t").unwrap();
+        for m in [None, Some("cafe".to_string())] {
+            let v = js(s.rappel(Parameters(RappelArgs { message: m })));
+            let e = &v.as_array().unwrap()[0];
+            for k in ["nature", "ref", "texte", "score", "estompe", "ancre"] {
+                assert!(e.get(k).is_some(), "{k}");
+            }
+        }
+    }
+
+    #[test]
+    fn fact_anchor_refuses_persona_and_unknown_is_clear() {
+        let s = srv();
+        let a = |key: &str, ancre| Parameters(FactAnchorArgs { key: key.into(), ancre });
+        assert!(s.fact_anchor(a(PERSONA_KEY, true)).is_err());
+        assert!(js(s.fact_anchor(a("inconnu", true)))["message"].as_str().unwrap().contains("inconnu"));
+        s.db().unwrap().fact_set("cafe", "noir", "t").unwrap();
+        assert!(js(s.fact_anchor(a(" cafe ", true)))["message"].is_string());
+        assert!(s.db().unwrap().rappel(None, now_local(), 12).unwrap().iter().any(|r| r.ancre));
     }
 
     #[test]
