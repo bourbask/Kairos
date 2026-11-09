@@ -14,6 +14,35 @@ permissions:
   contents: read
 
 jobs:
+  # Rien de personnel, de secret ni d'environnement ne doit entrer dans le dépôt public.
+  osint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Installer gitleaks
+        env:
+          VERSION: 8.30.1
+        run: |
+          curl -sSfL -o gl.tgz "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz"
+          curl -sSfL -o sums.txt "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_checksums.txt"
+          grep "gitleaks_${VERSION}_linux_x64.tar.gz" sums.txt | sed 's/gitleaks_.*/gl.tgz/' | sha256sum -c -
+          tar xzf gl.tgz gitleaks && sudo install -m755 gitleaks /usr/local/bin/gitleaks && rm -f gl.tgz sums.txt gitleaks
+      - name: Contenu et messages des commits
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ]; then BASE=$(git rev-list --max-parents=0 "$HEAD" | tail -1); fi
+          scripts/osint-scan.sh --range "$BASE..$HEAD"
+      - name: Titre et description de la PR
+        if: github.event_name == 'pull_request'
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+          BODY: ${{ github.event.pull_request.body }}
+        run: printf '%s\n%s\n' "$TITLE" "$BODY" | scripts/osint-scan.sh --text -
+
   build-and-test:
     runs-on: ubuntu-latest
     steps:
