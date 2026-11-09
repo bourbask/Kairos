@@ -51,6 +51,10 @@ struct Rec {
     night_calls: Mutex<Vec<String>>,
     /// Conversations encore à résumer, par jour.
     unsummarized_days: Mutex<HashMap<String, u32>>,
+    /// Comptages d'habitudes reçus : `{jour, sources}`.
+    habits: Mutex<Vec<Value>>,
+    /// `nuit_habitudes` signale une source connue absente.
+    habits_incomplete: AtomicBool,
 }
 
 #[derive(Clone)]
@@ -101,6 +105,12 @@ struct Jour {
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
+struct Habitudes {
+    jour: String,
+    sources: Value,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
 struct Appliquer {
     jour: String,
     indices: Value,
@@ -131,7 +141,7 @@ impl Fake {
     fn nuit_etat(&self) -> Result<String, String> {
         self.night("etat");
         let n = self.rec.nuit.lock().unwrap();
-        let rows: Vec<Value> = ["condensation", "extraction", "oubli"]
+        let rows: Vec<Value> = ["condensation", "extraction", "habitudes", "oubli"]
             .iter()
             .map(|e| {
                 let (d, s) = n.get(*e).cloned().unwrap_or((None, "ok".into()));
@@ -167,6 +177,20 @@ impl Fake {
         self.night("en_attente");
         let n = self.rec.unsummarized_days.lock().unwrap().get(&a.jour).copied().unwrap_or(0);
         Ok(json!({"conversations": n}).to_string())
+    }
+
+    #[tool(description = "Observations d'un jour.")]
+    fn nuit_observations(&self, Parameters(_): Parameters<Jour>) -> Result<String, String> {
+        self.night("observations");
+        Ok(r#"[{"quoi": "repas.lieu", "contexte": "soir.ouvre", "valeur": "maison", "libelle": "Dîner à la maison", "cadence": "quotidien"}]"#.into())
+    }
+
+    #[tool(description = "Compte les habitudes d'un jour.")]
+    fn nuit_habitudes(&self, Parameters(a): Parameters<Habitudes>) -> Result<String, String> {
+        self.night("habitudes");
+        self.rec.habits.lock().unwrap().push(json!({"jour": a.jour, "sources": a.sources}));
+        let complet = !self.rec.habits_incomplete.load(Ordering::SeqCst);
+        Ok(json!({"complet": complet, "appliquees": 1, "nees": 0, "changements": 0, "retours": 0, "ignorees": 0}).to_string())
     }
 
     #[tool(description = "Clés connues.")]
@@ -1267,4 +1291,56 @@ async fn cut_or_oversize_lot_is_not_condensed() {
     assert_eq!(fx.llm.lock().unwrap().requests.len(), before);
     assert!(fx.rec.condensed.lock().unwrap().is_empty());
     assert_eq!(etat(&fx.rec, "condensation").1, "sortie_invalide");
+}
+
+fn habit_days(rec: &Rec) -> Vec<String> {
+    rec.habits.lock().unwrap().iter().map(|h| h["jour"].as_str().unwrap().to_string()).collect()
+}
+
+#[tokio::test]
+async fn habits_step_feeds_observations_day_by_day() {
+    let mut fx = fixture("JB_H1", NIGHT_USAGES, vec![]).await;
+    set_etat(&fx.rec, "habitudes", "2026-11-06");
+    run(Job::Summaries, at(9, 3, 0), &mut fx.ctx).await.unwrap();
+    assert_eq!(habit_days(&fx.rec), vec!["2026-11-07", "2026-11-08"]);
+    let calls: Vec<String> =
+        fx.rec.night_calls.lock().unwrap().iter().filter(|c| *c == "observations" || *c == "habitudes").cloned().collect();
+    assert_eq!(calls, vec!["observations", "habitudes", "observations", "habitudes"]);
+    let first = fx.rec.habits.lock().unwrap()[0].clone();
+    assert_eq!(first["sources"]["t"][0]["valeur"], "maison");
+    assert_eq!(etat(&fx.rec, "habitudes"), (Some("2026-11-08".into()), "ok".into()));
+}
+
+#[tokio::test]
+async fn habits_run_without_model() {
+    let mut fx = fixture("JB_H2", &[], vec![]).await;
+    run(Job::Summaries, at(9, 3, 0), &mut fx.ctx).await.unwrap();
+    assert_eq!(habit_days(&fx.rec), vec!["2026-11-08"]);
+    assert_eq!(etat(&fx.rec, "habitudes"), (Some("2026-11-08".into()), "ok".into()));
+    assert!(fx.llm.lock().unwrap().requests.is_empty());
+}
+
+#[tokio::test]
+async fn missing_source_holds_the_day() {
+    let mut fx = fixture("JB_H3", NIGHT_USAGES, vec![]).await;
+    set_etat(&fx.rec, "habitudes", "2026-11-06");
+    fx.rec.habits_incomplete.store(true, Ordering::SeqCst);
+    run(Job::Summaries, at(9, 3, 0), &mut fx.ctx).await.unwrap();
+    assert_eq!(habit_days(&fx.rec), vec!["2026-11-07"]);
+    assert_eq!(etat(&fx.rec, "habitudes"), (Some("2026-11-06".into()), "source_indisponible".into()));
+
+    // Source revenue : la journée en attente et la suivante sont rattrapées.
+    fx.rec.habits_incomplete.store(false, Ordering::SeqCst);
+    run(Job::Summaries, at(9, 3, 0), &mut fx.ctx).await.unwrap();
+    assert_eq!(habit_days(&fx.rec), vec!["2026-11-07", "2026-11-07", "2026-11-08"]);
+    assert_eq!(etat(&fx.rec, "habitudes"), (Some("2026-11-08".into()), "ok".into()));
+}
+
+#[tokio::test]
+async fn habits_night_twice_is_harmless() {
+    let mut fx = fixture("JB_H4", NIGHT_USAGES, vec![]).await;
+    run(Job::Summaries, at(9, 3, 0), &mut fx.ctx).await.unwrap();
+    run(Job::Summaries, at(9, 3, 0), &mut fx.ctx).await.unwrap();
+    assert_eq!(habit_days(&fx.rec), vec!["2026-11-08"]);
+    assert_eq!(etat(&fx.rec, "habitudes"), (Some("2026-11-08".into()), "ok".into()));
 }

@@ -542,12 +542,13 @@ fn unfence(text: &str) -> &str {
     }
 }
 
-// --- Nuit de la mémoire : extraction, condensation, oubli ---
+// --- Nuit de la mémoire : extraction, habitudes, condensation, oubli ---
 
 const OK: &str = "ok";
 const NO_MODEL: &str = "modele_indisponible";
 const INVALID: &str = "sortie_invalide";
 const FAILED: &str = "echec";
+const SOURCE_MISSING: &str = "source_indisponible";
 
 #[derive(Deserialize)]
 struct NightState {
@@ -583,14 +584,17 @@ struct Hint {
 async fn memory_night(now: NaiveDateTime, ctx: &Ctx) {
     for (name, res) in ctx.tentacles.call_conventional_limited("nuit_etat", json!({}), NIGHT_MAX_CHARS).await {
         let states = res.ok().and_then(|t| serde_json::from_str::<Vec<NightState>>(&t).ok());
-        let extraction = match &states {
-            Some(states) => {
-                let last = states.iter().find(|s| s.etape == "extraction").and_then(|s| s.dernier_jour);
-                extract(&name, last, now, ctx).await
-            }
+        let last = |step: &str| states.as_ref().map(|s| s.iter().find(|s| s.etape == step).and_then(|s| s.dernier_jour));
+        let extraction = match last("extraction") {
+            Some(last) => extract(&name, last, now, ctx).await,
             None => FAILED,
         };
         note(&name, "extraction", extraction, None, ctx).await;
+        let habitudes = match last("habitudes") {
+            Some(last) => habits(&name, last, now, ctx).await,
+            None => FAILED,
+        };
+        note(&name, "habitudes", habitudes, None, ctx).await;
         let condensation = condense(&name, ctx).await;
         note(&name, "condensation", condensation, None, ctx).await;
         let forget = match night_tool(&name, "nuit_oublier", json!({}), ctx).await {
@@ -666,6 +670,47 @@ async fn extract(name: &str, last: Option<NaiveDate>, now: NaiveDateTime, ctx: &
             }
         }
         note(name, "extraction", OK, Some(day), ctx).await;
+    }
+    OK
+}
+
+/// Observations de chaque tentacule, jour par jour, comptées par la mémoire
+/// sans moteur. Une source muette laisse la journée en attente : elle n'est
+/// pas comptée comme « rien observé ». Seuls des nombres sont journalisés.
+async fn habits(name: &str, last: Option<NaiveDate>, now: NaiveDateTime, ctx: &Ctx) -> &'static str {
+    let yesterday = now.date() - TimeDelta::days(1);
+    let first = last.map_or(yesterday, |d| d + TimeDelta::days(1));
+    for day in first.iter_days().take_while(|d| *d <= yesterday).take(NIGHT_DAYS) {
+        let jour = day.format("%Y-%m-%d").to_string();
+        // Une réponse en erreur ou illisible rend la source absente, jamais vide.
+        let sources: serde_json::Map<String, Value> = ctx
+            .tentacles
+            .call_conventional_limited("nuit_observations", json!({"jour": jour}), NIGHT_MAX_CHARS)
+            .await
+            .into_iter()
+            .filter_map(|(source, res)| {
+                let obs = serde_json::from_str::<Vec<Value>>(&res.ok()?).ok()?;
+                Some((source, Value::Array(obs)))
+            })
+            .collect();
+        let Ok(bilan) = night_tool(name, "nuit_habitudes", json!({"jour": jour, "sources": sources}), ctx).await else {
+            return FAILED;
+        };
+        tracing::info!(
+            tentacule = %name,
+            sources = sources.len(),
+            appliquees = bilan["appliquees"].as_u64().unwrap_or(0),
+            nees = bilan["nees"].as_u64().unwrap_or(0),
+            changements = bilan["changements"].as_u64().unwrap_or(0),
+            retours = bilan["retours"].as_u64().unwrap_or(0),
+            ignorees = bilan["ignorees"].as_u64().unwrap_or(0),
+            "habitudes de nuit"
+        );
+        match bilan["complet"].as_bool() {
+            Some(true) => note(name, "habitudes", OK, Some(day), ctx).await,
+            Some(false) => return SOURCE_MISSING,
+            None => return FAILED,
+        }
     }
     OK
 }
