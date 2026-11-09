@@ -191,7 +191,7 @@ fun TodayScreen(
                     choice,
                     mark = { repository.mark(day, card.key, it) },
                     undoWindow = { notifier.undo("Fait · ${card.title}") },
-                    call = repository::tool,
+                    call = repository::reply,
                     busy = busy,
                 )
             } catch (_: ApiError.Unauthorized) {

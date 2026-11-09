@@ -1,6 +1,7 @@
 package app.kairos.mobile.ui.medias
 
 import app.kairos.mobile.data.ApiError
+import app.kairos.mobile.data.ToolMessage
 import app.kairos.mobile.data.DownloadItem
 import app.kairos.mobile.data.Downloads
 import app.kairos.mobile.data.KairosJson
@@ -180,7 +181,7 @@ class MediasStateTest {
         fun mark(m: Any?) { if (m == null) hidden -= item.key else hidden += item.key }
 
         // Annulé dans les 4 s : rien ne part, l'élément revient.
-        val undone = completeCard(watchedCard(item), null, mark = { mark(it) }, undoWindow = { assertTrue(item.key in hidden); true }, call = { _, t, a -> calls += t to a; "" })
+        val undone = completeCard(watchedCard(item), null, mark = { mark(it) }, undoWindow = { assertTrue(item.key in hidden); true }, call = { _, t, a -> calls += t to a; ToolMessage() })
         assertEquals(DoneOutcome.Undone, undone)
         assertTrue(hidden.isEmpty() && calls.isEmpty())
 
@@ -188,22 +189,28 @@ class MediasStateTest {
         val done = completeCard(watchedCard(item), null, mark = { mark(it) }, undoWindow = { false }, call = { module, t, a ->
             assertEquals(MEDIAS, module)
             calls += t to a
-            "« Série Alpha S01E02 » marqué vu."
+            ToolMessage("« Série Alpha S01E02 » marqué vu.", "done")
         })
-        assertEquals(DoneOutcome.Done("« Série Alpha S01E02 » marqué vu."), done)
+        assertEquals(DoneOutcome.Done("« Série Alpha S01E02 » marqué vu.", "done"), done)
         assertEquals("app_media_watched", calls.single().first)
         assertEquals("702", calls.single().second["key"]!!.jsonPrimitive.content)
         assertEquals(setOf("702"), hidden)
         // Confirmation ordinaire : pas de message (il retarderait l'annulation du geste suivant).
-        assertNull(watchedNotice("« Série Alpha S01E02 » marqué vu."))
+        assertNull(watchedNotice(done as DoneOutcome.Done))
+        // Décidé sur l'issue, pas sur le libellé.
+        assertNull(watchedNotice(DoneOutcome.Done("Libellé reformulé.", "done")))
+        assertEquals("Libellé reformulé.", watchedNotice(DoneOutcome.Done("Libellé reformulé.", "already")))
+        // Module plus ancien, sans issue : repli sur le libellé.
+        assertNull(watchedNotice(DoneOutcome.Done("« Série Alpha S01E02 » marqué vu.")))
 
         // Déjà vu ou disparu : message clair, l'élément part quand même.
         val gone = "Élément introuvable dans le lecteur (déjà retiré, ou lecteur injoignable)."
         hidden.clear()
-        assertEquals(DoneOutcome.Done(gone), completeCard(watchedCard(item), null, mark = { mark(it) }, undoWindow = { false }, call = { _, _, _ -> gone }))
+        val goneOut = completeCard(watchedCard(item), null, mark = { mark(it) }, undoWindow = { false }, call = { _, _, _ -> ToolMessage(gone, "gone") })
+        assertEquals(DoneOutcome.Done(gone, "gone"), goneOut)
         assertEquals(setOf("702"), hidden)
-        assertEquals(gone, watchedNotice(gone))
-        assertEquals("« X » est déjà vu.", watchedNotice("« X » est déjà vu."))
+        assertEquals(gone, watchedNotice(goneOut as DoneOutcome.Done))
+        assertEquals("« X » est déjà vu.", watchedNotice(DoneOutcome.Done("« X » est déjà vu.")))
 
         // Retiré de l'état gardé (reprises et prêts), sans attendre la relecture.
         val s = withoutWatched(MediasSnapshot(medias = sample), "703")

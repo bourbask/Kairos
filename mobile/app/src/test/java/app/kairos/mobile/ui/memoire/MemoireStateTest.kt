@@ -1,6 +1,7 @@
 package app.kairos.mobile.ui.memoire
 
 import app.kairos.mobile.data.ApiError
+import app.kairos.mobile.data.ToolMessage
 import app.kairos.mobile.data.ConversationSummary
 import app.kairos.mobile.data.Fact
 import app.kairos.mobile.data.Intention
@@ -70,7 +71,7 @@ class MemoireStateTest {
         fun mark(m: Any?) { if (m == null) hidden -= i.id else hidden += i.id }
 
         // Annulé dans la fenêtre : rien ne part, la carte revient.
-        val undone = completeCard(intentionCard(i, REFUSE), null, mark = { mark(it) }, undoWindow = { assertTrue(i.id in hidden); true }, call = { _, t, a -> calls += t to a; "" })
+        val undone = completeCard(intentionCard(i, REFUSE), null, mark = { mark(it) }, undoWindow = { assertTrue(i.id in hidden); true }, call = { _, t, a -> calls += t to a; ToolMessage() })
         assertEquals(DoneOutcome.Undone, undone)
         assertTrue(hidden.isEmpty())
         assertTrue(calls.isEmpty())
@@ -79,9 +80,10 @@ class MemoireStateTest {
         val done = completeCard(intentionCard(i, REFUSE), null, mark = { mark(it) }, undoWindow = { false }, call = { module, t, a ->
             assertEquals(MEMOIRE, module)
             calls += t to a
-            "Intention refusée."
+            ToolMessage("Intention refusée.", "done")
         })
-        assertEquals(DoneOutcome.Done("Intention refusée."), done)
+        assertEquals(DoneOutcome.Done("Intention refusée.", "done"), done)
+        assertNull(intentionNotice(done as DoneOutcome.Done))
         assertEquals("app_intention_set", calls.single().first)
         assertEquals(9L, calls.single().second["id"]!!.jsonPrimitive.long)
         assertEquals("refusee", calls.single().second["state"]!!.jsonPrimitive.content)
@@ -91,9 +93,15 @@ class MemoireStateTest {
         hidden.clear()
         val stale = completeCard(intentionCard(i, ACCEPT), null, mark = { mark(it) }, undoWindow = { false }, call = { _, _, a ->
             assertEquals("acceptee", a["state"]!!.jsonPrimitive.content)
-            STALE
+            ToolMessage(STALE, "stale")
         })
-        assertEquals(DoneOutcome.Done(STALE), stale)
+        assertEquals(DoneOutcome.Done(STALE, "stale"), stale)
+        // Seul l'imprévu s'annonce, décidé sur l'issue et non sur le libellé.
+        assertEquals(STALE, intentionNotice(stale as DoneOutcome.Done))
+        assertEquals("Autre libellé.", intentionNotice(DoneOutcome.Done("Autre libellé.", "stale")))
+        // Module plus ancien, sans issue : repli sur le libellé.
+        assertEquals(STALE, intentionNotice(DoneOutcome.Done(STALE)))
+        assertNull(intentionNotice(DoneOutcome.Done("Intention acceptée.")))
         assertEquals(setOf(9L), hidden)
         // Retirée de l'état gardé, sans attendre la relecture.
         val s = MemoireSnapshot(memory = Memory(intentions = listOf(i, i.copy(id = 10))))
@@ -111,13 +119,13 @@ class MemoireStateTest {
         val erased = mutableSetOf<String>()
         for (c in listOf(journalErasure(7), factErasure("sante.poids"), conversationErasure(3))) {
             // Annulé dans la fenêtre : rien ne part, l'élément revient.
-            val undone = completeCard(c, null, mark = { if (it == null) erased -= c.id else erased += c.id }, undoWindow = { true }, call = { _, t, a -> calls += t to a; "" })
+            val undone = completeCard(c, null, mark = { if (it == null) erased -= c.id else erased += c.id }, undoWindow = { true }, call = { _, t, a -> calls += t to a; ToolMessage() })
             assertEquals(DoneOutcome.Undone, undone)
             assertTrue(c.id !in erased && calls.none { it.first == c.done!!.tool })
             completeCard(c, null, mark = { if (it == null) erased -= c.id else erased += c.id }, undoWindow = { false }, call = { m, t, a ->
                 assertEquals(MEMOIRE, m)
                 calls += t to a
-                "ok"
+                ToolMessage("ok")
             })
         }
         assertEquals(listOf("app_journal_delete", "app_fact_forget", "app_conversation_delete"), calls.map { it.first })

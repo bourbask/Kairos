@@ -64,7 +64,6 @@ import app.kairos.mobile.ui.kit.StatusBanner
 import app.kairos.mobile.ui.kit.SwipeRow
 import app.kairos.mobile.ui.kit.Tone
 import app.kairos.mobile.ui.today.DoneOutcome
-import app.kairos.mobile.ui.today.InFlight
 import app.kairos.mobile.ui.today.completeCard
 import app.kairos.mobile.ui.today.refusal
 import kotlinx.coroutines.CoroutineScope
@@ -98,9 +97,10 @@ fun MediasScreen(
     val unauthorized by rememberUpdatedState(onUnauthorized)
     val notifier = LocalNotifier.current
     var refreshing by remember { mutableStateOf(false) }
-    var hidden by remember { mutableStateOf(emptySet<String>()) }
+    // Hors de l'écran : rouvrir l'espace pendant la fenêtre d'annulation ne permet pas un second envoi.
+    val pending = repository.watchedPending
+    val hidden by pending.hidden.collectAsState()
     var asking by rememberSaveable { mutableStateOf(false) }
-    val busy = remember { InFlight() }
     val scroll = rememberScrollState()
 
     fun refresh(force: Boolean = true) {
@@ -144,10 +144,10 @@ fun MediasScreen(
                 completeCard(
                     watchedCard(w),
                     null,
-                    mark = { m -> hidden = if (m == null) hidden - w.key else hidden + w.key },
+                    mark = { m -> pending.hide(w.key, m != null) },
                     undoWindow = { notifier.undo("Vu · ${w.title}") },
-                    call = repository::tool,
-                    busy = busy,
+                    call = repository::reply,
+                    busy = pending.busy,
                 )
             } catch (_: ApiError.Unauthorized) {
                 return@launch unauthorized()
@@ -161,8 +161,8 @@ fun MediasScreen(
                     } catch (_: ApiError.Unauthorized) {
                         return@launch unauthorized()
                     }
-                    if (repository.medias.value.issue == null) hidden = hidden - w.key
-                    watchedNotice(out.message)?.let { notifier.show(it) }
+                    if (repository.medias.value.issue == null) pending.hide(w.key, false)
+                    watchedNotice(out)?.let { notifier.show(it) }
                 }
                 is DoneOutcome.Refused -> notifier.show(out.message)
                 else -> Unit

@@ -1,5 +1,9 @@
 package app.kairos.mobile.ui.documents
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import app.kairos.mobile.data.ApiError
 import app.kairos.mobile.data.DocDeadline
 import app.kairos.mobile.data.DocExtraction
 import app.kairos.mobile.data.DocHit
@@ -9,6 +13,10 @@ import app.kairos.mobile.data.Documents
 import app.kairos.mobile.data.DocumentsSnapshot
 import app.kairos.mobile.ui.finances.issueOf
 import app.kairos.mobile.ui.kit.Tone
+import app.kairos.mobile.ui.today.refusal
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
@@ -148,6 +156,53 @@ fun passageSpans(passage: String): List<Pair<String, Boolean>> {
 }
 
 fun canSearch(q: String): Boolean = q.isNotBlank()
+
+/**
+ * Recherche où la dernière demande gagne : une nouvelle demande, ou [clear] (saisie
+ * modifiée), abandonne celle en cours ; une réponse ancienne n'est jamais affichée.
+ */
+class LatestSearch<T>(
+    private val scope: CoroutineScope,
+    private val search: suspend (String) -> T,
+    private val onUnauthorized: () -> Unit,
+) {
+    var results by mutableStateOf<T?>(null)
+        private set
+    var failed by mutableStateOf<String?>(null)
+        private set
+    var searching by mutableStateOf(false)
+        private set
+    private var job: Job? = null
+    private var seq = 0
+
+    fun run(query: String) {
+        if (!canSearch(query)) return
+        clear()
+        val n = seq
+        searching = true
+        job = scope.launch {
+            try {
+                val r = search(query.trim())
+                if (n == seq) results = r
+            } catch (_: ApiError.Unauthorized) {
+                onUnauthorized()
+            } catch (e: ApiError) {
+                if (n == seq) failed = refusal(e)
+            } finally {
+                if (n == seq) searching = false
+            }
+        }
+    }
+
+    fun clear() {
+        seq++
+        job?.cancel()
+        job = null
+        searching = false
+        results = null
+        failed = null
+    }
+}
 
 /** Nouvel état après une lecture : la réponse remplace l'ancien ; sinon il est gardé avec la raison. */
 fun documentsAfter(prev: DocumentsSnapshot, docs: Result<Documents>, now: String): DocumentsSnapshot =

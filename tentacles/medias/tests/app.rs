@@ -81,6 +81,7 @@ async fn fake(w: W) -> String {
                     "800" => ("movie", "Film Beta", "eng", 0),
                     "700" => ("movie", "Film Delta", "fra", 0),
                     "710" => ("movie", "Film Vu", "fra", 1),
+                    "503" => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
                     _ => return StatusCode::NOT_FOUND.into_response(),
                 };
                 Json(json!({"MediaContainer": {"Metadata": [{"ratingKey": k, "type": kind, "title": title,
@@ -419,6 +420,7 @@ async fn watched_by_key() {
     let e = setup().await;
     let v = call(&e.url, "app_media_watched", json!({"key": "700"})).await;
     assert!(v["message"].as_str().unwrap().contains("Film Delta"), "{v}");
+    assert_eq!(v["outcome"], "done");
     let l = logged(&e.w, "SCROBBLE");
     assert!(l.len() == 1 && l[0].starts_with("SCROBBLE key=700&"), "{l:?}");
 }
@@ -429,10 +431,26 @@ async fn watched_unknown_key_is_clear() {
     for key in ["999", "../x", ""] {
         let v = call(&e.url, "app_media_watched", json!({"key": key})).await;
         assert!(v["message"].as_str().unwrap().contains("introuvable"), "{key}: {v}");
+        assert_eq!(v["outcome"], "gone", "{key}: {v}");
     }
     let v = call(&e.url, "app_media_watched", json!({"key": "710"})).await;
     assert!(v["message"].as_str().unwrap().contains("déjà"), "{v}");
+    assert_eq!(v["outcome"], "already");
     assert!(logged(&e.w, "SCROBBLE").is_empty());
+}
+
+#[tokio::test]
+async fn watched_player_down_is_error() {
+    // Lecteur en échec : l'élément n'est pas déclaré disparu, l'application le remet en place.
+    let e = setup().await;
+    let v = raw(&e.url, "app_media_watched", json!({"key": "503"})).await;
+    assert_eq!(v["result"]["isError"], true, "{v}");
+    let e = setup_with(|m, _| {
+        m.insert("MEDIAS_PLEX_URL".into(), "http://127.0.0.1:9".into());
+    })
+    .await;
+    let v = raw(&e.url, "app_media_watched", json!({"key": "700"})).await;
+    assert_eq!(v["result"]["isError"], true, "{v}");
 }
 
 #[tokio::test]

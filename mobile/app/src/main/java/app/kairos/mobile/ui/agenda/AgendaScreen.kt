@@ -191,7 +191,7 @@ fun AgendaScreen(
                     null,
                     mark = { m -> hidden = if (m == null) hidden - task.id else hidden + task.id },
                     undoWindow = { undoWindow("Faite · ${task.title}") },
-                    call = repository::tool,
+                    call = repository::reply,
                     busy = tasksBusy,
                 )
             } catch (_: ApiError.Unauthorized) {

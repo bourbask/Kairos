@@ -36,6 +36,7 @@ pub(crate) fn why(name: &str, e: &SvcError) -> String {
     match e {
         SvcError::NotConfigured => format!("{name} non configuré"),
         SvcError::Unavailable => format!("{name} injoignable"),
+        SvcError::NotFound => format!("{name} : élément introuvable"),
         SvcError::Denied => format!("{name} : accès refusé"),
     }
 }

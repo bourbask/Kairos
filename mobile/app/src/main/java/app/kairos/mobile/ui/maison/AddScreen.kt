@@ -1,11 +1,6 @@
 package app.kairos.mobile.ui.maison
 
-import android.content.ActivityNotFoundException
-import android.content.Intent
 import android.os.SystemClock
-import android.speech.RecognizerIntent
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -60,6 +55,7 @@ import app.kairos.mobile.data.Product
 import app.kairos.mobile.data.Repository
 import app.kairos.mobile.scan.BarcodeCamera
 import app.kairos.mobile.ui.theme.Motion
+import app.kairos.mobile.voice.rememberDictation
 import java.time.LocalDate
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -462,12 +458,10 @@ private fun DishStep(
 private fun NameStep(name: String, onName: (String) -> Unit, onNext: () -> Unit, onNote: (String) -> Unit) {
     val focus = remember { FocusRequester() }
     val next by rememberUpdatedState(onNext)
-    val dictate = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
-        r.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()?.trim()?.takeIf { it.isNotEmpty() }?.let {
-            onName(it)
-            next()
-        }
-    }
+    val dictate = rememberDictation("Nom du produit", "Pas de dictée sur ce téléphone : écris le nom.", onText = {
+        onName(it)
+        next()
+    }, onNote = onNote)
     LaunchedEffect(Unit) { focus.requestFocus() }
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         OutlinedTextField(
@@ -481,18 +475,7 @@ private fun NameStep(name: String, onName: (String) -> Unit, onNext: () -> Unit,
         )
         Spacer(Modifier.weight(1f))
         Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            BigTile("Dicter", Modifier.weight(1f), enabled = true) {
-                try {
-                    dictate.launch(
-                        Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
-                            .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                            .putExtra(RecognizerIntent.EXTRA_LANGUAGE, "fr-FR")
-                            .putExtra(RecognizerIntent.EXTRA_PROMPT, "Nom du produit"),
-                    )
-                } catch (_: ActivityNotFoundException) {
-                    onNote("Pas de dictée sur ce téléphone : écris le nom.")
-                }
-            }
+            BigTile("Dicter", Modifier.weight(1f), enabled = true, onClick = dictate)
             BigTile("Suivant →", Modifier.weight(1f), enabled = name.isNotBlank(), highlighted = true, onClick = onNext)
         }
     }

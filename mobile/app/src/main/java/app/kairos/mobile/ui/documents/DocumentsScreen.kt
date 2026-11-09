@@ -61,7 +61,6 @@ import app.kairos.mobile.ui.kit.PrimaryAction
 import app.kairos.mobile.ui.kit.SpaceScaffold
 import app.kairos.mobile.ui.kit.StatePill
 import app.kairos.mobile.ui.theme.KairosColors
-import app.kairos.mobile.ui.today.refusal
 import kotlinx.coroutines.launch
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.buildJsonObject
@@ -206,27 +205,10 @@ private fun DeadlineCard(r: DeadlineRow) {
 @Composable
 private fun Search(search: suspend (String) -> List<DocHit>, onUnauthorized: () -> Unit, focus: FocusRequester) {
     val scope = rememberCoroutineScope()
+    val unauthorized by rememberUpdatedState(onUnauthorized)
     var query by rememberSaveable { mutableStateOf("") }
-    var results by remember { mutableStateOf<List<DocHit>?>(null) }
-    var failed by remember { mutableStateOf<String?>(null) }
-    var searching by remember { mutableStateOf(false) }
-    fun run() {
-        if (!canSearch(query) || searching) return
-        searching = true
-        failed = null
-        results = null
-        scope.launch {
-            try {
-                results = search(query.trim())
-            } catch (_: ApiError.Unauthorized) {
-                onUnauthorized()
-            } catch (e: ApiError) {
-                failed = refusal(e)
-            } finally {
-                searching = false
-            }
-        }
-    }
+    val state = remember { LatestSearch(scope, search, onUnauthorized = { unauthorized() }) }
+    fun run() = state.run(query)
 
     SectionHeader("Chercher")
     Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -235,7 +217,7 @@ private fun Search(search: suspend (String) -> List<DocHit>, onUnauthorized: () 
             onValueChange = {
                 query = it
                 // Résultats d'une autre recherche : retirés dès que la requête change.
-                results = null
+                state.clear()
             },
             label = { Text("Mot, organisme, référence…") },
             singleLine = true,
@@ -244,10 +226,10 @@ private fun Search(search: suspend (String) -> List<DocHit>, onUnauthorized: () 
             modifier = Modifier.weight(1f).focusRequester(focus),
         )
         Spacer(Modifier.width(4.dp))
-        TextButton(onClick = ::run, enabled = canSearch(query) && !searching) { Text(if (searching) "…" else "Chercher") }
+        TextButton(onClick = ::run, enabled = canSearch(query)) { Text(if (state.searching) "…" else "Chercher") }
     }
-    failed?.let { Caption(it, Modifier.padding(bottom = 6.dp)) }
-    val shown = results ?: return
+    state.failed?.let { Caption(it, Modifier.padding(bottom = 6.dp)) }
+    val shown = state.results ?: return
     if (shown.isEmpty()) Caption("Aucun résultat.")
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         shown.forEach { h -> HitRow(h) }

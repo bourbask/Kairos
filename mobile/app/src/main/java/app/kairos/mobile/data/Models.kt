@@ -161,7 +161,14 @@ const val PIECE = "pièce"
 
 /** Réponse d'un outil d'écriture. */
 @Serializable
-data class ToolMessage(val message: String = "")
+data class ToolMessage(
+    val message: String = "",
+    /**
+     * Issue d'un geste, pour décider sans lire le libellé : `done`, `already` (déjà fait),
+     * `stale` (plus à traiter), `gone` (inconnu). Absente d'un module plus ancien.
+     */
+    val outcome: String? = null,
+)
 
 /** Dernier état connu de la maison ; [offline] = la dernière actualisation a échoué. */
 @Serializable

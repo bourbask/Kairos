@@ -1426,10 +1426,15 @@ impl FoodServer {
         Ok(serde_json::Value::Array(out).to_string())
     }
 
-    #[tool(description = "Application : ranger une ligne de commande, ou la déclarer en rupture.")]
+    #[tool(
+        description = "Application : ranger une ligne de commande, ou la déclarer en rupture. Rend `message` (à afficher) et `outcome` : `done` (rangée), `already` (déjà traitée, ou commande plus à ranger : rien n'est refait)."
+    )]
     async fn app_order_line(&self, Parameters(a): Parameters<AppOrderLineArgs>) -> Out {
+        let already = |m: String| Ok(serde_json::json!({"message": m, "outcome": "already"}).to_string());
         let pending = self.store.orders(true).map_err(|e| e.to_string())?;
-        let o = pending.into_iter().find(|o| o.id == a.order).ok_or(format!("Commande {} : pas à ranger.", a.order))?;
+        let Some(o) = pending.into_iter().find(|o| o.id == a.order) else {
+            return already(format!("Commande {} : pas à ranger.", a.order));
+        };
         let line = o.lines.get(a.index).ok_or(format!("Commande {} : pas de ligne {}.", o.id, a.index))?;
         let missing = a.missing.unwrap_or(false);
         let mut l = line.clone();
@@ -1443,12 +1448,12 @@ impl FoodServer {
             }
             Store::check_in(&l)?;
         }
-        // La ligne est réservée avant d'écrire le stock : un second envoi est refusé.
+        // La ligne est réservée avant d'écrire le stock : un second envoi ne range rien.
         // ponytail: réservation et écriture du stock hors d'une même transaction ;
         // un arrêt entre les deux laisse la ligne traitée sans stock. Une seule
         // transaction si cela arrive en pratique.
         if !self.store.claim_line(o.id, a.index, if missing { "rupture" } else { "rangee" }).map_err(|e| e.to_string())? {
-            return Err(format!("{} : déjà traité.", line.name));
+            return already(format!("{} : déjà traité.", line.name));
         }
         let msg = if missing {
             format!("{} : rupture, non stocké.", line.name)
@@ -1459,7 +1464,7 @@ impl FoodServer {
         if remaining == 0 {
             self.store.mark_received(o.id).map_err(|e| e.to_string())?;
         }
-        Ok(serde_json::json!({"message": msg, "remaining": remaining}).to_string())
+        Ok(serde_json::json!({"message": msg, "remaining": remaining, "outcome": "done"}).to_string())
     }
 
     #[tool(
@@ -1930,7 +1935,7 @@ mod tests {
         let s = server();
         let id = order(&s);
         let j = v(s.app_order_line(line_args(id, 1, serde_json::json!({"expiry": "2030-01-15"}))).await);
-        assert_eq!(j["remaining"], 1);
+        assert_eq!((j["remaining"].as_u64(), j["outcome"].as_str()), (Some(1), Some("done")));
         assert!(j["message"].as_str().unwrap().contains("Yaourts nature"), "{j}");
         let lots = s.store.lots(None, Some("yaourts")).unwrap();
         assert_eq!((lots.len(), lots[0].expiry.as_deref(), lots[0].estimated), (1, Some("2030-01-15"), false));
@@ -1952,12 +1957,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn order_line_twice_refused() {
+    async fn order_line_twice_is_already() {
         let s = server();
         let id = order(&s);
         s.app_order_line(line_args(id, 1, serde_json::json!({"location": "congelateur"}))).await.unwrap();
-        let e = s.app_order_line(line_args(id, 1, serde_json::json!({}))).await.unwrap_err();
-        assert!(e.contains("déjà"), "{e}");
+        let j = v(s.app_order_line(line_args(id, 1, serde_json::json!({}))).await);
+        assert_eq!(j["outcome"], "already", "{j}");
+        assert!(j["message"].as_str().unwrap().contains("déjà"), "{j}");
         let lots = s.store.lots(None, Some("yaourts")).unwrap();
         assert_eq!((lots.len(), lots[0].qty, lots[0].location.as_str()), (1, 8.0, "congelateur"));
         assert!(s.app_order_line(line_args(id, 7, serde_json::json!({}))).await.is_err());
@@ -1973,8 +1979,8 @@ mod tests {
         assert!(s.store.orders(true).unwrap().is_empty());
         assert_eq!(s.store.orders(false).unwrap()[0].status, "retiree");
         assert_eq!(s.app_orders().await.unwrap(), "[]");
-        let e = s.app_order_line(line_args(id, 1, serde_json::json!({}))).await.unwrap_err();
-        assert_eq!(e, format!("Commande {id} : pas à ranger."));
+        let j = v(s.app_order_line(line_args(id, 1, serde_json::json!({}))).await);
+        assert_eq!((j["message"].as_str(), j["outcome"].as_str()), (Some(format!("Commande {id} : pas à ranger.").as_str()), Some("already")));
     }
 
     #[tokio::test]

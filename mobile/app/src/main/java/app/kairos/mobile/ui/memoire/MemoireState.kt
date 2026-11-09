@@ -8,6 +8,8 @@ import app.kairos.mobile.data.JournalEntry
 import app.kairos.mobile.data.Memory
 import app.kairos.mobile.data.MemoireSnapshot
 import app.kairos.mobile.ui.finances.issueOf
+import app.kairos.mobile.ui.today.DoneOutcome
+import app.kairos.mobile.ui.today.surprise
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -26,8 +28,14 @@ const val MEMOIRE = "memoire"
 const val ACCEPT = "acceptee"
 const val REFUSE = "refusee"
 
-/** Réponse du module quand l'intention n'est plus à traiter : la carte disparaît sans erreur. */
+/**
+ * Réponse du module quand l'intention n'est plus à traiter : la carte disparaît sans erreur.
+ * Libellé gardé pour un module sans `outcome` (déployé avant l'application).
+ */
 const val STALE = "Cette intention est échue ou déjà traitée."
+
+/** Message à annoncer après accepter / refuser : seulement si l'intention n'était plus à traiter. */
+fun intentionNotice(out: DoneOutcome.Done): String? = out.surprise { it != STALE }
 
 /** Échéances proposées à l'ajout rapide : libellé, jours. */
 val DEADLINES = listOf("Aujourd'hui" to 0, "3 jours" to 3, "1 semaine" to 7, "1 mois" to 30)

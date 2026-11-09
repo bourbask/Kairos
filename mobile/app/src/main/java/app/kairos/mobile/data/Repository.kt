@@ -26,6 +26,7 @@ import app.kairos.mobile.ui.medias.mediasAfter
 import app.kairos.mobile.ui.medias.withoutWatched
 import app.kairos.mobile.ui.memoire.cacheable
 import app.kairos.mobile.ui.memoire.memoireAfter
+import app.kairos.mobile.ui.today.Pending
 import kotlinx.serialization.DeserializationStrategy
 import java.io.File
 import java.time.LocalDate
@@ -96,6 +97,15 @@ class Repository(
 
     private val _documents = MutableStateFlow(DocumentsSnapshot())
     val documents: StateFlow<DocumentsSnapshot> = _documents.asStateFlow()
+
+    /** Intentions acceptées ou refusées, en attente de leur issue (survit à l'écran Mémoire). */
+    val intentionsPending = Pending<Long>()
+
+    /** Effacements Mémoire en attente de leur issue. */
+    val erasuresPending = Pending<String>()
+
+    /** Éléments marqués vus, en attente de leur issue (survit à l'écran Médias). */
+    val watchedPending = Pending<String>()
 
     /** Relit l'état enregistré (une seule fois) ; appelé d'office par [refresh] et [mark]. */
     suspend fun load() = loadLock.withLock {
@@ -323,8 +333,11 @@ class Repository(
     suspend fun maisonTool(name: String, args: JsonObject): String = tool(ALIMENTATION, name, args)
 
     /** Outil d'écriture `app_*` d'un module ; rend son message. */
-    suspend fun tool(module: String, name: String, args: JsonObject): String =
-        api.tool(module, name, ToolMessage.serializer(), args).message
+    suspend fun tool(module: String, name: String, args: JsonObject): String = reply(module, name, args).message
+
+    /** Outil d'écriture `app_*` d'un module ; rend sa réponse entière (message et issue). */
+    suspend fun reply(module: String, name: String, args: JsonObject): ToolMessage =
+        api.tool(module, name, ToolMessage.serializer(), args)
 
     /** Pose ou retire ([mark] = null) la marque de l'élément [key] du jour [day]. */
     suspend fun mark(day: String, key: String, mark: Mark?) {

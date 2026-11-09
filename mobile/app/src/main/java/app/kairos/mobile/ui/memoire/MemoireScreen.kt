@@ -1,10 +1,5 @@
 package app.kairos.mobile.ui.memoire
 
-import android.content.ActivityNotFoundException
-import android.content.Intent
-import android.speech.RecognizerIntent
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -67,8 +62,10 @@ import app.kairos.mobile.data.ConversationSummary
 import app.kairos.mobile.data.Fact
 import app.kairos.mobile.data.FactValue
 import app.kairos.mobile.data.Intention
+import app.kairos.mobile.voice.rememberDictation
 import app.kairos.mobile.data.JournalEntry
 import app.kairos.mobile.data.Mark
+import app.kairos.mobile.data.ToolMessage
 import app.kairos.mobile.data.Repository
 import app.kairos.mobile.ui.finances.syncLabel
 import app.kairos.mobile.ui.kit.LocalAmountsMasked
@@ -80,7 +77,6 @@ import app.kairos.mobile.ui.overlay.anchorTo
 import app.kairos.mobile.ui.overlay.rememberOverlayState
 import app.kairos.mobile.ui.overlay.underOverlays
 import app.kairos.mobile.ui.today.DoneOutcome
-import app.kairos.mobile.ui.today.InFlight
 import app.kairos.mobile.ui.kit.SwipeRow
 import app.kairos.mobile.ui.today.completeCard
 import app.kairos.mobile.ui.today.refusal
@@ -141,12 +137,14 @@ fun MemoireScreen(
     // ponytail: résultats en mémoire vive seulement, jamais écrits sur l'appareil.
     var found by remember { mutableStateOf<Found?>(null) }
     var refreshing by remember { mutableStateOf(false) }
-    var hidden by remember { mutableStateOf(emptySet<Long>()) }
+    // Hors de l'écran : rouvrir l'espace pendant la fenêtre d'annulation ne permet pas un second envoi.
+    val intents = repository.intentionsPending
+    val erasures = repository.erasuresPending
+    val hidden by intents.hidden.collectAsState()
     var revealed by remember { mutableStateOf(emptySet<Long>()) }
     // Éléments en cours d'effacement ou effacés : jamais réaffichés, recherche comprise.
-    var erased by remember { mutableStateOf(emptySet<String>()) }
+    val erased by erasures.hidden.collectAsState()
     var factKey by rememberSaveable { mutableStateOf<String?>(null) }
-    val busy = remember { InFlight() }
     val detail = rememberOverlayState(factKey != null, Origin.Anchor)
     val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     val today = LocalDate.now().toString()
@@ -196,10 +194,10 @@ fun MemoireScreen(
                 completeCard(
                     intentionCard(i, state),
                     null,
-                    mark = { m -> hidden = if (m == null) hidden - i.id else hidden + i.id },
+                    mark = { m -> intents.hide(i.id, m != null) },
                     undoWindow = { undoWindow("${if (state == ACCEPT) "Acceptée" else "Refusée"} · ${i.what}") },
-                    call = repository::tool,
-                    busy = busy,
+                    call = repository::reply,
+                    busy = intents.busy,
                 )
             } catch (_: ApiError.Unauthorized) {
                 return@launch unauthorized()
@@ -213,9 +211,9 @@ fun MemoireScreen(
                     } catch (_: ApiError.Unauthorized) {
                         return@launch unauthorized()
                     }
-                    if (repository.memoire.value.issue == null) hidden = hidden - i.id
+                    if (repository.memoire.value.issue == null) intents.hide(i.id, false)
                     // Seul l'imprévu s'annonce : un message de confirmation retarderait l'annulation du geste suivant.
-                    if (out.message == STALE) notifier.show(out.message)
+                    intentionNotice(out)?.let { notifier.show(it) }
                 }
                 is DoneOutcome.Refused -> notifier.show(out.message)
                 else -> Unit
@@ -230,10 +228,10 @@ fun MemoireScreen(
                 completeCard(
                     c,
                     null,
-                    mark = { m -> erased = if (m == null) erased - c.id else erased + c.id },
+                    mark = { m -> erasures.hide(c.id, m != null) },
                     undoWindow = { undoWindow(label) },
-                    call = repository::tool,
-                    busy = busy,
+                    call = repository::reply,
+                    busy = erasures.busy,
                 )
             } catch (_: ApiError.Unauthorized) {
                 return@launch unauthorized()
@@ -261,8 +259,8 @@ fun MemoireScreen(
                 null,
                 mark = { m -> repository.mark(today, laterKey(i.id), m?.let { Mark.PlusTard }) },
                 undoWindow = { undoWindow("Plus tard · ${i.what}") },
-                call = { _, _, _ -> "" },
-                busy = busy,
+                call = { _, _, _ -> ToolMessage() },
+                busy = intents.busy,
             )
         }
     }
@@ -384,29 +382,6 @@ fun MemoireScreen(
 private fun Caption(text: String, modifier: Modifier = Modifier) =
     Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = modifier)
 
-/** Dictée par la reconnaissance vocale du téléphone ; sans elle, le clavier reste. */
-@Composable
-private fun rememberDictation(prompt: String, onText: (String) -> Unit, onNote: (String) -> Unit): () -> Unit {
-    val text by rememberUpdatedState(onText)
-    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
-        r.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()?.trim()?.takeIf { it.isNotEmpty() }?.let(text)
-    }
-    return {
-        try {
-            launcher.launch(
-                Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
-                    .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                    .putExtra(RecognizerIntent.EXTRA_LANGUAGE, "fr-FR")
-                    .putExtra(RecognizerIntent.EXTRA_PROMPT, prompt)
-                    // Notes personnelles : reconnaissance sur l'appareil quand elle est disponible.
-                    .putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true),
-            )
-        } catch (_: ActivityNotFoundException) {
-            onNote("Pas de dictée sur ce téléphone : écris plutôt.")
-        }
-    }
-}
-
 /** Champ de saisie avec dictée et bouton d'envoi ; vidé quand l'envoi a abouti. */
 @Composable
 private fun Composer(
@@ -419,7 +394,7 @@ private fun Composer(
     val scope = rememberCoroutineScope()
     var text by rememberSaveable { mutableStateOf("") }
     var sending by remember { mutableStateOf(false) }
-    val dictate = rememberDictation(label, onText = { text = if (text.isBlank()) it else "$text $it" }, onNote = onNote)
+    val dictate = rememberDictation(label, "Pas de dictée sur ce téléphone : écris plutôt.", onText = { text = if (text.isBlank()) it else "$text $it" }, onNote = onNote)
     Column(Modifier.fillMaxWidth().padding(bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         OutlinedTextField(
             value = text,

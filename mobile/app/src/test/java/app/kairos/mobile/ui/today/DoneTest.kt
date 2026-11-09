@@ -1,6 +1,7 @@
 package app.kairos.mobile.ui.today
 
 import app.kairos.mobile.data.ApiError
+import app.kairos.mobile.data.ToolMessage
 import app.kairos.mobile.data.Card
 import app.kairos.mobile.data.CardDone
 import app.kairos.mobile.data.KairosJson
@@ -29,10 +30,10 @@ class DoneTest {
         val log = mutableListOf<String>()
         val mark: suspend (Mark?) -> Unit = { log += "mark $it" }
         val window: suspend () -> Boolean = { log += "window"; gate?.await(); undo }
-        val call: suspend (String, String, JsonObject) -> String = { m, t, a ->
+        val call: suspend (String, String, JsonObject) -> ToolMessage = { m, t, a ->
             log += "call $m/$t $a"
             fail?.let { throw it }
-            "Repas noté : Curry"
+            ToolMessage("Repas noté : Curry")
         }
     }
 
@@ -119,5 +120,25 @@ class DoneTest {
         // L'effet du module ne se défait pas depuis le fil.
         assertFalse(restorable(TimelineItem(meal, Phase.Fait)))
         assertFalse(restorable(TimelineItem(Card(id = "m", title = "m", state = "fait"), Phase.Fait)))
+    }
+
+    @Test
+    fun pending_outlives_the_screen() = runBlocking {
+        // Geste lancé depuis un écran ; l'écran rouvert ne voit que [pending], gardé hors de lui.
+        val pending = Pending<String>()
+        val gate = CompletableDeferred<Unit>()
+        val f = Fake(gate = gate)
+        val first = async(start = CoroutineStart.UNDISPATCHED) {
+            completeCard(meal, null, { m -> pending.hide("soir", m != null) }, f.window, f.call, pending.busy)
+        }
+        assertEquals(setOf("soir"), pending.hidden.value)
+        assertEquals(DoneOutcome.Ignored, completeCard(meal, null, { m -> pending.hide("soir", m != null) }, f.window, f.call, pending.busy))
+        gate.complete(Unit)
+        assertTrue(first.await() is DoneOutcome.Done)
+        assertEquals(1, f.log.count { it.startsWith("call") })
+        // Toujours cachée tant que l'écran ne l'a pas relâchée (relecture confirmée).
+        assertEquals(setOf("soir"), pending.hidden.value)
+        pending.hide("soir", false)
+        assertTrue(pending.hidden.value.isEmpty())
     }
 }
