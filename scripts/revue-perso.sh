@@ -33,9 +33,15 @@ command -v claude >/dev/null || { echo "revue-perso : modèle indisponible, publ
 prompt=$(cat <<'P'
 Tu relis, avant publication sur un dépôt GitHub PUBLIC, le texte fourni (lignes de code ou de doc ajoutées, messages de commit, titre et description de PR ou de release).
 
-Question : ce texte révèle-t-il une donnée personnelle réelle, de l'auteur ou d'un tiers ? Juge le SENS, pas les mots :
-- À signaler : identité réelle (nom, prénom rattaché à une personne, pseudo), coordonnées (téléphone, email personnel, adresse), lieu de vie ou de travail, trajets, employeur, clients, collègues, proches, salaire ou situation financière, santé, habitudes de vie identifiantes, noms de machines ou de domaines personnels, fournisseurs et topologie de l'infrastructure personnelle, faiblesses de sécurité de cette infrastructure.
-- À NE PAS signaler : exemples manifestement fictifs (« Exemple », example.com, « Série Alpha »), noms de lieux ou de marques cités sans lien avec une personne réelle, identifiants de code, noms de bibliothèques, valeurs de test génériques, l'auteur Git déjà public.
+Contexte : ce dépôt EST un assistant personnel auto-hébergé. Décrire ses fonctionnalités, ses modules (finances, alimentation, agenda, médias, documents, emploi…), son architecture générique, ses choix techniques et de sécurité en termes généraux N'EST PAS une donnée personnelle.
+
+Question : ce texte révèle-t-il un FAIT RÉEL et PRÉCIS sur une personne réelle (l'auteur ou un tiers) ? Exemples à signaler :
+- identité réelle (nom, prénom rattaché à une personne, pseudo), coordonnées (téléphone, email personnel, adresse postale) ;
+- lieu réel de vie ou de travail, trajet réel, employeur ou clients réels, collègues ou proches réels ;
+- valeurs réelles de sa vie : salaire ou prétentions réels, montants réels de comptes ou dépenses, contenu réel de son domicile, jours ou horaires réels de sa semaine, santé ;
+- identifiants réels de son infrastructure : nom de domaine, nom de machine, hébergeur ou fournisseur nommés, adresses IP, ports exposés, faiblesse de sécurité de SON installation.
+À NE PAS signaler : une fonctionnalité décrite en général (« suivre l'épargne », « jours sur site configurables »), des exemples manifestement fictifs (« Exemple », example.com, « Série Alpha », montants ronds d'illustration), des noms de lieux ou de marques sans lien avec une personne réelle, des identifiants de code, des bibliothèques, l'auteur Git public.
+Dans le doute sur un exemple : signale-le seulement s'il paraît tiré de la vie réelle (précision invraisemblable pour une illustration).
 
 Réponds UNIQUEMENT par un objet JSON sur une ligne :
 {"verdict":"ok"} ou {"verdict":"risque","zones":[{"emplacement":"fichier:ligne ou message/titre/corps","nature":"catégorie de donnée, sans la recopier"}]}

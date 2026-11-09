@@ -26,6 +26,8 @@ import java.time.LocalTime
 
 class AgendaStateTest {
     private val today = LocalDate.of(2026, 11, 8)
+    // Horloge figée : le formulaire de test reste « à venir » quel que soit le jour réel.
+    private val clock = LocalDateTime.of(2026, 11, 8, 12, 0)
 
     @Test
     fun day_strip_seven_days() {
@@ -59,13 +61,13 @@ class AgendaStateTest {
 
     @Test
     fun add_form_validation() {
-        assertNull(formError(valid))
-        assertNotNull("titre vide", formError(valid.copy(title = "   ")))
-        assertNotNull("titre trop long", formError(valid.copy(title = "x".repeat(201))))
-        assertNotNull("durée absente", formError(valid.copy(span = null)))
-        assertNotNull("heure absente", formError(valid.copy(start = null)))
+        assertNull(formError(valid, clock))
+        assertNotNull("titre vide", formError(valid.copy(title = "   "), clock))
+        assertNotNull("titre trop long", formError(valid.copy(title = "x".repeat(201)), clock))
+        assertNotNull("durée absente", formError(valid.copy(span = null), clock))
+        assertNotNull("heure absente", formError(valid.copy(start = null), clock))
         // Journée entière : pas d'heure demandée.
-        assertNull(formError(valid.copy(span = Span.Day, start = null)))
+        assertNull(formError(valid.copy(span = Span.Day, start = null), clock))
         // Aujourd'hui : une heure déjà passée est refusée, pas une heure à venir ni une journée.
         val now = LocalDateTime.of(2026, 11, 9, 14, 0)
         assertNotNull("heure passée", formError(valid, now))
@@ -91,17 +93,17 @@ class AgendaStateTest {
         var calls = 0
         val busy = InFlight()
         val call: suspend (JsonObject) -> String = { calls++; gate.await(); "Événement ajouté." }
-        val first = async(start = CoroutineStart.UNDISPATCHED) { submitEvent(valid, busy, call = call) }
-        val second = async(start = CoroutineStart.UNDISPATCHED) { submitEvent(valid, busy, call = call) }
+        val first = async(start = CoroutineStart.UNDISPATCHED) { submitEvent(valid, busy, clock, call = call) }
+        val second = async(start = CoroutineStart.UNDISPATCHED) { submitEvent(valid, busy, clock, call = call) }
         assertEquals(AddOutcome.Ignored, second.await())
         gate.complete(Unit)
         assertEquals(AddOutcome.Added("Événement ajouté."), first.await())
         assertEquals(1, calls)
         // Formulaire invalide : rien ne part.
-        assertTrue(submitEvent(valid.copy(title = ""), busy, call = call) is AddOutcome.Invalid)
+        assertTrue(submitEvent(valid.copy(title = ""), busy, clock, call = call) is AddOutcome.Invalid)
         assertEquals(1, calls)
         // Refus du module : raison affichée, le panneau reste ouvert.
-        val refused = submitEvent(valid, busy) { throw ApiError.Server(422, "agenda travail non configuré") }
+        val refused = submitEvent(valid, busy, clock) { throw ApiError.Server(422, "agenda travail non configuré") }
         assertEquals(AddOutcome.Refused("agenda travail non configuré"), refused)
     }
 
