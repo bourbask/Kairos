@@ -4,7 +4,7 @@ pub mod remotive;
 pub mod remoteok;
 pub mod jobicy;
 pub mod weworkremotely;
-pub mod linkedin_email;
+pub mod email_alerts;
 
 use async_trait::async_trait;
 use crate::models::JobOffer;

@@ -152,7 +152,7 @@ async fn main() -> anyhow::Result<()> {
                 Box::new(collectors::remoteok::RemoteOkCollector::new()),
                 Box::new(collectors::jobicy::JobicyCollector::new()),
                 Box::new(collectors::weworkremotely::WeWorkRemotelyCollector::new()),
-                Box::new(collectors::linkedin_email::LinkedInEmailCollector::new()),
+                Box::new(collectors::email_alerts::EmailAlertCollector::new()),
             ];
             // Adzuna (UE, contrats permanents + salaire) — activé si les clés API sont présentes.
             if let (Ok(id), Ok(key)) = (std::env::var("ADZUNA_APP_ID"), std::env::var("ADZUNA_API_KEY")) {

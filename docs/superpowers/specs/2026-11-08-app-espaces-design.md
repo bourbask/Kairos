@@ -115,13 +115,18 @@ résumées, leçons).
 - **Journal** : les entrées récentes datées, recherche ; ajout d'une note
   (clavier ou dictée). Les entrées marquées sensibles sont masquées par défaut
   (tap pour afficher), et toujours masquées quand les montants le sont.
+  « Supprimer » sur une entrée affichée (une entrée sensible se révèle d'abord).
 - **Ce que Kairos sait de toi** : faits groupés par thème (préfixe de clé),
-  valeur courante ; tap = historique des valeurs ; correction d'une valeur.
+  valeur courante ; tap = historique des valeurs ; correction d'une valeur ;
+  « Oublier ce fait » efface la valeur et tout son historique.
 - **Conversations** : les dernières, avec leur résumé, sujets et décisions ;
-  recherche.
+  recherche ; « Supprimer ».
 
-Hors du premier jet : modifier la personnalité de l'assistant, supprimer un
-fait ou une entrée de journal, éditer une leçon.
+Les effacements sont définitifs, après la fenêtre d'annulation de 4 s des
+autres gestes. Ils passent par des outils `app_*`, que le moteur ne voit pas.
+
+Hors du premier jet : modifier la personnalité de l'assistant (seulement depuis
+l'hôte), éditer une leçon.
 
 ## Espace Médias
 

@@ -26,7 +26,6 @@ import app.kairos.mobile.ui.medias.mediasAfter
 import app.kairos.mobile.ui.medias.withoutWatched
 import app.kairos.mobile.ui.memoire.cacheable
 import app.kairos.mobile.ui.memoire.memoireAfter
-import app.kairos.mobile.ui.memoire.withoutIntention
 import kotlinx.serialization.DeserializationStrategy
 import java.io.File
 import java.time.LocalDate
@@ -37,11 +36,13 @@ import java.time.LocalDateTime
  * stockage privé : sans serveur, l'application reste lisible.
  * Les marques « fait » / « plus tard » sont locales à l'appareil, par jour,
  * indexées par [Card.key].
+ * Fichiers chiffrés par [codec].
  * Accès disque hors du fil principal ; une erreur disque n'interrompt jamais l'affichage.
  */
 class Repository(
     private val api: KairosApi,
     private val dir: File,
+    private val codec: CacheCodec,
     private val today: () -> LocalDate = LocalDate::now,
 ) {
     private val snapshotFile = File(dir, "snapshot.json")
@@ -257,9 +258,9 @@ class Repository(
         if (m.isSuccess) write(memoireFile, MemoireSnapshot.serializer(), cacheable(next))
     }
 
-    /** Retire une intention traitée sans attendre le module (relue à la prochaine actualisation). */
-    suspend fun dropIntention(id: Long) = memoireLock.withLock {
-        val next = _memoire.updateAndGet { withoutIntention(it, id) }
+    /** Retire un élément traité ou effacé sans attendre le module (relu à la prochaine actualisation). */
+    suspend fun dropFromMemoire(change: (MemoireSnapshot) -> MemoireSnapshot) = memoireLock.withLock {
+        val next = _memoire.updateAndGet(change)
         write(memoireFile, MemoireSnapshot.serializer(), cacheable(next))
     }
 
@@ -375,7 +376,19 @@ class Repository(
     }
 
     private suspend fun <T> read(file: File, serializer: KSerializer<T>): T? = withContext(Dispatchers.IO) {
-        runCatching { KairosJson.decodeFromString(serializer, file.readText()) }.getOrNull()
+        runCatching {
+            val bytes = file.readBytes()
+            codec.open(bytes)?.let { return@runCatching KairosJson.decodeFromString(serializer, it) }
+            // Marques locales d'avant le chiffrement : le serveur ne peut pas les rendre, elles sont reprises
+            // puis réécrites chiffrées. Tout autre cache illisible est effacé et se recharge.
+            if (file == marksFile) {
+                runCatching { KairosJson.decodeFromString(serializer, String(bytes)) }.getOrNull()?.let { legacy ->
+                    write(file, serializer, legacy)
+                    return@runCatching legacy
+                }
+            }
+            null.also { file.delete() }
+        }.getOrNull()
     }
 
     private suspend fun <T> write(file: File, serializer: KSerializer<T>, value: T) {
@@ -383,7 +396,7 @@ class Repository(
             runCatching {
                 dir.mkdirs()
                 val tmp = File(dir, file.name + ".tmp")
-                tmp.writeText(KairosJson.encodeToString(serializer, value))
+                tmp.writeBytes(codec.seal(KairosJson.encodeToString(serializer, value)))
                 check(tmp.renameTo(file))
             }
         }

@@ -88,6 +88,26 @@ fun intentionCard(i: Intention, state: String): Card = Card(
 fun withoutIntention(s: MemoireSnapshot, id: Long): MemoireSnapshot =
     s.copy(memory = s.memory?.let { m -> m.copy(intentions = m.intentions.filterNot { it.id == id }) })
 
+/** Effacements définitifs, sous la forme d'un geste « fait » : même fenêtre d'annulation. */
+fun journalErasure(id: Long): Card = erasure("journal/$id", "app_journal_delete", buildJsonObject { put("id", id) })
+fun factErasure(key: String): Card = erasure("fait/$key", "app_fact_forget", buildJsonObject { put("key", key) })
+fun conversationErasure(id: Long): Card = erasure("conversation/$id", "app_conversation_delete", buildJsonObject { put("id", id) })
+
+private fun erasure(id: String, tool: String, args: JsonObject) = Card(id = id, title = "", module = MEMOIRE, done = CardDone(tool, args))
+
+/** Retire de l'état gardé l'élément effacé par [c], sans attendre la relecture. */
+fun withoutErased(s: MemoireSnapshot, c: Card): MemoireSnapshot {
+    val (kind, ref) = c.id.split('/', limit = 2)
+    return s.copy(memory = s.memory?.let { m ->
+        when (kind) {
+            "journal" -> m.copy(journal = m.journal.filterNot { it.id.toString() == ref })
+            "fait" -> m.copy(facts = m.facts.filterNot { it.key == ref })
+            "conversation" -> m.copy(conversations = m.conversations.filterNot { it.id.toString() == ref })
+            else -> m
+        }
+    })
+}
+
 /** Texte d'une entrée, ou null si elle reste masquée : sensible, pas révélée, ou montants masqués. */
 fun shownText(e: JournalEntry, revealed: Set<Long>, masked: Boolean): String? =
     if (e.sensitive && (masked || e.id !in revealed)) null else e.text

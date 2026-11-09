@@ -1,6 +1,7 @@
 package app.kairos.mobile.ui.memoire
 
 import app.kairos.mobile.data.ApiError
+import app.kairos.mobile.data.ConversationSummary
 import app.kairos.mobile.data.Fact
 import app.kairos.mobile.data.Intention
 import app.kairos.mobile.data.JournalEntry
@@ -102,6 +103,40 @@ class MemoireStateTest {
         val refused = completeCard(intentionCard(i, REFUSE), null, mark = { mark(it) }, undoWindow = { false }, call = { _, _, _ -> throw ApiError.Offline })
         assertTrue(refused is DoneOutcome.Refused)
         assertTrue(hidden.isEmpty())
+    }
+
+    @Test
+    fun erasures_call_app_tools_and_leave_state() = runBlocking {
+        val calls = mutableListOf<Pair<String, JsonObject>>()
+        val erased = mutableSetOf<String>()
+        for (c in listOf(journalErasure(7), factErasure("sante.poids"), conversationErasure(3))) {
+            // Annulé dans la fenêtre : rien ne part, l'élément revient.
+            val undone = completeCard(c, null, mark = { if (it == null) erased -= c.id else erased += c.id }, undoWindow = { true }, call = { _, t, a -> calls += t to a; "" })
+            assertEquals(DoneOutcome.Undone, undone)
+            assertTrue(c.id !in erased && calls.none { it.first == c.done!!.tool })
+            completeCard(c, null, mark = { if (it == null) erased -= c.id else erased += c.id }, undoWindow = { false }, call = { m, t, a ->
+                assertEquals(MEMOIRE, m)
+                calls += t to a
+                "ok"
+            })
+        }
+        assertEquals(listOf("app_journal_delete", "app_fact_forget", "app_conversation_delete"), calls.map { it.first })
+        assertEquals(7L, calls[0].second["id"]!!.jsonPrimitive.long)
+        assertEquals("sante.poids", calls[1].second["key"]!!.jsonPrimitive.content)
+        assertEquals(3L, calls[2].second["id"]!!.jsonPrimitive.long)
+        assertEquals(3, erased.size)
+
+        val s = MemoireSnapshot(
+            memory = Memory(
+                journal = listOf(JournalEntry(7), JournalEntry(8)),
+                facts = listOf(Fact("sante.poids", "80"), Fact("sante.taille", "180")),
+                conversations = listOf(ConversationSummary(3), ConversationSummary(4)),
+            ),
+        )
+        val m = listOf(journalErasure(7), factErasure("sante.poids"), conversationErasure(3)).fold(s, ::withoutErased).memory!!
+        assertEquals(listOf(8L), m.journal.map { it.id })
+        assertEquals(listOf("sante.taille"), m.facts.map { it.key })
+        assertEquals(listOf(4L), m.conversations.map { it.id })
     }
 
     @Test

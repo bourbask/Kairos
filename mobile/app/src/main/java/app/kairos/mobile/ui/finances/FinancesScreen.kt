@@ -1,7 +1,5 @@
 package app.kairos.mobile.ui.finances
 
-import android.app.Activity
-import android.view.WindowManager
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -36,7 +34,6 @@ import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -52,7 +49,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -126,13 +122,6 @@ fun FinancesScreen(
         // Retour rapide (autre application, écran éteint) : pas de nouvel appel.
         refresh(force = false)
         onPauseOrDispose {}
-    }
-
-    // Montants visibles : ni capture d'écran ni aperçu dans les applications récentes.
-    val activity = LocalContext.current as? Activity
-    DisposableEffect(activity, masked) {
-        if (!masked) activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
-        onDispose { activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_SECURE) }
     }
 
     val cycle = snapshot.cycle
