@@ -1111,7 +1111,7 @@ async fn skipped_days_are_caught_up_next_night() {
     let mut fx = fixture("JB_N1", NIGHT_USAGES, vec![]).await;
     set_etat(&fx.rec, "extraction", "2026-10-30");
     episode(&fx.rec, "2026-10-31", "Je cours le samedi.");
-    episode(&fx.rec, "2026-11-08", "J'habite à Lyon.");
+    episode(&fx.rec, "2026-11-08", "J'habite à Ville-A.");
     run(Job::Summaries, at(9, 3, 0), &mut fx.ctx).await.unwrap();
     assert!(applied_days(&fx.rec).is_empty());
     assert_eq!(etat(&fx.rec, "extraction"), (Some("2026-10-30".into()), "modele_indisponible".into()));
@@ -1131,7 +1131,7 @@ async fn skipped_days_are_caught_up_next_night() {
 async fn skipped_step_is_recorded() {
     let mut fx = fixture("JB_N2", &[], vec![]).await;
     set_etat(&fx.rec, "extraction", "2026-11-07");
-    episode(&fx.rec, "2026-11-08", "J'habite à Lyon.");
+    episode(&fx.rec, "2026-11-08", "J'habite à Ville-A.");
     fx.rec.lots.lock().unwrap().push(lot("2026-W41", false));
     run(Job::Summaries, at(9, 3, 0), &mut fx.ctx).await.unwrap();
     assert_eq!(etat(&fx.rec, "extraction"), (Some("2026-11-07".into()), "modele_indisponible".into()));
@@ -1143,17 +1143,17 @@ async fn skipped_step_is_recorded() {
 #[tokio::test]
 async fn night_runs_extraction_condensation_forget() {
     let replies = vec![
-        text("```json\n[{\"key\": \"ville\", \"value\": \"Lyon\"}]\n```"),
+        text("```json\n[{\"key\": \"ville\", \"value\": \"Ville-A\"}]\n```"),
         text("  Semaine calme, course du matin décidée le 06/10.  "),
     ];
     let mut fx = fixture("JB_N3", NIGHT_USAGES, replies).await;
-    episode(&fx.rec, "2026-11-08", "J'habite à Lyon.");
+    episode(&fx.rec, "2026-11-08", "J'habite à Ville-A.");
     fx.rec.lots.lock().unwrap().push(lot("2026-W41", true));
     run(Job::Summaries, at(9, 3, 0), &mut fx.ctx).await.unwrap();
 
     assert_eq!(
         *fx.rec.applied.lock().unwrap(),
-        vec![json!({"jour": "2026-11-08", "indices": [{"key": "ville", "value": "Lyon"}]})]
+        vec![json!({"jour": "2026-11-08", "indices": [{"key": "ville", "value": "Ville-A"}]})]
     );
     assert_eq!(
         *fx.rec.condensed.lock().unwrap(),
@@ -1168,16 +1168,16 @@ async fn night_runs_extraction_condensation_forget() {
     assert!(pos("appliquer") < pos("condenser") && pos("condenser") < pos("oublier"));
     // Le moteur reçoit les épisodes, les clés connues, et la synthèse existante à reprendre.
     let reqs = requests_text(&fx.llm);
-    assert!(reqs.contains("J'habite à Lyon.") && reqs.contains("sport, ville"));
+    assert!(reqs.contains("J'habite à Ville-A.") && reqs.contains("sport, ville"));
     assert!(reqs.contains("Semaine calme.") && reqs.contains("Course du matin décidée."));
 }
 
 #[tokio::test]
 async fn bad_model_output_applies_nothing() {
-    let replies = vec![text("Il habite à Lyon."), text("   ")];
+    let replies = vec![text("Il habite à Ville-A."), text("   ")];
     let mut fx = fixture("JB_N4", NIGHT_USAGES, replies).await;
     set_etat(&fx.rec, "extraction", "2026-11-07");
-    episode(&fx.rec, "2026-11-08", "J'habite à Lyon.");
+    episode(&fx.rec, "2026-11-08", "J'habite à Ville-A.");
     fx.rec.lots.lock().unwrap().push(lot("2026-W41", false));
     run(Job::Summaries, at(9, 3, 0), &mut fx.ctx).await.unwrap();
     assert_eq!(etat(&fx.rec, "extraction"), (Some("2026-11-07".into()), "sortie_invalide".into()));
@@ -1187,8 +1187,8 @@ async fn bad_model_output_applies_nothing() {
     let many: Vec<Value> = (0..51).map(|i| json!({"key": "sport", "value": i.to_string()})).collect();
     for bad in [
         r#"[{"key": "ville", "value": 3}]"#.to_string(),
-        r#"[{"key": "ville", "value": "Lyon", "source": "x"}]"#.to_string(),
-        r#"{"key": "ville", "value": "Lyon"}"#.to_string(),
+        r#"[{"key": "ville", "value": "Ville-A", "source": "x"}]"#.to_string(),
+        r#"{"key": "ville", "value": "Ville-A"}"#.to_string(),
         Value::Array(many).to_string(),
     ] {
         fx.llm.lock().unwrap().replies.push_back(text(&bad));
@@ -1210,9 +1210,9 @@ async fn night_without_model_still_forgets() {
 
 #[tokio::test]
 async fn night_twice_is_harmless() {
-    let replies = vec![text(r#"[{"key": "ville", "value": "Lyon"}]"#), text("Semaine calme.")];
+    let replies = vec![text(r#"[{"key": "ville", "value": "Ville-A"}]"#), text("Semaine calme.")];
     let mut fx = fixture("JB_N6", NIGHT_USAGES, replies).await;
-    episode(&fx.rec, "2026-11-08", "J'habite à Lyon.");
+    episode(&fx.rec, "2026-11-08", "J'habite à Ville-A.");
     fx.rec.lots.lock().unwrap().push(lot("2026-W41", false));
     run(Job::Summaries, at(9, 3, 0), &mut fx.ctx).await.unwrap();
     run(Job::Summaries, at(9, 3, 0), &mut fx.ctx).await.unwrap();

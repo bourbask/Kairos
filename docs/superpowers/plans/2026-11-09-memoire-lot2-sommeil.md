@@ -4,7 +4,7 @@
 
 **Goal:** Chaque nuit, Kairos extrait ce qu'il a appris dans la journée, condense les épisodes estompés en synthèses (semaine → mois → année) et oublie réellement ce qui doit l'être.
 
-**Architecture:** Le module mémoire offre des opérations déterministes (épisodes du jour, lots condensables, condensation transactionnelle, application d'une extraction, oubli) via des outils `nuit_*` cachés au moteur. Le planificateur de la tête orchestre la nuit et appelle le modèle (poste de travail, serveur en secours, par la configuration de routage existante) pour extraire et rédiger les synthèses.
+**Architecture:** Le module mémoire offre des opérations déterministes (épisodes du jour, lots condensables, condensation transactionnelle, application d'une extraction, oubli) via des outils `nuit_*` cachés au moteur. Le planificateur de la tête orchestre la nuit et appelle le modèle (auto-hébergé, par la configuration de routage existante) pour extraire et rédiger les synthèses.
 
 **Tech Stack:** Rust 2024, SQLite (rusqlite, FTS5), rmcp ; crates `kairos-memoire`, `tete`.
 
@@ -29,7 +29,7 @@
 2. Sortie du modèle invalide, tronquée ou qui invente une clé hors liste : rien d'appliqué ou clé rangée sous un préfixe connu, aucune écriture dans `fact_log` (Task 4 : `extraction_rejects_out_of_schema` ; Task 6 : `bad_model_output_applies_nothing`).
 3. Une déduction ne touche jamais une connaissance déclarée, même répétée chaque nuit (Task 4 : `deduction_never_overrides_declared`).
 4. Nuit relancée deux fois (redémarrage, double déclenchement) : aucun doublon de synthèse, d'intention ou de déduction (Tasks 3 et 4 : idempotence ; Task 6 : `night_twice_is_harmless`).
-5. Ni poste ni serveur joignable : la nuit saute les étapes à modèle, l'oubli déterministe passe quand même (Task 6 : `night_without_model_still_forgets`).
+5. Aucun moteur joignable : la nuit saute les étapes à modèle, l'oubli déterministe passe quand même (Task 6 : `night_without_model_still_forgets`).
 
 ---
 
@@ -116,4 +116,4 @@
 - [ ] Tests : `skipped_days_are_caught_up_next_night`, `skipped_step_is_recorded`, `night_runs_extraction_condensation_forget`, `bad_model_output_applies_nothing`, `night_without_model_still_forgets`, `night_twice_is_harmless`.
 - [ ] Implémenter, `cargo test -p tete` puis `cargo test --workspace` verts, commit `feat(tete): le sommeil de la mémoire`.
 
-**À la livraison (hôte) :** ajouter dans `config/llm.toml` du serveur `memoire_extraction` et `memoire_condensation` vers le moteur du poste de travail, qui a déjà un repli déclaré sur le serveur.
+**À la livraison :** déclarer les usages de nuit dans la configuration LLM de l'hôte.
