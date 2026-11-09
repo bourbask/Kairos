@@ -216,7 +216,7 @@ impl Lot {
 }
 
 /// Indice tiré des épisodes d'une journée : une valeur supposée d'une clé.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Indice {
     pub key: String,
     pub value: String,
@@ -229,6 +229,22 @@ pub struct Bilan {
     pub deduits: u32,
     pub questions: u32,
     pub ignores: u32,
+}
+
+/// Étapes de la nuit dont l'état est conservé.
+pub const ETAPES_NUIT: [&str; 3] = ["extraction", "condensation", "oubli"];
+/// Longueur maximale d'un statut d'étape, en caractères.
+const STATUT_MAX: usize = 100;
+/// En dessous de cette récupérabilité, un souvenir oubliable est effacé.
+const SEUIL_OUBLI: f64 = 0.05;
+
+/// État d'une étape de nuit : dernier jour traité, dernière exécution, dernier statut.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct EtatNuit {
+    pub etape: String,
+    pub dernier_jour: Option<NaiveDate>,
+    pub derniere_execution: Option<NaiveDateTime>,
+    pub statut: String,
 }
 
 /// Longueur maximale d'une valeur d'indice, en caractères.
@@ -424,6 +440,8 @@ CREATE TABLE IF NOT EXISTS deductions (
     dernier_jour TEXT NOT NULL, PRIMARY KEY (key, value));
 CREATE TABLE IF NOT EXISTS renforcements_jour (
     key TEXT NOT NULL, jour TEXT NOT NULL, PRIMARY KEY (key, jour));
+CREATE TABLE IF NOT EXISTS nuit_etat (
+    etape TEXT PRIMARY KEY, dernier_jour TEXT, derniere_execution TEXT, statut TEXT);
 ";
 
 fn now_local() -> NaiveDateTime {
@@ -798,13 +816,21 @@ impl MemoryStore {
         n += tx.execute("DELETE FROM deductions WHERE key = ?", [key])?;
         tx.execute("DELETE FROM renforcements_jour WHERE key = ?", [key])?;
         tx.execute(
-            "DELETE FROM intentions WHERE state IN ('ouverte','proposee') AND substr(what, 1, length(?1)) = ?1",
+            "DELETE FROM intentions WHERE substr(what, 1, length(?1)) = ?1",
             [question_prefixe(key)],
         )?;
         tx.execute("DELETE FROM facts_fts WHERE key = ?", [key])?;
         tx.execute("INSERT INTO facts_fts (facts_fts) VALUES ('optimize')", [])?;
         tx.commit()?;
         Ok(n)
+    }
+
+    /// Clés connues, déclarées ou déduites, triées et sans doublon (personnalité exclue).
+    pub fn cles(&self) -> Result<Vec<String>> {
+        let mut st = self.conn.prepare(
+            "SELECT key FROM fact_log WHERE key <> ?1 UNION SELECT key FROM deductions WHERE key <> ?1 ORDER BY key",
+        )?;
+        Ok(st.query_map([PERSONA_KEY], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?)
     }
 
     /// Valeur courante de chaque clé commençant par `prefix` (comparaison littérale).
@@ -1147,6 +1173,85 @@ impl MemoryStore {
         }
         tx.commit()?;
         Ok(Some(id))
+    }
+
+    /// Efface pour de bon les synthèses fondues non annuelles et les déductions
+    /// dont la récupérabilité est passée sous `SEUIL_OUBLI`, index compris.
+    /// Renvoie le nombre de souvenirs effacés.
+    pub fn oublier(&self, maintenant: NaiveDateTime) -> Result<u32> {
+        let tx = self.conn.unchecked_transaction()?;
+        let candidats = {
+            let mut st = tx.prepare(
+                "SELECT s.nature, s.ref, s.stabilite, s.dernier_rappel, s.ancre FROM souvenirs s
+                 JOIN syntheses y ON y.id = CAST(s.ref AS INTEGER)
+                 WHERE s.nature = 'synthese' AND y.fondue = 1 AND y.niveau <> 'annee'
+                 UNION ALL
+                 SELECT nature, ref, stabilite, dernier_rappel, ancre FROM souvenirs WHERE nature = 'deduction'",
+            )?;
+            st.query_map([], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, f64>(2)?, r.get::<_, String>(3)?, r.get::<_, bool>(4)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        let mut n = 0;
+        for (nature, r#ref, stabilite, dr, ancre) in candidats {
+            // Date illisible : on ne décide pas d'effacer sur une donnée douteuse.
+            let Ok(dernier) = parse_ts(&dr) else { continue };
+            if recuperabilite(dernier, stabilite, maintenant, ancre) >= SEUIL_OUBLI {
+                continue;
+            }
+            if nature == "synthese" {
+                let id: i64 = r#ref.parse()?;
+                tx.execute("DELETE FROM syntheses WHERE id = ?", [id])?;
+                tx.execute("DELETE FROM syntheses_fts WHERE rowid = ?", [id])?;
+            } else {
+                tx.execute("DELETE FROM deductions WHERE key || char(31) || value = ?", [&r#ref])?;
+            }
+            n += tx.execute("DELETE FROM souvenirs WHERE nature = ? AND ref = ?", [&nature, &r#ref])? as u32;
+        }
+        if n > 0 {
+            tx.execute("INSERT INTO syntheses_fts (syntheses_fts) VALUES ('optimize')", [])?;
+        }
+        tx.commit()?;
+        Ok(n)
+    }
+
+    // --- État de la nuit ---
+
+    /// États connus des étapes de nuit, par étape.
+    pub fn nuit_etat(&self) -> Result<Vec<EtatNuit>> {
+        let mut st = self.conn.prepare("SELECT etape, dernier_jour, derniere_execution, statut FROM nuit_etat ORDER BY etape")?;
+        st.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?, r.get::<_, Option<String>>(2)?, r.get::<_, Option<String>>(3)?))
+        })?
+        .map(|row| {
+            let (etape, dj, de, statut) = row?;
+            Ok(EtatNuit {
+                etape,
+                dernier_jour: dj.map(|j| NaiveDate::parse_from_str(&j, "%Y-%m-%d")).transpose()?,
+                derniere_execution: de.map(|t| parse_ts(&t)).transpose()?,
+                statut: statut.unwrap_or_default(),
+            })
+        })
+        .collect()
+    }
+
+    /// Note l'exécution d'une étape ; sans `dernier_jour`, garde le précédent.
+    pub fn nuit_noter(&self, etape: &str, statut: &str, dernier_jour: Option<NaiveDate>, maintenant: NaiveDateTime) -> Result<()> {
+        if !ETAPES_NUIT.contains(&etape) {
+            bail!("étape inconnue : {etape}");
+        }
+        let statut = statut.split_whitespace().collect::<Vec<_>>().join(" ");
+        if statut.is_empty() || statut.chars().count() > STATUT_MAX {
+            bail!("statut vide ou trop long");
+        }
+        self.conn.execute(
+            "INSERT INTO nuit_etat (etape, dernier_jour, derniere_execution, statut) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(etape) DO UPDATE SET dernier_jour = coalesce(?2, dernier_jour),
+                 derniere_execution = ?3, statut = ?4",
+            params![etape, dernier_jour.map(|j| j.format("%Y-%m-%d").to_string()), ts(maintenant), statut],
+        )?;
+        Ok(())
     }
 
     /// Conversations sans résumé, sujets ni décisions commencées avant `jour` :
@@ -2457,5 +2562,111 @@ mod tests {
         MemoryStore::migrate_souvenirs(&s.conn).unwrap();
         assert!(s.force("deduction", "musique\u{1f}jazz").unwrap().is_none());
         assert!(s.force("deduction", "animal\u{1f}chien").unwrap().is_some());
+    }
+
+    // --- Oubli et état de nuit ---
+
+    /// Synthèse fondue ou non, rappelée pour la dernière fois à `quand`.
+    fn synthese_le(s: &MemoryStore, niveau: &str, periode: &str, texte: &str, fondue: bool, quand: NaiveDateTime) -> i64 {
+        let id = s.synthese_creer(niveau, periode, texte, quand).unwrap();
+        s.conn.execute("UPDATE syntheses SET fondue = ? WHERE id = ?", params![fondue, id]).unwrap();
+        id
+    }
+
+    #[test]
+    fn forget_only_folded_and_deduced() {
+        let s = store();
+        let m = jour(2026, 11, 1);
+        let vieux = m - Duration::days(600);
+        let w_oubliee = synthese_le(&s, "semaine", "2025-W01", "grimoire", true, vieux);
+        let w_gardee = synthese_le(&s, "semaine", "2025-W02", "brouillon", false, vieux);
+        let w_recente = synthese_le(&s, "semaine", "2025-W03", "recent", true, m - Duration::days(10));
+        let mo_oublie = synthese_le(&s, "mois", "2024-12", "almanach", true, vieux);
+        // Mois : S₀ 180 j, R ≈ 0,11 à 400 jours.
+        let mo_garde = synthese_le(&s, "mois", "2025-01", "chronique", true, m - Duration::days(400));
+        s.appliquer_extraction(d(1), &[indice("sport", "escrime")], vieux).unwrap();
+        s.appliquer_extraction(d(1), &[indice("boisson", "thé")], m).unwrap();
+        assert!(index_garde(&s, "syntheses_fts", "grimoire"));
+
+        assert_eq!(s.oublier(m).unwrap(), 3);
+        for id in [w_oubliee, mo_oublie] {
+            assert_eq!(compte(&s, &format!("SELECT COUNT(*) FROM syntheses WHERE id = {id}")), 0);
+            assert!(s.force("synthese", &id.to_string()).unwrap().is_none());
+        }
+        for id in [w_gardee, w_recente, mo_garde] {
+            assert!(s.force("synthese", &id.to_string()).unwrap().is_some(), "{id}");
+        }
+        assert!(!index_garde(&s, "syntheses_fts", "grimoire"));
+        assert!(!index_garde(&s, "syntheses_fts", "almanach"));
+        assert_eq!(compte(&s, "SELECT COUNT(*) FROM syntheses_fts"), 3);
+        assert_eq!(compte(&s, "SELECT COUNT(*) FROM deductions WHERE key = 'sport'"), 0);
+        assert!(s.force("deduction", "sport\u{1f}escrime").unwrap().is_none());
+        assert_eq!(compte(&s, "SELECT COUNT(*) FROM deductions"), 1);
+        // Rejouable sans effet.
+        assert_eq!(s.oublier(m).unwrap(), 0);
+    }
+
+    #[test]
+    fn forget_never_touches_declared_anchor_year() {
+        let s = store();
+        let m = jour(2026, 11, 1);
+        let vieux = m - Duration::days(3000);
+        s.fact_set_at("ville", "Lorient", "utilisateur", vieux).unwrap();
+        let annee = synthese_le(&s, "annee", "2018", "decennie", true, vieux);
+        vieillir(&s, "synthese", &annee.to_string(), vieux);
+        s.ancrer("synthese", &annee.to_string(), false).unwrap();
+        let ancree = synthese_le(&s, "semaine", "2018-W02", "ancree", true, vieux);
+        s.ancrer("synthese", &ancree.to_string(), true).unwrap();
+        s.appliquer_extraction(d(1), &[indice("loisir", "voile")], vieux).unwrap();
+        s.ancrer("deduction", "loisir\u{1f}voile", true).unwrap();
+        episode_le(&s, "promenade", vieux);
+        let avant: Vec<i64> = ["fact_log", "syntheses", "deductions", "journal", "souvenirs"]
+            .iter()
+            .map(|t| compte(&s, &format!("SELECT COUNT(*) FROM {t}")))
+            .collect();
+        assert_eq!(s.oublier(m).unwrap(), 0);
+        let apres: Vec<i64> = ["fact_log", "syntheses", "deductions", "journal", "souvenirs"]
+            .iter()
+            .map(|t| compte(&s, &format!("SELECT COUNT(*) FROM {t}")))
+            .collect();
+        assert_eq!(avant, apres);
+    }
+
+    #[test]
+    fn fact_forget_erases_every_question() {
+        let s = store();
+        let m = jour(2026, 11, 1);
+        for etat in [IntentionState::Refusee, IntentionState::Expiree, IntentionState::Acceptee, IntentionState::Proposee] {
+            let id = s.intention_create("Confirmer : animal = chien ?", "", m + Duration::days(7)).unwrap();
+            s.intention_set_state(id, etat).unwrap();
+        }
+        s.intention_create("Confirmer : animaux = deux ?", "", m + Duration::days(7)).unwrap();
+        s.fact_set_at("animal", "chat", "utilisateur", m).unwrap();
+        s.fact_forget("animal").unwrap();
+        assert_eq!(compte(&s, "SELECT COUNT(*) FROM intentions"), 1);
+    }
+
+    #[test]
+    fn night_state_keeps_last_day() {
+        let s = store();
+        assert!(s.nuit_etat().unwrap().is_empty());
+        s.nuit_noter("extraction", "ok", Some(d(3)), jour(2026, 11, 4)).unwrap();
+        s.nuit_noter("extraction", "modèle indisponible", None, jour(2026, 11, 5)).unwrap();
+        let e = s.nuit_etat().unwrap();
+        assert_eq!(e.len(), 1);
+        assert_eq!(e[0].dernier_jour, Some(d(3)));
+        assert_eq!(e[0].derniere_execution, Some(jour(2026, 11, 5)));
+        assert_eq!(e[0].statut, "modèle indisponible");
+        assert!(s.nuit_noter("inconnue", "ok", None, jour(2026, 11, 5)).is_err());
+        assert!(s.nuit_noter("oubli", " ", None, jour(2026, 11, 5)).is_err());
+    }
+
+    #[test]
+    fn known_keys_sorted_unique() {
+        let s = store();
+        s.fact_set_at("ville", "Lorient", "utilisateur", t()).unwrap();
+        s.fact_set_at(PERSONA_KEY, "calme", "hote", t()).unwrap();
+        s.appliquer_extraction(d(1), &[indice("boisson", "thé"), indice("boisson", "café"), indice("zen", "oui")], t()).unwrap();
+        assert_eq!(s.cles().unwrap(), ["boisson", "ville", "zen"]);
     }
 }

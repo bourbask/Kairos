@@ -46,7 +46,7 @@ async fn tools_list_requires_token() {
     let url = start().await;
     assert_eq!(post(&url, None, list()).await.status(), 401);
     let v: Value = post(&url, Some("t"), list()).await.json().await.unwrap();
-    assert_eq!(v["result"]["tools"].as_array().unwrap().len(), 29);
+    assert_eq!(v["result"]["tools"].as_array().unwrap().len(), 37);
 }
 
 #[tokio::test]

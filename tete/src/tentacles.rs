@@ -15,9 +15,10 @@ use crate::config::TentacleEntry;
 pub const TOOL_RESULT_MAX_CHARS: usize = 8000;
 pub const TOOL_TIMEOUT: Duration = Duration::from_secs(20);
 const TRUNCATED: &str = "… [tronqué]";
-/// Outils réservés à l'API de l'application (conventions et préfixe `app_`) : jamais proposés au moteur.
+/// Outils réservés à l'application (conventions, préfixe `app_`) et à la nuit
+/// (préfixe `nuit_`) : jamais proposés au moteur.
 pub fn is_app_tool(name: &str) -> bool {
-    matches!(name, "cards" | "decisions" | "decide" | "rappel") || name.starts_with("app_")
+    matches!(name, "cards" | "decisions" | "decide" | "rappel") || name.starts_with("app_") || name.starts_with("nuit_")
 }
 
 type Client = RunningService<RoleClient, ()>;
@@ -299,5 +300,13 @@ mod tests {
     #[test]
     fn rappel_is_hidden_from_the_model() {
         assert!(super::is_app_tool("rappel"));
+    }
+
+    #[test]
+    fn night_tools_hidden_from_model() {
+        for t in ["nuit_episodes", "nuit_cles", "nuit_appliquer", "nuit_condensables", "nuit_condenser", "nuit_oublier", "nuit_etat", "nuit_noter"] {
+            assert!(super::is_app_tool(t), "{t}");
+        }
+        assert!(!super::is_app_tool("nuitee"));
     }
 }
