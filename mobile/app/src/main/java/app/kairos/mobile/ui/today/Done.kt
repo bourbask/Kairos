@@ -7,6 +7,7 @@ import app.kairos.mobile.data.Mark
 import app.kairos.mobile.data.ToolMessage
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -40,6 +41,19 @@ class InFlight {
     @Synchronized fun release(key: String) {
         _keys.value -= key
     }
+}
+
+/**
+ * Gestes en cours d'un espace et éléments cachés en attendant leur issue, gardés hors de
+ * l'écran (dans [app.kairos.mobile.data.Repository]) : un écran rouvert pendant la fenêtre
+ * d'annulation garde l'élément caché et ignore un second geste.
+ */
+class Pending<K> {
+    val busy = InFlight()
+    private val _hidden = MutableStateFlow(emptySet<K>())
+    val hidden: StateFlow<Set<K>> = _hidden
+
+    fun hide(key: K, on: Boolean) = _hidden.update { if (on) it + key else it - key }
 }
 
 /** « Remettre dans le fil » : pas pour une carte dont le module a déjà agi, l'effet ne se défait pas d'ici. */

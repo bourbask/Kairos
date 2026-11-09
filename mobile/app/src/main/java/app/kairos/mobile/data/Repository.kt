@@ -26,6 +26,7 @@ import app.kairos.mobile.ui.medias.mediasAfter
 import app.kairos.mobile.ui.medias.withoutWatched
 import app.kairos.mobile.ui.memoire.cacheable
 import app.kairos.mobile.ui.memoire.memoireAfter
+import app.kairos.mobile.ui.today.Pending
 import kotlinx.serialization.DeserializationStrategy
 import java.io.File
 import java.time.LocalDate
@@ -96,6 +97,15 @@ class Repository(
 
     private val _documents = MutableStateFlow(DocumentsSnapshot())
     val documents: StateFlow<DocumentsSnapshot> = _documents.asStateFlow()
+
+    /** Intentions acceptées ou refusées, en attente de leur issue (survit à l'écran Mémoire). */
+    val intentionsPending = Pending<Long>()
+
+    /** Effacements Mémoire en attente de leur issue. */
+    val erasuresPending = Pending<String>()
+
+    /** Éléments marqués vus, en attente de leur issue (survit à l'écran Médias). */
+    val watchedPending = Pending<String>()
 
     /** Relit l'état enregistré (une seule fois) ; appelé d'office par [refresh] et [mark]. */
     suspend fun load() = loadLock.withLock {

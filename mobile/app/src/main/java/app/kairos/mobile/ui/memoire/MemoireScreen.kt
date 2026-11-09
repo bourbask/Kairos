@@ -77,7 +77,6 @@ import app.kairos.mobile.ui.overlay.anchorTo
 import app.kairos.mobile.ui.overlay.rememberOverlayState
 import app.kairos.mobile.ui.overlay.underOverlays
 import app.kairos.mobile.ui.today.DoneOutcome
-import app.kairos.mobile.ui.today.InFlight
 import app.kairos.mobile.ui.kit.SwipeRow
 import app.kairos.mobile.ui.today.completeCard
 import app.kairos.mobile.ui.today.refusal
@@ -138,12 +137,14 @@ fun MemoireScreen(
     // ponytail: résultats en mémoire vive seulement, jamais écrits sur l'appareil.
     var found by remember { mutableStateOf<Found?>(null) }
     var refreshing by remember { mutableStateOf(false) }
-    var hidden by remember { mutableStateOf(emptySet<Long>()) }
+    // Hors de l'écran : rouvrir l'espace pendant la fenêtre d'annulation ne permet pas un second envoi.
+    val intents = repository.intentionsPending
+    val erasures = repository.erasuresPending
+    val hidden by intents.hidden.collectAsState()
     var revealed by remember { mutableStateOf(emptySet<Long>()) }
     // Éléments en cours d'effacement ou effacés : jamais réaffichés, recherche comprise.
-    var erased by remember { mutableStateOf(emptySet<String>()) }
+    val erased by erasures.hidden.collectAsState()
     var factKey by rememberSaveable { mutableStateOf<String?>(null) }
-    val busy = remember { InFlight() }
     val detail = rememberOverlayState(factKey != null, Origin.Anchor)
     val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     val today = LocalDate.now().toString()
@@ -193,10 +194,10 @@ fun MemoireScreen(
                 completeCard(
                     intentionCard(i, state),
                     null,
-                    mark = { m -> hidden = if (m == null) hidden - i.id else hidden + i.id },
+                    mark = { m -> intents.hide(i.id, m != null) },
                     undoWindow = { undoWindow("${if (state == ACCEPT) "Acceptée" else "Refusée"} · ${i.what}") },
                     call = repository::reply,
-                    busy = busy,
+                    busy = intents.busy,
                 )
             } catch (_: ApiError.Unauthorized) {
                 return@launch unauthorized()
@@ -210,7 +211,7 @@ fun MemoireScreen(
                     } catch (_: ApiError.Unauthorized) {
                         return@launch unauthorized()
                     }
-                    if (repository.memoire.value.issue == null) hidden = hidden - i.id
+                    if (repository.memoire.value.issue == null) intents.hide(i.id, false)
                     // Seul l'imprévu s'annonce : un message de confirmation retarderait l'annulation du geste suivant.
                     intentionNotice(out)?.let { notifier.show(it) }
                 }
@@ -227,10 +228,10 @@ fun MemoireScreen(
                 completeCard(
                     c,
                     null,
-                    mark = { m -> erased = if (m == null) erased - c.id else erased + c.id },
+                    mark = { m -> erasures.hide(c.id, m != null) },
                     undoWindow = { undoWindow(label) },
                     call = repository::reply,
-                    busy = busy,
+                    busy = erasures.busy,
                 )
             } catch (_: ApiError.Unauthorized) {
                 return@launch unauthorized()
@@ -259,7 +260,7 @@ fun MemoireScreen(
                 mark = { m -> repository.mark(today, laterKey(i.id), m?.let { Mark.PlusTard }) },
                 undoWindow = { undoWindow("Plus tard · ${i.what}") },
                 call = { _, _, _ -> ToolMessage() },
-                busy = busy,
+                busy = intents.busy,
             )
         }
     }

@@ -121,4 +121,24 @@ class DoneTest {
         assertFalse(restorable(TimelineItem(meal, Phase.Fait)))
         assertFalse(restorable(TimelineItem(Card(id = "m", title = "m", state = "fait"), Phase.Fait)))
     }
+
+    @Test
+    fun pending_outlives_the_screen() = runBlocking {
+        // Geste lancé depuis un écran ; l'écran rouvert ne voit que [pending], gardé hors de lui.
+        val pending = Pending<String>()
+        val gate = CompletableDeferred<Unit>()
+        val f = Fake(gate = gate)
+        val first = async(start = CoroutineStart.UNDISPATCHED) {
+            completeCard(meal, null, { m -> pending.hide("soir", m != null) }, f.window, f.call, pending.busy)
+        }
+        assertEquals(setOf("soir"), pending.hidden.value)
+        assertEquals(DoneOutcome.Ignored, completeCard(meal, null, { m -> pending.hide("soir", m != null) }, f.window, f.call, pending.busy))
+        gate.complete(Unit)
+        assertTrue(first.await() is DoneOutcome.Done)
+        assertEquals(1, f.log.count { it.startsWith("call") })
+        // Toujours cachée tant que l'écran ne l'a pas relâchée (relecture confirmée).
+        assertEquals(setOf("soir"), pending.hidden.value)
+        pending.hide("soir", false)
+        assertTrue(pending.hidden.value.isEmpty())
+    }
 }
