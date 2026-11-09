@@ -29,6 +29,16 @@ fun capInput(text: String): String =
     if (text.codePointCount(0, text.length) <= MAX_INPUT_CHARS) text
     else text.substring(0, text.offsetByCodePoints(0, MAX_INPUT_CHARS))
 
+/** Message non parti, gardé dans le fil avec sa raison ; « Réessayer » le renvoie. */
+data class Failed(val text: String, val note: String)
+
+/** Raison courte d'un envoi en échec, dite sur la bulle. */
+fun failedNote(e: ApiError): String = when (e) {
+    ApiError.NoReply -> "Envoi incertain : vérifie avant de renvoyer"
+    ApiError.Offline, ApiError.Unauthorized -> "Non envoyé : serveur injoignable"
+    is ApiError.Server -> if (e.code == 503) "Non envoyé : Kairos a trop à faire" else "Non envoyé : ${e.message}"
+}
+
 /** Réponse attendue : première réponse de Kairos après [after], jusqu'à [deadline] (ms epoch). */
 data class PendingReply(val after: Long, val deadline: Long)
 
@@ -54,7 +64,11 @@ class Conversation(
     var pending by mutableStateOf<List<String>>(emptyList())
         private set
 
-    /** Brouillon de la saisie ; récupère un message dont l'envoi a échoué. */
+    /** Envois en échec : bulles « Non envoyé · Réessayer ». */
+    var failed by mutableStateOf<List<Failed>>(emptyList())
+        private set
+
+    /** Brouillon de la saisie. */
     var draft by mutableStateOf("")
 
     var busy by mutableStateOf(false)
@@ -115,16 +129,21 @@ class Conversation(
                 watch()
             } catch (e: ApiError) {
                 pending = pending - message
-                if (draft.isBlank()) draft = message
-                notice = when (e) {
-                    ApiError.Unauthorized -> null.also { onUnauthorized() }
-                    ApiError.Offline -> "Serveur injoignable : message gardé dans la saisie."
-                    ApiError.NoReply -> "Pas de réponse : le message est peut-être parti, vérifie avant de le renvoyer."
-                    is ApiError.Server ->
-                        if (e.code == 503) "Kairos a trop à faire, réessaie dans un moment." else e.message
-                }
+                if (e == ApiError.Unauthorized) onUnauthorized() else failed = failed + Failed(message, failedNote(e))
             }
         }
+    }
+
+    /** Renvoie un message en échec. */
+    fun retry(f: Failed) {
+        failed = failed - f
+        send(f.text, handsFree = false)
+    }
+
+    /** Reprend un message en échec dans la saisie, pour le corriger. */
+    fun edit(f: Failed) {
+        failed = failed - f
+        if (draft.isBlank()) draft = f.text
     }
 
     /** Premier plan : état léger régulier, et reprise de l'attente d'une réponse. */

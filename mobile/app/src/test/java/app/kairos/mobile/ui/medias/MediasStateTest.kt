@@ -224,12 +224,13 @@ class MediasStateTest {
                 {"id": 2, "media_type": "movie", "title": "Film Beta", "have": false, "requested": true},
                 {"id": 3, "media_type": "movie", "title": "Film Gamma", "year": 2023, "have": false, "requested": false}]""",
         )
-        assertEquals(listOf(Ask.Have, Ask.Requested, Ask.Open), results.map { askState(it, asked = emptySet()) })
-        assertEquals(listOf("Déjà là", "Déjà demandé", "Demander"), results.map { askState(it, emptySet()).label })
+        assertEquals(listOf(Ask.Have, Ask.Requested, Ask.Open), results.map { askState(it, asked = emptyMap()) })
+        assertEquals(listOf("Déjà là", "Déjà demandé", "Demander"), results.map { askState(it, emptyMap()).label })
         assertFalse(Ask.Have.enabled || Ask.Requested.enabled)
         assertTrue(Ask.Open.enabled)
-        // Demandé depuis l'appareil : bouton désactivé sans attendre une nouvelle recherche.
-        assertEquals(Ask.Requested, askState(results[2], asked = setOf(askKey(results[2]))))
+        // Demandé depuis l'appareil : l'état rendu par le module, sans attendre une nouvelle recherche.
+        assertEquals(Ask.Requested, askState(results[2], asked = mapOf(askKey(results[2]) to Ask.Requested)))
+        assertEquals(Ask.Have, askState(results[2], asked = mapOf(askKey(results[2]) to Ask.Have)))
         assertEquals("Série · 2024", resultNote(results[0]))
         assertEquals("Film", resultNote(results[1]))
         val args = requestArgs(results[2])
@@ -238,5 +239,20 @@ class MediasStateTest {
         // Moins de 2 caractères utiles : pas de recherche.
         assertFalse(canSearch(" a "))
         assertTrue(canSearch("ab"))
+    }
+
+    @Test
+    fun request_answer_gives_the_real_state() {
+        assertEquals(Ask.Have, askAfter("Film Alpha est déjà disponible."))
+        assertEquals(Ask.Requested, askAfter("Film Alpha est déjà demandé."))
+        assertEquals(Ask.Requested, askAfter("Film Alpha demandé ; suivi jusqu'à ce qu'il soit regardable."))
+    }
+
+    @Test
+    fun pause_choices_without_known_state_offer_both() {
+        assertEquals(listOf("Reprendre" to "reprise"), pauseChoices(Downloads(paused = true)))
+        assertEquals(listOf("Mettre en pause" to "pause"), pauseChoices(Downloads()))
+        // Section tombée : état inconnu, les deux gestes restent possibles.
+        assertEquals(listOf("Mettre en pause" to "pause", "Reprendre" to "reprise"), pauseChoices(null))
     }
 }

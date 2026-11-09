@@ -49,6 +49,7 @@ object KairosIcons {
             moveTo(12f, 17f); verticalLineTo(17.01f)
         }
     }
+    val Search by lazy { icon("Chercher") { circle(10.5f, 10.5f, 6f); moveTo(15f, 15f); lineTo(20f, 20f) } }
     val EyeOff by lazy { icon("Masquer") { eye(); moveTo(4f, 4f); lineTo(20f, 20f) } }
 
     private fun PathBuilder.circle(cx: Float, cy: Float, r: Float) {

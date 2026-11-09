@@ -119,7 +119,13 @@ fun pauseAction(d: Downloads): String = if (d.paused) "reprise" else "pause"
 
 fun pauseButton(d: Downloads): String = if (d.paused) "Reprendre" else "Mettre en pause"
 
-fun pauseArgs(d: Downloads): JsonObject = buildJsonObject { put("action", pauseAction(d)) }
+fun pauseArgs(d: Downloads): JsonObject = pauseArgs(pauseAction(d))
+
+fun pauseArgs(action: String): JsonObject = buildJsonObject { put("action", action) }
+
+/** Gestes proposés (libellé, action) ; file illisible ([d] null) : état inconnu, les deux restent possibles. */
+fun pauseChoices(d: Downloads?): List<Pair<String, String>> =
+    if (d == null) listOf("Mettre en pause" to "pause", "Reprendre" to "reprise") else listOf(pauseButton(d) to pauseAction(d))
 
 data class DayGroup(val day: String, val label: String, val releases: List<Release>)
 
@@ -165,7 +171,7 @@ fun problems(m: Medias): List<String> {
     return down + listOfNotNull(if (k > 0) "${plural(k, "téléchargement")} ${if (k > 1) "bloqués" else "bloqué"}" else null)
 }
 
-/** État du bouton d'un résultat de recherche. */
+/** État d'un résultat de recherche : seul [Open] est un bouton, les autres une pastille. */
 enum class Ask(val label: String, val enabled: Boolean) {
     Have("Déjà là", false),
     Requested("Déjà demandé", false),
@@ -174,12 +180,15 @@ enum class Ask(val label: String, val enabled: Boolean) {
 
 fun askKey(r: MediaResult): String = "${r.mediaType}/${r.id}"
 
-/** [asked] : demandés depuis l'appareil, désactivés sans attendre une nouvelle recherche. */
-fun askState(r: MediaResult, asked: Set<String>): Ask = when {
+/** [asked] : réponses du module aux demandes faites depuis l'appareil, sans attendre une nouvelle recherche. */
+fun askState(r: MediaResult, asked: Map<String, Ask>): Ask = when {
     r.have -> Ask.Have
-    r.requested || askKey(r) in asked -> Ask.Requested
-    else -> Ask.Open
+    r.requested -> Ask.Requested
+    else -> asked[askKey(r)] ?: Ask.Open
 }
+
+/** État d'après le message du module : un titre déjà disponible n'est pas « demandé ». */
+fun askAfter(message: String): Ask = if ("déjà disponible" in message) Ask.Have else Ask.Requested
 
 fun resultNote(r: MediaResult): String =
     listOfNotNull(if (r.mediaType == "tv") "Série" else "Film", r.year?.toString()).joinToString(" · ")

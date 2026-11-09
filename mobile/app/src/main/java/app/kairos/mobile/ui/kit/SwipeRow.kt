@@ -49,7 +49,7 @@ fun spokenLabel(label: String): String = label.filterNot { it == '✓' || it == 
  * de l'action apparaît sous l'élément pendant le geste ; vibration au seuil.
  * [rightStays] : → ouvre un choix sur place, l'élément revient au lieu de partir ([leftStays] : ←).
  * Chaque sens doté d'un libellé est aussi proposé en action d'accessibilité ; un libellé vide
- * signifie « pas d'action dans ce sens ». Le contenu forme un seul élément pour le lecteur d'écran.
+ * signifie « pas d'action dans ce sens » (ni geste, ni action d'accessibilité). Le contenu forme un seul élément pour le lecteur d'écran.
  */
 @Composable
 fun SwipeRow(
@@ -72,6 +72,8 @@ fun SwipeRow(
     var width by remember { mutableIntStateOf(1) }
     var armed by remember { mutableStateOf(false) }
     val threshold = width * 0.32f
+    val noRight = spokenLabel(rightLabel).isEmpty()
+    val noLeft = spokenLabel(leftLabel).isEmpty()
     val actions = buildList {
         spokenLabel(rightLabel).takeIf { it.isNotEmpty() }?.let { add(CustomAccessibilityAction(it) { right(); true }) }
         spokenLabel(leftLabel).takeIf { it.isNotEmpty() }?.let { add(CustomAccessibilityAction(it) { left(); true }) }
@@ -109,7 +111,8 @@ fun SwipeRow(
                     orientation = Orientation.Horizontal,
                     enabled = enabled,
                     state = rememberDraggableState { delta ->
-                        dx += delta
+                        // Un sens sans libellé n'a pas d'action : l'élément ne s'y déplace pas.
+                        dx = (dx + delta).coerceIn(if (noLeft) 0f else Float.NEGATIVE_INFINITY, if (noRight) 0f else Float.POSITIVE_INFINITY)
                         val over = abs(dx) > threshold
                         if (over != armed) {
                             armed = over

@@ -24,8 +24,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
@@ -45,7 +43,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -61,6 +58,7 @@ import app.kairos.mobile.data.Repository
 import app.kairos.mobile.ui.kit.AlertRow
 import app.kairos.mobile.ui.kit.Amount
 import app.kairos.mobile.ui.kit.KairosIcons
+import app.kairos.mobile.ui.kit.MaskToggle
 import app.kairos.mobile.ui.kit.PrimaryAction
 import app.kairos.mobile.ui.kit.SpaceHeader
 import app.kairos.mobile.ui.kit.Bar
@@ -95,13 +93,14 @@ fun FinancesScreen(
     onToggleMasked: () -> Unit,
     onClose: () -> Unit,
     onUnauthorized: () -> Unit,
+    openAfford: Boolean = false,
 ) {
     val snapshot by repository.finances.collectAsState()
     val scope = rememberCoroutineScope()
     val unauthorized by rememberUpdatedState(onUnauthorized)
     var refreshing by remember { mutableStateOf(false) }
     var tab by rememberSaveable { mutableStateOf(Page.Cycle) }
-    var affordOpen by rememberSaveable { mutableStateOf(false) }
+    var affordOpen by rememberSaveable { mutableStateOf(openAfford) }
 
     fun refresh(force: Boolean = true) {
         if (refreshing) return
@@ -125,15 +124,7 @@ fun FinancesScreen(
     val cycle = snapshot.cycle
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         Column(Modifier.fillMaxSize().padding(top = padding.calculateTopPadding())) {
-            SpaceHeader("Finances", onClose) {
-                IconButton(onClick = onToggleMasked, modifier = Modifier.semantics { stateDescription = if (masked) "montants masqués" else "montants visibles" }) {
-                    Icon(
-                        if (masked) KairosIcons.EyeOff else KairosIcons.Eye,
-                        contentDescription = if (masked) "Afficher les montants" else "Masquer les montants",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
+            SpaceHeader("Finances", onClose) { MaskToggle(masked, onToggleMasked) }
             PrimaryTabRow(selectedTabIndex = tab.ordinal, containerColor = MaterialTheme.colorScheme.background) {
                 Page.entries.forEach { t ->
                     Tab(selected = tab == t, onClick = { tab = t }, text = { Text(t.label) })

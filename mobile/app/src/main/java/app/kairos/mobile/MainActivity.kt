@@ -520,6 +520,7 @@ private fun KairosRoot(model: AppModel) {
     var settingsOpen by rememberSaveable { mutableStateOf(false) }
     var maisonOpen by rememberSaveable { mutableStateOf(false) }
     var financesOpen by rememberSaveable { mutableStateOf(false) }
+    var financesAfford by rememberSaveable { mutableStateOf(false) }
     var agendaOpen by rememberSaveable { mutableStateOf(false) }
     var agendaDay by rememberSaveable { mutableStateOf<String?>(null) }
     var tab by rememberSaveable { mutableStateOf(Tab.Aujourdhui) }
@@ -642,19 +643,19 @@ private fun KairosRoot(model: AppModel) {
                 val medias by session.repository.medias.collectAsState()
                 val documents by session.repository.documents.collectAsState()
                 val marks by session.repository.marks.collectAsState()
-                // Une actualisation à l'arrivée sur l'onglet : les chiffres des cartes sont à jour.
-                LaunchedEffect(Unit) {
+                // Tous les espaces en parallèle ; sans [force], ceux lus il y a moins de 30 s sont gardés.
+                fun refreshSpaces(force: Boolean) {
                     val refreshes = listOf<suspend () -> Unit>(
                         { session.repository.refreshMaison() },
-                        { session.repository.refreshFinances(force = false) },
-                        { session.repository.refreshAgenda(LocalDate.now(), force = false) },
-                        { session.repository.refreshMarches(force = false) },
-                        { session.repository.refreshMemoire(force = false) },
-                        { session.repository.refreshMedias(force = false) },
-                        { session.repository.refreshDocuments(force = false) },
+                        { session.repository.refreshFinances(force) },
+                        { session.repository.refreshAgenda(LocalDate.now(), force = force) },
+                        { session.repository.refreshMarches(force) },
+                        { session.repository.refreshMemoire(force) },
+                        { session.repository.refreshMedias(force) },
+                        { session.repository.refreshDocuments(force) },
                     )
                     for (refresh in refreshes) {
-                        launch {
+                        scope.launch {
                             try {
                                 refresh()
                             } catch (_: ApiError.Unauthorized) {
@@ -663,16 +664,28 @@ private fun KairosRoot(model: AppModel) {
                         }
                     }
                 }
+                // Une actualisation à l'arrivée sur l'onglet : les états des rangées sont à jour.
+                LaunchedEffect(Unit) { refreshSpaces(force = false) }
                 SpacesScreen(
                     memoireLater = laterIds(marks[LocalDate.now().toString()].orEmpty().keys),
                     padding = padding,
+                    onRetry = { refreshSpaces(force = true) },
+                    onOpenSettings = { settingsOpen = true },
                     maison = maison,
                     maisonOpen = maisonOpen,
                     onOpenMaison = { maisonOpen = true },
                     onCloseMaison = { maisonOpen = false },
                     finances = finances,
                     financesOpen = financesOpen,
-                    onOpenFinances = { financesOpen = true },
+                    onOpenFinances = {
+                        financesAfford = false
+                        financesOpen = true
+                    },
+                    // Raccourci de la rangée : Finances s'ouvre sur « Puis-je me permettre ? ».
+                    onAfford = {
+                        financesAfford = true
+                        financesOpen = true
+                    },
                     onCloseFinances = { financesOpen = false },
                     financesContent = {
                         FinancesScreen(
@@ -682,6 +695,7 @@ private fun KairosRoot(model: AppModel) {
                             onToggleMasked = model::toggleAmountsMasked,
                             onClose = { financesOpen = false },
                             onUnauthorized = model::unauthorized,
+                            openAfford = financesAfford,
                         )
                     },
                     agenda = agenda,
@@ -723,6 +737,7 @@ private fun KairosRoot(model: AppModel) {
                             repository = session.repository,
                             padding = padding,
                             appScope = model.viewModelScope,
+                            onToggleMasked = model::toggleAmountsMasked,
                             onClose = { memoireOpen = false },
                             onUnauthorized = model::unauthorized,
                         )
@@ -846,6 +861,8 @@ private fun KairosRoot(model: AppModel) {
                 onSpeakReplies = model::changeSpeakReplies,
                 hideFromCaptures = model.hideFromCaptures,
                 onHideFromCaptures = model::changeHideFromCaptures,
+                amountsMasked = model.amountsMasked,
+                onToggleMasked = model::toggleAmountsMasked,
                 address = maskAddress(session.address),
                 version = model.version,
                 update = model.update,

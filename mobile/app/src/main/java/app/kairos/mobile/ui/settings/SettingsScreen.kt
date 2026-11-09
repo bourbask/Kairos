@@ -26,14 +26,21 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.material3.Button
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.runtime.LaunchedEffect
 import app.kairos.mobile.data.AppRelease
 import app.kairos.mobile.ui.theme.ThemeMode
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.ui.semantics.Role
+import app.kairos.mobile.ui.kit.KairosIcons
+import app.kairos.mobile.ui.kit.SectionHeader
+import app.kairos.mobile.ui.kit.SpaceHeader
+import app.kairos.mobile.ui.theme.DarkKairosColors
+import app.kairos.mobile.ui.theme.KairosColors
 
 /** Adresse du serveur montrée en partie seulement : de quoi reconnaître l'appareil, pas de quoi la relever. */
 internal fun maskAddress(baseUrl: String): String {
@@ -43,6 +50,7 @@ internal fun maskAddress(baseUrl: String): String {
     return host.take(3) + "•••" + port
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun SettingsScreen(
     theme: ThemeMode,
@@ -51,6 +59,8 @@ fun SettingsScreen(
     onSpeakReplies: (Boolean) -> Unit,
     hideFromCaptures: Boolean,
     onHideFromCaptures: (Boolean) -> Unit,
+    amountsMasked: Boolean,
+    onToggleMasked: () -> Unit,
     address: String,
     version: String,
     update: AppRelease?,
@@ -63,101 +73,97 @@ fun SettingsScreen(
     var confirm by remember { mutableStateOf(false) }
     // Vérification discrète à l'ouverture ; le bouton « Vérifier » dit le résultat.
     LaunchedEffect(Unit) { onCheck(false) }
+    val applied = if (KairosColors.current == DarkKairosColors) "sombre" else "clair"
     Column(
         Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
             .statusBarsPadding()
-            .navigationBarsPadding()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 22.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+            .navigationBarsPadding(),
     ) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text("Réglages", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.weight(1f))
-            TextButton(onClick = onClose) { Text("Fermer") }
-        }
-
-        Section("Thème")
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            for (mode in ThemeMode.entries) {
-                FilterChip(selected = theme == mode, onClick = { onTheme(mode) }, label = { Text(mode.name) })
+        SpaceHeader("Réglages", onClose, backLabel = "Fermer les réglages", backIcon = KairosIcons.ChevronDown)
+        Column(
+            Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 22.dp)
+                .padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            SectionHeader("Thème")
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                for (mode in ThemeMode.entries) {
+                    FilterChip(selected = theme == mode, onClick = { onTheme(mode) }, label = { Text(mode.name) })
+                }
             }
-        }
-        Text(
-            "Auto suit la luminosité ambiante (ou le thème du téléphone sans capteur).",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-
-        HorizontalDivider(Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant)
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text("Lire les réponses à voix haute", style = MaterialTheme.typography.titleMedium)
-                Text(
-                    "Les réponses sont lues dès qu'elles arrivent.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Switch(
-                checked = speakReplies,
-                onCheckedChange = onSpeakReplies,
-                modifier = Modifier.semantics { contentDescription = "Lire les réponses à voix haute" },
+            Text(
+                "Auto suit la luminosité ambiante (ou le thème du téléphone sans capteur)." +
+                    if (theme == ThemeMode.Auto) " Actuellement : $applied." else "",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-        }
 
-        HorizontalDivider(Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant)
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text("Masquer l'app dans les captures et les apps récentes", style = MaterialTheme.typography.titleMedium)
-                Text(
-                    "Captures d'écran bloquées, aperçu masqué dans les applications récentes.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Switch(
-                checked = hideFromCaptures,
-                onCheckedChange = onHideFromCaptures,
-                modifier = Modifier.semantics { contentDescription = "Masquer l'app dans les captures et les apps récentes" },
+            SectionHeader("Confidentialité")
+            SwitchRow(
+                "Masquer les montants",
+                "Dans tous les espaces, et le journal sensible de la mémoire. L'œil de Finances fait de même.",
+                amountsMasked,
+            ) { onToggleMasked() }
+            SwitchRow(
+                "Masquer l'app dans les captures et les apps récentes",
+                "Captures d'écran bloquées, aperçu masqué dans les applications récentes.",
+                hideFromCaptures,
+                onHideFromCaptures,
             )
-        }
 
-        HorizontalDivider(Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant)
-        Section("Application")
-        Text("Version installée : $version", style = MaterialTheme.typography.bodyLarge)
-        when {
-            updateProgress != null -> {
-                Text(updateLabel(updateProgress), style = MaterialTheme.typography.bodyMedium)
-                LinearProgressIndicator(progress = { updateProgress }, modifier = Modifier.fillMaxWidth())
-                if (updateProgress >= 1f) TextButton(onClick = onUpdate) { Text("Reprendre l'installation") }
+            SectionHeader("Voix")
+            SwitchRow("Lire les réponses à voix haute", "Les réponses sont lues dès qu'elles arrivent.", speakReplies, onSpeakReplies)
+
+            SectionHeader("Application")
+            Text("Version installée : $version", style = MaterialTheme.typography.bodyLarge)
+            when {
+                updateProgress != null -> {
+                    Text(updateLabel(updateProgress), style = MaterialTheme.typography.bodyMedium)
+                    LinearProgressIndicator(progress = { updateProgress }, modifier = Modifier.fillMaxWidth())
+                    if (updateProgress >= 1f) TextButton(onClick = onUpdate) { Text("Reprendre l'installation") }
+                }
+                update != null -> Button(onClick = onUpdate) { Text("Mettre à jour vers ${update.version}") }
+                else -> OutlinedButton(onClick = { onCheck(true) }) { Text("Vérifier les mises à jour") }
             }
-            update != null -> Button(onClick = onUpdate) { Text("Mettre à jour vers ${update.version}") }
-            else -> OutlinedButton(onClick = { onCheck(true) }) { Text("Vérifier les mises à jour") }
-        }
 
-        HorizontalDivider(Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant)
-        Section("Appareil appairé")
-        Text(address, style = MaterialTheme.typography.bodyLarge)
-        OutlinedButton(onClick = { confirm = true }) { Text("Se déconnecter") }
+            SectionHeader("Appareil appairé")
+            Text(address, style = MaterialTheme.typography.bodyLarge)
+            HorizontalDivider(Modifier.padding(vertical = 16.dp), color = MaterialTheme.colorScheme.outlineVariant)
+            // Action destructive, isolée en bas et en brique ; confirmée par un dialogue.
+            TextButton(onClick = { confirm = true }) { Text("Se déconnecter", color = MaterialTheme.colorScheme.error) }
+        }
     }
     if (confirm) {
         AlertDialog(
             onDismissRequest = { confirm = false },
             title = { Text("Se déconnecter ?") },
             text = { Text("Le jeton de cet appareil est effacé ; il faudra l'appairer à nouveau.") },
-            confirmButton = { TextButton(onClick = { confirm = false; onLogout() }) { Text("Se déconnecter") } },
+            confirmButton = { TextButton(onClick = { confirm = false; onLogout() }) { Text("Se déconnecter", color = MaterialTheme.colorScheme.error) } },
             dismissButton = { TextButton(onClick = { confirm = false }) { Text("Annuler") } },
         )
+    }
+}
+
+/** Interrupteur libellé : toute la rangée bascule, un seul arrêt pour le lecteur d'écran. */
+@Composable
+private fun SwitchRow(title: String, detail: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().toggleable(value = checked, role = Role.Switch, onValueChange = onChange).padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f).padding(end = 12.dp)) {
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            Text(detail, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Switch(checked = checked, onCheckedChange = null)
     }
 }
 
 /** « Téléchargement… 42 % » puis « Installation… » une fois le fichier complet. */
 internal fun updateLabel(progress: Float): String =
     if (progress < 1f) "Téléchargement… ${(progress * 100).toInt()} %" else "Installation…"
-
-@Composable
-private fun Section(label: String) {
-    Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-}
