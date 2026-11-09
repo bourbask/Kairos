@@ -6,13 +6,12 @@
 #   osint-scan.sh --range A..B    lignes ajoutées et messages des commits A..B (pre-push, CI)
 #   osint-scan.sh --text FICHIER  un texte libre : message de commit, titre ou corps de PR ("-" = entrée standard)
 #
-# Trois contrôles :
-#   1. liste privée de termes interdits (non versionnée) : $OSINT_DENYLIST, sinon
-#      private/osint-denylist.txt — une entrée par ligne, texte exact sans casse,
-#      ou `re:` suivi d'une expression régulière étendue ; `#` = commentaire ;
-#   2. motifs génériques : adresses IP privées, emails, chemins personnels,
-#      fichiers qui ne doivent jamais être versionnés ;
-#   3. secrets, par gitleaks quand il est installé.
+# Contrôles techniques, rapides, sans aucune donnée personnelle embarquée :
+#   - motifs génériques : adresses IP privées, emails, chemins personnels,
+#     fichiers qui ne doivent jamais être versionnés ;
+#   - secrets, par gitleaks quand il est installé.
+# Le sens (une donnée personnelle formulée autrement) est jugé à la publication
+# par scripts/revue-perso.sh.
 # Exceptions ponctuelles : private/osint-allowlist.txt (texte exact ; une ligne qui le
 # contient n'est pas signalée).
 # Les sorties donnent l'emplacement et la règle, jamais la valeur trouvée : en CI
@@ -21,9 +20,8 @@
 set -euo pipefail
 
 root=$(git rev-parse --show-toplevel)
-# Listes privées du clone principal : partagées par tous ses worktrees.
+# Exceptions locales du clone principal, partagées par ses worktrees.
 main=$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")
-deny=${OSINT_DENYLIST:-$main/private/osint-denylist.txt}
 allow=${OSINT_ALLOWLIST:-$main/private/osint-allowlist.txt}
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
@@ -61,22 +59,6 @@ check_lines() {
   if [ -s "$allow" ]; then
     grep -viF -f <(grep -v '^[[:space:]]*\(#\|$\)' "$allow") "$lines" > "$work/allowed" || true
     scan=$work/allowed
-  fi
-  if [ -s "$deny" ]; then
-    local fixed="$work/deny-fixed" regex="$work/deny-regex"
-    grep -v '^[[:space:]]*\(#\|$\)' "$deny" | grep -v '^re:' > "$fixed" || true
-    grep '^re:' "$deny" | sed 's/^re://' > "$regex" || true
-    if [ -s "$fixed" ]; then
-      grep -niF -f "$fixed" "$scan" > "$work/hits-f" || true
-      while IFS= read -r l; do fail "$label $(echo "$l" | cut -d: -f2-3) : terme de la liste privée"; done < "$work/hits-f"
-    fi
-    if [ -s "$regex" ]; then
-      grep -niE -f "$regex" "$scan" > "$work/hits-r" || true
-      while IFS= read -r l; do fail "$label $(echo "$l" | cut -d: -f2-3) : motif de la liste privée"; done < "$work/hits-r"
-    fi
-  elif [ -z "${CI:-}" ]; then
-    # Hors CI, la liste privée est obligatoire : sans elle, rien ne protège les noms.
-    fail "liste privée absente ($deny)"
   fi
   local rule pat
   for g in "${generic[@]}"; do

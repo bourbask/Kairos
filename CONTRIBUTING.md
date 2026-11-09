@@ -20,16 +20,19 @@
 ## Garde de publication
 
 Dépôt public : rien de personnel, de secret ni d'environnement ne doit y entrer.
+Les contrôles se font aux points où un contenu change de statut, pas à chaque étape.
 
-- Sur chaque clone, une fois : `make hooks`. Les hooks de `.githooks/` passent
-  `scripts/osint-scan.sh` sur chaque commit (contenu et message) et chaque push.
-- Le scan refuse : les termes d'une liste privée locale (`private/osint-denylist.txt`,
-  jamais versionnée), les adresses IP privées, les emails, les chemins personnels,
-  les fichiers interdits (`.env`, profils, bases, clés) et les secrets (gitleaks).
+- **Commit** (local, réécrivable) : contrôle technique rapide par les hooks de
+  `.githooks/` (`make hooks`, une fois par clone) — secrets (gitleaks), adresses IP
+  privées, emails, chemins personnels, fichiers interdits (`.env`, profils, bases, clés).
+- **Push et publications GitHub** (PR, issue, release) : en plus, relecture du sens
+  par un modèle indépendant (`scripts/revue-perso.sh`). Une donnée personnelle, de
+  l'auteur ou d'un tiers, même reformulée, bloque la publication ; les zones à
+  anonymiser sont indiquées sans recopier la donnée.
 - Aucune donnée réelle d'une personne, même dans la documentation ou les tests :
-  exemples fictifs uniquement.
-- Faux positif avéré : ajouter le texte exact à `private/osint-allowlist.txt`.
-- La CI rejoue le scan sur chaque PR (commits, messages, titre et description).
+  exemples fictifs uniquement. Aucune liste centralisée de données personnelles.
+- Faux positif technique avéré : ajouter le texte exact à `private/osint-allowlist.txt`.
+- La CI rejoue le contrôle technique sur chaque PR (commits, messages, titre et description).
 
 ## Worktrees
 
