@@ -2,7 +2,7 @@
 //! conversations, leçons. Horodatages en heure murale locale naïve.
 
 use anyhow::{Result, bail};
-use chrono::{NaiveDateTime, Utc};
+use chrono::{Datelike, NaiveDate, NaiveDateTime, Utc};
 use kairos::calendar::USER_TZ;
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use serde::{Deserialize, Serialize};
@@ -167,6 +167,21 @@ pub struct NewLesson {
     pub actions: Vec<String>,
 }
 
+/// Épisode d'une journée, texte complet.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Element {
+    pub nature: String,
+    pub r#ref: String,
+    pub date: NaiveDate,
+    pub texte: String,
+}
+
+/// Période ISO d'une date pour une synthèse de semaine (« 2026-W45 »).
+pub fn periode_semaine(d: NaiveDate) -> String {
+    let w = d.iso_week();
+    format!("{}-W{:02}", w.year(), w.week())
+}
+
 pub struct MemoryStore {
     conn: Connection,
 }
@@ -214,6 +229,11 @@ CREATE TABLE IF NOT EXISTS souvenirs (
     importance REAL NOT NULL, ancre INTEGER NOT NULL DEFAULT 0, confiance REAL NOT NULL,
     PRIMARY KEY (nature, ref));
 CREATE VIRTUAL TABLE IF NOT EXISTS facts_fts USING fts5(key, value);
+CREATE TABLE IF NOT EXISTS syntheses (
+    id INTEGER PRIMARY KEY, niveau TEXT NOT NULL CHECK(niveau IN ('semaine','mois','annee')),
+    periode TEXT NOT NULL, texte TEXT NOT NULL, fondue INTEGER NOT NULL DEFAULT 0,
+    cree_le TEXT NOT NULL, UNIQUE(niveau, periode));
+CREATE VIRTUAL TABLE IF NOT EXISTS syntheses_fts USING fts5(texte);
 ";
 
 fn now_local() -> NaiveDateTime {
@@ -359,6 +379,11 @@ impl MemoryStore {
              AND CAST(ref AS INTEGER) NOT IN (SELECT id FROM conversations)",
             [],
         )?;
+        tx.execute(
+            "DELETE FROM souvenirs WHERE nature = 'synthese'
+             AND CAST(ref AS INTEGER) NOT IN (SELECT id FROM syntheses)",
+            [],
+        )?;
         // Créés maintenant : réactivés à la migration pour ne pas s'estomper d'un coup.
         let maintenant = ts(now_local());
         tx.execute(
@@ -376,6 +401,12 @@ impl MemoryStore {
             "INSERT OR IGNORE INTO souvenirs (nature, ref, stabilite, dernier_rappel, importance, confiance)
              SELECT 'conversation', CAST(id AS TEXT), ?1, ?3, ?2, 1.0 FROM conversations",
             params![stabilite_initiale(Famille::Episode, IMPORTANCE_EPISODE), IMPORTANCE_EPISODE, maintenant],
+        )?;
+        tx.execute(
+            "INSERT OR IGNORE INTO souvenirs (nature, ref, stabilite, dernier_rappel, importance, ancre, confiance)
+             SELECT 'synthese', CAST(id AS TEXT),
+                    CASE niveau WHEN 'semaine' THEN ?1 ELSE ?2 END, ?3, 0.0, niveau = 'annee', 1.0 FROM syntheses",
+            params![stabilite_initiale(Famille::Synthese, 0.0), stabilite_initiale(Famille::SyntheseMois, 0.0), maintenant],
         )?;
         tx.execute("DELETE FROM facts_fts", [])?;
         tx.execute(
@@ -773,6 +804,46 @@ impl MemoryStore {
         Ok(self.conn.last_insert_rowid())
     }
 
+    // --- Synthèses et épisodes ---
+
+    /// Crée une synthèse, son index et son souvenir ; refuse une période déjà synthétisée.
+    pub fn synthese_creer(&self, niveau: &str, periode: &str, texte: &str, maintenant: NaiveDateTime) -> Result<i64> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
+            "INSERT INTO syntheses (niveau, periode, texte, cree_le) VALUES (?,?,?,?)",
+            params![niveau, periode, texte, ts(maintenant)],
+        )?;
+        let id = tx.last_insert_rowid();
+        tx.execute("INSERT INTO syntheses_fts (rowid, texte) VALUES (?,?)", params![id, texte])?;
+        let famille = if niveau == "semaine" { Famille::Synthese } else { Famille::SyntheseMois };
+        tx.execute(
+            "INSERT OR REPLACE INTO souvenirs (nature, ref, stabilite, dernier_rappel, importance, ancre, confiance)
+             VALUES ('synthese', ?, ?, ?, 0.0, ?, 1.0)",
+            params![id.to_string(), stabilite_initiale(famille, 0.0), ts(maintenant), niveau == "annee"],
+        )?;
+        tx.commit()?;
+        Ok(id)
+    }
+
+    /// Entrées de journal et conversations résumées d'une journée.
+    pub fn episodes_du_jour(&self, jour: NaiveDate) -> Result<Vec<Element>> {
+        let j = jour.format("%Y-%m-%d").to_string();
+        let mut out = Vec::new();
+        let mut st = self.conn.prepare("SELECT id, content FROM journal WHERE substr(at, 1, 10) = ? ORDER BY id")?;
+        for r in st.query_map([&j], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))? {
+            let (id, content) = r?;
+            out.push(Element { nature: "journal".into(), r#ref: id.to_string(), date: jour, texte: texte_journal(&content) });
+        }
+        let mut st = self.conn.prepare(
+            "SELECT id, summary FROM conversations WHERE substr(started_at, 1, 10) = ? AND coalesce(summary, '') <> '' ORDER BY id",
+        )?;
+        for r in st.query_map([&j], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))? {
+            let (id, summary) = r?;
+            out.push(Element { nature: "conversation".into(), r#ref: id.to_string(), date: jour, texte: summary });
+        }
+        Ok(out)
+    }
+
     // --- Rappel (lecture seule : ne renforce rien) ---
 
     /// Souvenirs à proposer au modèle : ancres d'abord (au plus `ANCRES_MAX`,
@@ -795,6 +866,11 @@ impl MemoryStore {
             for r in st.query_map(params![q, RAPPEL_RECHERCHE_MAX], |r| Ok((r.get::<_, f64>(1)?, r.get::<_, i64>(0)?)))? {
                 let (rank, id) = r?;
                 hits.push((rank, "conversation", id.to_string()));
+            }
+            let mut st = self.conn.prepare("SELECT rowid, rank FROM syntheses_fts WHERE syntheses_fts MATCH ? ORDER BY rank LIMIT ?")?;
+            for r in st.query_map(params![q, RAPPEL_RECHERCHE_MAX], |r| Ok((r.get::<_, f64>(1)?, r.get::<_, i64>(0)?)))? {
+                let (rank, id) = r?;
+                hits.push((rank, "synthese", id.to_string()));
             }
         }
         hits.sort_by(|a, b| a.0.total_cmp(&b.0));
@@ -819,7 +895,10 @@ impl MemoryStore {
                     s.stabilite, s.dernier_rappel, s.importance, s.ancre
              FROM souvenirs s JOIN conversations c ON c.id = CAST(s.ref AS INTEGER) WHERE s.nature = 'conversation'
                AND (s.ancre OR c.id IN (SELECT id FROM conversations ORDER BY id DESC LIMIT {RAPPEL_JOURNAL_RECENT})
-                    OR c.id IN ({conv_hits}))"
+                    OR c.id IN ({conv_hits}))
+             UNION ALL
+             SELECT 'synthese', s.ref, y.periode || ' : ' || y.texte, s.stabilite, s.dernier_rappel, s.importance, s.ancre
+             FROM souvenirs s JOIN syntheses y ON y.id = CAST(s.ref AS INTEGER) WHERE s.nature = 'synthese'"
         );
         struct Cand { r: Rappel, importance: f64, dernier: NaiveDateTime, rang: Option<usize> }
         let mut st = self.conn.prepare(&sql)?;
@@ -1474,5 +1553,44 @@ mod tests {
         let r = s.rappel(None, t(), 10).unwrap();
         let total: usize = r.iter().filter(|x| x.ancre).map(|x| x.texte.chars().count()).sum();
         assert!(total <= 3200 && total > 0, "{total}");
+    }
+
+    #[test]
+    fn syntheses_schema_and_recall() {
+        let s = store();
+        let id = s.synthese_creer("semaine", "2026-W45", "semaine de potager", t()).unwrap();
+        assert!(s.synthese_creer("semaine", "2026-W45", "doublon", t()).is_err());
+        s.synthese_creer("mois", "2026-10", "mois calme", t()).unwrap();
+        let an = s.synthese_creer("annee", "2025", "année de reprise", t()).unwrap();
+        assert_eq!(s.force("synthese", &id.to_string()).unwrap().unwrap().stabilite, 60.0);
+        assert_eq!(periode_semaine(NaiveDate::from_ymd_opt(2026, 11, 9).unwrap()), "2026-W46");
+        let m = s.force("synthese", "2").unwrap().unwrap();
+        assert_eq!(m.stabilite, 180.0);
+        assert!(!m.ancre);
+        assert!(s.force("synthese", &an.to_string()).unwrap().unwrap().ancre);
+        let r = s.rappel(Some("potager"), t(), 10).unwrap();
+        assert!(r.iter().any(|x| x.nature == "synthese" && x.texte == "2026-W45 : semaine de potager"));
+        // Migration : orphelin supprimé, manquant recréé.
+        s.conn.execute("DELETE FROM souvenirs WHERE nature = 'synthese' AND ref = '1'", []).unwrap();
+        s.conn.execute("INSERT INTO souvenirs VALUES ('synthese', '99', 60.0, '2026-01-01 00:00:00', 0, 0.0, 0, 1.0)", []).unwrap();
+        MemoryStore::migrate_souvenirs(&s.conn).unwrap();
+        assert!(s.force("synthese", "1").unwrap().is_some());
+        assert!(s.force("synthese", "99").unwrap().is_none());
+    }
+
+    #[test]
+    fn episodes_of_the_day() {
+        let s = store();
+        let jour = t().date();
+        let j = note(&s, "du jour");
+        s.conn.execute("UPDATE journal SET at = ?", [ts(t())]).unwrap();
+        let c = s.conversation_ingest(&conv("bavardage")).unwrap();
+        s.conversation_set_summary(c, "bilan du jour", &[], &[]).unwrap();
+        s.conversation_ingest(&NewConversation { session_id: Some("autre".into()), ..conv("sans résumé") }).unwrap();
+        let e = s.episodes_du_jour(jour).unwrap();
+        assert_eq!(e.len(), 2);
+        assert!(e.iter().any(|x| x.nature == "journal" && x.r#ref == j.to_string() && x.texte.contains("du jour")));
+        assert!(e.iter().any(|x| x.nature == "conversation" && x.texte == "bilan du jour" && x.date == jour));
+        assert!(s.episodes_du_jour(jour + Duration::days(1)).unwrap().is_empty());
     }
 }
