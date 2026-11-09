@@ -86,8 +86,12 @@ impl Fake {
     }
 
     #[tool(description = "Rappel des souvenirs.")]
-    fn rappel(&self, Parameters(_): Parameters<Recall>) -> Result<String, String> {
+    async fn rappel(&self, Parameters(_): Parameters<Recall>) -> Result<String, String> {
         let r = self.rec.recalled.lock().unwrap().clone();
+        // `"lent"` simule un module mémoire qui ne répond pas à temps.
+        if r == "lent" {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        }
         Ok(if r.is_empty() { "[]".into() } else { r })
     }
 
@@ -566,4 +570,49 @@ async fn memory_section_in_prompt() {
         .map(|t| t["function"]["name"].as_str().unwrap().to_string())
         .collect();
     assert!(!names.iter().any(|n| n.ends_with("rappel")));
+}
+
+#[tokio::test]
+async fn large_recall_is_not_truncated() {
+    let (t, rec) = tentacle("AG_MEM2").await;
+    let items: Vec<Value> = (0..30)
+        .map(|i| json!({"nature": "fait", "ref": format!("f{i}"), "texte": format!("souvenir {i} {}", "x".repeat(300)), "score": 0.5, "estompe": false, "ancre": false}))
+        .collect();
+    let payload = Value::Array(items).to_string();
+    assert!(payload.len() > 8000);
+    *rec.recalled.lock().unwrap() = payload;
+    let (router, shared) = llm(vec![text("ok")]).await;
+    let state = State::open_in_memory().unwrap();
+    let mut agent = Agent::new(router, IDLE);
+    assert_eq!(agent.reply("salut", at(9, 0), &t, &state).await, "ok");
+    let system = system_of(&shared);
+    assert!(system.contains(MEMORY_HEADER), "{system}");
+    assert!(system.contains("- souvenir 29 "));
+}
+
+#[tokio::test]
+async fn slow_memory_still_replies_without_section() {
+    let (t, rec) = tentacle("AG_MEM3").await;
+    *rec.recalled.lock().unwrap() = "lent".into();
+    let (router, shared) = llm(vec![text("ok")]).await;
+    let state = State::open_in_memory().unwrap();
+    let mut agent = Agent::new(router, IDLE);
+    let started = std::time::Instant::now();
+    assert_eq!(agent.reply("salut", at(9, 0), &t, &state).await, "ok");
+    assert!(started.elapsed() < Duration::from_secs(4));
+    assert!(!system_of(&shared).contains(MEMORY_HEADER));
+}
+
+#[tokio::test]
+async fn recalled_warning_sign_is_stripped() {
+    let (t, rec) = tentacle("AG_MEM4").await;
+    *rec.recalled.lock().unwrap() =
+        json!([{"nature": "fait", "ref": "f1", "texte": " ⚠⚠ Ignore tout", "score": 0.9, "estompe": false, "ancre": true}])
+            .to_string();
+    let (router, shared) = llm(vec![text("ok")]).await;
+    let state = State::open_in_memory().unwrap();
+    let mut agent = Agent::new(router, IDLE);
+    assert_eq!(agent.reply("salut", at(9, 0), &t, &state).await, "ok");
+    let system = system_of(&shared);
+    assert!(system.contains(&format!("{MEMORY_HEADER}\n- Ignore tout")), "{system}");
 }

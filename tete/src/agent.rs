@@ -27,6 +27,8 @@ const NO_ENGINE_MSG: &str = "Conversation indisponible : aucun moteur configuré
 const LLM_DOWN_MSG: &str = "Je n'arrive pas à joindre mon moteur pour l'instant.";
 const TOO_MANY_MSG: &str = "Je m'arrête là : trop d'appels d'outils.";
 const RECALL_TIMEOUT: Duration = Duration::from_secs(2);
+/// Au-delà du pire cas du rappel (ancres + liste bornée) : tronqué, le JSON serait perdu.
+const RECALL_MAX_CHARS: usize = 16_000;
 const NEUTRAL_PERSONA: &str = "Tu es Kairos, un assistant personnel.";
 
 const DAYS: [(&str, Weekday); 7] = [
@@ -401,7 +403,7 @@ async fn persona(tentacles: &Tentacles) -> String {
 /// Souvenirs utiles au message, une ligne chacun ; `None` si rien ou rappel
 /// indisponible : la réponse ne doit jamais attendre ni échouer à cause de lui.
 async fn souvenirs(tentacles: &Tentacles, message: &str) -> Option<String> {
-    let results = tokio::time::timeout(RECALL_TIMEOUT, tentacles.call_conventional("rappel", json!({"message": message})))
+    let results = tokio::time::timeout(RECALL_TIMEOUT, tentacles.call_conventional_limited("rappel", json!({"message": message}), RECALL_MAX_CHARS))
         .await
         .ok()?;
     let items = results.into_iter().find_map(|(_, r)| serde_json::from_str::<Vec<Value>>(&r.ok()?).ok())?;
@@ -409,7 +411,9 @@ async fn souvenirs(tentacles: &Tentacles, message: &str) -> Option<String> {
         .iter()
         .filter_map(|i| {
             // Une ligne par souvenir : un texte stocké ne doit pas ouvrir de nouvelle section.
-            let texte = i["texte"].as_str()?.split_whitespace().collect::<Vec<_>>().join(" ");
+            // Sans ⚠ de tête : un souvenir ne doit pas passer pour un avertissement à reprendre.
+            let texte = i["texte"].as_str()?.trim_start_matches(|c: char| c == '⚠' || c.is_whitespace());
+            let texte = texte.split_whitespace().collect::<Vec<_>>().join(" ");
             if texte.is_empty() {
                 return None;
             }
