@@ -26,6 +26,7 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.LayoutDirection
@@ -34,7 +35,10 @@ import app.kairos.mobile.data.AgendaSnapshot
 import app.kairos.mobile.data.FinancesSnapshot
 import app.kairos.mobile.data.MaisonSnapshot
 import app.kairos.mobile.data.MarchesSnapshot
+import app.kairos.mobile.data.MediasSnapshot
 import app.kairos.mobile.data.MemoireSnapshot
+import app.kairos.mobile.ui.medias.nextRelease
+import app.kairos.mobile.ui.medias.readyCount
 import app.kairos.mobile.ui.memoire.openIntentions
 import app.kairos.mobile.ui.memoire.timeLeft
 import java.time.LocalDateTime
@@ -94,6 +98,11 @@ fun SpacesScreen(
     onCloseMemoire: () -> Unit,
     memoireContent: @Composable () -> Unit,
     memoireLater: Set<Long> = emptySet(),
+    medias: MediasSnapshot,
+    mediasOpen: Boolean,
+    onOpenMedias: () -> Unit,
+    onCloseMedias: () -> Unit,
+    mediasContent: @Composable () -> Unit,
     maisonContent: @Composable () -> Unit,
 ) {
     val overlay = rememberOverlayState(maisonOpen, Origin.Anchor)
@@ -101,12 +110,13 @@ fun SpacesScreen(
     val agendaOverlay = rememberOverlayState(agendaOpen, Origin.Anchor)
     val marchesOverlay = rememberOverlayState(marchesOpen, Origin.Anchor)
     val memoireOverlay = rememberOverlayState(memoireOpen, Origin.Anchor)
+    val mediasOverlay = rememberOverlayState(mediasOpen, Origin.Anchor)
     val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.outlineVariant)) {
         Column(
             Modifier
                 .fillMaxSize()
-                .underOverlays(rtl, overlay, financesOverlay, agendaOverlay, marchesOverlay, memoireOverlay)
+                .underOverlays(rtl, overlay, financesOverlay, agendaOverlay, marchesOverlay, memoireOverlay, mediasOverlay)
                 .background(MaterialTheme.colorScheme.background)
                 .padding(padding)
                 .padding(horizontal = 20.dp, vertical = 20.dp),
@@ -124,6 +134,8 @@ fun SpacesScreen(
             MarchesCard(marches, onOpenMarches, Modifier.overlayAnchor(marchesOverlay, CardCorner))
             Spacer(Modifier.height(12.dp))
             MemoireCard(memoire, memoireLater, onOpenMemoire, Modifier.overlayAnchor(memoireOverlay, CardCorner))
+            Spacer(Modifier.height(12.dp))
+            MediasCard(medias, onOpenMedias, Modifier.overlayAnchor(mediasOverlay, CardCorner))
             Spacer(Modifier.height(16.dp))
             Text(
                 "D'autres espaces viendront ici.",
@@ -145,6 +157,9 @@ fun SpacesScreen(
         }
         Overlay(memoireOverlay, memoireOpen, onClose = onCloseMemoire, anchorColor = MaterialTheme.colorScheme.surface) {
             memoireContent()
+        }
+        Overlay(mediasOverlay, mediasOpen, onClose = onCloseMedias, anchorColor = MaterialTheme.colorScheme.surface) {
+            mediasContent()
         }
     }
 }
@@ -340,6 +355,57 @@ private fun MemoireCard(memoire: MemoireSnapshot, later: Set<Long>, onClick: () 
             Text("›", style = MaterialTheme.typography.headlineSmall, color = colors.onSurfaceVariant)
         }
     }
+}
+
+/** Nombre d'éléments prêts à regarder et la prochaine sortie. */
+@Composable
+private fun MediasCard(medias: MediasSnapshot, onClick: () -> Unit, modifier: Modifier) {
+    val colors = MaterialTheme.colorScheme
+    val m = medias.medias
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(CardCorner),
+        color = colors.surface,
+        border = BorderStroke(1.dp, colors.outlineVariant),
+        modifier = modifier.fillMaxWidth(),
+    ) {
+        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            PlayIcon(colors.primary, colors.primaryContainer)
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text("Médias", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                if (m == null) {
+                    Text("À regarder, téléchargements et sorties", style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant)
+                } else {
+                    val n = readyCount(m)
+                    Text(
+                        if (n == 0) "Rien de prêt à regarder" else "$n prêt${if (n > 1) "s" else ""} à regarder",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = colors.onSurfaceVariant,
+                    )
+                    nextRelease(m, LocalDate.now())?.let {
+                        Text(it, style = MaterialTheme.typography.bodySmall, color = colors.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+            }
+            Text("›", style = MaterialTheme.typography.headlineSmall, color = colors.onSurfaceVariant)
+        }
+    }
+}
+
+/** Écran et bouton lecture. */
+@Composable
+private fun PlayIcon(line: Color, fill: Color) = Canvas(Modifier.size(44.dp).background(fill, RoundedCornerShape(12.dp)).padding(9.dp)) {
+    val w = size.width
+    val h = size.height
+    drawRoundRect(line.copy(alpha = 0.35f), Offset(0f, h * 0.12f), Size(w, h * 0.76f), CornerRadius(3.dp.toPx()))
+    val play = Path().apply {
+        moveTo(w * 0.4f, h * 0.32f)
+        lineTo(w * 0.68f, h * 0.5f)
+        lineTo(w * 0.4f, h * 0.68f)
+        close()
+    }
+    drawPath(play, line)
 }
 
 /** Carnet : page et lignes. */

@@ -89,6 +89,7 @@ import app.kairos.mobile.ui.finances.FinancesScreen
 import app.kairos.mobile.ui.marches.MarchesScreen
 import app.kairos.mobile.ui.memoire.laterIds
 import app.kairos.mobile.ui.memoire.MemoireScreen
+import app.kairos.mobile.ui.medias.MediasScreen
 import app.kairos.mobile.ui.kit.LocalAmountsMasked
 import app.kairos.mobile.ui.pairing.PairingScreen
 import app.kairos.mobile.ui.talk.ChatScreen
@@ -514,6 +515,7 @@ private fun KairosRoot(model: AppModel) {
     var agendaOpen by rememberSaveable { mutableStateOf(false) }
     var marchesOpen by rememberSaveable { mutableStateOf(false) }
     var memoireOpen by rememberSaveable { mutableStateOf(false) }
+    var mediasOpen by rememberSaveable { mutableStateOf(false) }
     var unpackOrder by rememberSaveable { mutableStateOf<Long?>(null) }
     var adding by rememberSaveable { mutableStateOf(false) }
     var focusInput by remember { mutableStateOf(false) }
@@ -618,6 +620,7 @@ private fun KairosRoot(model: AppModel) {
                 val agenda by session.repository.agenda.collectAsState()
                 val marches by session.repository.marches.collectAsState()
                 val memoire by session.repository.memoire.collectAsState()
+                val medias by session.repository.medias.collectAsState()
                 val marks by session.repository.marks.collectAsState()
                 // Une actualisation à l'arrivée sur l'onglet : les chiffres des cartes sont à jour.
                 LaunchedEffect(Unit) {
@@ -627,6 +630,7 @@ private fun KairosRoot(model: AppModel) {
                         { session.repository.refreshAgenda(LocalDate.now(), force = false) },
                         { session.repository.refreshMarches(force = false) },
                         { session.repository.refreshMemoire(force = false) },
+                        { session.repository.refreshMedias(force = false) },
                     )
                     for (refresh in refreshes) {
                         launch {
@@ -695,6 +699,19 @@ private fun KairosRoot(model: AppModel) {
                             padding = padding,
                             appScope = model.viewModelScope,
                             onClose = { memoireOpen = false },
+                            onUnauthorized = model::unauthorized,
+                        )
+                    },
+                    medias = medias,
+                    mediasOpen = mediasOpen,
+                    onOpenMedias = { mediasOpen = true },
+                    onCloseMedias = { mediasOpen = false },
+                    mediasContent = {
+                        MediasScreen(
+                            repository = session.repository,
+                            padding = padding,
+                            appScope = model.viewModelScope,
+                            onClose = { mediasOpen = false },
                             onUnauthorized = model::unauthorized,
                         )
                     },

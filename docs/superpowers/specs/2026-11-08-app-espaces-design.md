@@ -127,3 +127,29 @@ autres gestes. Ils passent par des outils `app_*`, que le moteur ne voit pas.
 
 Hors du premier jet : modifier la personnalité de l'assistant (seulement depuis
 l'hôte), éditer une leçon.
+
+## Espace Médias
+
+Sources : module médias (sur la machine qui héberge la pile média, joint par la
+tête comme les autres). Rôle de l'écran : **« qu'est-ce que je peux regarder
+maintenant, qu'est-ce qui arrive, quelque chose bloque-t-il ? »**.
+
+- **À regarder** (en tête) : reprises en cours (temps restant) puis prochains
+  épisodes et films récents prêts, avec l'état des sous-titres (VF, ST FR,
+  absents, recherche en cours). Glisser → « vu » (annulable 4 s), bouton
+  visible. Les éléments sans sous-titres français sont regroupés à part.
+- **Téléchargements** : avancement en barres, temps restant, éléments bloqués
+  avec la raison ; un bouton pause / reprise global.
+- **À venir** : sorties suivies des 7 prochains jours (épisodes, films), datées
+  en heure locale, « déjà là » signalé.
+- **Demandes** : demandes suivies et leur état ; **ajouter** : recherche
+  (séries et films) puis « demander » sur un résultat.
+- **Problèmes** : bandeau quand un service est injoignable ou que la
+  bibliothèque signale des échecs ; une section dont le service est absent
+  affiche sa raison sans masquer les autres.
+- Carte Espaces : nombre d'éléments prêts et la prochaine sortie.
+
+Données externes (titres, raisons) : non fiables, nettoyées et bornées côté
+module. Hors du premier jet : statistiques, musique, lecture et livres audio,
+obligations de partage, résumé « previously », relance et liste noire des
+versions, ne plus suivre.
