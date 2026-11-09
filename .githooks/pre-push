@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Dernier contrôle avant publication : contenu et messages de chaque commit poussé.
+set -euo pipefail
+zero=0000000000000000000000000000000000000000
+scan="$(git rev-parse --show-toplevel)/scripts/osint-scan.sh"
+while read -r _ local_sha _ remote_sha; do
+  [ "$local_sha" = "$zero" ] && continue          # suppression de branche
+  if [ "$remote_sha" = "$zero" ]; then
+    # Nouvelle branche : depuis le point commun avec une branche déjà publiée.
+    base=$(git merge-base "$local_sha" origin/develop 2>/dev/null || git merge-base "$local_sha" origin/main 2>/dev/null || true)
+    [ -z "$base" ] && { echo "pre-push : aucune base publiée trouvée, envoi refusé" >&2; exit 1; }
+  else
+    base=$remote_sha
+  fi
+  [ "$base" = "$local_sha" ] && continue
+  "$scan" --range "$base..$local_sha"
+done

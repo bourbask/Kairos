@@ -70,8 +70,11 @@ jobs:
       - name: GitHub release with the APK
         env:
           GH_TOKEN: ${{ github.token }}
+          # Notes de version : la description de la PR de release (nouveautés, corrections).
+          NOTES: ${{ github.event.pull_request.body }}
         run: |
+          printf '%s\n' "$NOTES" > "$RUNNER_TEMP/notes.md"
           gh release create "v${{ steps.extract.outputs.version }}" \
             "$RUNNER_TEMP/kairos-v${{ steps.extract.outputs.version }}.apk" \
             --title "Kairos ${{ steps.extract.outputs.version }}" \
-            --generate-notes
+            --notes-file "$RUNNER_TEMP/notes.md"

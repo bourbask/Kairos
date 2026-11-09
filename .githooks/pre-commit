@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Refuse un commit qui ajouterait une donnée personnelle, un secret ou un détail d'environnement.
+exec "$(git rev-parse --show-toplevel)/scripts/osint-scan.sh" --staged

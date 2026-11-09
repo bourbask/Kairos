@@ -46,3 +46,13 @@ jobs:
             exit 1
           fi
           echo "Release $VERSION (previous: ${LAST:-none})."
+      - name: Release notes present
+        env:
+          BODY: ${{ github.event.pull_request.body }}
+        run: |
+          # La description devient les notes de la release : au moins une section
+          # « ## … » suivie d'un élément de liste.
+          if ! printf '%s\n' "$BODY" | grep -q '^## ' || ! printf '%s\n' "$BODY" | grep -qE '^[-*] .+'; then
+            echo "::error::La description de la PR de release doit contenir les notes de version (sections « ## Nouveautés » / « ## Corrections » avec des éléments de liste)."
+            exit 1
+          fi

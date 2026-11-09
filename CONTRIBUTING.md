@@ -17,6 +17,23 @@
 - Les branches de travail et de fusion sont supprimées une fois fusionnées.
 - Intégration par merge, jamais par rebase. Avant d'ouvrir une PR : `git pull origin <cible>`.
 
+## Garde de publication
+
+Dépôt public : rien de personnel, de secret ni d'environnement ne doit y entrer.
+Les contrôles se font aux points où un contenu change de statut, pas à chaque étape.
+
+- **Commit** (local, réécrivable) : contrôle technique rapide par les hooks de
+  `.githooks/` (`make hooks`, une fois par clone) — secrets (gitleaks), adresses IP
+  privées, emails, chemins personnels, fichiers interdits (`.env`, profils, bases, clés).
+- **Push et publications GitHub** (PR, issue, release) : en plus, relecture du sens
+  par un modèle indépendant (`scripts/revue-perso.sh`). Une donnée personnelle, de
+  l'auteur ou d'un tiers, même reformulée, bloque la publication ; les zones à
+  anonymiser sont indiquées sans recopier la donnée.
+- Aucune donnée réelle d'une personne, même dans la documentation ou les tests :
+  exemples fictifs uniquement. Aucune liste centralisée de données personnelles.
+- Faux positif technique avéré : ajouter le texte exact à `private/osint-allowlist.txt`.
+- La CI rejoue le contrôle technique sur chaque PR (commits, messages, titre et description).
+
 ## Worktrees
 
 Un worktree par branche de travail, dans `.worktrees/`, nommé d'après la branche
@@ -47,9 +64,12 @@ qu'appliquée depuis la 0.2.0 :
 
 Publier une release (deux PR en tout : les branches de travail, puis celle-ci) :
 
-1. PR `develop` → `main` intitulée exactement `Release X.Y.Z`. La CI vérifie le titre,
-   que le tag n'existe pas et que la version dépasse la précédente.
-2. Fusion en merge commit : tag `vX.Y.Z`, APK signé construit et publié dans la release.
+1. PR `develop` → `main` intitulée exactement `Release X.Y.Z`, dont la description
+   contient les notes de version (`## Nouveautés`, `## Corrections`, en listes). La CI
+   vérifie le titre, la présence des notes, que le tag n'existe pas et que la version
+   dépasse la précédente.
+2. Fusion en merge commit : tag `vX.Y.Z`, APK signé construit et publié dans la release,
+   avec la description de la PR comme notes.
 3. Déploiement depuis `main` (le script dépose l'APK du dernier tag sur le serveur).
 
 Le serveur se déploie depuis `main` uniquement.

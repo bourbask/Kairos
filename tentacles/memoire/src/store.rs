@@ -7,6 +7,8 @@ use kairos::calendar::USER_TZ;
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use serde::{Deserialize, Serialize};
 
+use crate::force::{Famille, est_actif, recuperabilite, renforcer, stabilite_initiale};
+
 /// Clé réservée du fait portant la personnalité.
 pub const PERSONA_KEY: &str = "persona";
 /// Taille maximale d'une transcription acceptée.
@@ -169,6 +171,22 @@ pub struct MemoryStore {
     conn: Connection,
 }
 
+/// Force d'un souvenir (fait ou entrée de journal).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Force {
+    pub stabilite: f64,
+    pub dernier_rappel: NaiveDateTime,
+    pub rappels: u32,
+    pub importance: f64,
+    pub ancre: bool,
+    pub confiance: f64,
+}
+
+/// Importance par défaut d'une connaissance déclarée.
+const IMPORTANCE_FAIT: f64 = 0.5;
+/// Importance par défaut d'un épisode.
+const IMPORTANCE_EPISODE: f64 = 0.0;
+
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS journal (
     id INTEGER PRIMARY KEY, at TEXT NOT NULL, source TEXT NOT NULL, kind TEXT NOT NULL,
@@ -190,6 +208,12 @@ CREATE VIRTUAL TABLE IF NOT EXISTS conversations_fts USING fts5(text);
 CREATE TABLE IF NOT EXISTS lessons (
     id INTEGER PRIMARY KEY, context TEXT NOT NULL, qualification TEXT NOT NULL,
     debrief TEXT NOT NULL, conclusion TEXT NOT NULL, actions TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS souvenirs (
+    nature TEXT NOT NULL, ref TEXT NOT NULL, stabilite REAL NOT NULL,
+    dernier_rappel TEXT NOT NULL, rappels INTEGER NOT NULL DEFAULT 0,
+    importance REAL NOT NULL, ancre INTEGER NOT NULL DEFAULT 0, confiance REAL NOT NULL,
+    PRIMARY KEY (nature, ref));
+CREATE VIRTUAL TABLE IF NOT EXISTS facts_fts USING fts5(key, value);
 ";
 
 fn now_local() -> NaiveDateTime {
@@ -212,6 +236,53 @@ fn fts_literal(query: &str) -> Option<String> {
         .map(|t| format!("\"{}\"", t.replace('"', "\"\"")))
         .collect();
     (!terms.is_empty()).then(|| terms.join(" "))
+}
+
+/// Variante en OU pour le rappel : termes d'au moins 3 caractères, chacun
+/// littéral. `None` si aucun terme cherchable.
+fn fts_any(query: &str) -> Option<String> {
+    let terms: Vec<String> = query
+        .split_whitespace()
+        .filter(|t| t.chars().count() >= 3)
+        .map(|t| format!("\"{}\"", t.replace('"', "\"\"")))
+        .collect();
+    (!terms.is_empty()).then(|| terms.join(" OR "))
+}
+
+/// Souvenir proposé au modèle par le rappel.
+#[derive(Debug, Clone, Serialize)]
+pub struct Rappel {
+    pub nature: String,
+    pub r#ref: String,
+    pub texte: String,
+    pub score: f64,
+    pub estompe: bool,
+    pub ancre: bool,
+}
+
+/// Budget de texte des ancres, toujours fournies.
+const BUDGET_ANCRES: usize = 3_200;
+/// Nombre maximal d'ancres rappelées, en plus de `limite`.
+const ANCRES_MAX: usize = 20;
+/// Longueur maximale du texte d'un souvenir rappelé.
+const TEXTE_MAX: usize = 300;
+/// Épisodes candidats sans recherche : les plus récents.
+const RAPPEL_JOURNAL_RECENT: u32 = 50;
+/// Résultats retenus par recherche plein texte.
+const RAPPEL_RECHERCHE_MAX: u32 = 50;
+/// Un souvenir estompé ne remonte que dans ces premiers rangs de recherche.
+const RANG_ESTOMPE: usize = 3;
+
+fn tronquer(t: &str) -> String {
+    t.chars().take(TEXTE_MAX).collect()
+}
+
+/// Texte lisible d'une entrée de journal : champ texte s'il existe, sinon le JSON brut.
+fn texte_journal(content: &str) -> String {
+    serde_json::from_str::<serde_json::Value>(content)
+        .ok()
+        .and_then(|v| ["texte", "text"].iter().find_map(|k| v.get(k)?.as_str().map(str::to_owned)))
+        .unwrap_or_else(|| content.to_owned())
 }
 
 fn card_from_row(r: &Row) -> rusqlite::Result<(ConversationCard, String, String, String, String)> {
@@ -260,20 +331,98 @@ impl MemoryStore {
         conn.execute_batch(
             "CREATE UNIQUE INDEX IF NOT EXISTS conversations_session ON conversations(session_id) WHERE session_id IS NOT NULL;",
         )?;
+        Self::migrate_souvenirs(&conn)?;
         Ok(MemoryStore { conn })
+    }
+
+    /// Aligne les souvenirs sur `fact_log` et `journal` à chaque ouverture, y
+    /// compris après un passage par une version qui les ignorait : retire ceux
+    /// dont la source a disparu, donne une force à chaque fait et entrée qui
+    /// n'en a pas, réindexe les valeurs courantes. Idempotent ; ne touche ni
+    /// `fact_log` ni `journal`. La personnalité reste hors souvenirs.
+    fn migrate_souvenirs(conn: &Connection) -> Result<()> {
+        let tx = conn.unchecked_transaction()?;
+        tx.execute(
+            "DELETE FROM souvenirs WHERE nature = 'fait' AND ref NOT IN (SELECT key FROM fact_log WHERE key <> ?)",
+            [PERSONA_KEY],
+        )?;
+        // Un identifiant de journal peut être réutilisé : un souvenir plus ancien
+        // que son entrée appartenait à une entrée effacée.
+        tx.execute(
+            "DELETE FROM souvenirs WHERE nature = 'journal' AND NOT EXISTS
+             (SELECT 1 FROM journal j WHERE j.id = CAST(souvenirs.ref AS INTEGER) AND j.at <= souvenirs.dernier_rappel)",
+            [],
+        )?;
+        // Créés maintenant : réactivés à la migration pour ne pas s'estomper d'un coup.
+        let maintenant = ts(now_local());
+        tx.execute(
+            "INSERT OR IGNORE INTO souvenirs (nature, ref, stabilite, dernier_rappel, importance, confiance)
+             SELECT 'fait', key, ?1, ?4, ?2, 1.0 FROM fact_log
+             WHERE id IN (SELECT MAX(id) FROM fact_log GROUP BY key) AND key <> ?3",
+            params![stabilite_initiale(Famille::Connaissance, IMPORTANCE_FAIT), IMPORTANCE_FAIT, PERSONA_KEY, maintenant],
+        )?;
+        tx.execute(
+            "INSERT OR IGNORE INTO souvenirs (nature, ref, stabilite, dernier_rappel, importance, confiance)
+             SELECT 'journal', CAST(id AS TEXT), ?1, ?3, ?2, 1.0 FROM journal",
+            params![stabilite_initiale(Famille::Episode, IMPORTANCE_EPISODE), IMPORTANCE_EPISODE, maintenant],
+        )?;
+        tx.execute("DELETE FROM facts_fts", [])?;
+        tx.execute(
+            "INSERT INTO facts_fts (key, value) SELECT key, value FROM fact_log
+             WHERE id IN (SELECT MAX(id) FROM fact_log GROUP BY key) AND key <> ?",
+            [PERSONA_KEY],
+        )?;
+        tx.execute("INSERT INTO facts_fts (facts_fts) VALUES ('optimize')", [])?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    // --- Force des souvenirs ---
+
+    pub fn force(&self, nature: &str, r#ref: &str) -> Result<Option<Force>> {
+        self.conn
+            .query_row(
+                "SELECT stabilite, dernier_rappel, rappels, importance, ancre, confiance
+                 FROM souvenirs WHERE nature = ? AND ref = ?",
+                [nature, r#ref],
+                |r| {
+                    Ok((r.get::<_, f64>(0)?, r.get::<_, String>(1)?, r.get::<_, u32>(2)?,
+                        r.get::<_, f64>(3)?, r.get::<_, bool>(4)?, r.get::<_, f64>(5)?))
+                },
+            )
+            .optional()?
+            .map(|(stabilite, dr, rappels, importance, ancre, confiance)| {
+                Ok(Force { stabilite, dernier_rappel: parse_ts(&dr)?, rappels, importance, ancre, confiance })
+            })
+            .transpose()
+    }
+
+    /// Pose ou retire l'ancre ; `false` si le souvenir est inconnu.
+    pub fn ancrer(&self, nature: &str, r#ref: &str, ancre: bool) -> Result<bool> {
+        let n = self.conn.execute(
+            "UPDATE souvenirs SET ancre = ? WHERE nature = ? AND ref = ?",
+            params![ancre, nature, r#ref],
+        )?;
+        Ok(n > 0)
     }
 
     // --- Journal ---
 
     pub fn journal_write(&self, e: &NewJournalEntry) -> Result<i64> {
         let content = serde_json::to_string(&e.content)?;
+        let at = ts(now_local());
         let tx = self.conn.unchecked_transaction()?;
         tx.execute(
             "INSERT INTO journal (at, source, kind, content, sensitivity, provenance) VALUES (?,?,?,?,?,?)",
-            params![ts(now_local()), e.source, e.kind, content, e.sensitivity.as_str(), e.provenance],
+            params![at, e.source, e.kind, content, e.sensitivity.as_str(), e.provenance],
         )?;
         let id = tx.last_insert_rowid();
         tx.execute("INSERT INTO journal_fts (rowid, content) VALUES (?,?)", params![id, content])?;
+        tx.execute(
+            "INSERT OR REPLACE INTO souvenirs (nature, ref, stabilite, dernier_rappel, importance, confiance)
+             VALUES ('journal', ?, ?, ?, ?, 1.0)",
+            params![id.to_string(), stabilite_initiale(Famille::Episode, IMPORTANCE_EPISODE), at, IMPORTANCE_EPISODE],
+        )?;
         tx.commit()?;
         Ok(id)
     }
@@ -333,6 +482,7 @@ impl MemoryStore {
         let tx = self.conn.unchecked_transaction()?;
         let n = tx.execute("DELETE FROM journal WHERE id = ?", [id])?;
         tx.execute("DELETE FROM journal_fts WHERE rowid = ?", [id])?;
+        tx.execute("DELETE FROM souvenirs WHERE nature = 'journal' AND ref = ?", [id.to_string()])?;
         tx.execute("INSERT INTO journal_fts (journal_fts) VALUES ('optimize')", [])?;
         tx.commit()?;
         Ok(n > 0)
@@ -341,10 +491,46 @@ impl MemoryStore {
     // --- Faits (journal d'écritures : le dernier gagne, le reste est l'historique) ---
 
     pub fn fact_set(&self, key: &str, value: &str, provenance: &str) -> Result<()> {
-        self.conn.execute(
+        self.fact_set_at(key, value, provenance, now_local())
+    }
+
+    /// Écrit la valeur ; une clé déjà connue est renforcée (rappel), une
+    /// nouvelle devient une connaissance déclarée.
+    fn fact_set_at(&self, key: &str, value: &str, provenance: &str, now: NaiveDateTime) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
             "INSERT INTO fact_log (key, value, provenance, updated_at) VALUES (?,?,?,?)",
-            params![key, value, provenance, ts(now_local())],
+            params![key, value, provenance, ts(now)],
         )?;
+        if key != PERSONA_KEY {
+            let prev = tx
+                .query_row(
+                    "SELECT stabilite, dernier_rappel, ancre FROM souvenirs WHERE nature = 'fait' AND ref = ?",
+                    [key],
+                    |r| Ok((r.get::<_, f64>(0)?, r.get::<_, String>(1)?, r.get::<_, bool>(2)?)),
+                )
+                .optional()?;
+            match prev {
+                Some((stabilite, dr, ancre)) => {
+                    let r = recuperabilite(parse_ts(&dr)?, stabilite, now, ancre);
+                    tx.execute(
+                        "UPDATE souvenirs SET stabilite = ?, dernier_rappel = ?, rappels = rappels + 1
+                         WHERE nature = 'fait' AND ref = ?",
+                        params![renforcer(stabilite, r), ts(now), key],
+                    )?;
+                }
+                None => {
+                    tx.execute(
+                        "INSERT INTO souvenirs (nature, ref, stabilite, dernier_rappel, importance, confiance)
+                         VALUES ('fait', ?, ?, ?, ?, 1.0)",
+                        params![key, stabilite_initiale(Famille::Connaissance, IMPORTANCE_FAIT), ts(now), IMPORTANCE_FAIT],
+                    )?;
+                }
+            }
+            tx.execute("DELETE FROM facts_fts WHERE key = ?", [key])?;
+            tx.execute("INSERT INTO facts_fts (key, value) VALUES (?,?)", [key, value])?;
+        }
+        tx.commit()?;
         Ok(())
     }
 
@@ -378,7 +564,13 @@ impl MemoryStore {
 
     /// Oublie une clé : valeur courante et historique. Renvoie le nombre de valeurs effacées.
     pub fn fact_forget(&self, key: &str) -> Result<usize> {
-        Ok(self.conn.execute("DELETE FROM fact_log WHERE key = ?", [key])?)
+        let tx = self.conn.unchecked_transaction()?;
+        let n = tx.execute("DELETE FROM fact_log WHERE key = ?", [key])?;
+        tx.execute("DELETE FROM souvenirs WHERE nature = 'fait' AND ref = ?", [key])?;
+        tx.execute("DELETE FROM facts_fts WHERE key = ?", [key])?;
+        tx.execute("INSERT INTO facts_fts (facts_fts) VALUES ('optimize')", [])?;
+        tx.commit()?;
+        Ok(n)
     }
 
     /// Valeur courante de chaque clé commençant par `prefix` (comparaison littérale).
@@ -562,6 +754,90 @@ impl MemoryStore {
             params![l.context, l.qualification, l.debrief, l.conclusion, serde_json::to_string(&l.actions)?],
         )?;
         Ok(self.conn.last_insert_rowid())
+    }
+
+    // --- Rappel (lecture seule : ne renforce rien) ---
+
+    /// Souvenirs à proposer au modèle : ancres d'abord (au plus `ANCRES_MAX`,
+    /// dans leur budget), puis jusqu'à `limite` autres par `R + importance + pertinence`.
+    pub fn rappel(&self, requete: Option<&str>, maintenant: NaiveDateTime, limite: usize) -> Result<Vec<Rappel>> {
+        // Rang commun : les deux recherches fusionnées par score bm25 (plus bas = meilleur).
+        let mut hits: Vec<(f64, &str, String)> = Vec::new();
+        if let Some(q) = requete.and_then(fts_any) {
+            let mut st = self.conn.prepare("SELECT key, rank FROM facts_fts WHERE facts_fts MATCH ? ORDER BY rank LIMIT ?")?;
+            for r in st.query_map(params![q, RAPPEL_RECHERCHE_MAX], |r| Ok((r.get::<_, f64>(1)?, r.get::<_, String>(0)?)))? {
+                let (rank, k) = r?;
+                hits.push((rank, "fait", k));
+            }
+            let mut st = self.conn.prepare("SELECT rowid, rank FROM journal_fts WHERE journal_fts MATCH ? ORDER BY rank LIMIT ?")?;
+            for r in st.query_map(params![q, RAPPEL_RECHERCHE_MAX], |r| Ok((r.get::<_, f64>(1)?, r.get::<_, i64>(0)?)))? {
+                let (rank, id) = r?;
+                hits.push((rank, "journal", id.to_string()));
+            }
+        }
+        hits.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let rang: std::collections::HashMap<(&str, &str), usize> =
+            hits.iter().enumerate().map(|(i, (_, n, r))| ((*n, r.as_str()), i)).collect();
+        let journal_hits: Vec<String> = hits.iter().filter(|h| h.1 == "journal").map(|h| h.2.clone()).collect();
+
+        // Candidats : tous les faits ; épisodes récents, ancrés ou trouvés.
+        // ponytail: tous les faits sont lus à chaque rappel ; filtrer en SQL si leur nombre explose.
+        let sql = format!(
+            "SELECT 'fait', s.ref, s.ref || ' : ' || f.value, s.stabilite, s.dernier_rappel, s.importance, s.ancre
+             FROM souvenirs s JOIN facts_fts f ON f.key = s.ref WHERE s.nature = 'fait'
+             UNION ALL
+             SELECT 'journal', s.ref, substr(j.at, 1, 10) || char(1) || j.content, s.stabilite, s.dernier_rappel, s.importance, s.ancre
+             FROM souvenirs s JOIN journal j ON j.id = CAST(s.ref AS INTEGER) WHERE s.nature = 'journal'
+               AND (s.ancre OR j.id IN (SELECT id FROM journal ORDER BY id DESC LIMIT {RAPPEL_JOURNAL_RECENT})
+                    OR j.id IN ({}))",
+            // Identifiants entiers issus de la base : pas de risque d'injection.
+            journal_hits.join(",")
+        );
+        struct Cand { r: Rappel, importance: f64, dernier: NaiveDateTime, rang: Option<usize> }
+        let mut st = self.conn.prepare(&sql)?;
+        let rows = st.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, f64>(3)?,
+                r.get::<_, String>(4)?, r.get::<_, f64>(5)?, r.get::<_, bool>(6)?))
+        })?;
+        let mut ancres = Vec::new();
+        let mut autres = Vec::new();
+        for row in rows {
+            let (nature, r#ref, brut, stabilite, dr, importance, ancre) = row?;
+            let texte = match brut.split_once('\u{1}') {
+                Some((date, content)) if nature == "journal" => format!("{date} : {}", texte_journal(content)),
+                _ => brut,
+            };
+            // Ligne illisible : ignorée sans bloquer le rappel ni exposer son contenu.
+            let Ok(dernier) = parse_ts(&dr) else { continue };
+            let rec = recuperabilite(dernier, stabilite, maintenant, ancre);
+            let rang = rang.get(&(nature.as_str(), r#ref.as_str())).copied();
+            let pertinence = rang.map_or(0.0, |i| 1.0 / (1.0 + i as f64));
+            let r = Rappel {
+                texte: tronquer(&texte),
+                score: rec + importance + pertinence,
+                estompe: !est_actif(rec),
+                ancre,
+                nature,
+                r#ref,
+            };
+            let c = Cand { r, importance, dernier, rang };
+            if ancre { ancres.push(c) } else { autres.push(c) }
+        }
+
+        ancres.sort_by(|a, b| b.importance.total_cmp(&a.importance).then(b.dernier.cmp(&a.dernier)));
+        let mut out = Vec::new();
+        let mut budget = 0;
+        for c in ancres {
+            let n = c.r.texte.chars().count();
+            if out.len() < ANCRES_MAX && budget + n <= BUDGET_ANCRES {
+                budget += n;
+                out.push(c.r);
+            }
+        }
+        autres.retain(|c| !c.r.estompe || c.rang.is_some_and(|i| i < RANG_ESTOMPE));
+        autres.sort_by(|a, b| b.r.score.total_cmp(&a.r.score));
+        out.extend(autres.into_iter().take(limite).map(|c| c.r));
+        Ok(out)
     }
 }
 
@@ -801,6 +1077,160 @@ mod tests {
     }
 
     #[test]
+    fn migration_is_idempotent_and_keeps_everything() {
+        let path = std::env::temp_dir().join(format!("kairos-mem-force-{}.db", std::process::id()));
+        let p = path.to_str().unwrap();
+        let _ = std::fs::remove_file(p);
+        {
+            let c = Connection::open(p).unwrap();
+            c.execute_batch("
+                CREATE TABLE journal (
+                    id INTEGER PRIMARY KEY, at TEXT NOT NULL, source TEXT NOT NULL, kind TEXT NOT NULL,
+                    content TEXT NOT NULL, sensitivity TEXT NOT NULL, provenance TEXT NOT NULL);
+                CREATE VIRTUAL TABLE journal_fts USING fts5(content);
+                CREATE TABLE fact_log (
+                    id INTEGER PRIMARY KEY, key TEXT NOT NULL, value TEXT NOT NULL,
+                    provenance TEXT NOT NULL, updated_at TEXT NOT NULL);
+                CREATE INDEX fact_log_key ON fact_log(key, id);
+                INSERT INTO fact_log (key, value, provenance, updated_at) VALUES
+                    ('k', 'a', 'p', '2026-01-01 10:00:00'),
+                    ('k', 'b', 'p', '2026-02-01 10:00:00'),
+                    ('kk', 'z', 'p', '2026-03-01 10:00:00'),
+                    ('persona', 'calme', 'hote', '2026-03-01 10:00:00');
+                INSERT INTO journal (at, source, kind, content, sensitivity, provenance) VALUES
+                    ('2026-04-01 08:00:00', 's', 'note', '{}', 'commune', 'p'),
+                    ('2026-04-02 08:00:00', 's', 'note', '{}', 'commune', 'p');
+            ").unwrap();
+        }
+        let avant = now_local() - Duration::seconds(1);
+        let s = MemoryStore::open(p).unwrap();
+        // Un souvenir déjà présent n'est pas retouché par une nouvelle ouverture.
+        s.conn.execute("UPDATE souvenirs SET dernier_rappel = '2026-04-02 08:00:00' WHERE nature = 'journal' AND ref = '2'", []).unwrap();
+        drop(s);
+        let s = MemoryStore::open(p).unwrap();
+        let count = |sql: &str| -> i64 { s.conn.query_row(sql, [], |r| r.get(0)).unwrap() };
+        assert_eq!(count("SELECT count(*) FROM souvenirs WHERE nature = 'fait'"), 2);
+        assert_eq!(count("SELECT count(*) FROM souvenirs WHERE nature = 'journal'"), 2);
+        assert_eq!(count("SELECT count(*) FROM facts_fts"), 2);
+        assert_eq!(count("SELECT count(*) FROM fact_log"), 4);
+        assert_eq!(count("SELECT count(*) FROM journal"), 2);
+        let f = s.force("fait", "k").unwrap().unwrap();
+        assert_eq!((f.confiance, f.importance, f.stabilite, f.rappels, f.ancre), (1.0, 0.5, 90.0, 0, false));
+        // Migrés : réactivés à la migration, pour ne pas s'estomper d'un coup.
+        assert!(f.dernier_rappel >= avant && f.dernier_rappel <= now_local(), "{}", f.dernier_rappel);
+        let j = s.force("journal", "1").unwrap().unwrap();
+        assert_eq!((j.stabilite, j.importance), (3.0, 0.0));
+        assert!(j.dernier_rappel >= avant, "{}", j.dernier_rappel);
+        let j2 = s.force("journal", "2").unwrap().unwrap();
+        assert_eq!(j2.dernier_rappel, parse_ts("2026-04-02 08:00:00").unwrap());
+        assert!(s.force("fait", PERSONA_KEY).unwrap().is_none());
+        assert_eq!(s.fact_get("k").unwrap().unwrap().value, "b");
+        drop(s);
+        let _ = std::fs::remove_file(p);
+    }
+
+    #[test]
+    fn reopen_after_rollback_drops_orphans() {
+        let path = std::env::temp_dir().join(format!("kairos-mem-retour-{}.db", std::process::id()));
+        let p = path.to_str().unwrap();
+        let _ = std::fs::remove_file(p);
+        let s = MemoryStore::open(p).unwrap();
+        s.fact_set("k", "a", "p").unwrap();
+        s.fact_set("oubli", "zorglub", "p").unwrap();
+        note(&s, "premier");
+        let dernier = note(&s, "second");
+        drop(s);
+        {
+            // Ancienne version : écrit et efface sans connaître les souvenirs.
+            let c = Connection::open(p).unwrap();
+            c.execute_batch(&format!("
+                DELETE FROM fact_log WHERE key = 'oubli';
+                INSERT INTO fact_log (key, value, provenance, updated_at) VALUES ('k', 'b', 'p', '2026-05-01 10:00:00');
+                DELETE FROM journal WHERE id = {dernier};
+                DELETE FROM journal_fts WHERE rowid = {dernier};
+            ")).unwrap();
+        }
+        let s = MemoryStore::open(p).unwrap();
+        assert_eq!(s.journal_write(&NewJournalEntry {
+            source: "s".into(), kind: "note".into(), content: serde_json::json!({ "texte": "t" }),
+            sensitivity: Sensitivity::Commune, provenance: "p".into(),
+        }).unwrap(), dernier);
+        assert!(!s.rappel(Some("zorglub oubli"), now_local(), 10).unwrap().iter().any(|r| r.r#ref == "oubli"));
+        assert!(s.force("fait", "oubli").unwrap().is_none());
+        let v: String = s.conn.query_row("SELECT value FROM facts_fts WHERE key = 'k'", [], |r| r.get(0)).unwrap();
+        assert_eq!(v, "b");
+        let n: i64 = s.conn.query_row("SELECT count(*) FROM fact_log", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 2);
+        drop(s);
+        let _ = std::fs::remove_file(p);
+    }
+
+    /// Vrai si un segment de l'index plein texte contient encore `mot`.
+    fn index_garde(s: &MemoryStore, table: &str, mot: &str) -> bool {
+        let mut st = s.conn.prepare(&format!("SELECT block FROM {table}_data")).unwrap();
+        let blocs: Vec<Vec<u8>> = st.query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect();
+        blocs.iter().any(|b| b.windows(mot.len()).any(|w| w == mot.as_bytes()))
+    }
+
+    #[test]
+    fn fact_forget_leaves_no_trace_in_index() {
+        let s = store();
+        s.fact_set("k", "zorglub", "p").unwrap();
+        s.fact_set("autre", "v", "p").unwrap();
+        assert!(index_garde(&s, "facts_fts", "zorglub"));
+        s.fact_forget("k").unwrap();
+        assert!(!index_garde(&s, "facts_fts", "zorglub"));
+    }
+
+    #[test]
+    fn redeclaring_a_fact_reinforces_it() {
+        let s = store();
+        s.fact_set_at("k", "a", "p", t()).unwrap();
+        let later = t() + Duration::days(60);
+        s.fact_set_at("k", "b", "p", later).unwrap();
+        let f = s.force("fait", "k").unwrap().unwrap();
+        assert_eq!(f.rappels, 1);
+        assert!(f.stabilite > 90.0, "{}", f.stabilite);
+        assert_eq!(f.dernier_rappel, later);
+        assert_eq!(s.fact_get("k").unwrap().unwrap().value, "b");
+        let v: String = s.conn.query_row("SELECT value FROM facts_fts WHERE key = 'k'", [], |r| r.get(0)).unwrap();
+        assert_eq!(v, "b");
+    }
+
+    #[test]
+    fn new_journal_entry_is_a_low_importance_episode() {
+        let s = store();
+        let id = note(&s, "x");
+        let f = s.force("journal", &id.to_string()).unwrap().unwrap();
+        assert_eq!((f.stabilite, f.importance, f.rappels), (3.0, 0.0, 0));
+    }
+
+    #[test]
+    fn anchor_and_forget_cleanup() {
+        let s = store();
+        s.fact_set("k", "a", "p").unwrap();
+        assert!(s.ancrer("fait", "k", true).unwrap());
+        assert!(s.force("fait", "k").unwrap().unwrap().ancre);
+        assert!(!s.ancrer("fait", "inconnue", true).unwrap());
+        s.fact_forget("k").unwrap();
+        assert!(s.force("fait", "k").unwrap().is_none());
+        let n: i64 = s.conn.query_row("SELECT count(*) FROM facts_fts", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 0);
+        let id = note(&s, "x");
+        assert!(s.journal_delete(id).unwrap());
+        assert!(s.force("journal", &id.to_string()).unwrap().is_none());
+    }
+
+    #[test]
+    fn persona_has_no_memory_row() {
+        let s = store();
+        s.fact_set(PERSONA_KEY, "calme", "hote").unwrap();
+        s.fact_set(PERSONA_KEY, "vif", "hote").unwrap();
+        assert!(s.force("fait", PERSONA_KEY).unwrap().is_none());
+        assert_eq!(s.fact_get(PERSONA_KEY).unwrap().unwrap().value, "vif");
+    }
+
+    #[test]
     fn oversized_transcript_is_rejected_without_write() {
         let s = store();
         assert!(s.conversation_ingest(&conv(&"x".repeat(MAX_TRANSCRIPT_BYTES + 1))).is_err());
@@ -814,5 +1244,123 @@ mod tests {
             .lesson_record(&NewLesson { context: "c".into(), qualification: "q".into(), debrief: "d".into(), conclusion: "k".into(), actions: vec!["a".into()] })
             .unwrap();
         assert!(id > 0);
+    }
+
+    // --- Rappel ---
+
+    fn vieillir(s: &MemoryStore, nature: &str, r#ref: &str, quand: NaiveDateTime) {
+        s.conn
+            .execute("UPDATE souvenirs SET dernier_rappel = ? WHERE nature = ? AND ref = ?", params![ts(quand), nature, r#ref])
+            .unwrap();
+    }
+
+    #[test]
+    fn recall_never_reinforces() {
+        let s = store();
+        s.fact_set_at("ville", "Lyon", "p", t()).unwrap();
+        let id = note(&s, "promenade au parc").to_string();
+        let avant = (s.force("fait", "ville").unwrap(), s.force("journal", &id).unwrap());
+        let plus_tard = t() + Duration::days(40);
+        s.rappel(Some("Lyon promenade"), plus_tard, 10).unwrap();
+        s.rappel(None, plus_tard, 10).unwrap();
+        assert_eq!(avant, (s.force("fait", "ville").unwrap(), s.force("journal", &id).unwrap()));
+    }
+
+    #[test]
+    fn anchors_always_first_even_without_match() {
+        let s = store();
+        s.fact_set_at("animal", "chat noir", "p", t()).unwrap();
+        s.fact_set_at("transport", "velo rouge", "p", t()).unwrap();
+        s.ancrer("fait", "animal", true).unwrap();
+        let r = s.rappel(Some("velo"), t(), 10).unwrap();
+        assert_eq!((r[0].r#ref.as_str(), r[0].ancre), ("animal", true));
+        assert_eq!(r[1].r#ref, "transport");
+    }
+
+    #[test]
+    fn faded_only_when_top_three() {
+        let s = store();
+        let id = note(&s, "vu une baleine").to_string();
+        vieillir(&s, "journal", &id, t() - Duration::days(30));
+        let a_id = |r: &Vec<Rappel>| r.iter().any(|x| x.nature == "journal" && x.r#ref == id);
+        assert!(!a_id(&s.rappel(None, t(), 10).unwrap()));
+        let r = s.rappel(Some("baleine"), t(), 10).unwrap();
+        assert!(a_id(&r));
+        assert!(r.iter().find(|x| x.r#ref == id).unwrap().estompe);
+    }
+
+    #[test]
+    fn relevance_orders_results() {
+        let s = store();
+        s.fact_set_at("aaa", "pomme", "p", t()).unwrap();
+        s.fact_set_at("bbb", "banane", "p", t()).unwrap();
+        let r = s.rappel(Some("banane"), t(), 10).unwrap();
+        assert_eq!(r[0].r#ref, "bbb");
+        assert_eq!(r[0].texte, "bbb : banane");
+        assert!(r[0].score > r[1].score);
+    }
+
+    #[test]
+    fn recall_query_is_escaped() {
+        let s = store();
+        s.fact_set_at("k", "v", "p", t()).unwrap();
+        note(&s, "x");
+        for q in ["\"", "a AND", "*", "NEAR(", "-x", "((", "le la de", "\"\"\"", "(((", "abc\"def"] {
+            assert!(s.rappel(Some(q), t(), 10).is_ok(), "{q}");
+        }
+    }
+
+    #[test]
+    fn anchors_do_not_eat_the_limit() {
+        let s = store();
+        for i in 0..15 {
+            let k = format!("ancre{i}");
+            s.fact_set_at(&k, "a", "p", t()).unwrap();
+            s.ancrer("fait", &k, true).unwrap();
+        }
+        for i in 0..3 {
+            s.fact_set_at(&format!("velo{i}"), "velo rouge", "p", t()).unwrap();
+        }
+        let r = s.rappel(Some("velo"), t(), 10).unwrap();
+        assert_eq!(r.iter().filter(|x| x.ancre).count(), 15);
+        assert_eq!(r.iter().filter(|x| x.r#ref.starts_with("velo")).count(), 3);
+    }
+
+    #[test]
+    fn at_most_twenty_anchors() {
+        let s = store();
+        for i in 0..30 {
+            let k = format!("a{i}");
+            s.fact_set_at(&k, "x", "p", t()).unwrap();
+            s.ancrer("fait", &k, true).unwrap();
+        }
+        // Les plus importantes passent en premier.
+        s.conn.execute("UPDATE souvenirs SET importance = 0.9 WHERE ref = 'a29'", []).unwrap();
+        let r = s.rappel(None, t(), 12).unwrap();
+        assert_eq!(r.iter().filter(|x| x.ancre).count(), 20);
+        assert_eq!(r[0].r#ref, "a29");
+    }
+
+    #[test]
+    fn corrupted_row_is_skipped() {
+        let s = store();
+        s.fact_set_at("bon", "pomme", "p", t()).unwrap();
+        s.fact_set_at("abime", "poire", "p", t()).unwrap();
+        s.conn.execute("UPDATE souvenirs SET dernier_rappel = 'n/a' WHERE ref = 'abime'", []).unwrap();
+        let r = s.rappel(Some("pomme poire"), t(), 10).unwrap();
+        assert_eq!(r.iter().map(|x| x.r#ref.as_str()).collect::<Vec<_>>(), ["bon"]);
+    }
+
+    #[test]
+    fn anchor_budget_is_respected() {
+        let s = store();
+        for i in 0..50 {
+            let k = format!("cle{i}");
+            s.fact_set_at(&k, &"x".repeat(250), "p", t()).unwrap();
+            s.ancrer("fait", &k, true).unwrap();
+        }
+        let r = s.rappel(None, t(), 10).unwrap();
+        let total: usize = r.iter().filter(|x| x.ancre).map(|x| x.texte.chars().count()).sum();
+        assert!(total <= 3200 && total > 0, "{total}");
     }
 }
