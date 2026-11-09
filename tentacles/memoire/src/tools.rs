@@ -245,6 +245,8 @@ struct CondenserArgs {
 struct NoterArgs {
     etape: String,
     statut: String,
+    /// Code du motif d'une sortie invalide.
+    motif: Option<String>,
     /// `AAAA-MM-JJ` ; absent, le précédent est gardé.
     dernier_jour: Option<String>,
 }
@@ -587,7 +589,7 @@ impl MemoryServer {
     #[tool(description = "Usage interne de la tête : noter l'exécution d'une étape de nuit.")]
     fn nuit_noter(&self, Parameters(a): Parameters<NoterArgs>) -> Out {
         let jour = a.dernier_jour.as_deref().map(parse_jour).transpose()?;
-        self.db()?.nuit_noter(&a.etape, &a.statut, jour, now_local()).map_err(err)?;
+        self.db()?.nuit_noter(&a.etape, &a.statut, a.motif.as_deref(), jour, now_local()).map_err(err)?;
         json_out(json!({"message": "État noté."}))
     }
 }
@@ -601,6 +603,17 @@ fn raison(statut: &str) -> &'static str {
         "modele_indisponible" => "modèle indisponible",
         "sortie_invalide" => "réponse du modèle inutilisable",
         _ => "échec",
+    }
+}
+
+/// Précision courte d'un motif de sortie invalide, pour le briefing.
+fn precision(motif: &str) -> &'static str {
+    match motif {
+        "lot_trop_long" => " (souvenirs trop longs à résumer)",
+        "reponse_coupee" => " (réponse coupée)",
+        "reponse_vide" => " (réponse vide)",
+        "synthese_trop_longue" => " (résumé trop long)",
+        _ => "",
     }
 }
 
@@ -621,7 +634,8 @@ impl MemoryServer {
             };
             if e.statut != "ok" {
                 let depuis = e.dernier_jour.and_then(|j| j.succ_opt()).unwrap_or(derniere.date());
-                lignes.push(format!("- Mémoire : {} en attente depuis le {} — {}", e.etape, jj(depuis), raison(&e.statut)));
+                let motif = e.motif.as_deref().map_or("", precision);
+                lignes.push(format!("- Mémoire : {} en attente depuis le {} — {}{motif}", e.etape, jj(depuis), raison(&e.statut)));
             }
             if now - derniere > Duration::hours(NUIT_MUETTE_HEURES) {
                 lignes.push(format!("- Mémoire : {} n'a pas tourné depuis le {}", e.etape, jj(derniere.date())));
@@ -951,7 +965,7 @@ mod tests {
         let s = srv();
         // Instant figé : le test ne dépend pas de l'heure du lancement.
         let now = NaiveDate::from_ymd_opt(2026, 11, 9).unwrap().and_hms_opt(7, 0, 0).unwrap();
-        let noter = |etape: &str, statut: &str, jour: Option<NaiveDate>| s.db().unwrap().nuit_noter(etape, statut, jour, now).unwrap();
+        let noter = |etape: &str, statut: &str, jour: Option<NaiveDate>| s.db().unwrap().nuit_noter(etape, statut, None, jour, now).unwrap();
         for etape in crate::store::ETAPES_NUIT {
             noter(etape, "ok", None);
         }
@@ -964,6 +978,10 @@ mod tests {
         assert!(s.brief_at(now).unwrap().contains("Mémoire : oubli en attente depuis le 09/11/2026 — échec"));
         noter("condensation", "sortie_invalide", None);
         assert!(s.brief_at(now).unwrap().contains("condensation en attente depuis le 09/11/2026 — réponse du modèle inutilisable"));
+        // Motif du refus : dit, sans rien du contenu.
+        s.db().unwrap().nuit_noter("condensation", "sortie_invalide", Some("lot_trop_long"), None, now).unwrap();
+        let b = s.brief_at(now).unwrap();
+        assert!(b.contains("condensation en attente depuis le 09/11/2026 — réponse du modèle inutilisable (souvenirs trop longs à résumer)"), "{b}");
         // Rattrapée : la ligne disparaît.
         noter("extraction", "ok", NaiveDate::from_ymd_opt(2026, 11, 8));
         assert!(!s.brief_at(now).unwrap().contains("extraction"));
@@ -994,14 +1012,14 @@ mod tests {
         let s = srv();
         let now = NaiveDate::from_ymd_opt(2026, 11, 9).unwrap().and_hms_opt(7, 0, 0).unwrap();
         for etape in crate::store::ETAPES_NUIT {
-            s.db().unwrap().nuit_noter(etape, "ok", None, now - Duration::hours(35)).unwrap();
+            s.db().unwrap().nuit_noter(etape, "ok", None, None, now - Duration::hours(35)).unwrap();
         }
         assert_eq!(s.brief_at(now).unwrap(), "");
-        s.db().unwrap().nuit_noter("oubli", "ok", None, now - Duration::hours(37)).unwrap();
+        s.db().unwrap().nuit_noter("oubli", "ok", None, None, now - Duration::hours(37)).unwrap();
         let b = s.brief_at(now).unwrap();
         assert_eq!(b, "- Mémoire : oubli n'a pas tourné depuis le 07/11/2026");
         // En échec et arrêtée : les deux se voient.
-        s.db().unwrap().nuit_noter("oubli", "echec", None, now - Duration::hours(37)).unwrap();
+        s.db().unwrap().nuit_noter("oubli", "echec", None, None, now - Duration::hours(37)).unwrap();
         let b = s.brief_at(now).unwrap();
         assert!(b.contains("oubli en attente") && b.contains("oubli n'a pas tourné"), "{b}");
     }
@@ -1048,12 +1066,17 @@ mod tests {
         assert_eq!(js(s.nuit_oublier()), json!({"supprimes": 0}));
 
         assert_eq!(js(s.nuit_etat()).as_array().unwrap().len(), 3);
-        let a = NoterArgs { etape: "extraction".into(), statut: "ok".into(), dernier_jour: Some("2026-11-08".into()) };
+        let a = NoterArgs { etape: "extraction".into(), statut: "ok".into(), motif: None, dernier_jour: Some("2026-11-08".into()) };
         assert!(js(s.nuit_noter(Parameters(a)))["message"].is_string());
         let e = &js(s.nuit_etat())[1];
         assert_eq!((e["etape"].as_str(), e["dernier_jour"].as_str(), e["statut"].as_str()), (Some("extraction"), Some("2026-11-08"), Some("ok")));
         assert!(e["derniere_execution"].is_string());
-        let a = NoterArgs { etape: "rêve".into(), statut: "ok".into(), dernier_jour: None };
+        let a = NoterArgs { etape: "rêve".into(), statut: "ok".into(), motif: None, dernier_jour: None };
+        assert!(s.nuit_noter(Parameters(a)).is_err());
+        let a = NoterArgs { etape: "condensation".into(), statut: "sortie_invalide".into(), motif: Some("reponse_coupee".into()), dernier_jour: None };
+        assert!(js(s.nuit_noter(Parameters(a)))["message"].is_string());
+        assert_eq!(js(s.nuit_etat())[0]["motif"], "reponse_coupee");
+        let a = NoterArgs { etape: "condensation".into(), statut: "sortie_invalide".into(), motif: Some("inventé".into()), dernier_jour: None };
         assert!(s.nuit_noter(Parameters(a)).is_err());
     }
 }

@@ -39,6 +39,8 @@ struct Rec {
     brief_calls: AtomicU32,
     /// Nuit : dernier jour traité et statut, par étape.
     nuit: Mutex<HashMap<String, (Option<String>, String)>>,
+    /// Nuit : dernier motif noté, par étape.
+    motifs: Mutex<HashMap<String, Option<String>>>,
     /// Textes des épisodes, par jour.
     episodes: Mutex<HashMap<String, Vec<String>>>,
     /// Indices appliqués : `{jour, indices}`.
@@ -92,6 +94,7 @@ struct SetSummary {
 struct Noter {
     etape: String,
     statut: String,
+    motif: Option<String>,
     dernier_jour: Option<String>,
 }
 
@@ -144,6 +147,7 @@ impl Fake {
     #[tool(description = "Note une étape.")]
     fn nuit_noter(&self, Parameters(a): Parameters<Noter>) -> Result<String, String> {
         self.night("noter");
+        self.rec.motifs.lock().unwrap().insert(a.etape.clone(), a.motif);
         let mut n = self.rec.nuit.lock().unwrap();
         let e = n.entry(a.etape).or_default();
         if a.dernier_jour.is_some() {
@@ -1104,6 +1108,10 @@ fn lot(periode: &str, complement: bool) -> Value {
     })
 }
 
+fn motif(rec: &Rec, etape: &str) -> Option<String> {
+    rec.motifs.lock().unwrap().get(etape).cloned().flatten()
+}
+
 fn applied_days(rec: &Rec) -> Vec<String> {
     rec.applied.lock().unwrap().iter().map(|a| a["jour"].as_str().unwrap().to_string()).collect()
 }
@@ -1256,6 +1264,7 @@ async fn cut_or_oversize_lot_is_not_condensed() {
     assert!(fx.rec.condensed.lock().unwrap().is_empty());
     assert!(!fx.rec.night_calls.lock().unwrap().contains(&"condenser".to_string()));
     assert_eq!(etat(&fx.rec, "condensation").1, "sortie_invalide");
+    assert_eq!(motif(&fx.rec, "condensation").as_deref(), Some("reponse_coupee"));
 
     // Lot trop long pour le contexte du moteur : écarté sans appel au moteur.
     let mut big = lot("2026-W42", false);
@@ -1267,4 +1276,28 @@ async fn cut_or_oversize_lot_is_not_condensed() {
     assert_eq!(fx.llm.lock().unwrap().requests.len(), before);
     assert!(fx.rec.condensed.lock().unwrap().is_empty());
     assert_eq!(etat(&fx.rec, "condensation").1, "sortie_invalide");
+    assert_eq!(motif(&fx.rec, "condensation").as_deref(), Some("lot_trop_long"));
+}
+
+#[tokio::test]
+async fn engine_failure_keeps_refused_lot_reason() {
+    // Lot trop long écarté, puis moteur muet sur le suivant : le refus reste visible.
+    let mut big = lot("2026-W42", false);
+    big["elements"][1]["texte"] = json!("x".repeat(20_000));
+    let mut fx = fixture("JB_N9", NIGHT_USAGES, vec![]).await;
+    *fx.rec.lots.lock().unwrap() = vec![big, lot("2026-W43", false)];
+    run(Job::Summaries, at(9, 3, 0), &mut fx.ctx).await.unwrap();
+    assert!(fx.rec.condensed.lock().unwrap().is_empty());
+    assert_eq!(etat(&fx.rec, "condensation").1, "sortie_invalide");
+    assert_eq!(motif(&fx.rec, "condensation").as_deref(), Some("lot_trop_long"));
+}
+
+#[tokio::test]
+async fn oversized_synthesis_is_not_condensed() {
+    let mut fx = fixture("JB_N10", NIGHT_USAGES, vec![text(&"x".repeat(4_001))]).await;
+    fx.rec.lots.lock().unwrap().push(lot("2026-W41", false));
+    run(Job::Summaries, at(9, 3, 0), &mut fx.ctx).await.unwrap();
+    assert!(!fx.rec.night_calls.lock().unwrap().contains(&"condenser".to_string()));
+    assert_eq!(etat(&fx.rec, "condensation").1, "sortie_invalide");
+    assert_eq!(motif(&fx.rec, "condensation").as_deref(), Some("synthese_trop_longue"));
 }

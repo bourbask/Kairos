@@ -551,6 +551,11 @@ const OK: &str = "ok";
 const NO_MODEL: &str = "modele_indisponible";
 const INVALID: &str = "sortie_invalide";
 const FAILED: &str = "echec";
+// Motifs d'une sortie invalide : codes fermés, connus de la mémoire.
+const TOO_LONG: &str = "lot_trop_long";
+const CUT: &str = "reponse_coupee";
+const EMPTY: &str = "reponse_vide";
+const OVERSIZED: &str = "synthese_trop_longue";
 
 #[derive(Deserialize)]
 struct NightState {
@@ -593,9 +598,9 @@ async fn memory_night(now: NaiveDateTime, ctx: &Ctx) {
             }
             None => FAILED,
         };
-        note(&name, "extraction", extraction, None, ctx).await;
-        let condensation = condense(&name, ctx).await;
-        note(&name, "condensation", condensation, None, ctx).await;
+        note(&name, "extraction", extraction, None, None, ctx).await;
+        let (condensation, motif) = condense(&name, ctx).await;
+        note(&name, "condensation", condensation, motif, None, ctx).await;
         let forget = match night_tool(&name, "nuit_oublier", json!({}), ctx).await {
             Ok(v) => {
                 tracing::info!(tentacule = %name, supprimes = v["supprimes"].as_u64().unwrap_or(0), "oubli de nuit");
@@ -603,7 +608,7 @@ async fn memory_night(now: NaiveDateTime, ctx: &Ctx) {
             }
             Err(_) => FAILED,
         };
-        note(&name, "oubli", forget, None, ctx).await;
+        note(&name, "oubli", forget, None, None, ctx).await;
     }
 }
 
@@ -614,8 +619,8 @@ async fn night_tool(name: &str, tool: &str, args: Value, ctx: &Ctx) -> anyhow::R
     serde_json::from_str(&raw).map_err(|_| anyhow!("{tool} illisible"))
 }
 
-async fn note(name: &str, step: &str, status: &str, day: Option<NaiveDate>, ctx: &Ctx) {
-    let mut args = json!({"etape": step, "statut": status});
+async fn note(name: &str, step: &str, status: &str, motif: Option<&str>, day: Option<NaiveDate>, ctx: &Ctx) {
+    let mut args = json!({"etape": step, "statut": status, "motif": motif});
     if let Some(d) = day {
         args["dernier_jour"] = json!(d.format("%Y-%m-%d").to_string());
     }
@@ -668,7 +673,7 @@ async fn extract(name: &str, last: Option<NaiveDate>, now: NaiveDateTime, ctx: &
                 Err(_) => return FAILED,
             }
         }
-        note(name, "extraction", OK, Some(day), ctx).await;
+        note(name, "extraction", OK, None, Some(day), ctx).await;
     }
     OK
 }
@@ -677,41 +682,51 @@ async fn extract(name: &str, last: Option<NaiveDate>, now: NaiveDateTime, ctx: &
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Issue {
     Condense,
-    Refuse,
+    /// Refusé, avec son motif.
+    Refuse(&'static str),
     Panne,
 }
 
-/// Statut de l'étape d'après les issues des lots : une panne du moteur
-/// n'efface ni un refus ni une condensation qui la précèdent.
-fn condense_status(issues: &[Issue]) -> &'static str {
-    if issues.contains(&Issue::Refuse) {
-        INVALID
+/// Statut de l'étape et motif du premier refus, d'après les issues des lots :
+/// une panne du moteur n'efface ni un refus ni une condensation qui la précèdent.
+fn condense_status(issues: &[Issue]) -> (&'static str, Option<&'static str>) {
+    if let Some(motif) = issues.iter().find_map(|i| if let Issue::Refuse(m) = i { Some(*m) } else { None }) {
+        (INVALID, Some(motif))
     } else if issues.first() == Some(&Issue::Panne) {
-        NO_MODEL
+        (NO_MODEL, None)
     } else {
-        OK
+        (OK, None)
     }
 }
 
-/// Synthèse retenue d'une réponse du moteur, sinon `None`.
-fn synthesis(text: Option<String>, truncated: bool) -> Option<String> {
-    // Une synthèse coupée remplacerait ses sources : refusée comme une sortie vide.
-    let text = text.filter(|_| !truncated)?;
+/// Synthèse retenue d'une réponse du moteur, sinon le motif du refus.
+fn synthesis(text: Option<String>, truncated: bool) -> Result<String, &'static str> {
+    // Une synthèse coupée remplacerait ses sources : refusée.
+    if truncated {
+        return Err(CUT);
+    }
+    let text = text.unwrap_or_default();
     let text = text.trim();
-    (!text.is_empty() && text.chars().count() <= SYNTHESIS_MAX_CHARS).then(|| text.to_owned())
+    if text.is_empty() {
+        Err(EMPTY)
+    } else if text.chars().count() > SYNTHESIS_MAX_CHARS {
+        Err(OVERSIZED)
+    } else {
+        Ok(text.to_owned())
+    }
 }
 
 /// Un lot refusé (sortie vide) n'empêche pas les suivants ; il reste condensable.
 /// Une panne du moteur arrête la condensation.
-async fn condense(name: &str, ctx: &Ctx) -> &'static str {
+async fn condense(name: &str, ctx: &Ctx) -> (&'static str, Option<&'static str>) {
     let Ok(lots) = night_tool(name, "nuit_condensables", json!({"max": NIGHT_LOTS}), ctx).await.and_then(|v| Ok(serde_json::from_value::<Vec<Lot>>(v)?)) else {
-        return FAILED;
+        return (FAILED, None);
     };
     if lots.is_empty() {
-        return OK;
+        return (OK, None);
     }
     let Ok(client) = engine(ctx.agent.router(), "memoire_condensation", Urgency::Deferred).await else {
-        return NO_MODEL;
+        return (NO_MODEL, None);
     };
     let mut issues = Vec::new();
     for lot in lots {
@@ -725,21 +740,24 @@ async fn condense(name: &str, ctx: &Ctx) -> &'static str {
             _ => format!("Souvenirs ({} {}) :\n{}", lot.niveau, lot.periode, lot.elements.iter().map(line).collect::<Vec<_>>().join("\n")),
         };
         if input.chars().count() > LOT_MAX_CHARS {
-            issues.push(Issue::Refuse);
+            issues.push(Issue::Refuse(TOO_LONG));
             continue;
         }
         let Ok(reply) = chat(&client, Urgency::Deferred, CONDENSATION_PROMPT, &[ChatTurn::User(input)], &[]).await else {
             issues.push(Issue::Panne);
             break;
         };
-        let Some(text) = synthesis(reply.text, reply.truncated) else {
-            issues.push(Issue::Refuse);
-            continue;
+        let text = match synthesis(reply.text, reply.truncated) {
+            Ok(text) => text,
+            Err(motif) => {
+                issues.push(Issue::Refuse(motif));
+                continue;
+            }
         };
         let args = json!({"niveau": lot.niveau, "periode": lot.periode, "texte": text, "empreinte": lot.empreinte});
         // `id` nul : lot modifié ou déjà condensé entre-temps, rien à faire.
         if night_tool(name, "nuit_condenser", args, ctx).await.is_err() {
-            return FAILED;
+            return (FAILED, None);
         }
         issues.push(Issue::Condense);
     }
@@ -753,19 +771,19 @@ mod tests {
 
     #[test]
     fn engine_failure_keeps_earlier_outcome() {
-        assert_eq!(condense_status(&[Panne]), NO_MODEL);
-        assert_eq!(condense_status(&[Refuse, Panne]), INVALID);
-        assert_eq!(condense_status(&[Condense, Panne]), OK);
-        assert_eq!(condense_status(&[Condense, Refuse, Condense]), INVALID);
-        assert_eq!(condense_status(&[Condense]), OK);
+        assert_eq!(condense_status(&[Panne]), (NO_MODEL, None));
+        assert_eq!(condense_status(&[Refuse(TOO_LONG), Panne]), (INVALID, Some(TOO_LONG)));
+        assert_eq!(condense_status(&[Condense, Panne]), (OK, None));
+        assert_eq!(condense_status(&[Condense, Refuse(CUT), Refuse(TOO_LONG)]), (INVALID, Some(CUT)));
+        assert_eq!(condense_status(&[Condense]), (OK, None));
     }
 
     #[test]
     fn oversized_synthesis_refused() {
-        assert_eq!(synthesis(Some(" résumé ".into()), false).as_deref(), Some("résumé"));
-        assert_eq!(synthesis(Some("résumé".into()), true), None);
-        assert_eq!(synthesis(Some("  ".into()), false), None);
-        assert_eq!(synthesis(Some("x".repeat(4_000)), false).map(|t| t.len()), Some(4_000));
-        assert_eq!(synthesis(Some("x".repeat(4_001)), false), None);
+        assert_eq!(synthesis(Some(" résumé ".into()), false).as_deref(), Ok("résumé"));
+        assert_eq!(synthesis(Some("résumé".into()), true), Err(CUT));
+        assert_eq!(synthesis(Some("  ".into()), false), Err(EMPTY));
+        assert_eq!(synthesis(Some("x".repeat(4_000)), false).map(|t| t.len()), Ok(4_000));
+        assert_eq!(synthesis(Some("x".repeat(4_001)), false), Err(OVERSIZED));
     }
 }
