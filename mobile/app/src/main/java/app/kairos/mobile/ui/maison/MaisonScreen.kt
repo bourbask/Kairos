@@ -41,11 +41,7 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Snackbar
-import androidx.compose.material3.SnackbarDuration
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.SnackbarResult
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -54,6 +50,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableFloatStateOf
@@ -68,7 +65,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
@@ -101,24 +97,23 @@ import app.kairos.mobile.data.Lot
 import app.kairos.mobile.data.Order
 import app.kairos.mobile.data.Repository
 import app.kairos.mobile.data.Tone
-import app.kairos.mobile.ui.talk.IconButton
 import app.kairos.mobile.ui.theme.Motion
+import app.kairos.mobile.ui.kit.LocalNotifier
+import app.kairos.mobile.ui.kit.PrimaryAction
+import app.kairos.mobile.ui.kit.SpaceHeader
+import app.kairos.mobile.ui.kit.StatusBanner
 import app.kairos.mobile.ui.kit.SwipeRow
 import java.time.LocalDate
-import java.time.LocalDateTime
-import java.time.format.DateTimeFormatter
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.roundToInt
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
 
-private const val UNDO_MS = 4_000L
-
-/** Coins du bandeau « Commande à ranger » et du bouton « Ajouter » (les panneaux suivants en naissent). */
+/** Coins du bandeau « Commande à ranger » et du bouton « Ajouter » (les panneaux suivants en naissent ; celui d'un bouton étendu). */
 val MaisonActionCorner = 16.dp
 
 /** Vitesse verticale au-delà de laquelle le panneau suit le lancer plutôt que sa position. */
@@ -129,7 +124,7 @@ private enum class Panel { Actions, Move, Qty }
 
 /**
  * Espace Inventaire : plan de la cuisine, stock de la zone choisie dans le panneau
- * du bas (↑ l'agrandit). Sur un produit : ← consommé (annulable [UNDO_MS]),
+ * du bas (↑ l'agrandit). Sur un produit : ← consommé (annulable, file commune),
  * → déplacer, tap sur la quantité = +/− puis « Valider », tap sur la ligne = les mêmes actions
  * en boutons. Les écritures partent depuis [appScope], qui survit à l'écran.
  * [onUnpack] : ranger une commande, depuis son bandeau ; [onAdd] : ajouter hors commande.
@@ -150,10 +145,12 @@ fun MaisonScreen(
     LaunchedEffect(snapshot) { state.load(snapshot) }
     val scope = rememberCoroutineScope()
     val haptic = LocalHapticFeedback.current
-    val snackbar = remember { SnackbarHostState() }
+    val notifier = LocalNotifier.current
     val unauthorized by rememberUpdatedState(onUnauthorized)
     var refreshing by remember { mutableStateOf(false) }
     var open by remember { mutableStateOf<Pair<Long, Panel>?>(null) }
+    var window by remember { mutableStateOf<Job?>(null) }
+    var query by remember { mutableStateOf("") }
 
     fun refresh() {
         if (refreshing) return
@@ -212,17 +209,22 @@ fun MaisonScreen(
             return
         }
         // Une seule horloge : « Annuler » n'est visible que tant que l'annulation est possible.
-        scope.launch {
-            snackbar.currentSnackbarData?.dismiss()
-            val r = withTimeoutOrNull(UNDO_MS) {
-                snackbar.showSnackbar("Consommé · ${a.lot.name}", actionLabel = "Annuler", duration = SnackbarDuration.Indefinite)
+        // Une consommation plus récente remplace la fenêtre en cours : l'ancienne part aussitôt.
+        window?.cancel()
+        window = scope.launch {
+            val undone = try {
+                notifier.undo("Consommé · ${a.lot.name}")
+            } catch (e: CancellationException) {
+                // Remplacée, ou écran quitté : l'envoi part.
+                if (state.dispatch(a)) appScope.launch { send(a) }
+                throw e
             }
-            if (r == SnackbarResult.ActionPerformed) {
+            if (undone) {
                 if (state.undo()) return@launch
-                snackbar.showSnackbar("Déjà enregistré")
+                notifier.show("Déjà enregistré")
                 return@launch
             }
-            // Délai écoulé, ou remplacé par une consommation plus récente : l'envoi part.
+            // Délai écoulé : l'envoi part.
             if (state.dispatch(a)) appScope.launch { send(a) }
         }
     }
@@ -238,7 +240,7 @@ fun MaisonScreen(
         snapshotFlow { state.message }.filterNotNull().collect { m ->
             state.consumeMessage()
             haptic.performHapticFeedback(HapticFeedbackType.Reject)
-            launch { snackbar.showSnackbar(m) }
+            launch { notifier.show(m) }
         }
     }
 
@@ -247,6 +249,7 @@ fun MaisonScreen(
     var headerHeight by remember { mutableIntStateOf(0) }
     var topHeight by remember { mutableIntStateOf(0) }
     sheet.range = (topHeight - headerHeight).toFloat().coerceAtLeast(1f)
+    val expanded by remember { derivedStateOf { sheet.fraction > 0.5f } }
 
     Box(
         Modifier
@@ -260,14 +263,24 @@ fun MaisonScreen(
                 .padding(top = padding.calculateTopPadding())
                 .onSizeChanged { topHeight = it.height },
         ) {
-            Header(
-                total = state.total,
-                urgent = state.zones.sumOf { it.urgent },
-                onClose = onClose,
-                modifier = Modifier.onSizeChanged { headerHeight = it.height },
+            SpaceHeader(
+                "Inventaire",
+                onClose,
+                Modifier.onSizeChanged { headerHeight = it.height },
+                subtitle = state.subtitle,
             )
             if (state.offline) {
-                OfflineBar(snapshot.reason ?: "Hors ligne", snapshot.fetchedAt, refreshing, ::refresh)
+                val age = stateAge(snapshot.fetchedAt, LocalDate.now())
+                StatusBanner(
+                    "Inventaire indisponible",
+                    Modifier.padding(start = 16.dp, end = 16.dp, bottom = 8.dp),
+                    detail = listOfNotNull(
+                        age?.let { "Dernier état $it · lecture seule" },
+                        snapshot.reason?.takeIf { it == ApiError.Server.OUTDATED },
+                    ).joinToString(" · ").ifEmpty { null },
+                    actionLabel = "Réessayer",
+                    onAction = ::refresh,
+                )
             }
             // Un seul bandeau, la commande la plus récente ; le panneau en naît, et y retourne.
             var banner by remember { mutableStateOf<LayoutCoordinates?>(null) }
@@ -282,7 +295,8 @@ fun MaisonScreen(
                 )
             }
             KitchenPlan(
-                zones = state.zones,
+                zones = state.planZones,
+                count = state::countText,
                 selected = state.zone,
                 onSelect = {
                     state.select(it)
@@ -300,13 +314,29 @@ fun MaisonScreen(
             height = { height },
         ) {
             AnimatedContent(state.zone, transitionSpec = { Motion.fadeThrough() }, label = "zone") { zone ->
-                val label = state.zones.first { it.id == zone }.label
-                val lots = state.lotsIn(zone)
+                val searching = query.isNotBlank()
+                val lots = if (searching) state.find(query) else state.lotsIn(zone)
+                // Toutes zones mêlées : chaque ligne dit où est le produit.
+                val mixed = searching || zone == TO_FINISH
                 Column(Modifier.fillMaxSize()) {
-                    SheetHeader(label, sheet, onToggle = { scope.launch { sheet.settle(if (sheet.fraction > 0.5f) 0f else 1f) } })
+                    SheetHeader(
+                        if (searching) "Recherche" else state.labelOf(zone),
+                        if (state.known) countLine(lots) else null,
+                        sheet,
+                        onToggle = { scope.launch { sheet.settle(if (sheet.fraction > 0.5f) 0f else 1f) } },
+                    )
+                    if (state.known && (expanded || searching)) {
+                        OutlinedTextField(
+                            value = query,
+                            onValueChange = { query = it.take(40) },
+                            label = { Text("Chercher un produit") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                        )
+                    }
                     when {
-                        !state.known -> Hint(if (state.offline) "${snapshot.reason ?: "Hors ligne"}, et rien en mémoire pour l'instant." else "Chargement…")
-                        lots.isEmpty() -> Hint("Rien ici.")
+                        !state.known -> Hint(if (state.offline) "Pas encore de stock connu." else "Chargement…")
+                        lots.isEmpty() -> Hint(if (searching) "Aucun produit ne correspond." else "Rien ici.")
                         else -> LazyColumn(
                             Modifier
                                 .fillMaxSize()
@@ -318,6 +348,7 @@ fun MaisonScreen(
                             items(lots, key = { it.id }) { lot ->
                                 LotItem(
                                     lot = lot,
+                                    place = if (mixed) state.labelOf(lot.location) else null,
                                     panel = open?.takeIf { it.first == lot.id }?.second,
                                     enabled = state.canAct,
                                     zones = state.zones,
@@ -339,29 +370,15 @@ fun MaisonScreen(
             }
         }
 
-        AddButton(
-            enabled = state.canAct,
-            onClick = onAdd,
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(end = 16.dp, bottom = padding.calculateBottomPadding() + 8.dp)
-                .then(addAnchor),
-        )
-        SnackbarHost(
-            snackbar,
+        PrimaryAction(
+            "Ajouter",
+            onAdd,
             Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = padding.calculateBottomPadding())
-                .padding(horizontal = 16.dp),
-        ) { data ->
-            Snackbar(
-                data,
-                shape = MaterialTheme.shapes.medium,
-                containerColor = MaterialTheme.colorScheme.onBackground,
-                contentColor = MaterialTheme.colorScheme.background,
-                actionColor = MaterialTheme.colorScheme.primaryContainer,
-            )
-        }
+                .align(Alignment.BottomEnd)
+                .padding(end = 16.dp, bottom = padding.calculateBottomPadding() + 16.dp)
+                .then(addAnchor),
+            enabled = state.canAct,
+        )
     }
 }
 
@@ -433,7 +450,7 @@ private fun Sheet(
 }
 
 @Composable
-private fun SheetHeader(label: String, sheet: SheetState, onToggle: () -> Unit) {
+private fun SheetHeader(label: String, count: String?, sheet: SheetState, onToggle: () -> Unit) {
     val scope = rememberCoroutineScope()
     val haptic = LocalHapticFeedback.current
     var high by remember { mutableStateOf(sheet.fraction > 0.5f) }
@@ -466,39 +483,8 @@ private fun SheetHeader(label: String, sheet: SheetState, onToggle: () -> Unit) 
         Spacer(Modifier.height(10.dp))
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
             Text(label, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-            Text(
-                "trié par urgence",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-    }
-}
-
-@Composable
-private fun Header(total: Int, urgent: Int, onClose: () -> Unit, modifier: Modifier = Modifier) {
-    Row(
-        modifier.fillMaxWidth().padding(start = 4.dp, end = 20.dp, top = 8.dp, bottom = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        IconButton(label = "Retour aux espaces", onClick = onClose) { ChevronBackIcon(MaterialTheme.colorScheme.onSurfaceVariant) }
-        Spacer(Modifier.width(4.dp))
-        Column {
-            Text("Inventaire", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
-            Row {
-                Text(
-                    "$total produit${if (total > 1) "s" else ""}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                if (urgent > 0) {
-                    Text(
-                        " · $urgent à finir vite",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                }
+            if (count != null) {
+                Text(count, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
@@ -513,32 +499,6 @@ internal fun ChevronBackIcon(color: Color) {
         drawLine(color, Offset(size.width * 0.62f, size.height * 0.2f), Offset(size.width * 0.34f, size.height * 0.5f), s, StrokeCap.Round)
         drawLine(color, Offset(size.width * 0.34f, size.height * 0.5f), Offset(size.width * 0.62f, size.height * 0.8f), s, StrokeCap.Round)
     }
-}
-
-private val TIME = DateTimeFormatter.ofPattern("HH:mm")
-
-@Composable
-private fun OfflineBar(reason: String, fetchedAt: String?, refreshing: Boolean, onRetry: () -> Unit) {
-    val since = fetchedAt?.let { runCatching { LocalDateTime.parse(it) }.getOrNull() }?.let {
-        if (it.toLocalDate() == LocalDate.now()) " (état de ${it.format(TIME)})" else " (état du ${it.format(DateTimeFormatter.ofPattern("dd/MM"))})"
-    }.orEmpty()
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp)
-            .background(MaterialTheme.colorScheme.surfaceContainerHighest, RoundedCornerShape(12.dp))
-            .padding(start = 14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            "$reason · lecture seule$since",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.error,
-            modifier = Modifier.weight(1f),
-        )
-        TextButton(onClick = onRetry, enabled = !refreshing) { Text(if (refreshing) "…" else "Réessayer") }
-    }
-    Spacer(Modifier.height(8.dp))
 }
 
 @Composable
@@ -593,7 +553,7 @@ private fun OrderBanner(
  * dans une rangée, toutes les tuiles prennent la hauteur du libellé le plus long.
  */
 @Composable
-private fun KitchenPlan(zones: List<ZoneView>, selected: String, onSelect: (String) -> Unit) {
+private fun KitchenPlan(zones: List<ZoneView>, count: (Int) -> String, selected: String, onSelect: (String) -> Unit) {
     val shape = RoundedCornerShape(20.dp)
     Surface(
         shape = shape,
@@ -609,7 +569,7 @@ private fun KitchenPlan(zones: List<ZoneView>, selected: String, onSelect: (Stri
                 start += n
                 Row(Modifier.height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     row.forEach { z ->
-                        ZoneTile(z, z.id == selected, { onSelect(z.id) }, Modifier.weight(1f).fillMaxHeight())
+                        ZoneTile(z, count(z.count), z.id == selected, { onSelect(z.id) }, Modifier.weight(1f).fillMaxHeight())
                     }
                 }
             }
@@ -621,12 +581,11 @@ private fun KitchenPlan(zones: List<ZoneView>, selected: String, onSelect: (Stri
 private val PlanMargin = 16.dp
 
 @Composable
-private fun ZoneTile(zone: ZoneView, selected: Boolean, onClick: () -> Unit, modifier: Modifier) {
+private fun ZoneTile(zone: ZoneView, count: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier) {
     val shape = RoundedCornerShape(12.dp)
     val colors = MaterialTheme.colorScheme
     val bg by animateColorAsState(if (selected) colors.primaryContainer else colors.background, Motion.enter(), label = "fond")
     val line by animateColorAsState(if (selected) colors.primary else colors.outlineVariant, Motion.enter(), label = "bord")
-    val count = if (zone.count == 0) "vide" else "${zone.count} produit${if (zone.count > 1) "s" else ""}"
     Column(
         modifier
             .fillMaxWidth()
@@ -681,6 +640,7 @@ private fun Hint(text: String) {
 @Composable
 private fun LotItem(
     lot: Lot,
+    place: String?,
     panel: Panel?,
     enabled: Boolean,
     zones: List<ZoneView>,
@@ -700,26 +660,34 @@ private fun LotItem(
             leftLabel = "Consommé",
             leftColor = colors.error,
             rightStays = true,
+            // Le tap sur la ligne porte sur le même nœud que les actions du glissement :
+            // le lecteur d'écran lit le produit et propose « Déplacer », « Consommé », « Actions » d'un seul arrêt.
+            modifier = Modifier
+                .clip(MaterialTheme.shapes.medium)
+                .clickable(onClickLabel = "Actions") { onPanel(if (panel == null) Panel.Actions else null) },
         ) {
             Row(
                 Modifier
                     .fillMaxWidth()
                     .clip(MaterialTheme.shapes.medium)
                     .background(colors.surface)
-                    .clickable(onClickLabel = "Actions") { onPanel(if (panel == null) Panel.Actions else null) }
                     .heightIn(min = 52.dp)
                     .padding(horizontal = 8.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 ToneDot(lot.tone)
-                Text(
-                    lot.name,
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = if (lot.tone == Tone.Urgent) FontWeight.SemiBold else FontWeight.Normal,
-                    color = if (lot.tone == Tone.Urgent) colors.error else colors.onSurface,
-                    maxLines = 2,
-                    modifier = Modifier.weight(1f).padding(end = 8.dp),
-                )
+                Column(Modifier.weight(1f).padding(end = 8.dp)) {
+                    Text(
+                        lot.name,
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = if (lot.tone == Tone.Urgent) FontWeight.SemiBold else FontWeight.Normal,
+                        color = if (lot.tone == Tone.Urgent) colors.error else colors.onSurface,
+                        maxLines = 2,
+                    )
+                    if (place != null) {
+                        Text(place, style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
+                    }
+                }
                 val today = remember { LocalDate.now() }
                 expiryText(lot, today)?.let {
                     Text(
@@ -847,7 +815,7 @@ private fun QtyEditor(lot: Lot, enabled: Boolean, onQty: (Double) -> Unit, onCan
 }
 
 @Composable
-private fun StepButton(text: String, label: String, enabled: Boolean, onClick: () -> Unit) {
+internal fun StepButton(text: String, label: String, enabled: Boolean, onClick: () -> Unit) {
     Surface(
         onClick = onClick,
         enabled = enabled,
@@ -857,27 +825,5 @@ private fun StepButton(text: String, label: String, enabled: Boolean, onClick: (
         modifier = Modifier.size(48.dp).alpha(if (enabled) 1f else 0.45f).semantics { contentDescription = label },
     ) {
         Box(contentAlignment = Alignment.Center) { Text(text, fontSize = 22.sp, fontWeight = FontWeight.Bold) }
-    }
-}
-
-@Composable
-private fun AddButton(enabled: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    val shape = RoundedCornerShape(MaisonActionCorner)
-    val primary = MaterialTheme.colorScheme.primary
-    Surface(
-        onClick = onClick,
-        enabled = enabled,
-        shape = shape,
-        color = primary,
-        contentColor = MaterialTheme.colorScheme.onPrimary,
-        modifier = modifier
-            .shadow(10.dp, shape, ambientColor = primary, spotColor = primary)
-            .alpha(if (enabled) 1f else 0.5f),
-    ) {
-        Text(
-            "＋  Ajouter",
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(horizontal = 18.dp, vertical = 14.dp),
-        )
     }
 }

@@ -415,7 +415,7 @@ private fun LineCard(
 
 /**
  * Les zones en grosses tuiles sous le pouce, rangées de trois au plus ;
- * [proposed] en surbrillance ; [extra] occupe la dernière case.
+ * [proposed] en surbrillance ; [extra], s'il est donné, occupe la dernière case.
  */
 @Composable
 internal fun ZoneGrid(
@@ -423,11 +423,11 @@ internal fun ZoneGrid(
     proposed: String?,
     enabled: Boolean,
     onZone: (String) -> Unit,
-    extra: @Composable (Modifier) -> Unit,
+    extra: (@Composable (Modifier) -> Unit)? = null,
 ) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         var start = 0
-        for (n in planRows(zones.size + 1)) {
+        for (n in planRows(zones.size + if (extra != null) 1 else 0)) {
             val row = (start until start + n).toList()
             start += n
             // Tuiles d'une rangée à la même hauteur : celle du libellé le plus long.
@@ -436,7 +436,7 @@ internal fun ZoneGrid(
                     val m = Modifier.weight(1f).fillMaxHeight()
                     zones.getOrNull(i)?.let { (id, label) ->
                         BigTile(label, m, enabled, highlighted = id == proposed) { onZone(id) }
-                    } ?: extra(m)
+                    } ?: extra?.invoke(m)
                 }
             }
         }
@@ -482,7 +482,8 @@ internal fun DateStep(
     today: LocalDate,
     enabled: Boolean,
     onDate: (LocalDate?) -> Unit,
-    onBack: () -> Unit,
+    /** Absent : le retour d'étape est porté par l'en-tête de l'appelant. */
+    onBack: (() -> Unit)?,
     onMissing: (() -> Unit)?,
 ) {
     // Dernière image où une date a été lue : les puces ne clignotent pas quand l'étiquette sort du champ.
@@ -491,7 +492,7 @@ internal fun DateStep(
     val haptic = LocalHapticFeedback.current
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = onBack) { Text("← ${zone ?: "?"}") }
+            if (onBack != null) TextButton(onClick = onBack) { Text("← ${zone ?: "?"}") }
             Text(name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         LabelCamera(

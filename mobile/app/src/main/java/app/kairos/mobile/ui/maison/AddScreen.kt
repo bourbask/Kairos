@@ -27,7 +27,6 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
@@ -51,7 +50,8 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import app.kairos.mobile.ui.kit.PanelHeader
+import app.kairos.mobile.ui.kit.KairosIcons
+import app.kairos.mobile.ui.kit.SpaceHeader
 import app.kairos.mobile.data.ApiError
 import app.kairos.mobile.data.Day
 import app.kairos.mobile.data.KairosApi
@@ -292,7 +292,19 @@ fun AddScreen(
             .systemBarsPadding()
             .imePadding(),
     ) {
-        PanelHeader("Ajouter", onClose, subtitle = if (added > 0) "$added ajouté${if (added > 1) "s" else ""}" else "hors commande")
+        // Un seul retour d'étape, à la place de « Fermer » : le chevron d'en-tête (le retour système ferme toujours).
+        val back: Pair<String, () -> Unit>? = when (step) {
+            AddStep.Scan -> null
+            AddStep.Date -> "Retour au choix de la zone" to { step = AddStep.Zone }
+            else -> "Retour au scanner" to ::restart
+        }
+        SpaceHeader(
+            "Ajouter",
+            back?.second ?: onClose,
+            subtitle = if (added > 0) "$added ajouté${if (added > 1) "s" else ""}" else "hors commande",
+            backLabel = back?.first ?: "Fermer",
+            backIcon = if (back != null) KairosIcons.ChevronBack else KairosIcons.ChevronDown,
+        )
         if (offline) Note("Hors ligne : ajout impossible pour l'instant.", error = true)
         note?.let { Note(it) }
         AnimatedContent(step, Modifier.weight(1f), transitionSpec = { Motion.fadeThrough() }, label = "étape") { s ->
@@ -323,7 +335,6 @@ fun AddScreen(
                     name = name,
                     onName = { name = it.take(NAME_MAX) },
                     onNext = ::named,
-                    onBack = ::restart,
                     onNote = { note = it },
                 )
                 AddStep.Quantity -> QuantityStep(
@@ -332,16 +343,13 @@ fun AddScreen(
                     qty = qty,
                     onQty = { qty = it.take(8) },
                     onNext = { if (parseQty(qty) != null) step = AddStep.Zone },
-                    onBack = ::restart,
                 )
                 AddStep.Zone -> Column(Modifier.fillMaxSize()) {
                     Column(Modifier.weight(1f).fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.Center) {
                         Text("Où le ranges-tu ?", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text(name, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold, maxLines = 3, overflow = TextOverflow.Ellipsis)
                     }
-                    ZoneGrid(zones, proposed = product?.location, enabled = !offline && !busy, onZone = ::choose) { m ->
-                        BigTile("← Autre", m, enabled = !busy, color = MaterialTheme.colorScheme.onSurfaceVariant, onClick = ::restart)
-                    }
+                    ZoneGrid(zones, proposed = product?.location, enabled = !offline && !busy, onZone = ::choose)
                     Spacer(Modifier.padding(4.dp))
                 }
                 AddStep.Date -> DateStep(
@@ -350,7 +358,7 @@ fun AddScreen(
                     today = today,
                     enabled = !offline && !busy,
                     onDate = ::add,
-                    onBack = { step = AddStep.Zone },
+                    onBack = null,
                     onMissing = null,
                 )
                 AddStep.Dish -> DishStep(
@@ -362,7 +370,6 @@ fun AddScreen(
                     onName = { name = it.take(NAME_MAX) },
                     onPortions = { portions = it.coerceIn(1, PORTIONS_MAX) },
                     onZone = { send("app_add_dish", dishArgs(name, portions, it)) },
-                    onBack = ::restart,
                 )
             }
         }
@@ -383,11 +390,10 @@ private fun Note(text: String, error: Boolean = false) {
 
 /** Quantité dans l'unité du produit, pré-remplie avec la quantité proposée. */
 @Composable
-private fun QuantityStep(name: String, unit: String, qty: String, onQty: (String) -> Unit, onNext: () -> Unit, onBack: () -> Unit) {
+private fun QuantityStep(name: String, unit: String, qty: String, onQty: (String) -> Unit, onNext: () -> Unit) {
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { focus.requestFocus() }
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        TextButton(onClick = onBack) { Text("← Autre") }
         Text("Combien ?", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(name, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold, maxLines = 3, overflow = TextOverflow.Ellipsis)
         OutlinedTextField(
@@ -418,10 +424,8 @@ private fun DishStep(
     onName: (String) -> Unit,
     onPortions: (Int) -> Unit,
     onZone: (String) -> Unit,
-    onBack: () -> Unit,
 ) {
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        TextButton(onClick = onBack) { Text("← Scanner") }
         Text("Plat cuisiné", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
         OutlinedTextField(
             value = name,
@@ -440,11 +444,9 @@ private fun DishStep(
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Portions", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-            TextButton(onClick = { onPortions(portions - 1) }, enabled = portions > 1) {
-                Text("−", style = MaterialTheme.typography.headlineSmall)
-            }
-            Text("$portions", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold)
-            TextButton(onClick = { onPortions(portions + 1) }) { Text("+", style = MaterialTheme.typography.headlineSmall) }
+            StepButton("−", "Une portion de moins", enabled = portions > 1) { onPortions(portions - 1) }
+            Text("$portions", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold, modifier = Modifier.padding(horizontal = 16.dp))
+            StepButton("+", "Une portion de plus", enabled = portions < PORTIONS_MAX) { onPortions(portions + 1) }
         }
         Spacer(Modifier.weight(1f))
         Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -457,7 +459,7 @@ private fun DishStep(
 
 /** Nom du produit au clavier, ou dicté par la reconnaissance vocale du téléphone. */
 @Composable
-private fun NameStep(name: String, onName: (String) -> Unit, onNext: () -> Unit, onBack: () -> Unit, onNote: (String) -> Unit) {
+private fun NameStep(name: String, onName: (String) -> Unit, onNext: () -> Unit, onNote: (String) -> Unit) {
     val focus = remember { FocusRequester() }
     val next by rememberUpdatedState(onNext)
     val dictate = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
@@ -468,7 +470,6 @@ private fun NameStep(name: String, onName: (String) -> Unit, onNext: () -> Unit,
     }
     LaunchedEffect(Unit) { focus.requestFocus() }
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        TextButton(onClick = onBack) { Text("← Scanner") }
         OutlinedTextField(
             value = name,
             onValueChange = onName,
