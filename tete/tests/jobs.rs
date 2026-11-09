@@ -295,7 +295,10 @@ async fn completions(AxState(s): AxState<Shared>, Json(body): Json<Value>) -> (S
     match reply {
         // `"pendre"` simule un moteur qui ne répond jamais.
         Some(Value::String(h)) if h == "pendre" => std::future::pending().await,
-        Some(message) => (StatusCode::OK, Json(json!({"choices": [{"message": message}]}))),
+        Some(message) => {
+            let finish = message.get("finish_reason").cloned();
+            (StatusCode::OK, Json(json!({"choices": [{"message": message, "finish_reason": finish}]})))
+        }
         None => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({}))),
     }
 }
@@ -1241,4 +1244,27 @@ async fn unsummarized_day_stays_pending() {
     run(Job::Summaries, at(9, 3, 0), &mut fx.ctx).await.unwrap();
     assert_eq!(applied_days(&fx.rec), vec!["2026-11-08"]);
     assert_eq!(etat(&fx.rec, "extraction"), (Some("2026-11-08".into()), "ok".into()));
+}
+
+#[tokio::test]
+async fn cut_or_oversize_lot_is_not_condensed() {
+    // Réponse coupée faute de place : la synthèse serait tronquée.
+    let cut = json!({"content": "Semaine calme, course du", "finish_reason": "length"});
+    let mut fx = fixture("JB_N8", NIGHT_USAGES, vec![cut]).await;
+    fx.rec.lots.lock().unwrap().push(lot("2026-W41", false));
+    run(Job::Summaries, at(9, 3, 0), &mut fx.ctx).await.unwrap();
+    assert!(fx.rec.condensed.lock().unwrap().is_empty());
+    assert!(!fx.rec.night_calls.lock().unwrap().contains(&"condenser".to_string()));
+    assert_eq!(etat(&fx.rec, "condensation").1, "sortie_invalide");
+
+    // Lot trop long pour le contexte du moteur : écarté sans appel au moteur.
+    let mut big = lot("2026-W42", false);
+    big["elements"][1]["texte"] = json!("x".repeat(20_000));
+    *fx.rec.lots.lock().unwrap() = vec![big];
+    fx.llm.lock().unwrap().replies.push_back(text("Synthèse."));
+    let before = fx.llm.lock().unwrap().requests.len();
+    run(Job::Summaries, at(9, 3, 0), &mut fx.ctx).await.unwrap();
+    assert_eq!(fx.llm.lock().unwrap().requests.len(), before);
+    assert!(fx.rec.condensed.lock().unwrap().is_empty());
+    assert_eq!(etat(&fx.rec, "condensation").1, "sortie_invalide");
 }

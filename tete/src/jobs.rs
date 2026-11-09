@@ -43,6 +43,12 @@ const NIGHT_MAX_CHARS: usize = 64_000;
 const NIGHT_DAYS: usize = 7;
 const NIGHT_LOTS: usize = 4;
 const HINTS_MAX: usize = 50;
+/// Taille maximale du texte d'un lot soumis au moteur : au-delà, l'entrée
+/// risquerait d'être coupée par la fenêtre de contexte et la synthèse d'oublier
+/// des souvenirs qui seraient pourtant effacés.
+// ponytail: borne fixe en caractères (≈ 3 000 jetons) pour la plus petite fenêtre
+// de contexte courante ; la dériver de la configuration du moteur si un lot légitime la dépasse.
+const LOT_MAX_CHARS: usize = 10_000;
 const EXTRACTION_PROMPT: &str = "Extrais de la journée fournie ce que l'utilisateur a lui-même dit ou fait \
     et qui le décrit durablement. Réponds uniquement par un tableau JSON [{\"key\": texte, \"value\": texte}], \
     sans aucun autre texte. Chaque clé est une des clés connues, ou commence par un préfixe d'une clé connue \
@@ -686,10 +692,15 @@ async fn condense(name: &str, ctx: &Ctx) -> &'static str {
             ),
             _ => format!("Souvenirs ({} {}) :\n{}", lot.niveau, lot.periode, lot.elements.iter().map(line).collect::<Vec<_>>().join("\n")),
         };
+        if input.chars().count() > LOT_MAX_CHARS {
+            status = INVALID;
+            continue;
+        }
         let Ok(reply) = chat(&client, Urgency::Deferred, CONDENSATION_PROMPT, &[ChatTurn::User(input)], &[]).await else {
             return NO_MODEL;
         };
-        let text = reply.text.unwrap_or_default();
+        // Une synthèse coupée remplacerait ses sources : refusée comme une sortie vide.
+        let text = reply.text.filter(|_| !reply.truncated).unwrap_or_default();
         if text.trim().is_empty() {
             status = INVALID;
             continue;
