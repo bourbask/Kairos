@@ -353,10 +353,10 @@ impl MemoryStore {
              (SELECT 1 FROM journal j WHERE j.id = CAST(souvenirs.ref AS INTEGER) AND j.at <= souvenirs.dernier_rappel)",
             [],
         )?;
-        // Même règle pour les conversations (identifiant réutilisable, date de début).
+        // Conversations : orpheline = plus de ligne source (la date vient du client, non fiable).
         tx.execute(
-            "DELETE FROM souvenirs WHERE nature = 'conversation' AND NOT EXISTS
-             (SELECT 1 FROM conversations c WHERE c.id = CAST(souvenirs.ref AS INTEGER) AND c.started_at <= souvenirs.dernier_rappel)",
+            "DELETE FROM souvenirs WHERE nature = 'conversation'
+             AND CAST(ref AS INTEGER) NOT IN (SELECT id FROM conversations)",
             [],
         )?;
         // Créés maintenant : réactivés à la migration pour ne pas s'estomper d'un coup.
@@ -982,6 +982,43 @@ mod tests {
         s.conversation_set_summary(id, "jardin", &[], &[]).unwrap();
         s.purge_transcripts(t() + Duration::days(1)).unwrap();
         assert!(s.force("conversation", &id.to_string()).unwrap().is_some());
+    }
+
+    #[test]
+    fn conversation_memory_survives_reopen_with_future_start() {
+        let s = store();
+        let mut c = conv("futur");
+        c.started_at = now_local() + Duration::hours(1);
+        let id = s.conversation_ingest(&c).unwrap().to_string();
+        s.ancrer("conversation", &id, true).unwrap();
+        s.conn.execute("UPDATE souvenirs SET rappels = 4 WHERE nature = 'conversation'", []).unwrap();
+        let avant = s.force("conversation", &id).unwrap();
+        MemoryStore::migrate_souvenirs(&s.conn).unwrap();
+        assert_eq!(s.force("conversation", &id).unwrap(), avant);
+    }
+
+    #[test]
+    fn reingest_keeps_conversation_memory() {
+        let s = store();
+        let mut c = conv("un");
+        c.session_id = Some("s1".into());
+        let id = s.conversation_ingest(&c).unwrap().to_string();
+        s.ancrer("conversation", &id, true).unwrap();
+        s.conn.execute("UPDATE souvenirs SET rappels = 2 WHERE nature = 'conversation'", []).unwrap();
+        let avant = s.force("conversation", &id).unwrap();
+        c.transcript = "deux".into();
+        assert_eq!(s.conversation_ingest(&c).unwrap().to_string(), id);
+        assert_eq!(s.force("conversation", &id).unwrap(), avant);
+    }
+
+    #[test]
+    fn recall_conversation_from_topics_only() {
+        let s = store();
+        let id = s.conversation_ingest(&conv("bavardage")).unwrap();
+        s.conversation_set_summary(id, "", &["jardin".into(), "potager".into()], &[]).unwrap();
+        let r = s.rappel(None, t(), 10).unwrap();
+        let c = r.iter().find(|x| x.nature == "conversation").unwrap();
+        assert_eq!(c.texte, "2026-10-29 : jardin, potager");
     }
 
     #[test]
