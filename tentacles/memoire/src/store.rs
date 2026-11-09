@@ -5,10 +5,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::f64::consts::LN_2;
 
 use anyhow::{Result, bail};
-use chrono::{Datelike, NaiveDate, NaiveDateTime, Utc, Weekday};
+use chrono::{Datelike, Days, NaiveDate, NaiveDateTime, Utc, Weekday};
 use kairos::calendar::USER_TZ;
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::force::{Famille, est_actif, recuperabilite, renforcer, stabilite_initiale};
 
@@ -171,7 +172,7 @@ pub struct NewLesson {
 }
 
 /// Épisode d'une journée, texte complet.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Element {
     pub nature: String,
     pub r#ref: String,
@@ -185,12 +186,33 @@ pub fn periode_semaine(d: NaiveDate) -> String {
     format!("{}-W{:02}", w.year(), w.week())
 }
 
-/// Éléments d'une période à condenser en une synthèse.
-#[derive(Debug, Clone, PartialEq)]
+/// Éléments d'une période à condenser en une synthèse. En complément, le
+/// premier élément est la synthèse existante de la période, à réécrire avec
+/// les éléments arrivés après elle.
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Lot {
     pub niveau: String,
     pub periode: String,
+    pub complement: bool,
     pub elements: Vec<Element>,
+    /// Empreinte du contenu : la condensation est refusée si le lot a changé depuis.
+    pub empreinte: String,
+}
+
+impl Lot {
+    fn new(niveau: &str, periode: String, complement: bool, elements: Vec<Element>) -> Lot {
+        let mut h = Sha256::new();
+        let flag = if complement { "1" } else { "0" };
+        let parts = [niveau, periode.as_str(), flag].into_iter().chain(
+            elements.iter().flat_map(|e| [e.nature.as_str(), e.r#ref.as_str(), e.texte.as_str()]),
+        );
+        for part in parts {
+            h.update((part.len() as u64).to_le_bytes());
+            h.update(part);
+        }
+        let empreinte = format!("{:x}", h.finalize());
+        Lot { niveau: niveau.into(), periode, complement, elements, empreinte }
+    }
 }
 
 /// Un épisode n'est condensé qu'estompé depuis plus de ce délai, en jours.
@@ -211,6 +233,39 @@ fn mois_de(d: NaiveDate) -> String {
 fn mois_semaine(d: NaiveDate) -> String {
     let w = d.iso_week();
     mois_de(NaiveDate::from_isoywd_opt(w.year(), w.week(), Weekday::Thu).unwrap_or(d))
+}
+
+/// Fin (dimanche) de la semaine ISO du dernier jeudi au plus tard le jour `d` :
+/// une période se termine avec la dernière semaine ISO qui lui appartient.
+fn fin_derniere_semaine(d: NaiveDate) -> NaiveDate {
+    let recul = (d.weekday().num_days_from_monday() + 7 - Weekday::Thu.num_days_from_monday()) % 7;
+    d - Days::new(recul.into()) + Days::new(3)
+}
+
+/// Texte complet d'une entrée de journal : champ texte d'abord, puis chaque
+/// autre champ « clé : valeur », par clé.
+fn texte_journal_complet(content: &str) -> String {
+    let Ok(serde_json::Value::Object(o)) = serde_json::from_str::<serde_json::Value>(content) else {
+        return texte_journal(content);
+    };
+    let est_texte = |k: &str, v: &serde_json::Value| matches!(k, "texte" | "text") && v.is_string();
+    let mut lignes: Vec<String> = o.iter().filter(|(k, v)| est_texte(k, v)).filter_map(|(_, v)| v.as_str().map(str::to_owned)).collect();
+    let mut autres: Vec<_> = o.iter().filter(|(k, v)| !est_texte(k, v)).collect();
+    autres.sort_by(|a, b| a.0.cmp(b.0));
+    lignes.extend(autres.into_iter().map(|(k, v)| format!("{k} : {}", v.as_str().map(str::to_owned).unwrap_or_else(|| v.to_string()))));
+    lignes.join("\n")
+}
+
+/// Texte complet d'une conversation : résumé, puis sujets et décisions s'il y en a.
+fn texte_conversation(resume: &str, sujets: &str, decisions: &str) -> String {
+    let mut t = resume.to_owned();
+    for (titre, brut) in [("Sujets", sujets), ("Décisions", decisions)] {
+        let v: Vec<String> = serde_json::from_str(brut).unwrap_or_else(|_| vec![brut.to_owned()]);
+        if !v.is_empty() {
+            t.push_str(&format!("\n{titre} : {}", v.join(", ")));
+        }
+    }
+    t
 }
 
 /// Premier jour d'une période de synthèse.
@@ -760,6 +815,11 @@ impl MemoryStore {
                 params![c.channel, c.device, ts(c.started_at), ts(c.ended_at), c.transcript, id],
             )?;
             tx.execute("UPDATE conversations_fts SET text = ? WHERE rowid = ?", params![c.transcript, id])?;
+            // Conversation reprise : l'épisode redevient frais.
+            tx.execute(
+                "UPDATE souvenirs SET dernier_rappel = ? WHERE nature = 'conversation' AND ref = ?",
+                params![ts(now_local()), id.to_string()],
+            )?;
             tx.commit()?;
             return Ok(id);
         }
@@ -892,10 +952,12 @@ impl MemoryStore {
         Ok(lots)
     }
 
-    /// Condense la période : recalcule son lot, crée la synthèse et retire ses
-    /// sources dans une seule transaction. `None` si le lot n'est pas (ou plus)
-    /// condensable ou si le texte est vide ; rien n'est alors modifié.
-    pub fn condenser(&self, niveau: &str, periode: &str, texte: &str, maintenant: NaiveDateTime) -> Result<Option<i64>> {
+    /// Condense la période : recalcule son lot et, s'il est inchangé (même
+    /// empreinte), crée la synthèse (ou réécrit l'existante pour un complément)
+    /// et retire ses sources dans une seule transaction. `None` si le lot n'est
+    /// pas (ou plus) condensable, a changé, ou si le texte est vide ; rien n'est
+    /// alors modifié.
+    pub fn condenser(&self, niveau: &str, periode: &str, texte: &str, empreinte: &str, maintenant: NaiveDateTime) -> Result<Option<i64>> {
         let texte = texte.trim();
         if texte.is_empty() {
             return Ok(None);
@@ -903,9 +965,21 @@ impl MemoryStore {
         let Some(lot) = self.lots(maintenant)?.into_iter().find(|l| l.niveau == niveau && l.periode == periode) else {
             return Ok(None);
         };
+        if lot.empreinte != empreinte {
+            return Ok(None);
+        }
         let tx = self.conn.unchecked_transaction()?;
-        let id = synthese_inserer(&tx, niveau, periode, texte, maintenant)?;
-        for e in &lot.elements {
+        let (id, sources) = if lot.complement {
+            let id: i64 = lot.elements[0].r#ref.parse()?;
+            // Réécrite, la synthèse est de nouveau à fondre dans le niveau supérieur.
+            tx.execute("UPDATE syntheses SET texte = ?, fondue = 0 WHERE id = ?", params![texte, id])?;
+            tx.execute("UPDATE syntheses_fts SET texte = ? WHERE rowid = ?", params![texte, id])?;
+            tx.execute("INSERT INTO syntheses_fts (syntheses_fts) VALUES ('optimize')", [])?;
+            (id, &lot.elements[1..])
+        } else {
+            (synthese_inserer(&tx, niveau, periode, texte, maintenant)?, &lot.elements[..])
+        };
+        for e in sources {
             let r: i64 = e.r#ref.parse()?;
             match e.nature.as_str() {
                 "journal" => journal_supprimer(&tx, r)?,
@@ -921,6 +995,15 @@ impl MemoryStore {
         Ok(Some(id))
     }
 
+    /// Conversations sans résumé commencées avant `jour` : elles ne peuvent pas être condensées.
+    pub fn conversations_non_resumees_avant(&self, jour: NaiveDate) -> Result<u32> {
+        Ok(self.conn.query_row(
+            "SELECT COUNT(*) FROM conversations WHERE coalesce(summary, '') = '' AND started_at < ?",
+            [jour.format("%Y-%m-%d").to_string()],
+            |r| r.get(0),
+        )?)
+    }
+
     /// Tous les lots condensables, recalculés depuis la base.
     // ponytail: lecture complète des épisodes et synthèses à chaque appel ; index par date si le volume l'exige.
     fn lots(&self, maintenant: NaiveDateTime) -> Result<Vec<Lot>> {
@@ -931,22 +1014,26 @@ impl MemoryStore {
         let mut annees_bloquees = BTreeSet::new();
 
         let mut st = self.conn.prepare(
-            "SELECT 'journal', j.id, substr(j.at, 1, 10), j.content, s.stabilite, s.dernier_rappel, s.ancre
+            "SELECT 'journal', j.id, substr(j.at, 1, 10), j.content, '', '', s.stabilite, s.dernier_rappel, s.ancre
              FROM journal j LEFT JOIN souvenirs s ON s.nature = 'journal' AND s.ref = CAST(j.id AS TEXT)
              UNION ALL
-             SELECT 'conversation', c.id, substr(c.started_at, 1, 10), coalesce(c.summary, ''), s.stabilite, s.dernier_rappel, s.ancre
+             SELECT 'conversation', c.id, substr(c.started_at, 1, 10), coalesce(c.summary, ''), c.topics, c.decisions,
+                    s.stabilite, s.dernier_rappel, s.ancre
              FROM conversations c LEFT JOIN souvenirs s ON s.nature = 'conversation' AND s.ref = CAST(c.id AS TEXT)
              ORDER BY 3, 1, 2",
         )?;
         let rows = st.query_map([], |r| {
             Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?,
-                r.get::<_, Option<f64>>(4)?, r.get::<_, Option<String>>(5)?, r.get::<_, Option<bool>>(6)?))
+                r.get::<_, String>(4)?, r.get::<_, String>(5)?,
+                r.get::<_, Option<f64>>(6)?, r.get::<_, Option<String>>(7)?, r.get::<_, Option<bool>>(8)?))
         })?;
         for row in rows {
-            let (nature, id, date, brut, stabilite, dernier, ancre) = row?;
+            let (nature, id, date, brut, sujets, decisions, stabilite, dernier, ancre) = row?;
             // Date illisible : l'épisode ne peut être rangé dans aucune semaine.
             let Ok(date) = NaiveDate::parse_from_str(&date, "%Y-%m-%d") else { continue };
-            let texte = if nature == "journal" { texte_journal(&brut) } else { brut };
+            // Une conversation pas encore résumée n'a rien à transmettre : elle attend.
+            let a_contenu = !brut.trim().is_empty();
+            let texte = if nature == "journal" { texte_journal_complet(&brut) } else { texte_conversation(&brut, &sujets, &decisions) };
             // Estompé depuis plus de D_COND : instant d'estompage = dernier rappel + S × ln 2.
             let estompe = match (stabilite, dernier.as_deref().map(parse_ts), ancre) {
                 (Some(s), Some(Ok(d)), Some(false)) => {
@@ -954,18 +1041,17 @@ impl MemoryStore {
                 }
                 _ => false,
             };
-            // Une conversation pas encore résumée n'a rien à transmettre : elle attend.
-            let pret = estompe && !texte.trim().is_empty();
             mois_bloques.insert(mois_de(date));
             mois_bloques.insert(mois_semaine(date));
             annees_bloquees.insert(date.year());
             annees_bloquees.insert(date.iso_week().year());
             let e = semaines.entry(periode_semaine(date)).or_insert((Vec::new(), true));
             e.0.push(Element { nature, r#ref: id.to_string(), date, texte });
-            e.1 &= pret;
+            e.1 &= estompe && a_contenu;
         }
 
-        let mut existantes = BTreeSet::new();
+        // Synthèses existantes, cibles d'un éventuel complément.
+        let mut existantes: BTreeMap<(String, String), Element> = BTreeMap::new();
         let mut mois: BTreeMap<String, Vec<Element>> = BTreeMap::new();
         let mut annees: BTreeMap<i32, Vec<Element>> = BTreeMap::new();
         let mut st = self.conn.prepare("SELECT id, niveau, periode, texte, fondue FROM syntheses ORDER BY periode, id")?;
@@ -974,12 +1060,12 @@ impl MemoryStore {
         })?;
         for row in rows {
             let (id, niveau, periode, texte, fondue) = row?;
-            existantes.insert((niveau.clone(), periode.clone()));
             let Some(debut) = debut_periode(&niveau, &periode) else { continue };
+            let e = Element { nature: "synthese".into(), r#ref: id.to_string(), date: debut, texte };
+            existantes.insert((niveau.clone(), periode), e.clone());
             if fondue {
                 continue;
             }
-            let e = Element { nature: "synthese".into(), r#ref: id.to_string(), date: debut, texte };
             match niveau.as_str() {
                 "semaine" => {
                     annees_bloquees.insert(debut.iso_week().year());
@@ -989,27 +1075,31 @@ impl MemoryStore {
                 _ => {}
             }
         }
-        let libre = |niveau: &str, p: &String| !existantes.contains(&(niveau.to_owned(), p.clone()));
 
         let mut out = Vec::new();
+        // Période déjà synthétisée : complément, synthèse existante en tête.
+        let mut pousser = |niveau: &str, p: String, elements: Vec<Element>| match existantes.get(&(niveau.to_owned(), p.clone())) {
+            Some(cible) => out.push(Lot::new(niveau, p, true, std::iter::once(cible.clone()).chain(elements).collect())),
+            None => out.push(Lot::new(niveau, p, false, elements)),
+        };
         for (p, (elements, pret)) in semaines {
             let finie = jour_semaine(&p, Weekday::Sun).is_some_and(|d| d < aujourdhui);
-            if pret && finie && libre("semaine", &p) {
-                out.push(Lot { niveau: "semaine".into(), periode: p, elements });
+            if pret && finie {
+                pousser("semaine", p, elements);
             }
         }
         for (p, elements) in mois {
             let finie = debut_periode("mois", &p)
                 .and_then(|d| d.checked_add_months(chrono::Months::new(1)))
-                .is_some_and(|suivant| suivant <= aujourdhui);
-            if finie && !mois_bloques.contains(&p) && libre("mois", &p) {
-                out.push(Lot { niveau: "mois".into(), periode: p, elements });
+                .is_some_and(|suivant| fin_derniere_semaine(suivant - Days::new(1)) < aujourdhui);
+            if finie && !mois_bloques.contains(&p) {
+                pousser("mois", p, elements);
             }
         }
         for (a, elements) in annees {
-            let p = a.to_string();
-            if a < aujourdhui.year() && !annees_bloquees.contains(&a) && libre("annee", &p) {
-                out.push(Lot { niveau: "annee".into(), periode: p, elements });
+            let finie = NaiveDate::from_ymd_opt(a, 12, 31).is_some_and(|d| fin_derniere_semaine(d) < aujourdhui);
+            if finie && !annees_bloquees.contains(&a) {
+                pousser("annee", a.to_string(), elements);
             }
         }
         Ok(out)
@@ -1277,7 +1367,10 @@ mod tests {
         let avant = s.force("conversation", &id).unwrap();
         c.transcript = "deux".into();
         assert_eq!(s.conversation_ingest(&c).unwrap().to_string(), id);
-        assert_eq!(s.force("conversation", &id).unwrap(), avant);
+        let (avant, apres) = (avant.unwrap(), s.force("conversation", &id).unwrap().unwrap());
+        // Ancre, rappels et stabilité gardés ; l'épisode redevient frais.
+        assert!(apres.ancre && apres.rappels == 2 && apres.stabilite == avant.stabilite);
+        assert!(apres.dernier_rappel >= avant.dernier_rappel);
     }
 
     #[test]
@@ -1794,6 +1887,17 @@ mod tests {
         id
     }
 
+    /// Condense avec l'empreinte du lot courant (vide si la période n'a pas de lot).
+    fn condense(s: &MemoryStore, niveau: &str, periode: &str, texte: &str, m: NaiveDateTime) -> Result<Option<i64>> {
+        let lots = s.condensables(m, usize::MAX)?;
+        let e = lots.iter().find(|l| l.niveau == niveau && l.periode == periode).map(|l| l.empreinte.clone()).unwrap_or_default();
+        s.condenser(niveau, periode, texte, &e, m)
+    }
+
+    fn jour(a: i32, m: u32, j: u32) -> NaiveDateTime {
+        NaiveDate::from_ymd_opt(a, m, j).unwrap().and_hms_opt(8, 0, 0).unwrap()
+    }
+
     fn compte(s: &MemoryStore, sql: &str) -> i64 {
         s.conn.query_row(sql, [], |r| r.get(0)).unwrap()
     }
@@ -1818,13 +1922,12 @@ mod tests {
         s.ancrer("journal", &b.to_string(), true).unwrap();
         assert!(s.condensables(m, 10).unwrap().is_empty());
         s.ancrer("journal", &b.to_string(), false).unwrap();
-        assert!(s.condensables(m, 0).unwrap().is_empty());
+        assert_eq!(s.condensables(m, 10).unwrap().len(), 1);
     }
 
     #[test]
     fn month_after_all_weeks_and_month_over() {
         let s = store();
-        let jour = |a, m, j| NaiveDate::from_ymd_opt(a, m, j).unwrap().and_hms_opt(8, 0, 0).unwrap();
         s.synthese_creer("semaine", "2026-W40", "début d'automne", t()).unwrap(); // jeudi 1er octobre
         s.synthese_creer("semaine", "2026-W44", "fin d'octobre", t()).unwrap(); // jeudi 29 octobre
         s.synthese_creer("semaine", "2026-W45", "début de novembre", t()).unwrap(); // jeudi 5 novembre
@@ -1838,14 +1941,16 @@ mod tests {
         assert_eq!(lots.len(), 1);
         assert_eq!((lots[0].niveau.as_str(), lots[0].periode.as_str()), ("mois", "2026-10"));
         assert_eq!(lots[0].elements.len(), 2);
-        assert!(s.condenser("mois", "2026-10", "un octobre au jardin", jour(2026, 11, 5)).unwrap().is_some());
+        assert!(condense(&s, "mois", "2026-10", "un octobre au jardin", jour(2026, 11, 5)).unwrap().is_some());
         assert_eq!(compte(&s, "SELECT COUNT(*) FROM syntheses WHERE fondue = 1"), 2);
-        // Année terminée, mais une semaine de novembre attend encore son mois.
+        // Mois terminés, mais une semaine de novembre attend encore son mois.
         let fin = jour(2027, 1, 2);
         let lots = s.condensables(fin, 10).unwrap();
         assert_eq!(lots.iter().map(|l| (l.niveau.as_str(), l.periode.as_str())).collect::<Vec<_>>(), [("mois", "2026-11")]);
-        s.condenser("mois", "2026-11", "novembre", fin).unwrap().unwrap();
-        let lots = s.condensables(fin, 10).unwrap();
+        condense(&s, "mois", "2026-11", "novembre", fin).unwrap().unwrap();
+        // L'année 2026 se termine avec sa dernière semaine ISO, le dimanche 3 janvier 2027.
+        assert!(s.condensables(fin, 10).unwrap().is_empty());
+        let lots = s.condensables(jour(2027, 1, 4), 10).unwrap();
         assert_eq!(lots.iter().map(|l| (l.niveau.as_str(), l.periode.as_str())).collect::<Vec<_>>(), [("annee", "2026")]);
         assert_eq!(lots[0].elements.len(), 2);
         assert!(s.condensables(jour(2026, 12, 31), 10).unwrap().is_empty());
@@ -1861,22 +1966,22 @@ mod tests {
         let m = t() + Duration::days(30);
         assert_eq!(s.condensables(m, 10).unwrap()[0].elements.len(), 2);
         // Texte vide : rien.
-        assert_eq!(s.condenser("semaine", "2026-W44", "  \n", m).unwrap(), None);
+        assert_eq!(condense(&s, "semaine", "2026-W44", "  \n", m).unwrap(), None);
         // Erreur au milieu : tout est annulé.
         s.conn.execute_batch("CREATE TEMP TRIGGER bloque BEFORE DELETE ON conversations BEGIN SELECT RAISE(ABORT, 'refus'); END;").unwrap();
-        assert!(s.condenser("semaine", "2026-W44", "rosiers taillés", m).is_err());
+        assert!(condense(&s, "semaine", "2026-W44", "rosiers taillés", m).is_err());
         s.conn.execute_batch("DROP TRIGGER bloque;").unwrap();
         assert_eq!(compte(&s, "SELECT COUNT(*) FROM syntheses"), 0);
         assert!(s.force("journal", &j.to_string()).unwrap().is_some());
         assert_eq!(compte(&s, "SELECT COUNT(*) FROM journal") + compte(&s, "SELECT COUNT(*) FROM conversations"), 2);
         // Deux fois : une seule synthèse.
-        let id = s.condenser("semaine", "2026-W44", "rosiers taillés", m).unwrap().unwrap();
-        assert_eq!(s.condenser("semaine", "2026-W44", "rosiers taillés", m).unwrap(), None);
+        let id = condense(&s, "semaine", "2026-W44", "rosiers taillés", m).unwrap().unwrap();
+        assert_eq!(condense(&s, "semaine", "2026-W44", "rosiers taillés", m).unwrap(), None);
         assert_eq!(compte(&s, "SELECT COUNT(*) FROM syntheses"), 1);
         assert!(s.force("synthese", &id.to_string()).unwrap().is_some());
         // Période inconnue ou non condensable : rien.
-        assert_eq!(s.condenser("semaine", "2026-W10", "rien", m).unwrap(), None);
-        assert_eq!(s.condenser("bidon", "2026-W44", "rien", m).unwrap(), None);
+        assert_eq!(condense(&s, "semaine", "2026-W10", "rien", m).unwrap(), None);
+        assert_eq!(condense(&s, "bidon", "2026-W44", "rien", m).unwrap(), None);
     }
 
     #[test]
@@ -1887,7 +1992,7 @@ mod tests {
         s.conversation_set_summary(c, "quokka", &[], &[]).unwrap();
         vieillir(&s, "conversation", &c.to_string(), t());
         assert!(index_garde(&s, "journal_fts", "zygomorphe") && index_garde(&s, "conversations_fts", "quokka"));
-        s.condenser("semaine", "2026-W44", "ornithorynque", t() + Duration::days(30)).unwrap().unwrap();
+        condense(&s, "semaine", "2026-W44", "ornithorynque", t() + Duration::days(30)).unwrap().unwrap();
         assert!(!index_garde(&s, "journal_fts", "zygomorphe"));
         assert!(!index_garde(&s, "conversations_fts", "xylophone"));
         assert!(!index_garde(&s, "conversations_fts", "quokka"));
@@ -1896,5 +2001,115 @@ mod tests {
         assert!(s.force("conversation", &c.to_string()).unwrap().is_none());
         assert!(s.conversation_get(c).unwrap().is_none());
         assert_eq!(compte(&s, "SELECT COUNT(*) FROM journal"), 0);
+    }
+
+    #[test]
+    fn condensed_lot_carries_full_information() {
+        let s = store();
+        let j = s
+            .journal_write(&NewJournalEntry {
+                source: "s".into(),
+                kind: "mesure".into(),
+                content: serde_json::json!({ "texte": "pesée", "valeur": 72.4, "unite": "kg" }),
+                sensitivity: Sensitivity::Commune,
+                provenance: "p".into(),
+            })
+            .unwrap();
+        s.conn.execute("UPDATE journal SET at = ?", [ts(t())]).unwrap();
+        vieillir(&s, "journal", &j.to_string(), t());
+        let c = s.conversation_ingest(&conv("bavardage")).unwrap();
+        s.conversation_set_summary(c, "bilan", &["jardin".into()], &["planter des fèves".into()]).unwrap();
+        vieillir(&s, "conversation", &c.to_string(), t());
+        s.conversation_ingest(&NewConversation { session_id: Some("x".into()), ..conv("pas résumée") }).unwrap();
+        s.conn.execute("UPDATE conversations SET started_at = '2026-10-01 10:00:00' WHERE session_id = 'x'", []).unwrap();
+        assert_eq!(s.conversations_non_resumees_avant(t().date()).unwrap(), 1);
+        assert_eq!(s.conversations_non_resumees_avant(NaiveDate::from_ymd_opt(2026, 10, 1).unwrap()).unwrap(), 0);
+        let lots = s.condensables(t() + Duration::days(30), 10).unwrap();
+        let lot = lots.iter().find(|l| l.periode == "2026-W44").unwrap();
+        let tout: String = lot.elements.iter().map(|e| e.texte.clone()).collect::<Vec<_>>().join("\n");
+        for attendu in ["pesée", "valeur : 72.4", "unite : kg", "bilan", "Sujets : jardin", "Décisions : planter des fèves"] {
+            assert!(tout.contains(attendu), "{attendu}");
+        }
+    }
+
+    #[test]
+    fn month_and_year_close_after_last_iso_week() {
+        let s = store();
+        // Jeudi 29 octobre : la semaine 44 court jusqu'au dimanche 1er novembre.
+        s.synthese_creer("semaine", "2026-W44", "fin d'octobre", t()).unwrap();
+        assert!(s.condensables(jour(2026, 11, 1), 10).unwrap().is_empty());
+        assert_eq!(s.condensables(jour(2026, 11, 2), 10).unwrap()[0].periode, "2026-10");
+        // Jeudi 31 décembre : la semaine 53 court jusqu'au dimanche 3 janvier.
+        s.synthese_creer("semaine", "2026-W53", "fêtes", t()).unwrap();
+        let a_condenser = |m| s.condensables(m, 10).unwrap().into_iter().map(|l| l.periode).collect::<Vec<_>>();
+        assert_eq!(a_condenser(jour(2027, 1, 3)), ["2026-10"]);
+        assert_eq!(a_condenser(jour(2027, 1, 4)), ["2026-10", "2026-12"]);
+        condense(&s, "mois", "2026-10", "octobre", jour(2027, 1, 4)).unwrap().unwrap();
+        condense(&s, "mois", "2026-12", "décembre", jour(2027, 1, 4)).unwrap().unwrap();
+        assert!(a_condenser(jour(2027, 1, 3)).is_empty());
+        assert_eq!(a_condenser(jour(2027, 1, 4)), ["2026"]);
+    }
+
+    #[test]
+    fn late_episode_completes_existing_synthesis() {
+        let s = store();
+        let m = t() + Duration::days(30);
+        episode_le(&s, "semis de fèves", t());
+        let id = condense(&s, "semaine", "2026-W44", "semaine de semis", m).unwrap().unwrap();
+        // Épisode tardif de la même semaine : il bloque le mois et appelle un complément.
+        let tard = episode_le(&s, "récolte de radis", t() + Duration::days(1));
+        let lots = s.condensables(m, 10).unwrap();
+        assert_eq!(lots.len(), 1);
+        let lot = &lots[0];
+        assert!(lot.complement);
+        assert_eq!((lot.niveau.as_str(), lot.periode.as_str()), ("semaine", "2026-W44"));
+        assert_eq!(lot.elements[0].texte, "semaine de semis");
+        assert_eq!(lot.elements[1].r#ref, tard.to_string());
+        assert_eq!(condense(&s, "semaine", "2026-W44", "semis puis cueillette", m).unwrap(), Some(id));
+        assert_eq!(condense(&s, "semaine", "2026-W44", "semis puis cueillette", m).unwrap(), None);
+        assert!(s.force("journal", &tard.to_string()).unwrap().is_none());
+        assert_eq!(compte(&s, "SELECT COUNT(*) FROM syntheses"), 1);
+        assert!(index_garde(&s, "syntheses_fts", "cueillette"));
+        let lots = s.condensables(m, 10).unwrap();
+        assert_eq!(lots.iter().map(|l| (l.niveau.as_str(), l.complement)).collect::<Vec<_>>(), [("mois", false)]);
+        // Une semaine déjà fondue dans son mois redevient à fondre après complément.
+        condense(&s, "mois", "2026-10", "octobre", m).unwrap().unwrap();
+        episode_le(&s, "dernier arrosage", t() + Duration::days(2));
+        condense(&s, "semaine", "2026-W44", "semis, récolte, arrosage", m).unwrap().unwrap();
+        let lots = s.condensables(m, 10).unwrap();
+        assert_eq!(lots.iter().map(|l| (l.niveau.as_str(), l.complement)).collect::<Vec<_>>(), [("mois", true)]);
+        assert_eq!(lots[0].elements[0].texte, "octobre");
+        condense(&s, "mois", "2026-10", "octobre complet", m).unwrap().unwrap();
+        assert!(s.condensables(m, 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn stale_fingerprint_is_refused() {
+        let s = store();
+        let m = t() + Duration::days(30);
+        let a = episode_le(&s, "taille de la haie", t());
+        let ancien = s.condensables(m, 10).unwrap()[0].empreinte.clone();
+        episode_le(&s, "ramassage des feuilles", t());
+        assert_eq!(s.condenser("semaine", "2026-W44", "haie taillée", &ancien, m).unwrap(), None);
+        assert!(s.force("journal", &a.to_string()).unwrap().is_some());
+        assert_eq!(compte(&s, "SELECT COUNT(*) FROM syntheses"), 0);
+        let neuf = s.condensables(m, 10).unwrap()[0].empreinte.clone();
+        assert_ne!(neuf, ancien);
+        assert!(s.condenser("semaine", "2026-W44", "haie et feuilles", &neuf, m).unwrap().is_some());
+    }
+
+    #[test]
+    fn reingested_conversation_is_fresh_again() {
+        let s = store();
+        let maintenant = now_local();
+        let debut = maintenant - Duration::days(30);
+        let c = NewConversation { started_at: debut, ended_at: debut, session_id: Some("s".into()), ..conv("première") };
+        let id = s.conversation_ingest(&c).unwrap();
+        s.conversation_set_summary(id, "bilan", &[], &[]).unwrap();
+        vieillir(&s, "conversation", &id.to_string(), debut);
+        assert_eq!(s.condensables(maintenant, 10).unwrap().len(), 1);
+        s.conversation_ingest(&NewConversation { transcript: "suite".into(), ..c }).unwrap();
+        s.conversation_set_summary(id, "bilan complet", &[], &[]).unwrap();
+        assert!(s.condensables(maintenant, 10).unwrap().is_empty());
     }
 }

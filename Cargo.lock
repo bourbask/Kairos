@@ -1428,6 +1428,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "sha2",
  "tentacle-common",
  "tokio",
 ]
