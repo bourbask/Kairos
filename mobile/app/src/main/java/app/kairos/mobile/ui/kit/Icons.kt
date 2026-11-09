@@ -42,6 +42,13 @@ object KairosIcons {
         }
     }
     val Eye by lazy { icon("Afficher") { eye() } }
+    val Warning by lazy {
+        icon("Alerte") {
+            moveTo(12f, 3.5f); lineTo(21.5f, 20f); lineTo(2.5f, 20f); close()
+            moveTo(12f, 10f); verticalLineTo(14f)
+            moveTo(12f, 17f); verticalLineTo(17.01f)
+        }
+    }
     val EyeOff by lazy { icon("Masquer") { eye(); moveTo(4f, 4f); lineTo(20f, 20f) } }
 
     private fun PathBuilder.circle(cx: Float, cy: Float, r: Float) {

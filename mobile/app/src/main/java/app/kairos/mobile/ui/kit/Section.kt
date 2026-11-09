@@ -11,6 +11,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -23,7 +25,9 @@ import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import app.kairos.mobile.ui.theme.KairosColors
 
 /** Couleur d'un ton dans le thème courant (clair ou sombre). */
 @Composable
@@ -85,6 +89,26 @@ fun StatusBanner(
         }
         if (onAction != null && actionLabel != null) {
             TextButton(onClick = onAction) { Text(actionLabel) }
+        }
+    }
+}
+
+/**
+ * Alerte de contenu (Finances, Marchés) : triangle, titre gras, détail et remède dessous,
+ * date facultative. Le bandeau reste réservé à l'état des données.
+ */
+@Composable
+fun AlertRow(title: String, modifier: Modifier = Modifier, detail: String? = null, remedy: String? = null, at: String? = null) {
+    Row(
+        modifier.fillMaxWidth().semantics(mergeDescendants = true) {}.padding(vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Icon(KairosIcons.Warning, contentDescription = "Alerte", tint = KairosColors.current.attentionText, modifier = Modifier.size(20.dp))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+            detail?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            remedy?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+            at?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         }
     }
 }

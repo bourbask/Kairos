@@ -19,11 +19,14 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.font.FontWeight
+import app.kairos.mobile.ui.theme.KairosColors
 import app.kairos.mobile.ui.theme.Motion
 
 /**
  * Valeur consommée face à sa limite, avec seuils (> 80 % attention, > 100 % urgent).
  * [format] met en forme valeur et limite ; [masked] les remplace par un masque, sémantique comprise.
+ * Au-delà de 80 %, une mention (« 82 % », « dépassé de 11 € ») dit l'état sans la couleur.
  */
 @Composable
 fun Bar(
@@ -35,26 +38,28 @@ fun Bar(
     masked: Boolean = LocalAmountsMasked.current,
 ) {
     val tone = barTone(value, limit)
+    // Attention : ambre foncé du texte, lisible en barre sur fond clair (l'ambre seul est sous 3:1).
+    val toneColor = when (tone) {
+        Tone.Neutral -> MaterialTheme.colorScheme.primary
+        Tone.Attention -> KairosColors.current.attentionText
+        Tone.Urgent -> MaterialTheme.colorScheme.error
+    }
     val f by animateFloatAsState(fill(value, limit), Motion.enter(), label = "bar")
-    val color by animateColorAsState(tone.color(), Motion.enter(), label = "barTone")
+    val color by animateColorAsState(toneColor, Motion.enter(), label = "barTone")
     val track = MaterialTheme.colorScheme.surfaceVariant
     val shown: (Double) -> String = { if (masked) MASK else format(it) }
+    val note = barNote(value, limit, format, masked)
     Column(
         modifier.fillMaxWidth().clearAndSetSemantics {
-            contentDescription = describeBar(label, value, limit, format, masked)
+            contentDescription = listOfNotNull(describeBar(label, value, limit, format, masked), note).joinToString(", ")
         },
     ) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(label, style = MaterialTheme.typography.bodyMedium)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
             Text(
-                // Le ton se lit aussi sans la couleur.
-                "${shown(value)} / ${shown(limit)}" + when (tone) {
-                    Tone.Neutral -> ""
-                    Tone.Attention -> " !"
-                    Tone.Urgent -> " ⚠"
-                },
+                "${shown(value)} / ${shown(limit)}",
                 style = MaterialTheme.typography.bodySmall,
-                color = if (tone == Tone.Neutral) MaterialTheme.colorScheme.onSurfaceVariant else color,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
         Canvas(Modifier.fillMaxWidth().height(10.dp)) {
@@ -63,6 +68,9 @@ fun Bar(
             val r = CornerRadius(h / 2)
             drawRoundRect(track, Offset(0f, top), Size(size.width, h), r)
             if (f > 0f) drawRoundRect(color, Offset(0f, top), Size(size.width * f, h), r)
+        }
+        if (note != null) {
+            Text(note, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold, color = toneColor)
         }
     }
 }

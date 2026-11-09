@@ -97,9 +97,20 @@ fun financesAfter(prev: FinancesSnapshot, cycle: Result<FinanceCycle>, wealth: R
     return FinancesSnapshot(c.value, w.value, c.at, w.at, c.issue, w.issue)
 }
 
+/**
+ * Bandeau d'un espace pas à jour, dans les mots de l'utilisateur : « <Espace> indisponible »
+ * (ou « Données partielles »), détail = [last] (dernier état connu) et, seul motif utile à
+ * l'écran, un serveur à mettre à jour. Le motif technique ne sort pas.
+ */
+fun issueBanner(space: String, issue: String, last: String?): Pair<String, String?> {
+    val title = if (issue == PARTIAL) PARTIAL else "$space indisponible"
+    val detail = listOfNotNull(last, issue.takeIf { it == ApiError.Server.OUTDATED }).joinToString(" · ").ifEmpty { null }
+    return title to detail
+}
+
 /** Bandeau d'une source pas à jour (titre, date de dernière réponse complète), ou null. */
-fun sourceBanner(issue: String?, at: String?): Pair<String, String?>? =
-    issue?.let { it to at?.let { a -> "Dernière mise à jour complète : ${syncLabel(a)}" } }
+fun sourceBanner(space: String, issue: String?, at: String?): Pair<String, String?>? =
+    issue?.let { issueBanner(space, it, at?.let { a -> "Dernière mise à jour complète : ${syncLabel(a)}" }) }
 
 /** Part consommée ; prévu nul et dépense engagée = dépassement maximal. */
 private fun pressure(e: Envelope): Double = when {
