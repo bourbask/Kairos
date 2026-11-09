@@ -688,11 +688,12 @@ enum Issue {
 }
 
 /// Statut de l'étape et motif du premier refus, d'après les issues des lots :
-/// une panne du moteur n'efface ni un refus ni une condensation qui la précèdent.
+/// une panne du moteur n'efface pas un refus qui la précède ; sans refus, elle
+/// est signalée même après une condensation réussie (lots restants reportés).
 fn condense_status(issues: &[Issue]) -> (&'static str, Option<&'static str>) {
     if let Some(motif) = issues.iter().find_map(|i| if let Issue::Refuse(m) = i { Some(*m) } else { None }) {
         (INVALID, Some(motif))
-    } else if issues.first() == Some(&Issue::Panne) {
+    } else if issues.contains(&Issue::Panne) {
         (NO_MODEL, None)
     } else {
         (OK, None)
@@ -773,7 +774,7 @@ mod tests {
     fn engine_failure_keeps_earlier_outcome() {
         assert_eq!(condense_status(&[Panne]), (NO_MODEL, None));
         assert_eq!(condense_status(&[Refuse(TOO_LONG), Panne]), (INVALID, Some(TOO_LONG)));
-        assert_eq!(condense_status(&[Condense, Panne]), (OK, None));
+        assert_eq!(condense_status(&[Condense, Panne]), (NO_MODEL, None));
         assert_eq!(condense_status(&[Condense, Refuse(CUT), Refuse(TOO_LONG)]), (INVALID, Some(CUT)));
         assert_eq!(condense_status(&[Condense]), (OK, None));
     }

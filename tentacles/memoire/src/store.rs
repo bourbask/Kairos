@@ -1244,7 +1244,8 @@ impl MemoryStore {
         // durée de vie de plus, il n'a plus d'effet.
         tx.execute(
             "DELETE FROM intentions WHERE state IN ('refusee','acceptee','expiree')
-             AND expires_at <= ?2 AND substr(what, 1, length(?1)) = ?1",
+             AND expires_at <= ?2 AND substr(what, 1, length(?1)) = ?1
+             AND what LIKE '% = % ?' AND constraints = ''",
             params![QUESTION_DEBUT, ts(maintenant - chrono::Duration::days(QUESTION_JOURS))],
         )?;
         let candidats = {
@@ -2854,6 +2855,9 @@ mod tests {
         }
         // Intention ordinaire ancienne : hors périmètre.
         s.intention_create("Appeler Exemple", "", m - Duration::days(30)).unwrap();
+        // Rappel de l'utilisateur qui commence comme une question : gardé.
+        let rappel = s.intention_create("Confirmer : rendez-vous", "", m - Duration::days(30)).unwrap();
+        s.intention_set_state(rappel, IntentionState::Acceptee).unwrap();
         // Refus récent : gardé, il bloque toujours la même question.
         s.appliquer_extraction(d(1), &[indice("animal", "chien")], m).unwrap();
         let id = s.intentions_open(m).unwrap()[0].id;
@@ -2862,6 +2866,7 @@ mod tests {
         s.oublier(plus_tard).unwrap();
         assert_eq!(compte(&s, "SELECT COUNT(*) FROM intentions WHERE what LIKE 'Confirmer : animaux%'"), 0);
         assert_eq!(compte(&s, "SELECT COUNT(*) FROM intentions WHERE what = 'Appeler Exemple'"), 1);
+        assert_eq!(compte(&s, "SELECT COUNT(*) FROM intentions WHERE what = 'Confirmer : rendez-vous'"), 1);
         assert_eq!(compte(&s, "SELECT COUNT(*) FROM intentions WHERE state = 'refusee'"), 1);
         assert_eq!(s.appliquer_extraction(d(3), &[indice("animal", "chien")], plus_tard).unwrap().questions, 0);
         // Une durée de vie après son échéance, le refus est purgé à son tour.
