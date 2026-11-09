@@ -17,6 +17,7 @@ anyhow = "1"
 tentacle-common = { path = "../../crates/tentacle-common" }
 rmcp = { version = "3.8", features = ["server", "macros"] }
 schemars = "1"
+sha2 = "0.10"
 tokio = { version = "1", features = ["full"] }
 
 [dev-dependencies]

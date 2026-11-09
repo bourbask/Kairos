@@ -147,9 +147,8 @@ Seules les étapes 1, 2 et 4 utilisent un modèle de langue, **local uniquement*
 calcul de l'oubli, du renforcement et des habitudes est déterministe : il ne coûte
 rien et ne dépend pas de la qualité du modèle.
 
-Modèle utilisé (décision de l'utilisateur) : le modèle du poste de travail quand il est
-joignable, meilleur pour résumer et extraire ; sinon, en secours, le modèle du serveur.
-Les deux sont auto-hébergés : aucune donnée ne part vers un modèle tiers. Le choix se fait
+Modèle utilisé (décision de l'utilisateur) : le moteur déclaré pour l'usage, et son repli
+déclaré s'il est injoignable. Les deux sont auto-hébergés : aucune donnée ne part vers un modèle tiers. Le choix se fait
 au début de chaque étape, par un test de disponibilité ; une étape commencée sur l'un
 n'est pas reprise sur l'autre.
 
@@ -236,7 +235,7 @@ fait par la tête, en plus des outils actuels.
 - Les souvenirs estompés ne sont fournis que s'ils sont dans les 3 premiers résultats de
   la recherche : « s'en souvenir parce qu'on en parle ».
 - Une recherche par sens, avec des vecteurs calculés localement, pourra compléter la
-  recherche plein texte plus tard, si la mémoire du serveur le permet.
+  recherche plein texte plus tard.
 
 ### 3.10 Contrôle par l'utilisateur
 
@@ -268,8 +267,8 @@ chargée : elle fait partie du noyau sans être une ligne de la table.
 - **Sensibilité** : les données de santé ou d'argent ne sont conservées que sous forme
   d'agrégat utile (déjà acté) ; l'archive chiffrée hors du serveur pour les données
   durables et sensibles est un lot ultérieur.
-- **Modèle de langue** : toujours auto-hébergé pour la mémoire — poste de travail s'il est
-  allumé, serveur en secours —, sans repli sur un modèle hébergé ailleurs. Il sert à
+- **Modèle de langue** : toujours auto-hébergé pour la mémoire (moteur déclaré, puis
+  son repli déclaré), sans repli sur un modèle hébergé ailleurs. Il sert à
   résumer et à extraire, jamais à décider de l'oubli.
 
 ## 5. Valeurs de départ (à régler à l'usage)

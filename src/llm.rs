@@ -395,6 +395,8 @@ pub struct ChatReply {
     pub text: Option<String>,
     pub tool_calls: Vec<ToolCall>,
     pub usage: TokenUsage,
+    /// Génération arrêtée faute de place : le texte est incomplet.
+    pub truncated: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -406,6 +408,8 @@ struct WireChatResponse {
 #[derive(Debug, Deserialize)]
 struct WireChoice {
     message: WireMessage,
+    #[serde(default)]
+    finish_reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -808,7 +812,8 @@ impl LlmClient {
             input: n("input_tokens") + n("cache_read_input_tokens") + n("cache_creation_input_tokens"),
             output: n("output_tokens"),
         };
-        Ok(ChatReply { text: (!text.is_empty()).then_some(text), tool_calls, usage })
+        let truncated = v["stop_reason"] == "max_tokens";
+        Ok(ChatReply { text: (!text.is_empty()).then_some(text), tool_calls, usage, truncated })
     }
 
     fn parse_chat_response(
@@ -827,12 +832,13 @@ impl LlmClient {
             LlmProtocol::Messages => self.parse_messages_reply(body),
             LlmProtocol::OpenaiCompatible => {
                 let parsed: WireChatResponse = serde_json::from_str(body)?;
-                let message = parsed
+                let choice = parsed
                     .choices
                     .into_iter()
                     .next()
-                    .ok_or_else(|| anyhow::anyhow!("réponse d'inférence sans complétion"))?
-                    .message;
+                    .ok_or_else(|| anyhow::anyhow!("réponse d'inférence sans complétion"))?;
+                let truncated = choice.finish_reason.as_deref() == Some("length");
+                let message = choice.message;
                 let tool_calls = message
                     .tool_calls
                     .into_iter()
@@ -853,7 +859,7 @@ impl LlmClient {
                     TokenUsage { input: 0, output: 0 },
                     |u| TokenUsage { input: u.prompt_tokens, output: u.completion_tokens },
                 );
-                Ok(ChatReply { text: message.content, tool_calls, usage })
+                Ok(ChatReply { text: message.content, tool_calls, usage, truncated })
             }
         }
     }
@@ -1372,6 +1378,23 @@ mod tests {
             .parse_chat_response(reqwest::StatusCode::OK, sans)
             .unwrap();
         assert_eq!(reply.usage, TokenUsage { input: 0, output: 0 });
+    }
+
+    #[test]
+    fn reply_cut_for_length_is_flagged() {
+        let openai = |fin: &str| {
+            let body = format!(r#"{{"choices":[{{"message":{{"content":"x"}},"finish_reason":{fin}}}]}}"#);
+            client_with(LlmProtocol::OpenaiCompatible).parse_chat_response(reqwest::StatusCode::OK, &body).unwrap().truncated
+        };
+        assert!(openai(r#""length""#));
+        assert!(!openai(r#""stop""#));
+        assert!(!openai("null"));
+        let messages = |fin: &str| {
+            let body = format!(r#"{{"content":[{{"type":"text","text":"x"}}],"stop_reason":"{fin}"}}"#);
+            client_with(LlmProtocol::Messages).parse_chat_response(reqwest::StatusCode::OK, &body).unwrap().truncated
+        };
+        assert!(messages("max_tokens"));
+        assert!(!messages("end_turn"));
     }
 
     #[test]

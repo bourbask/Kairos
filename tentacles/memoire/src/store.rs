@@ -1,11 +1,15 @@
 //! Stockage de la mémoire personnelle : journal, faits, intentions,
 //! conversations, leçons. Horodatages en heure murale locale naïve.
 
+use std::collections::{BTreeMap, BTreeSet};
+use std::f64::consts::LN_2;
+
 use anyhow::{Result, bail};
-use chrono::{NaiveDateTime, Utc};
+use chrono::{Datelike, Days, NaiveDate, NaiveDateTime, Utc, Weekday};
 use kairos::calendar::USER_TZ;
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::force::{Famille, est_actif, recuperabilite, renforcer, stabilite_initiale};
 
@@ -167,6 +171,243 @@ pub struct NewLesson {
     pub actions: Vec<String>,
 }
 
+/// Épisode d'une journée, texte complet.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Element {
+    pub nature: String,
+    pub r#ref: String,
+    pub date: NaiveDate,
+    pub texte: String,
+}
+
+/// Période ISO d'une date pour une synthèse de semaine (« 2026-W45 »).
+pub fn periode_semaine(d: NaiveDate) -> String {
+    let w = d.iso_week();
+    format!("{}-W{:02}", w.year(), w.week())
+}
+
+/// Éléments d'une période à condenser en une synthèse. En complément, le
+/// premier élément est la synthèse existante de la période, à réécrire avec
+/// les éléments arrivés après elle.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Lot {
+    pub niveau: String,
+    pub periode: String,
+    pub complement: bool,
+    pub elements: Vec<Element>,
+    /// Empreinte du contenu : la condensation est refusée si le lot a changé depuis.
+    pub empreinte: String,
+}
+
+impl Lot {
+    fn new(niveau: &str, periode: String, complement: bool, elements: Vec<Element>) -> Lot {
+        let mut h = Sha256::new();
+        let flag = if complement { "1" } else { "0" };
+        let parts = [niveau, periode.as_str(), flag].into_iter().chain(
+            elements.iter().flat_map(|e| [e.nature.as_str(), e.r#ref.as_str(), e.texte.as_str()]),
+        );
+        for part in parts {
+            h.update((part.len() as u64).to_le_bytes());
+            h.update(part);
+        }
+        let empreinte = format!("{:x}", h.finalize());
+        Lot { niveau: niveau.into(), periode, complement, elements, empreinte }
+    }
+}
+
+/// Indice tiré des épisodes d'une journée : une valeur supposée d'une clé.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct Indice {
+    pub key: String,
+    pub value: String,
+}
+
+/// Effet de l'application d'une extraction.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct Bilan {
+    pub renforces: u32,
+    pub deduits: u32,
+    pub questions: u32,
+    pub ignores: u32,
+}
+
+/// Étapes de la nuit dont l'état est conservé.
+pub const ETAPES_NUIT: [&str; 3] = ["extraction", "condensation", "oubli"];
+/// Statuts possibles d'une étape de nuit : des codes, jamais de texte libre.
+pub const STATUTS_NUIT: [&str; 4] = ["ok", "modele_indisponible", "sortie_invalide", "echec"];
+/// En dessous de cette récupérabilité, un souvenir oubliable est effacé.
+const SEUIL_OUBLI: f64 = 0.05;
+
+/// État d'une étape de nuit : dernier jour traité, dernière exécution, dernier statut.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct EtatNuit {
+    pub etape: String,
+    pub dernier_jour: Option<NaiveDate>,
+    pub derniere_execution: Option<NaiveDateTime>,
+    pub statut: String,
+    /// Ligne altérée : étape, dates ou statut inexploitables.
+    pub illisible: bool,
+}
+
+/// Longueur maximale d'une valeur d'indice, en caractères.
+const INDICE_VALEUR_MAX: usize = 300;
+/// Confiance d'une déduction à son premier indice, et part gagnée à chaque jour d'indice nouveau.
+const PAS_CONFIANCE: f64 = 0.25;
+/// Durée de vie d'une question de confirmation, en jours.
+const QUESTION_JOURS: i64 = 7;
+
+/// Forme comparable d'une valeur : sans casse, espaces réduits.
+fn norme(v: &str) -> String {
+    v.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+}
+
+/// Début du texte d'une question de confirmation sur `key`.
+fn question_prefixe(key: &str) -> String {
+    format!("Confirmer : {key} = ")
+}
+
+/// Référence du souvenir d'une déduction.
+fn ref_deduction(key: &str, value: &str) -> String {
+    format!("{key}\u{1f}{value}")
+}
+
+/// Renforce un souvenir existant au moment `now` (rappel).
+fn renforcer_souvenir(c: &Connection, nature: &str, r#ref: &str, now: NaiveDateTime) -> Result<bool> {
+    let prev = c
+        .query_row(
+            "SELECT stabilite, dernier_rappel, ancre FROM souvenirs WHERE nature = ? AND ref = ?",
+            [nature, r#ref],
+            |r| Ok((r.get::<_, f64>(0)?, r.get::<_, String>(1)?, r.get::<_, bool>(2)?)),
+        )
+        .optional()?;
+    let Some((stabilite, dr, ancre)) = prev else { return Ok(false) };
+    let r = recuperabilite(parse_ts(&dr)?, stabilite, now, ancre);
+    c.execute(
+        "UPDATE souvenirs SET stabilite = ?, dernier_rappel = ?, rappels = rappels + 1 WHERE nature = ? AND ref = ?",
+        params![renforcer(stabilite, r), ts(now), nature, r#ref],
+    )?;
+    Ok(true)
+}
+
+/// Un épisode n'est condensé qu'estompé depuis plus de ce délai, en jours.
+const D_COND: f64 = 14.0;
+
+/// Jour d'une semaine ISO « AAAA-Www ».
+fn jour_semaine(periode: &str, j: Weekday) -> Option<NaiveDate> {
+    let (a, w) = periode.split_once("-W")?;
+    NaiveDate::from_isoywd_opt(a.parse().ok()?, w.parse().ok()?, j)
+}
+
+/// Mois « AAAA-MM » d'une date.
+fn mois_de(d: NaiveDate) -> String {
+    d.format("%Y-%m").to_string()
+}
+
+/// Mois d'une semaine ISO : celui de son jeudi.
+fn mois_semaine(d: NaiveDate) -> String {
+    let w = d.iso_week();
+    mois_de(NaiveDate::from_isoywd_opt(w.year(), w.week(), Weekday::Thu).unwrap_or(d))
+}
+
+/// Fin (dimanche) de la semaine ISO du dernier jeudi au plus tard le jour `d` :
+/// une période se termine avec la dernière semaine ISO qui lui appartient.
+fn fin_derniere_semaine(d: NaiveDate) -> NaiveDate {
+    let recul = (d.weekday().num_days_from_monday() + 7 - Weekday::Thu.num_days_from_monday()) % 7;
+    d - Days::new(recul.into()) + Days::new(3)
+}
+
+/// Texte complet d'une entrée de journal : champ texte d'abord, puis chaque
+/// autre champ « clé : valeur », par clé.
+fn texte_journal_complet(content: &str) -> String {
+    let Ok(serde_json::Value::Object(o)) = serde_json::from_str::<serde_json::Value>(content) else {
+        return texte_journal(content);
+    };
+    let est_texte = |k: &str, v: &serde_json::Value| matches!(k, "texte" | "text") && v.is_string();
+    let mut lignes: Vec<String> = o.iter().filter(|(k, v)| est_texte(k, v)).filter_map(|(_, v)| v.as_str().map(str::to_owned)).collect();
+    let mut autres: Vec<_> = o.iter().filter(|(k, v)| !est_texte(k, v)).collect();
+    autres.sort_by(|a, b| a.0.cmp(b.0));
+    lignes.extend(autres.into_iter().map(|(k, v)| format!("{k} : {}", v.as_str().map(str::to_owned).unwrap_or_else(|| v.to_string()))));
+    lignes.join("\n")
+}
+
+/// Texte complet d'une conversation : résumé, puis sujets et décisions s'il y en a.
+fn texte_conversation(resume: &str, sujets: &str, decisions: &str) -> String {
+    let mut t = resume.to_owned();
+    for (titre, brut) in [("Sujets", sujets), ("Décisions", decisions)] {
+        let v: Vec<String> = serde_json::from_str(brut).unwrap_or_else(|_| vec![brut.to_owned()]);
+        if !v.is_empty() && !brut.trim().is_empty() {
+            t.push_str(&format!("\n{titre} : {}", v.join(", ")));
+        }
+    }
+    t.trim().to_owned()
+}
+
+/// Clé proposée par le modèle ramenée à une clé connue (casse ignorée), ou à
+/// une sous-clé `<connue>.<suite>` ; toute autre clé est refusée.
+fn cle_connue(connues: &[String], cle: &str) -> Option<String> {
+    let bas = cle.to_lowercase();
+    if let Some(c) = connues.iter().find(|c| c.to_lowercase() == bas) {
+        return Some(c.clone());
+    }
+    // Préfixe connu le plus long ; la suite est gardée en minuscules.
+    connues
+        .iter()
+        .filter_map(|c| {
+            let suite = bas.strip_prefix(&c.to_lowercase())?.strip_prefix('.')?.to_owned();
+            (!suite.trim().is_empty()).then(|| (c.len(), format!("{c}.{suite}")))
+        })
+        .max_by_key(|(n, _)| *n)
+        .map(|(_, k)| k)
+}
+
+/// Conversation pas encore passée au résumé. Un résumé vide est un résultat :
+/// rien à retenir, la conversation n'attend plus. Sa négation définit les
+/// conversations qui sont des épisodes.
+const NON_RESUMEE: &str = "summary IS NULL";
+
+/// Premier jour d'une période de synthèse.
+fn debut_periode(niveau: &str, periode: &str) -> Option<NaiveDate> {
+    match niveau {
+        "semaine" => jour_semaine(periode, Weekday::Mon),
+        "mois" => NaiveDate::parse_from_str(&format!("{periode}-01"), "%Y-%m-%d").ok(),
+        "annee" => NaiveDate::from_ymd_opt(periode.parse().ok()?, 1, 1),
+        _ => None,
+    }
+}
+
+/// Insère une synthèse, son index et son souvenir dans la transaction en cours.
+fn synthese_inserer(c: &Connection, niveau: &str, periode: &str, texte: &str, maintenant: NaiveDateTime) -> Result<i64> {
+    c.execute(
+        "INSERT INTO syntheses (niveau, periode, texte, cree_le) VALUES (?,?,?,?)",
+        params![niveau, periode, texte, ts(maintenant)],
+    )?;
+    let id = c.last_insert_rowid();
+    c.execute("INSERT INTO syntheses_fts (rowid, texte) VALUES (?,?)", params![id, texte])?;
+    let famille = if niveau == "semaine" { Famille::Synthese } else { Famille::SyntheseMois };
+    c.execute(
+        "INSERT OR REPLACE INTO souvenirs (nature, ref, stabilite, dernier_rappel, importance, ancre, confiance)
+         VALUES ('synthese', ?, ?, ?, 0.0, ?, 1.0)",
+        params![id.to_string(), stabilite_initiale(famille, 0.0), ts(maintenant), niveau == "annee"],
+    )?;
+    Ok(id)
+}
+
+/// Supprime une entrée de journal, son index et son souvenir (sans compacter l'index).
+fn journal_supprimer(c: &Connection, id: i64) -> Result<bool> {
+    let n = c.execute("DELETE FROM journal WHERE id = ?", [id])?;
+    c.execute("DELETE FROM journal_fts WHERE rowid = ?", [id])?;
+    c.execute("DELETE FROM souvenirs WHERE nature = 'journal' AND ref = ?", [id.to_string()])?;
+    Ok(n > 0)
+}
+
+/// Supprime une conversation, son index et son souvenir (sans compacter l'index).
+fn conversation_supprimer(c: &Connection, id: i64) -> Result<bool> {
+    let n = c.execute("DELETE FROM conversations WHERE id = ?", [id])?;
+    c.execute("DELETE FROM conversations_fts WHERE rowid = ?", [id])?;
+    c.execute("DELETE FROM souvenirs WHERE nature = 'conversation' AND ref = ?", [id.to_string()])?;
+    Ok(n > 0)
+}
+
 pub struct MemoryStore {
     conn: Connection,
 }
@@ -214,6 +455,18 @@ CREATE TABLE IF NOT EXISTS souvenirs (
     importance REAL NOT NULL, ancre INTEGER NOT NULL DEFAULT 0, confiance REAL NOT NULL,
     PRIMARY KEY (nature, ref));
 CREATE VIRTUAL TABLE IF NOT EXISTS facts_fts USING fts5(key, value);
+CREATE TABLE IF NOT EXISTS syntheses (
+    id INTEGER PRIMARY KEY, niveau TEXT NOT NULL CHECK(niveau IN ('semaine','mois','annee')),
+    periode TEXT NOT NULL, texte TEXT NOT NULL, fondue INTEGER NOT NULL DEFAULT 0,
+    cree_le TEXT NOT NULL, UNIQUE(niveau, periode));
+CREATE VIRTUAL TABLE IF NOT EXISTS syntheses_fts USING fts5(texte);
+CREATE TABLE IF NOT EXISTS deductions (
+    key TEXT NOT NULL, value TEXT NOT NULL, confiance REAL NOT NULL, cree_le TEXT NOT NULL,
+    dernier_jour TEXT NOT NULL, PRIMARY KEY (key, value));
+CREATE TABLE IF NOT EXISTS renforcements_jour (
+    key TEXT NOT NULL, jour TEXT NOT NULL, PRIMARY KEY (key, jour));
+CREATE TABLE IF NOT EXISTS nuit_etat (
+    etape TEXT PRIMARY KEY, dernier_jour TEXT, derniere_execution TEXT, statut TEXT);
 ";
 
 fn now_local() -> NaiveDateTime {
@@ -332,7 +585,21 @@ impl MemoryStore {
             "CREATE UNIQUE INDEX IF NOT EXISTS conversations_session ON conversations(session_id) WHERE session_id IS NOT NULL;",
         )?;
         Self::migrate_souvenirs(&conn)?;
+        Self::migrer_nuit(&conn)?;
         Ok(MemoryStore { conn })
+    }
+
+    /// Donne un état à chaque étape de nuit qui n'en a pas : son horloge part
+    /// de maintenant, pour qu'une nuit qui ne tourne jamais finisse signalée.
+    fn migrer_nuit(conn: &Connection) -> Result<()> {
+        let maintenant = ts(now_local());
+        for etape in ETAPES_NUIT {
+            conn.execute(
+                "INSERT OR IGNORE INTO nuit_etat (etape, derniere_execution, statut) VALUES (?, ?, 'ok')",
+                [etape, maintenant.as_str()],
+            )?;
+        }
+        Ok(())
     }
 
     /// Aligne les souvenirs sur `fact_log` et `journal` à chaque ouverture, y
@@ -353,6 +620,22 @@ impl MemoryStore {
              (SELECT 1 FROM journal j WHERE j.id = CAST(souvenirs.ref AS INTEGER) AND j.at <= souvenirs.dernier_rappel)",
             [],
         )?;
+        // Conversations : orpheline = plus de ligne source (la date vient du client, non fiable).
+        tx.execute(
+            "DELETE FROM souvenirs WHERE nature = 'conversation'
+             AND CAST(ref AS INTEGER) NOT IN (SELECT id FROM conversations)",
+            [],
+        )?;
+        tx.execute(
+            "DELETE FROM souvenirs WHERE nature = 'synthese'
+             AND CAST(ref AS INTEGER) NOT IN (SELECT id FROM syntheses)",
+            [],
+        )?;
+        tx.execute(
+            "DELETE FROM souvenirs WHERE nature = 'deduction' AND NOT EXISTS
+             (SELECT 1 FROM deductions d WHERE d.key || char(31) || d.value = souvenirs.ref)",
+            [],
+        )?;
         // Créés maintenant : réactivés à la migration pour ne pas s'estomper d'un coup.
         let maintenant = ts(now_local());
         tx.execute(
@@ -365,6 +648,22 @@ impl MemoryStore {
             "INSERT OR IGNORE INTO souvenirs (nature, ref, stabilite, dernier_rappel, importance, confiance)
              SELECT 'journal', CAST(id AS TEXT), ?1, ?3, ?2, 1.0 FROM journal",
             params![stabilite_initiale(Famille::Episode, IMPORTANCE_EPISODE), IMPORTANCE_EPISODE, maintenant],
+        )?;
+        tx.execute(
+            "INSERT OR IGNORE INTO souvenirs (nature, ref, stabilite, dernier_rappel, importance, confiance)
+             SELECT 'conversation', CAST(id AS TEXT), ?1, ?3, ?2, 1.0 FROM conversations",
+            params![stabilite_initiale(Famille::Episode, IMPORTANCE_EPISODE), IMPORTANCE_EPISODE, maintenant],
+        )?;
+        tx.execute(
+            "INSERT OR IGNORE INTO souvenirs (nature, ref, stabilite, dernier_rappel, importance, ancre, confiance)
+             SELECT 'synthese', CAST(id AS TEXT),
+                    CASE niveau WHEN 'semaine' THEN ?1 ELSE ?2 END, ?3, 0.0, niveau = 'annee', 1.0 FROM syntheses",
+            params![stabilite_initiale(Famille::Synthese, 0.0), stabilite_initiale(Famille::SyntheseMois, 0.0), maintenant],
+        )?;
+        tx.execute(
+            "INSERT OR IGNORE INTO souvenirs (nature, ref, stabilite, dernier_rappel, importance, confiance)
+             SELECT 'deduction', key || char(31) || value, ?1, ?2, 0.0, confiance FROM deductions",
+            params![stabilite_initiale(Famille::Connaissance, 0.0), maintenant],
         )?;
         tx.execute("DELETE FROM facts_fts", [])?;
         tx.execute(
@@ -480,12 +779,10 @@ impl MemoryStore {
     /// Supprime l'entrée et son index ; `false` si elle n'existe pas.
     pub fn journal_delete(&self, id: i64) -> Result<bool> {
         let tx = self.conn.unchecked_transaction()?;
-        let n = tx.execute("DELETE FROM journal WHERE id = ?", [id])?;
-        tx.execute("DELETE FROM journal_fts WHERE rowid = ?", [id])?;
-        tx.execute("DELETE FROM souvenirs WHERE nature = 'journal' AND ref = ?", [id.to_string()])?;
+        let n = journal_supprimer(&tx, id)?;
         tx.execute("INSERT INTO journal_fts (journal_fts) VALUES ('optimize')", [])?;
         tx.commit()?;
-        Ok(n > 0)
+        Ok(n)
     }
 
     // --- Faits (journal d'écritures : le dernier gagne, le reste est l'historique) ---
@@ -503,29 +800,12 @@ impl MemoryStore {
             params![key, value, provenance, ts(now)],
         )?;
         if key != PERSONA_KEY {
-            let prev = tx
-                .query_row(
-                    "SELECT stabilite, dernier_rappel, ancre FROM souvenirs WHERE nature = 'fait' AND ref = ?",
-                    [key],
-                    |r| Ok((r.get::<_, f64>(0)?, r.get::<_, String>(1)?, r.get::<_, bool>(2)?)),
-                )
-                .optional()?;
-            match prev {
-                Some((stabilite, dr, ancre)) => {
-                    let r = recuperabilite(parse_ts(&dr)?, stabilite, now, ancre);
-                    tx.execute(
-                        "UPDATE souvenirs SET stabilite = ?, dernier_rappel = ?, rappels = rappels + 1
-                         WHERE nature = 'fait' AND ref = ?",
-                        params![renforcer(stabilite, r), ts(now), key],
-                    )?;
-                }
-                None => {
-                    tx.execute(
-                        "INSERT INTO souvenirs (nature, ref, stabilite, dernier_rappel, importance, confiance)
-                         VALUES ('fait', ?, ?, ?, ?, 1.0)",
-                        params![key, stabilite_initiale(Famille::Connaissance, IMPORTANCE_FAIT), ts(now), IMPORTANCE_FAIT],
-                    )?;
-                }
+            if !renforcer_souvenir(&tx, "fait", key, now)? {
+                tx.execute(
+                    "INSERT INTO souvenirs (nature, ref, stabilite, dernier_rappel, importance, confiance)
+                     VALUES ('fait', ?, ?, ?, ?, 1.0)",
+                    params![key, stabilite_initiale(Famille::Connaissance, IMPORTANCE_FAIT), ts(now), IMPORTANCE_FAIT],
+                )?;
             }
             tx.execute("DELETE FROM facts_fts WHERE key = ?", [key])?;
             tx.execute("INSERT INTO facts_fts (key, value) VALUES (?,?)", [key, value])?;
@@ -562,15 +842,34 @@ impl MemoryStore {
         st.query_map([key], Self::fact_from)?.map(|r| Self::fact_build(r?)).collect()
     }
 
-    /// Oublie une clé : valeur courante et historique. Renvoie le nombre de valeurs effacées.
+    /// Oublie une clé : valeur courante, historique, déductions et questions de
+    /// confirmation en cours. Renvoie le nombre de valeurs effacées, déduites comprises.
     pub fn fact_forget(&self, key: &str) -> Result<usize> {
         let tx = self.conn.unchecked_transaction()?;
-        let n = tx.execute("DELETE FROM fact_log WHERE key = ?", [key])?;
+        let mut n = tx.execute("DELETE FROM fact_log WHERE key = ?", [key])?;
         tx.execute("DELETE FROM souvenirs WHERE nature = 'fait' AND ref = ?", [key])?;
+        tx.execute(
+            "DELETE FROM souvenirs WHERE nature = 'deduction' AND ref IN (SELECT key || char(31) || value FROM deductions WHERE key = ?)",
+            [key],
+        )?;
+        n += tx.execute("DELETE FROM deductions WHERE key = ?", [key])?;
+        tx.execute("DELETE FROM renforcements_jour WHERE key = ?", [key])?;
+        tx.execute(
+            "DELETE FROM intentions WHERE substr(what, 1, length(?1)) = ?1",
+            [question_prefixe(key)],
+        )?;
         tx.execute("DELETE FROM facts_fts WHERE key = ?", [key])?;
         tx.execute("INSERT INTO facts_fts (facts_fts) VALUES ('optimize')", [])?;
         tx.commit()?;
         Ok(n)
+    }
+
+    /// Clés connues, déclarées ou déduites, triées et sans doublon (personnalité exclue).
+    pub fn cles(&self) -> Result<Vec<String>> {
+        let mut st = self.conn.prepare(
+            "SELECT key FROM fact_log WHERE key <> ?1 UNION SELECT key FROM deductions WHERE key <> ?1 ORDER BY key",
+        )?;
+        Ok(st.query_map([PERSONA_KEY], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?)
     }
 
     /// Valeur courante de chaque clé commençant par `prefix` (comparaison littérale).
@@ -581,6 +880,100 @@ impl MemoryStore {
                AND substr(key, 1, length(?1)) = ?1 ORDER BY key",
         )?;
         st.query_map([prefix], Self::fact_from)?.map(|r| Self::fact_build(r?)).collect()
+    }
+
+    // --- Déductions ---
+
+    /// Applique les indices extraits des épisodes de `jour` : une valeur
+    /// déclarée re-mentionnée est renforcée (une fois par clé et par jour), une
+    /// valeur qui la contredit devient une question de confirmation, le reste
+    /// une déduction. Ne modifie jamais une valeur déclarée. Rejouable sans effet.
+    pub fn appliquer_extraction(&self, jour: NaiveDate, indices: &[Indice], maintenant: NaiveDateTime) -> Result<Bilan> {
+        let j = jour.format("%Y-%m-%d").to_string();
+        let mut b = Bilan::default();
+        let connues = self.cles()?;
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute("DELETE FROM renforcements_jour WHERE jour < ?", [&j])?;
+        for i in indices {
+            let (Some(key), value) = (cle_connue(&connues, i.key.trim()), i.value.trim()) else {
+                b.ignores += 1;
+                continue;
+            };
+            let key = key.as_str();
+            if key == PERSONA_KEY || value.is_empty() || value.chars().count() > INDICE_VALEUR_MAX {
+                b.ignores += 1;
+                continue;
+            }
+            let declaree: Option<String> = tx
+                .query_row("SELECT value FROM fact_log WHERE key = ? ORDER BY id DESC LIMIT 1", [key], |r| r.get(0))
+                .optional()?;
+            match declaree {
+                Some(v) if norme(&v) == norme(value) => {
+                    let nouveau = tx.execute("INSERT OR IGNORE INTO renforcements_jour (key, jour) VALUES (?, ?)", [key, &j])? > 0;
+                    if nouveau && renforcer_souvenir(&tx, "fait", key, maintenant)? {
+                        b.renforces += 1;
+                    }
+                }
+                Some(_) => {
+                    let what = format!("{}{value} ?", question_prefixe(key));
+                    // Question en cours, ou refusée dans sa durée de vie : pas de nouvelle question.
+                    let deja = tx
+                        .prepare(
+                            "SELECT what FROM intentions WHERE state IN ('ouverte','proposee','refusee')
+                             AND expires_at > ?2 AND substr(what, 1, length(?1)) = ?1",
+                        )?
+                        .query_map(params![question_prefixe(key), ts(maintenant)], |r| r.get::<_, String>(0))?
+                        .collect::<rusqlite::Result<Vec<_>>>()?
+                        .iter()
+                        .any(|w| norme(w) == norme(&what));
+                    if !deja {
+                        tx.execute(
+                            "INSERT INTO intentions (what, constraints, expires_at, state) VALUES (?, '', ?, ?)",
+                            params![what, ts(maintenant + chrono::Duration::days(QUESTION_JOURS)), IntentionState::Proposee.as_str()],
+                        )?;
+                        b.questions += 1;
+                    }
+                }
+                None => {
+                    let existante = {
+                        let mut st = tx.prepare("SELECT value, confiance, dernier_jour FROM deductions WHERE key = ?")?;
+                        st.query_map([key], |r| Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?, r.get::<_, String>(2)?)))?
+                            .collect::<rusqlite::Result<Vec<_>>>()?
+                            .into_iter()
+                            .find(|(v, _, _)| norme(v) == norme(value))
+                    };
+                    match existante {
+                        // Même jour ou jour déjà compté : rien de nouveau.
+                        Some((_, _, dernier)) if dernier.as_str() >= j.as_str() => {}
+                        Some((v, m, _)) => {
+                            let m = m + PAS_CONFIANCE * (1.0 - m);
+                            let r#ref = ref_deduction(key, &v);
+                            tx.execute(
+                                "UPDATE deductions SET confiance = ?, dernier_jour = ? WHERE key = ? AND value = ?",
+                                params![m, j, key, v],
+                            )?;
+                            renforcer_souvenir(&tx, "deduction", &r#ref, maintenant)?;
+                            tx.execute("UPDATE souvenirs SET confiance = ? WHERE nature = 'deduction' AND ref = ?", params![m, r#ref])?;
+                            b.deduits += 1;
+                        }
+                        None => {
+                            tx.execute(
+                                "INSERT INTO deductions (key, value, confiance, cree_le, dernier_jour) VALUES (?,?,?,?,?)",
+                                params![key, value, PAS_CONFIANCE, ts(maintenant), j],
+                            )?;
+                            tx.execute(
+                                "INSERT OR REPLACE INTO souvenirs (nature, ref, stabilite, dernier_rappel, importance, confiance)
+                                 VALUES ('deduction', ?, ?, ?, 0.0, ?)",
+                                params![ref_deduction(key, value), stabilite_initiale(Famille::Connaissance, 0.0), ts(maintenant), PAS_CONFIANCE],
+                            )?;
+                            b.deduits += 1;
+                        }
+                    }
+                }
+            }
+        }
+        tx.commit()?;
+        Ok(b)
     }
 
     // --- Intentions ---
@@ -646,6 +1039,11 @@ impl MemoryStore {
                 params![c.channel, c.device, ts(c.started_at), ts(c.ended_at), c.transcript, id],
             )?;
             tx.execute("UPDATE conversations_fts SET text = ? WHERE rowid = ?", params![c.transcript, id])?;
+            // Conversation reprise : l'épisode redevient frais.
+            tx.execute(
+                "UPDATE souvenirs SET dernier_rappel = ? WHERE nature = 'conversation' AND ref = ?",
+                params![ts(now_local()), id.to_string()],
+            )?;
             tx.commit()?;
             return Ok(id);
         }
@@ -655,6 +1053,11 @@ impl MemoryStore {
         )?;
         let id = tx.last_insert_rowid();
         tx.execute("INSERT INTO conversations_fts (rowid, text) VALUES (?,?)", params![id, c.transcript])?;
+        tx.execute(
+            "INSERT OR REPLACE INTO souvenirs (nature, ref, stabilite, dernier_rappel, importance, confiance)
+             VALUES ('conversation', ?, ?, ?, ?, 1.0)",
+            params![id.to_string(), stabilite_initiale(Famille::Episode, IMPORTANCE_EPISODE), ts(now_local()), IMPORTANCE_EPISODE],
+        )?;
         tx.commit()?;
         Ok(id)
     }
@@ -676,9 +1079,10 @@ impl MemoryStore {
         st.query_map([limit], card_from_row)?.map(|r| finish_card(r?)).collect()
     }
 
+    /// Conversations en attente de résumé : la même règle que pour l'extraction.
     pub fn conversations_unsummarized(&self, limit: u32) -> Result<Vec<ConversationCard>> {
         let mut st = self.conn.prepare(&format!(
-            "SELECT {CARD_COLS} FROM conversations c WHERE c.summary IS NULL ORDER BY c.id LIMIT ?"
+            "SELECT {CARD_COLS} FROM conversations c WHERE {NON_RESUMEE} ORDER BY c.id LIMIT ?"
         ))?;
         st.query_map([limit], card_from_row)?.map(|r| finish_card(r?)).collect()
     }
@@ -718,11 +1122,10 @@ impl MemoryStore {
     /// Supprime la conversation et son index ; `false` si elle n'existe pas.
     pub fn conversation_delete(&self, id: i64) -> Result<bool> {
         let tx = self.conn.unchecked_transaction()?;
-        let n = tx.execute("DELETE FROM conversations WHERE id = ?", [id])?;
-        tx.execute("DELETE FROM conversations_fts WHERE rowid = ?", [id])?;
+        let n = conversation_supprimer(&tx, id)?;
         tx.execute("INSERT INTO conversations_fts (conversations_fts) VALUES ('optimize')", [])?;
         tx.commit()?;
-        Ok(n > 0)
+        Ok(n)
     }
 
     /// Vide la transcription des conversations résumées terminées avant `before` ;
@@ -756,6 +1159,305 @@ impl MemoryStore {
         Ok(self.conn.last_insert_rowid())
     }
 
+    // --- Synthèses et épisodes ---
+
+    /// Crée une synthèse, son index et son souvenir ; refuse une période déjà synthétisée.
+    pub fn synthese_creer(&self, niveau: &str, periode: &str, texte: &str, maintenant: NaiveDateTime) -> Result<i64> {
+        let tx = self.conn.unchecked_transaction()?;
+        let id = synthese_inserer(&tx, niveau, periode, texte, maintenant)?;
+        tx.commit()?;
+        Ok(id)
+    }
+
+    /// Lots condensables à `maintenant`, au plus `max` : semaines, puis mois,
+    /// puis années, les plus anciens d'abord.
+    pub fn condensables(&self, maintenant: NaiveDateTime, max: usize) -> Result<Vec<Lot>> {
+        let mut lots = self.lots(maintenant)?;
+        lots.truncate(max);
+        Ok(lots)
+    }
+
+    /// Condense la période : recalcule son lot et, s'il est inchangé (même
+    /// empreinte), crée la synthèse (ou réécrit l'existante pour un complément)
+    /// et retire ses sources dans une seule transaction. `None` si le lot n'est
+    /// pas (ou plus) condensable, a changé, ou si le texte est vide ; rien n'est
+    /// alors modifié.
+    pub fn condenser(&self, niveau: &str, periode: &str, texte: &str, empreinte: &str, maintenant: NaiveDateTime) -> Result<Option<i64>> {
+        let texte = texte.trim();
+        if texte.is_empty() {
+            return Ok(None);
+        }
+        let Some(lot) = self.lots(maintenant)?.into_iter().find(|l| l.niveau == niveau && l.periode == periode) else {
+            return Ok(None);
+        };
+        if lot.empreinte != empreinte {
+            return Ok(None);
+        }
+        let tx = self.conn.unchecked_transaction()?;
+        let (id, sources) = if lot.complement {
+            let id: i64 = lot.elements[0].r#ref.parse()?;
+            // Réécrite, la synthèse est de nouveau à fondre dans le niveau supérieur.
+            tx.execute("UPDATE syntheses SET texte = ?, fondue = 0 WHERE id = ?", params![texte, id])?;
+            tx.execute("UPDATE syntheses_fts SET texte = ? WHERE rowid = ?", params![texte, id])?;
+            tx.execute("INSERT INTO syntheses_fts (syntheses_fts) VALUES ('optimize')", [])?;
+            (id, &lot.elements[1..])
+        } else {
+            (synthese_inserer(&tx, niveau, periode, texte, maintenant)?, &lot.elements[..])
+        };
+        for e in sources {
+            let r: i64 = e.r#ref.parse()?;
+            match e.nature.as_str() {
+                "journal" => journal_supprimer(&tx, r)?,
+                "conversation" => conversation_supprimer(&tx, r)?,
+                _ => tx.execute("UPDATE syntheses SET fondue = 1 WHERE id = ?", [r])? > 0,
+            };
+        }
+        if niveau == "semaine" {
+            tx.execute("INSERT INTO journal_fts (journal_fts) VALUES ('optimize')", [])?;
+            tx.execute("INSERT INTO conversations_fts (conversations_fts) VALUES ('optimize')", [])?;
+        }
+        tx.commit()?;
+        Ok(Some(id))
+    }
+
+    /// Efface pour de bon les synthèses fondues non annuelles et les déductions
+    /// dont la récupérabilité est passée sous `SEUIL_OUBLI`, index compris.
+    /// Renvoie le nombre de souvenirs effacés.
+    pub fn oublier(&self, maintenant: NaiveDateTime) -> Result<u32> {
+        let tx = self.conn.unchecked_transaction()?;
+        let candidats = {
+            let mut st = tx.prepare(
+                "SELECT s.nature, s.ref, s.stabilite, s.dernier_rappel, s.ancre FROM souvenirs s
+                 JOIN syntheses y ON y.id = CAST(s.ref AS INTEGER)
+                 WHERE s.nature = 'synthese' AND y.fondue = 1 AND y.niveau <> 'annee'
+                 UNION ALL
+                 SELECT nature, ref, stabilite, dernier_rappel, ancre FROM souvenirs WHERE nature = 'deduction'",
+            )?;
+            st.query_map([], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, f64>(2)?, r.get::<_, String>(3)?, r.get::<_, bool>(4)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        let mut n = 0;
+        for (nature, r#ref, stabilite, dr, ancre) in candidats {
+            // Date illisible : on ne décide pas d'effacer sur une donnée douteuse.
+            let Ok(dernier) = parse_ts(&dr) else { continue };
+            if recuperabilite(dernier, stabilite, maintenant, ancre) >= SEUIL_OUBLI {
+                continue;
+            }
+            if nature == "synthese" {
+                let id: i64 = r#ref.parse()?;
+                tx.execute("DELETE FROM syntheses WHERE id = ?", [id])?;
+                tx.execute("DELETE FROM syntheses_fts WHERE rowid = ?", [id])?;
+            } else {
+                tx.execute("DELETE FROM deductions WHERE key || char(31) || value = ?", [&r#ref])?;
+            }
+            n += tx.execute("DELETE FROM souvenirs WHERE nature = ? AND ref = ?", [&nature, &r#ref])? as u32;
+        }
+        if n > 0 {
+            tx.execute("INSERT INTO syntheses_fts (syntheses_fts) VALUES ('optimize')", [])?;
+        }
+        tx.commit()?;
+        Ok(n)
+    }
+
+    // --- État de la nuit ---
+
+    /// États connus des étapes de nuit, par étape.
+    pub fn nuit_etat(&self) -> Result<Vec<EtatNuit>> {
+        let mut st = self.conn.prepare("SELECT etape, dernier_jour, derniere_execution, statut FROM nuit_etat ORDER BY etape")?;
+        st.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?, r.get::<_, Option<String>>(2)?, r.get::<_, Option<String>>(3)?))
+        })?
+        .map(|row| {
+            let (etape, dj, de, statut) = row?;
+            let dernier_jour = dj.map(|j| NaiveDate::parse_from_str(&j, "%Y-%m-%d").ok());
+            let derniere_execution = de.map(|t| parse_ts(&t).ok());
+            let statut = statut.unwrap_or_default();
+            // Ligne altérée : signalée sans faire échouer la lecture des autres.
+            let illisible = !ETAPES_NUIT.contains(&etape.as_str())
+                || !STATUTS_NUIT.contains(&statut.as_str())
+                || dernier_jour == Some(None)
+                || matches!(derniere_execution, None | Some(None));
+            Ok(EtatNuit {
+                etape,
+                dernier_jour: dernier_jour.flatten(),
+                derniere_execution: derniere_execution.flatten(),
+                statut,
+                illisible,
+            })
+        })
+        .collect()
+    }
+
+    /// Note l'exécution d'une étape ; sans `dernier_jour`, garde le précédent.
+    pub fn nuit_noter(&self, etape: &str, statut: &str, dernier_jour: Option<NaiveDate>, maintenant: NaiveDateTime) -> Result<()> {
+        if !ETAPES_NUIT.contains(&etape) {
+            bail!("étape inconnue : {etape}");
+        }
+        if !STATUTS_NUIT.contains(&statut) {
+            bail!("statut inconnu : {statut} (attendu : {})", STATUTS_NUIT.join(", "));
+        }
+        self.conn.execute(
+            "INSERT INTO nuit_etat (etape, dernier_jour, derniere_execution, statut) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(etape) DO UPDATE SET dernier_jour = coalesce(?2, dernier_jour),
+                 derniere_execution = ?3, statut = ?4",
+            params![etape, dernier_jour.map(|j| j.format("%Y-%m-%d").to_string()), ts(maintenant), statut],
+        )?;
+        Ok(())
+    }
+
+    /// Conversations sans résumé, sujets ni décisions commencées avant `jour` :
+    /// elles ne peuvent pas être condensées.
+    pub fn conversations_non_resumees_avant(&self, jour: NaiveDate) -> Result<u32> {
+        self.non_resumees("started_at < ?", jour)
+    }
+
+    /// Conversations non résumées commencées le `jour` : la journée ne peut pas
+    /// encore être extraite.
+    pub fn conversations_non_resumees_le(&self, jour: NaiveDate) -> Result<u32> {
+        self.non_resumees("substr(started_at, 1, 10) = ?", jour)
+    }
+
+    fn non_resumees(&self, filtre_date: &str, jour: NaiveDate) -> Result<u32> {
+        let sql = format!("SELECT COUNT(*) FROM conversations WHERE {NON_RESUMEE} AND {filtre_date}");
+        Ok(self.conn.query_row(&sql, [jour.format("%Y-%m-%d").to_string()], |r| r.get(0))?)
+    }
+
+    /// Tous les lots condensables, recalculés depuis la base.
+    // ponytail: lecture complète des épisodes et synthèses à chaque appel ; index par date si le volume l'exige.
+    fn lots(&self, maintenant: NaiveDateTime) -> Result<Vec<Lot>> {
+        let aujourdhui = maintenant.date();
+        let mut semaines: BTreeMap<String, (Vec<Element>, bool)> = BTreeMap::new();
+        // Mois et années qui gardent un épisode ou une synthèse non fondue.
+        let mut mois_bloques = BTreeSet::new();
+        let mut annees_bloquees = BTreeSet::new();
+
+        let mut st = self.conn.prepare(
+            "SELECT 'journal', j.id, substr(j.at, 1, 10), j.content, '', '', s.stabilite, s.dernier_rappel, s.ancre
+             FROM journal j LEFT JOIN souvenirs s ON s.nature = 'journal' AND s.ref = CAST(j.id AS TEXT)
+             UNION ALL
+             SELECT 'conversation', c.id, substr(c.started_at, 1, 10), c.summary, c.topics, c.decisions,
+                    s.stabilite, s.dernier_rappel, s.ancre
+             FROM conversations c LEFT JOIN souvenirs s ON s.nature = 'conversation' AND s.ref = CAST(c.id AS TEXT)
+             ORDER BY 3, 1, 2",
+        )?;
+        let rows = st.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, String>(2)?, r.get::<_, Option<String>>(3)?,
+                r.get::<_, String>(4)?, r.get::<_, String>(5)?,
+                r.get::<_, Option<f64>>(6)?, r.get::<_, Option<String>>(7)?, r.get::<_, Option<bool>>(8)?))
+        })?;
+        for row in rows {
+            let (nature, id, date, brut, sujets, decisions, stabilite, dernier, ancre) = row?;
+            // Date illisible : l'épisode ne peut être rangé dans aucune semaine.
+            let Ok(date) = NaiveDate::parse_from_str(&date, "%Y-%m-%d") else { continue };
+            // Une conversation pas encore résumée attend ; une entrée de journal vide aussi.
+            let a_contenu = if nature == "conversation" { brut.is_some() } else { brut.as_deref().is_some_and(|b| !b.trim().is_empty()) };
+            let brut = brut.unwrap_or_default();
+            let texte = if nature == "journal" { texte_journal_complet(&brut) } else { texte_conversation(&brut, &sujets, &decisions) };
+            // Estompé depuis plus de D_COND : instant d'estompage = dernier rappel + S × ln 2.
+            let estompe = match (stabilite, dernier.as_deref().map(parse_ts), ancre) {
+                (Some(s), Some(Ok(d)), Some(false)) => {
+                    (maintenant - d).num_milliseconds() as f64 / 86_400_000.0 > s * LN_2 + D_COND
+                }
+                _ => false,
+            };
+            mois_bloques.insert(mois_de(date));
+            mois_bloques.insert(mois_semaine(date));
+            annees_bloquees.insert(date.year());
+            annees_bloquees.insert(date.iso_week().year());
+            let e = semaines.entry(periode_semaine(date)).or_insert((Vec::new(), true));
+            e.0.push(Element { nature, r#ref: id.to_string(), date, texte });
+            e.1 &= estompe && a_contenu;
+        }
+
+        // Synthèses existantes, cibles d'un éventuel complément.
+        let mut existantes: BTreeMap<(String, String), Element> = BTreeMap::new();
+        let mut mois: BTreeMap<String, Vec<Element>> = BTreeMap::new();
+        let mut annees: BTreeMap<i32, Vec<Element>> = BTreeMap::new();
+        let mut st = self.conn.prepare("SELECT id, niveau, periode, texte, fondue FROM syntheses ORDER BY periode, id")?;
+        let rows = st.query_map([], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?, r.get::<_, bool>(4)?))
+        })?;
+        for row in rows {
+            let (id, niveau, periode, texte, fondue) = row?;
+            let Some(debut) = debut_periode(&niveau, &periode) else { continue };
+            let e = Element { nature: "synthese".into(), r#ref: id.to_string(), date: debut, texte };
+            existantes.insert((niveau.clone(), periode), e.clone());
+            if fondue {
+                continue;
+            }
+            match niveau.as_str() {
+                "semaine" => {
+                    annees_bloquees.insert(debut.iso_week().year());
+                    mois.entry(mois_semaine(debut)).or_default().push(e);
+                }
+                "mois" => annees.entry(debut.year()).or_default().push(e),
+                _ => {}
+            }
+        }
+
+        let mut out = Vec::new();
+        // Période déjà synthétisée : complément, synthèse existante en tête.
+        let mut pousser = |niveau: &str, p: String, elements: Vec<Element>| match existantes.get(&(niveau.to_owned(), p.clone())) {
+            Some(cible) => out.push(Lot::new(niveau, p, true, std::iter::once(cible.clone()).chain(elements).collect())),
+            None => out.push(Lot::new(niveau, p, false, elements)),
+        };
+        // Une semaine n'est condensée qu'une fois tous ses jours passés par l'extraction.
+        let extrait_jusquau: Option<NaiveDate> = self
+            .conn
+            .query_row("SELECT dernier_jour FROM nuit_etat WHERE etape = 'extraction'", [], |r| r.get::<_, Option<String>>(0))
+            .optional()?
+            .flatten()
+            .and_then(|j| NaiveDate::parse_from_str(&j, "%Y-%m-%d").ok());
+        for (p, (elements, pret)) in semaines {
+            let dimanche = jour_semaine(&p, Weekday::Sun);
+            let finie = dimanche.is_some_and(|d| d < aujourdhui);
+            let extraite = dimanche.zip(extrait_jusquau).is_some_and(|(d, e)| d <= e);
+            if pret && finie && extraite {
+                pousser("semaine", p, elements);
+            }
+        }
+        for (p, elements) in mois {
+            let finie = debut_periode("mois", &p)
+                .and_then(|d| d.checked_add_months(chrono::Months::new(1)))
+                .is_some_and(|suivant| fin_derniere_semaine(suivant - Days::new(1)) < aujourdhui);
+            if finie && !mois_bloques.contains(&p) {
+                pousser("mois", p, elements);
+            }
+        }
+        for (a, elements) in annees {
+            let finie = NaiveDate::from_ymd_opt(a, 12, 31).is_some_and(|d| fin_derniere_semaine(d) < aujourdhui);
+            if finie && !annees_bloquees.contains(&a) {
+                pousser("annee", a.to_string(), elements);
+            }
+        }
+        Ok(out)
+    }
+
+    /// Entrées de journal et conversations résumées d'une journée.
+    pub fn episodes_du_jour(&self, jour: NaiveDate) -> Result<Vec<Element>> {
+        let j = jour.format("%Y-%m-%d").to_string();
+        let mut out = Vec::new();
+        let mut st = self.conn.prepare("SELECT id, content FROM journal WHERE substr(at, 1, 10) = ? ORDER BY id")?;
+        for r in st.query_map([&j], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))? {
+            let (id, content) = r?;
+            out.push(Element { nature: "journal".into(), r#ref: id.to_string(), date: jour, texte: texte_journal(&content) });
+        }
+        // Exactement les conversations du jour qui ne sont pas en attente de résumé.
+        let mut st = self.conn.prepare(&format!(
+            "SELECT id, coalesce(summary, ''), topics, decisions FROM conversations
+             WHERE substr(started_at, 1, 10) = ? AND NOT ({NON_RESUMEE}) ORDER BY id"
+        ))?;
+        let lignes = st.query_map([&j], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?)))?;
+        for r in lignes {
+            let (id, resume, sujets, decisions) = r?;
+            let texte = texte_conversation(resume.trim(), &sujets, &decisions);
+            out.push(Element { nature: "conversation".into(), r#ref: id.to_string(), date: jour, texte });
+        }
+        Ok(out)
+    }
+
     // --- Rappel (lecture seule : ne renforce rien) ---
 
     /// Souvenirs à proposer au modèle : ancres d'abord (au plus `ANCRES_MAX`,
@@ -774,11 +1476,23 @@ impl MemoryStore {
                 let (rank, id) = r?;
                 hits.push((rank, "journal", id.to_string()));
             }
+            let mut st = self.conn.prepare("SELECT rowid, rank FROM conversations_fts WHERE conversations_fts MATCH ? ORDER BY rank LIMIT ?")?;
+            for r in st.query_map(params![q, RAPPEL_RECHERCHE_MAX], |r| Ok((r.get::<_, f64>(1)?, r.get::<_, i64>(0)?)))? {
+                let (rank, id) = r?;
+                hits.push((rank, "conversation", id.to_string()));
+            }
+            let mut st = self.conn.prepare("SELECT rowid, rank FROM syntheses_fts WHERE syntheses_fts MATCH ? ORDER BY rank LIMIT ?")?;
+            for r in st.query_map(params![q, RAPPEL_RECHERCHE_MAX], |r| Ok((r.get::<_, f64>(1)?, r.get::<_, i64>(0)?)))? {
+                let (rank, id) = r?;
+                hits.push((rank, "synthese", id.to_string()));
+            }
         }
         hits.sort_by(|a, b| a.0.total_cmp(&b.0));
         let rang: std::collections::HashMap<(&str, &str), usize> =
             hits.iter().enumerate().map(|(i, (_, n, r))| ((*n, r.as_str()), i)).collect();
-        let journal_hits: Vec<String> = hits.iter().filter(|h| h.1 == "journal").map(|h| h.2.clone()).collect();
+        let ids = |nature: &str| hits.iter().filter(|h| h.1 == nature).map(|h| h.2.clone()).collect::<Vec<_>>().join(",");
+        // Identifiants entiers issus de la base : pas de risque d'injection.
+        let (journal_hits, conv_hits) = (ids("journal"), ids("conversation"));
 
         // Candidats : tous les faits ; épisodes récents, ancrés ou trouvés.
         // ponytail: tous les faits sont lus à chaque rappel ; filtrer en SQL si leur nombre explose.
@@ -789,9 +1503,22 @@ impl MemoryStore {
              SELECT 'journal', s.ref, substr(j.at, 1, 10) || char(1) || j.content, s.stabilite, s.dernier_rappel, s.importance, s.ancre
              FROM souvenirs s JOIN journal j ON j.id = CAST(s.ref AS INTEGER) WHERE s.nature = 'journal'
                AND (s.ancre OR j.id IN (SELECT id FROM journal ORDER BY id DESC LIMIT {RAPPEL_JOURNAL_RECENT})
-                    OR j.id IN ({}))",
-            // Identifiants entiers issus de la base : pas de risque d'injection.
-            journal_hits.join(",")
+                    OR j.id IN ({journal_hits}))
+             UNION ALL
+             SELECT 'conversation', s.ref, substr(c.started_at, 1, 10) || char(1) || coalesce(c.summary, '') || char(1) || c.topics,
+                    s.stabilite, s.dernier_rappel, s.importance, s.ancre
+             FROM souvenirs s JOIN conversations c ON c.id = CAST(s.ref AS INTEGER) WHERE s.nature = 'conversation'
+               AND (s.ancre OR c.id IN (SELECT id FROM conversations ORDER BY id DESC LIMIT {RAPPEL_JOURNAL_RECENT})
+                    OR c.id IN ({conv_hits}))
+             UNION ALL
+             SELECT 'synthese', s.ref, y.periode || ' : ' || y.texte, s.stabilite, s.dernier_rappel, s.importance, s.ancre
+             FROM souvenirs s JOIN syntheses y ON y.id = CAST(s.ref AS INTEGER) WHERE s.nature = 'synthese'
+             UNION ALL
+             SELECT 'deduction', s.ref, 'je crois que ' || d.key || ' : ' || d.value, s.stabilite, s.dernier_rappel, s.importance, s.ancre
+             FROM souvenirs s JOIN deductions d ON s.ref = d.key || char(31) || d.value WHERE s.nature = 'deduction'
+               AND d.key NOT IN (SELECT key FROM fact_log)
+               AND NOT EXISTS (SELECT 1 FROM deductions e WHERE e.key = d.key
+                   AND (e.confiance > d.confiance OR (e.confiance = d.confiance AND e.value < d.value)))"
         );
         struct Cand { r: Rappel, importance: f64, dernier: NaiveDateTime, rang: Option<usize> }
         let mut st = self.conn.prepare(&sql)?;
@@ -805,6 +1532,14 @@ impl MemoryStore {
             let (nature, r#ref, brut, stabilite, dr, importance, ancre) = row?;
             let texte = match brut.split_once('\u{1}') {
                 Some((date, content)) if nature == "journal" => format!("{date} : {}", texte_journal(content)),
+                Some((date, reste)) if nature == "conversation" => {
+                    let (resume, sujets) = reste.split_once('\u{1}').unwrap_or((reste, "[]"));
+                    let sujets: Vec<String> = serde_json::from_str(sujets).unwrap_or_default();
+                    let corps = if resume.is_empty() { sujets.join(", ") } else { resume.to_string() };
+                    // Conversation sans résumé ni sujets : rien à rappeler.
+                    if corps.is_empty() { continue }
+                    format!("{date} : {corps}")
+                }
                 _ => brut,
             };
             // Ligne illisible : ignorée sans bloquer le rappel ni exposer son contenu.
@@ -848,6 +1583,13 @@ mod tests {
 
     fn store() -> MemoryStore {
         MemoryStore::open(":memory:").unwrap()
+    }
+
+    /// Mémoire dont l'extraction est à jour : seule la condensation décide.
+    fn store_extrait() -> MemoryStore {
+        let s = store();
+        s.nuit_noter("extraction", "ok", NaiveDate::from_ymd_opt(2099, 12, 31), t()).unwrap();
+        s
     }
 
     fn t() -> NaiveDateTime {
@@ -929,6 +1671,85 @@ mod tests {
         assert!(s.conversation_search("jardin", 10).unwrap().is_empty());
         let n: i64 = s.conn.query_row("SELECT count(*) FROM conversations_fts", [], |r| r.get(0)).unwrap();
         assert_eq!(n, 0);
+    }
+
+    #[test]
+    fn conversations_become_episodes() {
+        let s = store();
+        let id = s.conversation_ingest(&conv("parlons du jardin")).unwrap();
+        let f = s.force("conversation", &id.to_string()).unwrap().unwrap();
+        assert_eq!((f.stabilite, f.importance, f.rappels), (3.0, 0.0, 0));
+        // Migration : ligne manquante recréée, orpheline retirée, transcription purgée sans effet.
+        s.conn.execute("DELETE FROM souvenirs WHERE nature = 'conversation'", []).unwrap();
+        s.conn.execute("INSERT INTO souvenirs VALUES ('conversation', '999', 3.0, '2999-01-01 00:00:00', 0, 0.0, 0, 1.0)", []).unwrap();
+        MemoryStore::migrate_souvenirs(&s.conn).unwrap();
+        assert!(s.force("conversation", &id.to_string()).unwrap().is_some());
+        assert!(s.force("conversation", "999").unwrap().is_none());
+        s.conversation_set_summary(id, "jardin", &[], &[]).unwrap();
+        s.purge_transcripts(t() + Duration::days(1)).unwrap();
+        assert!(s.force("conversation", &id.to_string()).unwrap().is_some());
+    }
+
+    #[test]
+    fn conversation_memory_survives_reopen_with_future_start() {
+        let s = store();
+        let mut c = conv("futur");
+        c.started_at = now_local() + Duration::hours(1);
+        let id = s.conversation_ingest(&c).unwrap().to_string();
+        s.ancrer("conversation", &id, true).unwrap();
+        s.conn.execute("UPDATE souvenirs SET rappels = 4 WHERE nature = 'conversation'", []).unwrap();
+        let avant = s.force("conversation", &id).unwrap();
+        MemoryStore::migrate_souvenirs(&s.conn).unwrap();
+        assert_eq!(s.force("conversation", &id).unwrap(), avant);
+    }
+
+    #[test]
+    fn reingest_keeps_conversation_memory() {
+        let s = store();
+        let mut c = conv("un");
+        c.session_id = Some("s1".into());
+        let id = s.conversation_ingest(&c).unwrap().to_string();
+        s.ancrer("conversation", &id, true).unwrap();
+        s.conn.execute("UPDATE souvenirs SET rappels = 2 WHERE nature = 'conversation'", []).unwrap();
+        let avant = s.force("conversation", &id).unwrap();
+        c.transcript = "deux".into();
+        assert_eq!(s.conversation_ingest(&c).unwrap().to_string(), id);
+        let (avant, apres) = (avant.unwrap(), s.force("conversation", &id).unwrap().unwrap());
+        // Ancre, rappels et stabilité gardés ; l'épisode redevient frais.
+        assert!(apres.ancre && apres.rappels == 2 && apres.stabilite == avant.stabilite);
+        assert!(apres.dernier_rappel >= avant.dernier_rappel);
+    }
+
+    #[test]
+    fn recall_conversation_from_topics_only() {
+        let s = store();
+        let id = s.conversation_ingest(&conv("bavardage")).unwrap();
+        s.conversation_set_summary(id, "", &["jardin".into(), "potager".into()], &[]).unwrap();
+        let r = s.rappel(None, t(), 10).unwrap();
+        let c = r.iter().find(|x| x.nature == "conversation").unwrap();
+        assert_eq!(c.texte, "2026-10-29 : jardin, potager");
+    }
+
+    #[test]
+    fn conversation_delete_removes_memory() {
+        let s = store();
+        let id = s.conversation_ingest(&conv("parlons du jardin")).unwrap();
+        assert!(s.conversation_delete(id).unwrap());
+        assert!(s.force("conversation", &id.to_string()).unwrap().is_none());
+    }
+
+    #[test]
+    fn recall_finds_conversation_by_summary() {
+        let s = store();
+        let id = s.conversation_ingest(&conv("bavardage")).unwrap();
+        s.conversation_set_summary(id, "projet de potager", &[], &[]).unwrap();
+        let r = s.rappel(Some("potager"), t(), 10).unwrap();
+        let c = r.iter().find(|x| x.nature == "conversation").unwrap();
+        assert_eq!(c.texte, "2026-10-29 : projet de potager");
+        // Sans résumé ni sujets : ignorée.
+        let s2 = store();
+        s2.conversation_ingest(&conv("bavardage")).unwrap();
+        assert!(s2.rappel(None, t(), 10).unwrap().iter().all(|x| x.nature != "conversation"));
     }
 
     #[test]
@@ -1257,11 +2078,11 @@ mod tests {
     #[test]
     fn recall_never_reinforces() {
         let s = store();
-        s.fact_set_at("ville", "Lyon", "p", t()).unwrap();
+        s.fact_set_at("ville", "Ville-A", "p", t()).unwrap();
         let id = note(&s, "promenade au parc").to_string();
         let avant = (s.force("fait", "ville").unwrap(), s.force("journal", &id).unwrap());
         let plus_tard = t() + Duration::days(40);
-        s.rappel(Some("Lyon promenade"), plus_tard, 10).unwrap();
+        s.rappel(Some("Ville-A promenade"), plus_tard, 10).unwrap();
         s.rappel(None, plus_tard, 10).unwrap();
         assert_eq!(avant, (s.force("fait", "ville").unwrap(), s.force("journal", &id).unwrap()));
     }
@@ -1362,5 +2183,666 @@ mod tests {
         let r = s.rappel(None, t(), 10).unwrap();
         let total: usize = r.iter().filter(|x| x.ancre).map(|x| x.texte.chars().count()).sum();
         assert!(total <= 3200 && total > 0, "{total}");
+    }
+
+    #[test]
+    fn syntheses_schema_and_recall() {
+        let s = store();
+        let id = s.synthese_creer("semaine", "2026-W45", "semaine de potager", t()).unwrap();
+        assert!(s.synthese_creer("semaine", "2026-W45", "doublon", t()).is_err());
+        s.synthese_creer("mois", "2026-10", "mois calme", t()).unwrap();
+        let an = s.synthese_creer("annee", "2025", "année de reprise", t()).unwrap();
+        assert_eq!(s.force("synthese", &id.to_string()).unwrap().unwrap().stabilite, 60.0);
+        assert_eq!(periode_semaine(NaiveDate::from_ymd_opt(2026, 11, 9).unwrap()), "2026-W46");
+        let m = s.force("synthese", "2").unwrap().unwrap();
+        assert_eq!(m.stabilite, 180.0);
+        assert!(!m.ancre);
+        assert!(s.force("synthese", &an.to_string()).unwrap().unwrap().ancre);
+        let r = s.rappel(Some("potager"), t(), 10).unwrap();
+        assert!(r.iter().any(|x| x.nature == "synthese" && x.texte == "2026-W45 : semaine de potager"));
+        // Migration : orphelin supprimé, manquant recréé.
+        s.conn.execute("DELETE FROM souvenirs WHERE nature = 'synthese' AND ref = '1'", []).unwrap();
+        s.conn.execute("INSERT INTO souvenirs VALUES ('synthese', '99', 60.0, '2026-01-01 00:00:00', 0, 0.0, 0, 1.0)", []).unwrap();
+        MemoryStore::migrate_souvenirs(&s.conn).unwrap();
+        assert!(s.force("synthese", "1").unwrap().is_some());
+        assert!(s.force("synthese", "99").unwrap().is_none());
+    }
+
+    #[test]
+    fn episodes_of_the_day() {
+        let s = store();
+        let jour = t().date();
+        let j = note(&s, "du jour");
+        s.conn.execute("UPDATE journal SET at = ?", [ts(t())]).unwrap();
+        let c = s.conversation_ingest(&conv("bavardage")).unwrap();
+        s.conversation_set_summary(c, "bilan du jour", &[], &[]).unwrap();
+        s.conversation_ingest(&NewConversation { session_id: Some("autre".into()), ..conv("sans résumé") }).unwrap();
+        let e = s.episodes_du_jour(jour).unwrap();
+        assert_eq!(e.len(), 2);
+        assert!(e.iter().any(|x| x.nature == "journal" && x.r#ref == j.to_string() && x.texte.contains("du jour")));
+        assert!(e.iter().any(|x| x.nature == "conversation" && x.texte == "bilan du jour" && x.date == jour));
+        assert!(s.episodes_du_jour(jour + Duration::days(1)).unwrap().is_empty());
+    }
+
+    // --- Condensation ---
+
+    /// Entrée de journal datée de `quand`, rappelée pour la dernière fois à ce moment.
+    fn episode_le(s: &MemoryStore, texte: &str, quand: NaiveDateTime) -> i64 {
+        let id = note(s, texte);
+        s.conn.execute("UPDATE journal SET at = ? WHERE id = ?", params![ts(quand), id]).unwrap();
+        vieillir(s, "journal", &id.to_string(), quand);
+        id
+    }
+
+    /// Condense avec l'empreinte du lot courant (vide si la période n'a pas de lot).
+    fn condense(s: &MemoryStore, niveau: &str, periode: &str, texte: &str, m: NaiveDateTime) -> Result<Option<i64>> {
+        let lots = s.condensables(m, usize::MAX)?;
+        let e = lots.iter().find(|l| l.niveau == niveau && l.periode == periode).map(|l| l.empreinte.clone()).unwrap_or_default();
+        s.condenser(niveau, periode, texte, &e, m)
+    }
+
+    fn jour(a: i32, m: u32, j: u32) -> NaiveDateTime {
+        NaiveDate::from_ymd_opt(a, m, j).unwrap().and_hms_opt(8, 0, 0).unwrap()
+    }
+
+    fn compte(s: &MemoryStore, sql: &str) -> i64 {
+        s.conn.query_row(sql, [], |r| r.get(0)).unwrap()
+    }
+
+    #[test]
+    fn condensation_waits_for_extraction() {
+        let s = store();
+        episode_le(&s, "semis de radis", t()); // semaine 44, finie le dimanche 1er novembre
+        let m = t() + Duration::days(20);
+        // Extraction jamais passée, puis en retard sur la semaine : rien à condenser.
+        s.conn.execute("UPDATE nuit_etat SET dernier_jour = NULL WHERE etape = 'extraction'", []).unwrap();
+        assert!(s.condensables(m, 10).unwrap().is_empty());
+        s.nuit_noter("extraction", "ok", Some(jour(2026, 10, 31).date()), m).unwrap();
+        assert!(s.condensables(m, 10).unwrap().is_empty());
+        s.nuit_noter("extraction", "ok", Some(jour(2026, 11, 1).date()), m).unwrap();
+        assert_eq!(s.condensables(m, 10).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn week_condensable_only_when_all_faded_14_days() {
+        let s = store_extrait();
+        // Estompage à 3 × ln 2 ≈ 2,08 jours après le dernier rappel.
+        let a = episode_le(&s, "semis de radis", t());
+        let b = episode_le(&s, "arrosage du soir", t() + Duration::days(1));
+        assert!(s.condensables(t() + Duration::days(16), 10).unwrap().is_empty());
+        // `a` estompé depuis plus de 14 jours, `b` pas encore.
+        assert!(s.condensables(t() + Duration::days(17), 10).unwrap().is_empty());
+        let m = t() + Duration::days(18) + Duration::hours(12);
+        let lots = s.condensables(m, 10).unwrap();
+        assert_eq!(lots.len(), 1);
+        assert_eq!((lots[0].niveau.as_str(), lots[0].periode.as_str()), ("semaine", "2026-W44"));
+        let refs: Vec<&str> = lots[0].elements.iter().map(|e| e.r#ref.as_str()).collect();
+        assert_eq!(refs, [a.to_string(), b.to_string()]);
+        assert!(lots[0].elements[0].texte.contains("semis de radis"));
+        // Un épisode ancré ne s'estompe jamais : la semaine reste.
+        s.ancrer("journal", &b.to_string(), true).unwrap();
+        assert!(s.condensables(m, 10).unwrap().is_empty());
+        s.ancrer("journal", &b.to_string(), false).unwrap();
+        assert_eq!(s.condensables(m, 10).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn month_after_all_weeks_and_month_over() {
+        let s = store();
+        s.synthese_creer("semaine", "2026-W40", "début d'automne", t()).unwrap(); // jeudi 1er octobre
+        s.synthese_creer("semaine", "2026-W44", "fin d'octobre", t()).unwrap(); // jeudi 29 octobre
+        s.synthese_creer("semaine", "2026-W45", "début de novembre", t()).unwrap(); // jeudi 5 novembre
+        let reste = episode_le(&s, "pas encore estompé", jour(2026, 10, 20));
+        s.ancrer("journal", &reste.to_string(), true).unwrap();
+        // Mois pas terminé, puis épisode restant dans le mois.
+        assert!(s.condensables(jour(2026, 10, 31), 10).unwrap().iter().all(|l| l.niveau != "mois"));
+        assert!(s.condensables(jour(2026, 11, 5), 10).unwrap().iter().all(|l| l.niveau != "mois"));
+        s.journal_delete(reste).unwrap();
+        let lots = s.condensables(jour(2026, 11, 5), 10).unwrap();
+        assert_eq!(lots.len(), 1);
+        assert_eq!((lots[0].niveau.as_str(), lots[0].periode.as_str()), ("mois", "2026-10"));
+        assert_eq!(lots[0].elements.len(), 2);
+        assert!(condense(&s, "mois", "2026-10", "un octobre au jardin", jour(2026, 11, 5)).unwrap().is_some());
+        assert_eq!(compte(&s, "SELECT COUNT(*) FROM syntheses WHERE fondue = 1"), 2);
+        // Mois terminés, mais une semaine de novembre attend encore son mois.
+        let fin = jour(2027, 1, 2);
+        let lots = s.condensables(fin, 10).unwrap();
+        assert_eq!(lots.iter().map(|l| (l.niveau.as_str(), l.periode.as_str())).collect::<Vec<_>>(), [("mois", "2026-11")]);
+        condense(&s, "mois", "2026-11", "novembre", fin).unwrap().unwrap();
+        // L'année 2026 se termine avec sa dernière semaine ISO, le dimanche 3 janvier 2027.
+        assert!(s.condensables(fin, 10).unwrap().is_empty());
+        let lots = s.condensables(jour(2027, 1, 4), 10).unwrap();
+        assert_eq!(lots.iter().map(|l| (l.niveau.as_str(), l.periode.as_str())).collect::<Vec<_>>(), [("annee", "2026")]);
+        assert_eq!(lots[0].elements.len(), 2);
+        assert!(s.condensables(jour(2026, 12, 31), 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn condensation_is_atomic_and_idempotent() {
+        let s = store_extrait();
+        let j = episode_le(&s, "taille des rosiers", t());
+        let c = s.conversation_ingest(&conv("discussion sur les rosiers")).unwrap();
+        s.conversation_set_summary(c, "conseils de taille", &[], &[]).unwrap();
+        vieillir(&s, "conversation", &c.to_string(), t());
+        let m = t() + Duration::days(30);
+        assert_eq!(s.condensables(m, 10).unwrap()[0].elements.len(), 2);
+        // Texte vide : rien.
+        assert_eq!(condense(&s, "semaine", "2026-W44", "  \n", m).unwrap(), None);
+        // Erreur au milieu : tout est annulé.
+        s.conn.execute_batch("CREATE TEMP TRIGGER bloque BEFORE DELETE ON conversations BEGIN SELECT RAISE(ABORT, 'refus'); END;").unwrap();
+        assert!(condense(&s, "semaine", "2026-W44", "rosiers taillés", m).is_err());
+        s.conn.execute_batch("DROP TRIGGER bloque;").unwrap();
+        assert_eq!(compte(&s, "SELECT COUNT(*) FROM syntheses"), 0);
+        assert!(s.force("journal", &j.to_string()).unwrap().is_some());
+        assert_eq!(compte(&s, "SELECT COUNT(*) FROM journal") + compte(&s, "SELECT COUNT(*) FROM conversations"), 2);
+        // Deux fois : une seule synthèse.
+        let id = condense(&s, "semaine", "2026-W44", "rosiers taillés", m).unwrap().unwrap();
+        assert_eq!(condense(&s, "semaine", "2026-W44", "rosiers taillés", m).unwrap(), None);
+        assert_eq!(compte(&s, "SELECT COUNT(*) FROM syntheses"), 1);
+        assert!(s.force("synthese", &id.to_string()).unwrap().is_some());
+        // Période inconnue ou non condensable : rien.
+        assert_eq!(condense(&s, "semaine", "2026-W10", "rien", m).unwrap(), None);
+        assert_eq!(condense(&s, "bidon", "2026-W44", "rien", m).unwrap(), None);
+    }
+
+    #[test]
+    fn condensed_sources_leave_no_index_trace() {
+        let s = store_extrait();
+        let j = episode_le(&s, "zygomorphe", t());
+        let c = s.conversation_ingest(&conv("xylophone")).unwrap();
+        s.conversation_set_summary(c, "quokka", &[], &[]).unwrap();
+        vieillir(&s, "conversation", &c.to_string(), t());
+        assert!(index_garde(&s, "journal_fts", "zygomorphe") && index_garde(&s, "conversations_fts", "quokka"));
+        condense(&s, "semaine", "2026-W44", "ornithorynque", t() + Duration::days(30)).unwrap().unwrap();
+        assert!(!index_garde(&s, "journal_fts", "zygomorphe"));
+        assert!(!index_garde(&s, "conversations_fts", "xylophone"));
+        assert!(!index_garde(&s, "conversations_fts", "quokka"));
+        assert!(index_garde(&s, "syntheses_fts", "ornithorynque"));
+        assert!(s.force("journal", &j.to_string()).unwrap().is_none());
+        assert!(s.force("conversation", &c.to_string()).unwrap().is_none());
+        assert!(s.conversation_get(c).unwrap().is_none());
+        assert_eq!(compte(&s, "SELECT COUNT(*) FROM journal"), 0);
+    }
+
+    #[test]
+    fn unsummarized_count_per_day() {
+        let s = store();
+        s.conversation_ingest(&NewConversation { session_id: Some("x".into()), ..conv("pas résumée") }).unwrap();
+        let c = s.conversation_ingest(&NewConversation { session_id: Some("y".into()), ..conv("résumée") }).unwrap();
+        s.conversation_set_summary(c, "bilan", &[], &[]).unwrap();
+        let sujets = s.conversation_ingest(&NewConversation { session_id: Some("z".into()), ..conv("sujets seuls") }).unwrap();
+        s.conversation_set_summary(sujets, "", &["jardin".into()], &[]).unwrap();
+        let blanc = s.conversation_ingest(&NewConversation { session_id: Some("w".into()), ..conv("résumé blanc") }).unwrap();
+        s.conn.execute("UPDATE conversations SET summary = '   ' WHERE id = ?", [blanc]).unwrap();
+        s.conn.execute("UPDATE conversations SET started_at = '2026-10-01 10:00:00'", []).unwrap();
+        let jour = NaiveDate::from_ymd_opt(2026, 10, 1).unwrap();
+        assert_eq!(s.conversations_non_resumees_le(jour).unwrap(), 1);
+        assert_eq!(s.conversations_non_resumees_le(jour.succ_opt().unwrap()).unwrap(), 0);
+        // Seules les conversations jamais résumées sont reproposées : un résumé
+        // blanc est un résultat (rien à retenir) et n'occupe pas la file.
+        let a_resumer: Vec<i64> = s.conversations_unsummarized(10).unwrap().iter().map(|c| c.id).collect();
+        assert_eq!(a_resumer.len(), 1);
+        assert!(!a_resumer.contains(&blanc));
+        // Chaque conversation est soit en attente, soit un épisode : jamais les deux, jamais aucun.
+        let ep = s.episodes_du_jour(jour).unwrap();
+        let textes: Vec<(&str, &str)> = ep.iter().map(|e| (e.r#ref.as_str(), e.texte.as_str())).collect();
+        assert_eq!(
+            textes,
+            vec![(c.to_string().as_str(), "bilan"), (sujets.to_string().as_str(), "Sujets : jardin"), (blanc.to_string().as_str(), "")]
+        );
+    }
+
+    #[test]
+    fn condensed_lot_carries_full_information() {
+        let s = store_extrait();
+        let j = s
+            .journal_write(&NewJournalEntry {
+                source: "s".into(),
+                kind: "mesure".into(),
+                content: serde_json::json!({ "texte": "pesée", "valeur": 72.4, "unite": "kg" }),
+                sensitivity: Sensitivity::Commune,
+                provenance: "p".into(),
+            })
+            .unwrap();
+        s.conn.execute("UPDATE journal SET at = ?", [ts(t())]).unwrap();
+        vieillir(&s, "journal", &j.to_string(), t());
+        let c = s.conversation_ingest(&conv("bavardage")).unwrap();
+        s.conversation_set_summary(c, "bilan", &["jardin".into()], &["planter des fèves".into()]).unwrap();
+        vieillir(&s, "conversation", &c.to_string(), t());
+        s.conversation_ingest(&NewConversation { session_id: Some("x".into()), ..conv("pas résumée") }).unwrap();
+        s.conn.execute("UPDATE conversations SET started_at = '2026-10-01 10:00:00' WHERE session_id = 'x'", []).unwrap();
+        assert_eq!(s.conversations_non_resumees_avant(t().date()).unwrap(), 1);
+        assert_eq!(s.conversations_non_resumees_avant(NaiveDate::from_ymd_opt(2026, 10, 1).unwrap()).unwrap(), 0);
+        let lots = s.condensables(t() + Duration::days(30), 10).unwrap();
+        let lot = lots.iter().find(|l| l.periode == "2026-W44").unwrap();
+        let tout: String = lot.elements.iter().map(|e| e.texte.clone()).collect::<Vec<_>>().join("\n");
+        for attendu in ["pesée", "valeur : 72.4", "unite : kg", "bilan", "Sujets : jardin", "Décisions : planter des fèves"] {
+            assert!(tout.contains(attendu), "{attendu}");
+        }
+    }
+
+    #[test]
+    fn month_and_year_close_after_last_iso_week() {
+        let s = store();
+        // Jeudi 29 octobre : la semaine 44 court jusqu'au dimanche 1er novembre.
+        s.synthese_creer("semaine", "2026-W44", "fin d'octobre", t()).unwrap();
+        assert!(s.condensables(jour(2026, 11, 1), 10).unwrap().is_empty());
+        assert_eq!(s.condensables(jour(2026, 11, 2), 10).unwrap()[0].periode, "2026-10");
+        // Jeudi 31 décembre : la semaine 53 court jusqu'au dimanche 3 janvier.
+        s.synthese_creer("semaine", "2026-W53", "fêtes", t()).unwrap();
+        let a_condenser = |m| s.condensables(m, 10).unwrap().into_iter().map(|l| l.periode).collect::<Vec<_>>();
+        assert_eq!(a_condenser(jour(2027, 1, 3)), ["2026-10"]);
+        assert_eq!(a_condenser(jour(2027, 1, 4)), ["2026-10", "2026-12"]);
+        condense(&s, "mois", "2026-10", "octobre", jour(2027, 1, 4)).unwrap().unwrap();
+        condense(&s, "mois", "2026-12", "décembre", jour(2027, 1, 4)).unwrap().unwrap();
+        assert!(a_condenser(jour(2027, 1, 3)).is_empty());
+        assert_eq!(a_condenser(jour(2027, 1, 4)), ["2026"]);
+    }
+
+    #[test]
+    fn late_episode_completes_existing_synthesis() {
+        let s = store_extrait();
+        let m = t() + Duration::days(30);
+        episode_le(&s, "semis de fèves", t());
+        let id = condense(&s, "semaine", "2026-W44", "semaine de semis", m).unwrap().unwrap();
+        // Épisode tardif de la même semaine : il bloque le mois et appelle un complément.
+        let tard = episode_le(&s, "récolte de radis", t() + Duration::days(1));
+        let lots = s.condensables(m, 10).unwrap();
+        assert_eq!(lots.len(), 1);
+        let lot = &lots[0];
+        assert!(lot.complement);
+        assert_eq!((lot.niveau.as_str(), lot.periode.as_str()), ("semaine", "2026-W44"));
+        assert_eq!(lot.elements[0].texte, "semaine de semis");
+        assert_eq!(lot.elements[1].r#ref, tard.to_string());
+        assert_eq!(condense(&s, "semaine", "2026-W44", "semis puis cueillette", m).unwrap(), Some(id));
+        assert_eq!(condense(&s, "semaine", "2026-W44", "semis puis cueillette", m).unwrap(), None);
+        assert!(s.force("journal", &tard.to_string()).unwrap().is_none());
+        assert_eq!(compte(&s, "SELECT COUNT(*) FROM syntheses"), 1);
+        assert!(index_garde(&s, "syntheses_fts", "cueillette"));
+        let lots = s.condensables(m, 10).unwrap();
+        assert_eq!(lots.iter().map(|l| (l.niveau.as_str(), l.complement)).collect::<Vec<_>>(), [("mois", false)]);
+        // Une semaine déjà fondue dans son mois redevient à fondre après complément.
+        condense(&s, "mois", "2026-10", "octobre", m).unwrap().unwrap();
+        episode_le(&s, "dernier arrosage", t() + Duration::days(2));
+        condense(&s, "semaine", "2026-W44", "semis, récolte, arrosage", m).unwrap().unwrap();
+        let lots = s.condensables(m, 10).unwrap();
+        assert_eq!(lots.iter().map(|l| (l.niveau.as_str(), l.complement)).collect::<Vec<_>>(), [("mois", true)]);
+        assert_eq!(lots[0].elements[0].texte, "octobre");
+        condense(&s, "mois", "2026-10", "octobre complet", m).unwrap().unwrap();
+        assert!(s.condensables(m, 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn stale_fingerprint_is_refused() {
+        let s = store_extrait();
+        let m = t() + Duration::days(30);
+        let a = episode_le(&s, "taille de la haie", t());
+        let ancien = s.condensables(m, 10).unwrap()[0].empreinte.clone();
+        episode_le(&s, "ramassage des feuilles", t());
+        assert_eq!(s.condenser("semaine", "2026-W44", "haie taillée", &ancien, m).unwrap(), None);
+        assert!(s.force("journal", &a.to_string()).unwrap().is_some());
+        assert_eq!(compte(&s, "SELECT COUNT(*) FROM syntheses"), 0);
+        let neuf = s.condensables(m, 10).unwrap()[0].empreinte.clone();
+        assert_ne!(neuf, ancien);
+        assert!(s.condenser("semaine", "2026-W44", "haie et feuilles", &neuf, m).unwrap().is_some());
+    }
+
+    #[test]
+    fn reingested_conversation_is_fresh_again() {
+        let s = store_extrait();
+        let maintenant = now_local();
+        let debut = maintenant - Duration::days(30);
+        let c = NewConversation { started_at: debut, ended_at: debut, session_id: Some("s".into()), ..conv("première") };
+        let id = s.conversation_ingest(&c).unwrap();
+        s.conversation_set_summary(id, "bilan", &[], &[]).unwrap();
+        vieillir(&s, "conversation", &id.to_string(), debut);
+        assert_eq!(s.condensables(maintenant, 10).unwrap().len(), 1);
+        s.conversation_ingest(&NewConversation { transcript: "suite".into(), ..c }).unwrap();
+        s.conversation_set_summary(id, "bilan complet", &[], &[]).unwrap();
+        assert!(s.condensables(maintenant, 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn conversation_with_topics_only_has_content() {
+        let s = store_extrait();
+        let c = s.conversation_ingest(&conv("bavardage")).unwrap();
+        s.conversation_set_summary(c, "", &["jardin".into()], &[]).unwrap();
+        vieillir(&s, "conversation", &c.to_string(), t());
+        assert_eq!(s.conversations_non_resumees_avant(t().date() + Duration::days(1)).unwrap(), 0);
+        let lots = s.condensables(t() + Duration::days(30), 10).unwrap();
+        assert_eq!(lots.len(), 1);
+        assert!(lots[0].elements[0].texte.contains("Sujets : jardin"));
+        let d = s.conversation_ingest(&NewConversation { session_id: Some("y".into()), ..conv("muette") }).unwrap();
+        s.conversation_set_summary(d, "", &[], &["arroser".into()]).unwrap();
+        assert_eq!(s.conversations_non_resumees_avant(t().date() + Duration::days(1)).unwrap(), 0);
+        // Résumé blanc : un résultat, rien à retenir ; la conversation n'attend plus.
+        s.conversation_set_summary(d, " ", &[], &[]).unwrap();
+        assert_eq!(s.conversations_non_resumees_avant(t().date() + Duration::days(1)).unwrap(), 0);
+    }
+
+    // --- Déductions ---
+
+    fn indice(k: &str, v: &str) -> Indice {
+        Indice { key: k.into(), value: v.into() }
+    }
+
+    fn d(j: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(2026, 11, j).unwrap()
+    }
+
+    fn confiance(s: &MemoryStore, k: &str, v: &str) -> f64 {
+        s.conn.query_row("SELECT confiance FROM deductions WHERE key = ? AND value = ?", [k, v], |r| r.get(0)).unwrap()
+    }
+
+    #[test]
+    fn deduction_never_overrides_declared() {
+        let s = store();
+        s.fact_set_at("ville", "Ville-A", "utilisateur", t()).unwrap();
+        for j in 1..=5 {
+            s.appliquer_extraction(d(j), &[indice("ville", "Ville-B")], jour(2026, 11, j)).unwrap();
+        }
+        assert_eq!(s.fact_get("ville").unwrap().unwrap().value, "Ville-A");
+        assert_eq!(s.fact_history("ville").unwrap().len(), 1);
+        assert_eq!(compte(&s, "SELECT COUNT(*) FROM deductions"), 0);
+        // Même valeur, casse et espaces près : renforcement, une fois par jour.
+        let b = s.appliquer_extraction(d(6), &[indice("ville", "  ville-a "), indice("ville", "VILLE-A")], jour(2026, 11, 6)).unwrap();
+        assert_eq!((b.renforces, b.deduits, b.questions), (1, 0, 0));
+        let f = s.force("fait", "ville").unwrap().unwrap();
+        assert_eq!((f.rappels, f.dernier_rappel), (1, jour(2026, 11, 6)));
+        s.appliquer_extraction(d(6), &[indice("ville", "Ville-A")], jour(2026, 11, 6) + Duration::hours(1)).unwrap();
+        assert_eq!(s.force("fait", "ville").unwrap().unwrap().rappels, 1);
+        s.appliquer_extraction(d(7), &[indice("ville", "Ville-A")], jour(2026, 11, 7)).unwrap();
+        assert_eq!(s.force("fait", "ville").unwrap().unwrap().rappels, 2);
+        assert_eq!(s.fact_history("ville").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn extraction_keys_must_be_known() {
+        let s = store();
+        s.fact_set_at("ville", "Ville-A", "utilisateur", t()).unwrap();
+        // Casse et espaces près, la clé du modèle est ramenée à la clé connue.
+        let b = s.appliquer_extraction(d(1), &[indice(" Ville ", "ville-a"), indice("VILLE", "Ville-B")], jour(2026, 11, 1)).unwrap();
+        assert_eq!((b.renforces, b.questions, b.deduits), (1, 1, 0));
+        // Sous-clé d'une clé connue : acceptée, rangée sous la clé connue ; clé inventée : ignorée.
+        let b = s.appliquer_extraction(d(2), &[indice("Ville.quartier", "Nord"), indice("humeur", "gaie")], jour(2026, 11, 2)).unwrap();
+        assert_eq!((b.deduits, b.ignores), (1, 1));
+        assert_eq!(confiance(&s, "ville.quartier", "Nord"), 0.25);
+        assert_eq!(compte(&s, "SELECT COUNT(*) FROM deductions WHERE key <> 'ville.quartier'"), 0);
+    }
+
+    #[test]
+    fn extraction_key_exact_match_wins_and_never_panics() {
+        let s = store();
+        s.fact_set_at("ville", "Ville-A", "utilisateur", t()).unwrap();
+        s.fact_set_at("ville.quartier", "Nord", "utilisateur", t()).unwrap();
+        s.fact_set_at("café", "noir", "utilisateur", t()).unwrap();
+        // Clé déclarée en casse différente : jamais une déduction sous une variante.
+        let b = s.appliquer_extraction(d(1), &[indice("VILLE.QUARTIER", "Sud")], jour(2026, 11, 1)).unwrap();
+        assert_eq!((b.deduits, b.questions), (0, 1));
+        // Suite dont la minuscule change de longueur : ni panique ni clé tronquée.
+        let b = s.appliquer_extraction(d(2), &[indice("café.İİ", "x")], jour(2026, 11, 2)).unwrap();
+        assert_eq!(b.deduits, 1);
+        assert_eq!(compte(&s, "SELECT COUNT(*) FROM deductions WHERE key LIKE 'café.%'"), 1);
+    }
+
+    #[test]
+    fn repeated_hint_raises_confidence_once_per_day() {
+        let s = store();
+        s.fact_set_at("goûts", "variés", "utilisateur", t()).unwrap();
+        let b = s.appliquer_extraction(d(1), &[indice("goûts.sport", "natation")], jour(2026, 11, 1)).unwrap();
+        assert_eq!(b.deduits, 1);
+        assert_eq!(confiance(&s, "goûts.sport", "natation"), 0.25);
+        s.appliquer_extraction(d(1), &[indice("goûts.sport", "Natation ")], jour(2026, 11, 1)).unwrap();
+        assert_eq!(confiance(&s, "goûts.sport", "natation"), 0.25);
+        s.appliquer_extraction(d(2), &[indice("goûts.sport", "natation")], jour(2026, 11, 2)).unwrap();
+        assert!((confiance(&s, "goûts.sport", "natation") - 0.4375).abs() < 1e-9);
+        // Nuit relancée : rien de plus.
+        s.appliquer_extraction(d(2), &[indice("goûts.sport", "natation")], jour(2026, 11, 2)).unwrap();
+        assert!((confiance(&s, "goûts.sport", "natation") - 0.4375).abs() < 1e-9);
+        let r = s.force("deduction", "goûts.sport\u{1f}natation").unwrap().unwrap();
+        assert_eq!((r.rappels, r.importance), (1, 0.0));
+        assert!((r.confiance - 0.4375).abs() < 1e-9);
+        assert_eq!(compte(&s, "SELECT COUNT(*) FROM deductions"), 1);
+        assert!(s.fact_get("goûts.sport").unwrap().is_none());
+    }
+
+    #[test]
+    fn contradiction_asks_once() {
+        let s = store();
+        s.fact_set_at("animal", "chat", "utilisateur", t()).unwrap();
+        let m = jour(2026, 11, 1);
+        let b = s.appliquer_extraction(d(1), &[indice("animal", "chien")], m).unwrap();
+        assert_eq!(b.questions, 1);
+        let b = s.appliquer_extraction(d(2), &[indice("animal", "chien")], jour(2026, 11, 2)).unwrap();
+        assert_eq!(b.questions, 0);
+        let ouvertes = s.intentions_open(m).unwrap();
+        assert_eq!(ouvertes.len(), 1);
+        assert_eq!(ouvertes[0].what, "Confirmer : animal = chien ?");
+        assert_eq!(ouvertes[0].state, IntentionState::Proposee);
+        assert_eq!(ouvertes[0].expires_at, m + Duration::days(7));
+        // Expirée : la question peut revenir.
+        assert!(s.intentions_open(m + Duration::days(8)).unwrap().is_empty());
+        let b = s.appliquer_extraction(d(9), &[indice("animal", "chien")], m + Duration::days(8)).unwrap();
+        assert_eq!(b.questions, 1);
+        assert_eq!(s.fact_get("animal").unwrap().unwrap().value, "chat");
+    }
+
+    #[test]
+    fn extraction_rejects_out_of_schema() {
+        let s = store();
+        let long = "x".repeat(301);
+        let b = s
+            .appliquer_extraction(
+                d(1),
+                &[indice("", "rien"), indice("  ", "rien"), indice(PERSONA_KEY, "bavard"), indice("note", &long), indice("note", " ")],
+                jour(2026, 11, 1),
+            )
+            .unwrap();
+        assert_eq!((b.renforces, b.deduits, b.questions, b.ignores), (0, 0, 0, 5));
+        for table in ["fact_log", "deductions", "intentions"] {
+            assert_eq!(compte(&s, &format!("SELECT COUNT(*) FROM {table}")), 0, "{table}");
+        }
+        assert_eq!(compte(&s, "SELECT COUNT(*) FROM souvenirs"), 0);
+        // 300 caractères : accepté.
+        s.fact_set_at("goûts", "variés", "utilisateur", t()).unwrap();
+        assert_eq!(s.appliquer_extraction(d(1), &[indice("goûts.note", &"x".repeat(300))], jour(2026, 11, 1)).unwrap().deduits, 1);
+    }
+
+    #[test]
+    fn forget_drops_deductions() {
+        let s = store();
+        let m = jour(2026, 11, 1);
+        s.fact_set_at("animal", "chat", "utilisateur", t()).unwrap();
+        s.appliquer_extraction(d(1), &[indice("animal", "chat"), indice("animal", "chien")], m).unwrap();
+        s.conn.execute("INSERT INTO deductions VALUES ('animal', 'lapin', 0.5, ?, '2026-11-01')", [ts(m)]).unwrap();
+        s.conn.execute("INSERT INTO souvenirs VALUES ('deduction', 'animal' || char(31) || 'lapin', 30.0, ?, 0, 0.0, 0, 0.5)", [ts(m)]).unwrap();
+        s.appliquer_extraction(d(1), &[indice("animal.nombre", "deux")], m).unwrap();
+        let autre = s.intention_create("Confirmer : animal.nombre = trois ?", "", m + Duration::days(7)).unwrap();
+        // Une valeur déclarée et une déduction.
+        assert_eq!(s.fact_forget("animal").unwrap(), 2);
+        assert!(!s.rappel(None, m, 50).unwrap().iter().any(|r| r.texte.contains("animal :")));
+        for (table, n) in [
+            ("deductions WHERE key = 'animal'", 0),
+            ("souvenirs WHERE ref LIKE 'animal%' AND ref NOT LIKE 'animal.%'", 0),
+            ("renforcements_jour", 0),
+            ("intentions", 1),
+            ("deductions", 1),
+        ] {
+            assert_eq!(compte(&s, &format!("SELECT COUNT(*) FROM {table}")), n, "{table}");
+        }
+        assert_eq!(s.intentions_open(m).unwrap()[0].id, autre);
+        assert_eq!(s.fact_forget("animal.nombre").unwrap(), 1);
+    }
+
+    #[test]
+    fn question_dedup_ignores_case_and_refusal_holds() {
+        let s = store();
+        let m = jour(2026, 11, 1);
+        s.fact_set_at("animal", "chat", "utilisateur", t()).unwrap();
+        let b = s.appliquer_extraction(d(1), &[indice("animal", "Chien"), indice("animal", " chien ")], m).unwrap();
+        assert_eq!(b.questions, 1);
+        let id = s.intentions_open(m).unwrap()[0].id;
+        s.intention_set_state(id, IntentionState::Refusee).unwrap();
+        assert_eq!(s.appliquer_extraction(d(3), &[indice("animal", "chien")], m + Duration::days(2)).unwrap().questions, 0);
+        assert_eq!(s.appliquer_extraction(d(9), &[indice("animal", "chien")], m + Duration::days(8)).unwrap().questions, 1);
+    }
+
+    #[test]
+    fn daily_reinforcement_marks_are_pruned() {
+        let s = store();
+        s.fact_set_at("ville", "Ville-A", "utilisateur", t()).unwrap();
+        s.appliquer_extraction(d(1), &[indice("ville", "Ville-A")], jour(2026, 11, 1)).unwrap();
+        s.appliquer_extraction(d(2), &[indice("ville", "Ville-A")], jour(2026, 11, 2)).unwrap();
+        assert_eq!(compte(&s, "SELECT COUNT(*) FROM renforcements_jour WHERE jour < '2026-11-02'"), 0);
+        assert_eq!(compte(&s, "SELECT COUNT(*) FROM renforcements_jour"), 1);
+    }
+
+    #[test]
+    fn recall_marks_deductions() {
+        let s = store();
+        s.fact_set_at("goûts", "variés", "utilisateur", t()).unwrap();
+        let m = jour(2026, 11, 3);
+        s.appliquer_extraction(d(1), &[indice("goûts.boisson", "thé"), indice("goûts.boisson", "café")], jour(2026, 11, 1)).unwrap();
+        s.appliquer_extraction(d(2), &[indice("goûts.boisson", "café")], jour(2026, 11, 2)).unwrap();
+        s.appliquer_extraction(d(2), &[indice("goûts.musique", "jazz")], jour(2026, 11, 2)).unwrap();
+        s.fact_set_at("animal", "chat", "utilisateur", m).unwrap();
+        s.conn.execute("INSERT INTO deductions VALUES ('animal', 'chien', 0.9, ?, '2026-11-01')", [ts(m)]).unwrap();
+        let textes: Vec<String> = s.rappel(None, m, 50).unwrap().into_iter().map(|r| r.texte).collect();
+        assert!(textes.contains(&"je crois que goûts.boisson : café".to_string()), "{textes:?}");
+        assert!(textes.contains(&"je crois que goûts.musique : jazz".to_string()));
+        assert!(!textes.iter().any(|t| t.contains("thé") || t.contains("chien")), "{textes:?}");
+        // Migration : une déduction sans source disparaît, une sans souvenir en reçoit un.
+        s.conn.execute("DELETE FROM deductions WHERE key = 'goûts.musique'", []).unwrap();
+        MemoryStore::migrate_souvenirs(&s.conn).unwrap();
+        assert!(s.force("deduction", "goûts.musique\u{1f}jazz").unwrap().is_none());
+        assert!(s.force("deduction", "animal\u{1f}chien").unwrap().is_some());
+    }
+
+    // --- Oubli et état de nuit ---
+
+    /// Synthèse fondue ou non, rappelée pour la dernière fois à `quand`.
+    fn synthese_le(s: &MemoryStore, niveau: &str, periode: &str, texte: &str, fondue: bool, quand: NaiveDateTime) -> i64 {
+        let id = s.synthese_creer(niveau, periode, texte, quand).unwrap();
+        s.conn.execute("UPDATE syntheses SET fondue = ? WHERE id = ?", params![fondue, id]).unwrap();
+        id
+    }
+
+    #[test]
+    fn forget_only_folded_and_deduced() {
+        let s = store();
+        s.fact_set_at("goûts", "variés", "utilisateur", t()).unwrap();
+        let m = jour(2026, 11, 1);
+        let vieux = m - Duration::days(600);
+        let w_oubliee = synthese_le(&s, "semaine", "2025-W01", "grimoire", true, vieux);
+        let w_gardee = synthese_le(&s, "semaine", "2025-W02", "brouillon", false, vieux);
+        let w_recente = synthese_le(&s, "semaine", "2025-W03", "recent", true, m - Duration::days(10));
+        let mo_oublie = synthese_le(&s, "mois", "2024-12", "almanach", true, vieux);
+        // Mois : S₀ 180 j, R ≈ 0,11 à 400 jours.
+        let mo_garde = synthese_le(&s, "mois", "2025-01", "chronique", true, m - Duration::days(400));
+        s.appliquer_extraction(d(1), &[indice("goûts.sport", "escrime")], vieux).unwrap();
+        s.appliquer_extraction(d(1), &[indice("goûts.boisson", "thé")], m).unwrap();
+        assert!(index_garde(&s, "syntheses_fts", "grimoire"));
+
+        assert_eq!(s.oublier(m).unwrap(), 3);
+        for id in [w_oubliee, mo_oublie] {
+            assert_eq!(compte(&s, &format!("SELECT COUNT(*) FROM syntheses WHERE id = {id}")), 0);
+            assert!(s.force("synthese", &id.to_string()).unwrap().is_none());
+        }
+        for id in [w_gardee, w_recente, mo_garde] {
+            assert!(s.force("synthese", &id.to_string()).unwrap().is_some(), "{id}");
+        }
+        assert!(!index_garde(&s, "syntheses_fts", "grimoire"));
+        assert!(!index_garde(&s, "syntheses_fts", "almanach"));
+        assert_eq!(compte(&s, "SELECT COUNT(*) FROM syntheses_fts"), 3);
+        assert_eq!(compte(&s, "SELECT COUNT(*) FROM deductions WHERE key = 'goûts.sport'"), 0);
+        assert!(s.force("deduction", "goûts.sport\u{1f}escrime").unwrap().is_none());
+        assert_eq!(compte(&s, "SELECT COUNT(*) FROM deductions"), 1);
+        // Rejouable sans effet.
+        assert_eq!(s.oublier(m).unwrap(), 0);
+    }
+
+    #[test]
+    fn forget_never_touches_declared_anchor_year() {
+        let s = store();
+        let m = jour(2026, 11, 1);
+        let vieux = m - Duration::days(3000);
+        s.fact_set_at("ville", "Ville-A", "utilisateur", vieux).unwrap();
+        let annee = synthese_le(&s, "annee", "2018", "decennie", true, vieux);
+        vieillir(&s, "synthese", &annee.to_string(), vieux);
+        s.ancrer("synthese", &annee.to_string(), false).unwrap();
+        let ancree = synthese_le(&s, "semaine", "2018-W02", "ancree", true, vieux);
+        s.ancrer("synthese", &ancree.to_string(), true).unwrap();
+        s.appliquer_extraction(d(1), &[indice("loisir", "voile")], vieux).unwrap();
+        s.ancrer("deduction", "loisir\u{1f}voile", true).unwrap();
+        episode_le(&s, "promenade", vieux);
+        let avant: Vec<i64> = ["fact_log", "syntheses", "deductions", "journal", "souvenirs"]
+            .iter()
+            .map(|t| compte(&s, &format!("SELECT COUNT(*) FROM {t}")))
+            .collect();
+        assert_eq!(s.oublier(m).unwrap(), 0);
+        let apres: Vec<i64> = ["fact_log", "syntheses", "deductions", "journal", "souvenirs"]
+            .iter()
+            .map(|t| compte(&s, &format!("SELECT COUNT(*) FROM {t}")))
+            .collect();
+        assert_eq!(avant, apres);
+    }
+
+    #[test]
+    fn fact_forget_erases_every_question() {
+        let s = store();
+        let m = jour(2026, 11, 1);
+        for etat in [IntentionState::Refusee, IntentionState::Expiree, IntentionState::Acceptee, IntentionState::Proposee] {
+            let id = s.intention_create("Confirmer : animal = chien ?", "", m + Duration::days(7)).unwrap();
+            s.intention_set_state(id, etat).unwrap();
+        }
+        s.intention_create("Confirmer : animaux = deux ?", "", m + Duration::days(7)).unwrap();
+        s.fact_set_at("animal", "chat", "utilisateur", m).unwrap();
+        s.fact_forget("animal").unwrap();
+        assert_eq!(compte(&s, "SELECT COUNT(*) FROM intentions"), 1);
+    }
+
+    #[test]
+    fn night_state_keeps_last_day() {
+        let s = store();
+        // Chaque étape existe dès l'ouverture : son horloge part de là.
+        let e = s.nuit_etat().unwrap();
+        assert_eq!(e.iter().map(|e| e.etape.as_str()).collect::<Vec<_>>(), ["condensation", "extraction", "oubli"]);
+        assert!(e.iter().all(|e| e.statut == "ok" && e.derniere_execution.is_some() && e.dernier_jour.is_none() && !e.illisible));
+        s.nuit_noter("extraction", "ok", Some(d(3)), jour(2026, 11, 4)).unwrap();
+        s.nuit_noter("extraction", "modele_indisponible", None, jour(2026, 11, 5)).unwrap();
+        // Rouverte : l'état existant n'est pas écrasé.
+        MemoryStore::migrer_nuit(&s.conn).unwrap();
+        let e: Vec<_> = s.nuit_etat().unwrap().into_iter().filter(|e| e.etape == "extraction").collect();
+        assert_eq!(e[0].dernier_jour, Some(d(3)));
+        assert_eq!(e[0].derniere_execution, Some(jour(2026, 11, 5)));
+        assert_eq!(e[0].statut, "modele_indisponible");
+        assert!(s.nuit_noter("inconnue", "ok", None, jour(2026, 11, 5)).is_err());
+        for statut in [" ", "erreur", "modèle indisponible", "texte libre quelconque"] {
+            assert!(s.nuit_noter("oubli", statut, None, jour(2026, 11, 5)).is_err(), "{statut}");
+        }
+        for statut in STATUTS_NUIT {
+            s.nuit_noter("oubli", statut, None, jour(2026, 11, 5)).unwrap();
+        }
+    }
+
+    #[test]
+    fn unreadable_night_state_is_flagged() {
+        let s = store();
+        s.conn.execute("UPDATE nuit_etat SET derniere_execution = 'hier soir' WHERE etape = 'oubli'", []).unwrap();
+        s.conn.execute("UPDATE nuit_etat SET statut = 'n''importe quoi' WHERE etape = 'extraction'", []).unwrap();
+        s.conn.execute("INSERT INTO nuit_etat VALUES ('autre', NULL, NULL, 'ok')", []).unwrap();
+        let e = s.nuit_etat().unwrap();
+        let illisibles: Vec<_> = e.iter().filter(|e| e.illisible).map(|e| e.etape.as_str()).collect();
+        assert_eq!(illisibles, ["autre", "extraction", "oubli"]);
+        assert!(e.iter().find(|e| e.etape == "condensation").is_some_and(|e| !e.illisible));
+    }
+
+    #[test]
+    fn known_keys_sorted_unique() {
+        let s = store();
+        s.fact_set_at("ville", "Ville-A", "utilisateur", t()).unwrap();
+        s.fact_set_at(PERSONA_KEY, "calme", "hote", t()).unwrap();
+        s.appliquer_extraction(d(1), &[indice("ville.quartier", "Nord"), indice("ville.quartier", "Sud"), indice("zen", "oui")], t()).unwrap();
+        assert_eq!(s.cles().unwrap(), ["ville", "ville.quartier"]);
     }
 }

@@ -12,6 +12,7 @@ pub enum Famille {
     Habitude,
     Connaissance,
     Synthese,
+    SyntheseMois,
 }
 
 impl Famille {
@@ -22,6 +23,7 @@ impl Famille {
             Famille::Habitude => 14.0,
             Famille::Connaissance => 30.0,
             Famille::Synthese => 60.0,
+            Famille::SyntheseMois => 180.0,
         }
     }
 }
