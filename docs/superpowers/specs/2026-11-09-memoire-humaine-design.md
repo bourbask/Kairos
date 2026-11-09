@@ -249,9 +249,10 @@ S'y ajoutent :
 ### 3.11 Données existantes
 
 À la mise en place : chaque fait existant devient une connaissance **déclarée**
-(`confiance = 1`, importance moyenne, `dernier_rappel` = sa date de mise à jour), donc
-jamais oubliée automatiquement. Les entrées de journal et les conversations deviennent
-des épisodes avec leur date. La personnalité reste lue à part par la tête, toujours
+(`confiance = 1`, importance moyenne, `dernier_rappel` = date de la migration), donc
+jamais oubliée automatiquement ni estompée d'un coup au déploiement. Les entrées de
+journal et les conversations deviennent des épisodes avec leur date, `dernier_rappel`
+étant lui aussi la date de la migration. La personnalité reste lue à part par la tête, toujours
 chargée : elle fait partie du noyau sans être une ligne de la table.
 
 ## 4. Conservation et stockage

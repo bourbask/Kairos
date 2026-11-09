@@ -27,8 +27,10 @@ const NO_ENGINE_MSG: &str = "Conversation indisponible : aucun moteur configuré
 const LLM_DOWN_MSG: &str = "Je n'arrive pas à joindre mon moteur pour l'instant.";
 const TOO_MANY_MSG: &str = "Je m'arrête là : trop d'appels d'outils.";
 const RECALL_TIMEOUT: Duration = Duration::from_secs(2);
-/// Au-delà du pire cas du rappel (ancres + liste bornée) : tronqué, le JSON serait perdu.
-const RECALL_MAX_CHARS: usize = 16_000;
+/// Au-delà du pire cas du rappel : tronqué, le JSON serait perdu. Textes :
+/// ancres ≤ 3 200 + 12 × 300 = 6 800, au pire doublés par l'échappement JSON ;
+/// plus, pour 32 éléments (20 ancres + 12), les clés et ~100 caractères de champs.
+const RECALL_MAX_CHARS: usize = 24_000;
 const NEUTRAL_PERSONA: &str = "Tu es Kairos, un assistant personnel.";
 
 const DAYS: [(&str, Weekday); 7] = [

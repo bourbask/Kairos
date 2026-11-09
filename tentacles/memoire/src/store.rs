@@ -262,6 +262,8 @@ pub struct Rappel {
 
 /// Budget de texte des ancres, toujours fournies.
 const BUDGET_ANCRES: usize = 3_200;
+/// Nombre maximal d'ancres rappelées, en plus de `limite`.
+const ANCRES_MAX: usize = 20;
 /// Longueur maximale du texte d'un souvenir rappelé.
 const TEXTE_MAX: usize = 300;
 /// Épisodes candidats sans recherche : les plus récents.
@@ -333,30 +335,44 @@ impl MemoryStore {
         Ok(MemoryStore { conn })
     }
 
-    /// Donne une force à chaque fait et chaque entrée de journal qui n'en a pas,
-    /// et indexe les valeurs courantes des faits. Idempotent ; ne touche ni
+    /// Aligne les souvenirs sur `fact_log` et `journal` à chaque ouverture, y
+    /// compris après un passage par une version qui les ignorait : retire ceux
+    /// dont la source a disparu, donne une force à chaque fait et entrée qui
+    /// n'en a pas, réindexe les valeurs courantes. Idempotent ; ne touche ni
     /// `fact_log` ni `journal`. La personnalité reste hors souvenirs.
     fn migrate_souvenirs(conn: &Connection) -> Result<()> {
         let tx = conn.unchecked_transaction()?;
         tx.execute(
+            "DELETE FROM souvenirs WHERE nature = 'fait' AND ref NOT IN (SELECT key FROM fact_log WHERE key <> ?)",
+            [PERSONA_KEY],
+        )?;
+        // Un identifiant de journal peut être réutilisé : un souvenir plus ancien
+        // que son entrée appartenait à une entrée effacée.
+        tx.execute(
+            "DELETE FROM souvenirs WHERE nature = 'journal' AND NOT EXISTS
+             (SELECT 1 FROM journal j WHERE j.id = CAST(souvenirs.ref AS INTEGER) AND j.at <= souvenirs.dernier_rappel)",
+            [],
+        )?;
+        // Créés maintenant : réactivés à la migration pour ne pas s'estomper d'un coup.
+        let maintenant = ts(now_local());
+        tx.execute(
             "INSERT OR IGNORE INTO souvenirs (nature, ref, stabilite, dernier_rappel, importance, confiance)
-             SELECT 'fait', key, ?1, updated_at, ?2, 1.0 FROM fact_log
+             SELECT 'fait', key, ?1, ?4, ?2, 1.0 FROM fact_log
              WHERE id IN (SELECT MAX(id) FROM fact_log GROUP BY key) AND key <> ?3",
-            params![stabilite_initiale(Famille::Connaissance, IMPORTANCE_FAIT), IMPORTANCE_FAIT, PERSONA_KEY],
+            params![stabilite_initiale(Famille::Connaissance, IMPORTANCE_FAIT), IMPORTANCE_FAIT, PERSONA_KEY, maintenant],
         )?;
         tx.execute(
             "INSERT OR IGNORE INTO souvenirs (nature, ref, stabilite, dernier_rappel, importance, confiance)
-             SELECT 'journal', CAST(id AS TEXT), ?1, at, ?2, 1.0 FROM journal",
-            params![stabilite_initiale(Famille::Episode, IMPORTANCE_EPISODE), IMPORTANCE_EPISODE],
+             SELECT 'journal', CAST(id AS TEXT), ?1, ?3, ?2, 1.0 FROM journal",
+            params![stabilite_initiale(Famille::Episode, IMPORTANCE_EPISODE), IMPORTANCE_EPISODE, maintenant],
         )?;
-        let indexed: bool = tx.prepare("SELECT 1 FROM facts_fts LIMIT 1")?.exists([])?;
-        if !indexed {
-            tx.execute(
-                "INSERT INTO facts_fts (key, value) SELECT key, value FROM fact_log
-                 WHERE id IN (SELECT MAX(id) FROM fact_log GROUP BY key) AND key <> ?",
-                [PERSONA_KEY],
-            )?;
-        }
+        tx.execute("DELETE FROM facts_fts", [])?;
+        tx.execute(
+            "INSERT INTO facts_fts (key, value) SELECT key, value FROM fact_log
+             WHERE id IN (SELECT MAX(id) FROM fact_log GROUP BY key) AND key <> ?",
+            [PERSONA_KEY],
+        )?;
+        tx.execute("INSERT INTO facts_fts (facts_fts) VALUES ('optimize')", [])?;
         tx.commit()?;
         Ok(())
     }
@@ -403,7 +419,7 @@ impl MemoryStore {
         let id = tx.last_insert_rowid();
         tx.execute("INSERT INTO journal_fts (rowid, content) VALUES (?,?)", params![id, content])?;
         tx.execute(
-            "INSERT INTO souvenirs (nature, ref, stabilite, dernier_rappel, importance, confiance)
+            "INSERT OR REPLACE INTO souvenirs (nature, ref, stabilite, dernier_rappel, importance, confiance)
              VALUES ('journal', ?, ?, ?, ?, 1.0)",
             params![id.to_string(), stabilite_initiale(Famille::Episode, IMPORTANCE_EPISODE), at, IMPORTANCE_EPISODE],
         )?;
@@ -552,6 +568,7 @@ impl MemoryStore {
         let n = tx.execute("DELETE FROM fact_log WHERE key = ?", [key])?;
         tx.execute("DELETE FROM souvenirs WHERE nature = 'fait' AND ref = ?", [key])?;
         tx.execute("DELETE FROM facts_fts WHERE key = ?", [key])?;
+        tx.execute("INSERT INTO facts_fts (facts_fts) VALUES ('optimize')", [])?;
         tx.commit()?;
         Ok(n)
     }
@@ -741,8 +758,8 @@ impl MemoryStore {
 
     // --- Rappel (lecture seule : ne renforce rien) ---
 
-    /// Souvenirs à proposer au modèle : ancres d'abord dans leur budget, puis
-    /// les autres par `R + importance + pertinence` jusqu'à `limite`.
+    /// Souvenirs à proposer au modèle : ancres d'abord (au plus `ANCRES_MAX`,
+    /// dans leur budget), puis jusqu'à `limite` autres par `R + importance + pertinence`.
     pub fn rappel(&self, requete: Option<&str>, maintenant: NaiveDateTime, limite: usize) -> Result<Vec<Rappel>> {
         // Rang commun : les deux recherches fusionnées par score bm25 (plus bas = meilleur).
         let mut hits: Vec<(f64, &str, String)> = Vec::new();
@@ -790,7 +807,8 @@ impl MemoryStore {
                 Some((date, content)) if nature == "journal" => format!("{date} : {}", texte_journal(content)),
                 _ => brut,
             };
-            let dernier = parse_ts(&dr)?;
+            // Ligne illisible : ignorée sans bloquer le rappel ni exposer son contenu.
+            let Ok(dernier) = parse_ts(&dr) else { continue };
             let rec = recuperabilite(dernier, stabilite, maintenant, ancre);
             let rang = rang.get(&(nature.as_str(), r#ref.as_str())).copied();
             let pertinence = rang.map_or(0.0, |i| 1.0 / (1.0 + i as f64));
@@ -811,15 +829,14 @@ impl MemoryStore {
         let mut budget = 0;
         for c in ancres {
             let n = c.r.texte.chars().count();
-            if budget + n <= BUDGET_ANCRES {
+            if out.len() < ANCRES_MAX && budget + n <= BUDGET_ANCRES {
                 budget += n;
                 out.push(c.r);
             }
         }
         autres.retain(|c| !c.r.estompe || c.rang.is_some_and(|i| i < RANG_ESTOMPE));
         autres.sort_by(|a, b| b.r.score.total_cmp(&a.r.score));
-        let place = limite.saturating_sub(out.len());
-        out.extend(autres.into_iter().take(place).map(|c| c.r));
+        out.extend(autres.into_iter().take(limite).map(|c| c.r));
         Ok(out)
     }
 }
@@ -1085,7 +1102,11 @@ mod tests {
                     ('2026-04-02 08:00:00', 's', 'note', '{}', 'commune', 'p');
             ").unwrap();
         }
-        drop(MemoryStore::open(p).unwrap());
+        let avant = now_local() - Duration::seconds(1);
+        let s = MemoryStore::open(p).unwrap();
+        // Un souvenir déjà présent n'est pas retouché par une nouvelle ouverture.
+        s.conn.execute("UPDATE souvenirs SET dernier_rappel = '2026-04-02 08:00:00' WHERE nature = 'journal' AND ref = '2'", []).unwrap();
+        drop(s);
         let s = MemoryStore::open(p).unwrap();
         let count = |sql: &str| -> i64 { s.conn.query_row(sql, [], |r| r.get(0)).unwrap() };
         assert_eq!(count("SELECT count(*) FROM souvenirs WHERE nature = 'fait'"), 2);
@@ -1095,14 +1116,70 @@ mod tests {
         assert_eq!(count("SELECT count(*) FROM journal"), 2);
         let f = s.force("fait", "k").unwrap().unwrap();
         assert_eq!((f.confiance, f.importance, f.stabilite, f.rappels, f.ancre), (1.0, 0.5, 90.0, 0, false));
-        assert_eq!(f.dernier_rappel, parse_ts("2026-02-01 10:00:00").unwrap());
+        // Migrés : réactivés à la migration, pour ne pas s'estomper d'un coup.
+        assert!(f.dernier_rappel >= avant && f.dernier_rappel <= now_local(), "{}", f.dernier_rappel);
         let j = s.force("journal", "1").unwrap().unwrap();
         assert_eq!((j.stabilite, j.importance), (3.0, 0.0));
-        assert_eq!(j.dernier_rappel, parse_ts("2026-04-01 08:00:00").unwrap());
+        assert!(j.dernier_rappel >= avant, "{}", j.dernier_rappel);
+        let j2 = s.force("journal", "2").unwrap().unwrap();
+        assert_eq!(j2.dernier_rappel, parse_ts("2026-04-02 08:00:00").unwrap());
         assert!(s.force("fait", PERSONA_KEY).unwrap().is_none());
         assert_eq!(s.fact_get("k").unwrap().unwrap().value, "b");
         drop(s);
         let _ = std::fs::remove_file(p);
+    }
+
+    #[test]
+    fn reopen_after_rollback_drops_orphans() {
+        let path = std::env::temp_dir().join(format!("kairos-mem-retour-{}.db", std::process::id()));
+        let p = path.to_str().unwrap();
+        let _ = std::fs::remove_file(p);
+        let s = MemoryStore::open(p).unwrap();
+        s.fact_set("k", "a", "p").unwrap();
+        s.fact_set("oubli", "zorglub", "p").unwrap();
+        note(&s, "premier");
+        let dernier = note(&s, "second");
+        drop(s);
+        {
+            // Ancienne version : écrit et efface sans connaître les souvenirs.
+            let c = Connection::open(p).unwrap();
+            c.execute_batch(&format!("
+                DELETE FROM fact_log WHERE key = 'oubli';
+                INSERT INTO fact_log (key, value, provenance, updated_at) VALUES ('k', 'b', 'p', '2026-05-01 10:00:00');
+                DELETE FROM journal WHERE id = {dernier};
+                DELETE FROM journal_fts WHERE rowid = {dernier};
+            ")).unwrap();
+        }
+        let s = MemoryStore::open(p).unwrap();
+        assert_eq!(s.journal_write(&NewJournalEntry {
+            source: "s".into(), kind: "note".into(), content: serde_json::json!({ "texte": "t" }),
+            sensitivity: Sensitivity::Commune, provenance: "p".into(),
+        }).unwrap(), dernier);
+        assert!(!s.rappel(Some("zorglub oubli"), now_local(), 10).unwrap().iter().any(|r| r.r#ref == "oubli"));
+        assert!(s.force("fait", "oubli").unwrap().is_none());
+        let v: String = s.conn.query_row("SELECT value FROM facts_fts WHERE key = 'k'", [], |r| r.get(0)).unwrap();
+        assert_eq!(v, "b");
+        let n: i64 = s.conn.query_row("SELECT count(*) FROM fact_log", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 2);
+        drop(s);
+        let _ = std::fs::remove_file(p);
+    }
+
+    /// Vrai si un segment de l'index plein texte contient encore `mot`.
+    fn index_garde(s: &MemoryStore, table: &str, mot: &str) -> bool {
+        let mut st = s.conn.prepare(&format!("SELECT block FROM {table}_data")).unwrap();
+        let blocs: Vec<Vec<u8>> = st.query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect();
+        blocs.iter().any(|b| b.windows(mot.len()).any(|w| w == mot.as_bytes()))
+    }
+
+    #[test]
+    fn fact_forget_leaves_no_trace_in_index() {
+        let s = store();
+        s.fact_set("k", "zorglub", "p").unwrap();
+        s.fact_set("autre", "v", "p").unwrap();
+        assert!(index_garde(&s, "facts_fts", "zorglub"));
+        s.fact_forget("k").unwrap();
+        assert!(!index_garde(&s, "facts_fts", "zorglub"));
     }
 
     #[test]
@@ -1231,6 +1308,47 @@ mod tests {
         for q in ["\"", "a AND", "*", "NEAR(", "-x", "((", "le la de", "\"\"\"", "(((", "abc\"def"] {
             assert!(s.rappel(Some(q), t(), 10).is_ok(), "{q}");
         }
+    }
+
+    #[test]
+    fn anchors_do_not_eat_the_limit() {
+        let s = store();
+        for i in 0..15 {
+            let k = format!("ancre{i}");
+            s.fact_set_at(&k, "a", "p", t()).unwrap();
+            s.ancrer("fait", &k, true).unwrap();
+        }
+        for i in 0..3 {
+            s.fact_set_at(&format!("velo{i}"), "velo rouge", "p", t()).unwrap();
+        }
+        let r = s.rappel(Some("velo"), t(), 10).unwrap();
+        assert_eq!(r.iter().filter(|x| x.ancre).count(), 15);
+        assert_eq!(r.iter().filter(|x| x.r#ref.starts_with("velo")).count(), 3);
+    }
+
+    #[test]
+    fn at_most_twenty_anchors() {
+        let s = store();
+        for i in 0..30 {
+            let k = format!("a{i}");
+            s.fact_set_at(&k, "x", "p", t()).unwrap();
+            s.ancrer("fait", &k, true).unwrap();
+        }
+        // Les plus importantes passent en premier.
+        s.conn.execute("UPDATE souvenirs SET importance = 0.9 WHERE ref = 'a29'", []).unwrap();
+        let r = s.rappel(None, t(), 12).unwrap();
+        assert_eq!(r.iter().filter(|x| x.ancre).count(), 20);
+        assert_eq!(r[0].r#ref, "a29");
+    }
+
+    #[test]
+    fn corrupted_row_is_skipped() {
+        let s = store();
+        s.fact_set_at("bon", "pomme", "p", t()).unwrap();
+        s.fact_set_at("abime", "poire", "p", t()).unwrap();
+        s.conn.execute("UPDATE souvenirs SET dernier_rappel = 'n/a' WHERE ref = 'abime'", []).unwrap();
+        let r = s.rappel(Some("pomme poire"), t(), 10).unwrap();
+        assert_eq!(r.iter().map(|x| x.r#ref.as_str()).collect::<Vec<_>>(), ["bon"]);
     }
 
     #[test]

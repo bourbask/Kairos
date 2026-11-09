@@ -273,7 +273,9 @@ impl MemoryServer {
         if is_persona(&a.key) {
             return Err(PERSONA_REFUSED.into());
         }
-        if !self.db()?.ancrer("fait", a.key.trim(), a.ancre).map_err(err)? {
+        // Clé telle qu'écrite (éventuellement avec espaces), sinon nettoyée.
+        let db = self.db()?;
+        if !db.ancrer("fait", &a.key, a.ancre).map_err(err)? && !db.ancrer("fait", a.key.trim(), a.ancre).map_err(err)? {
             return json_out(json!({"message": "Fait inconnu : rien n'a été modifié."}));
         }
         let m = if a.ancre { "Fait ancré : il sera toujours rappelé." } else { "Fait désancré : il n'est plus forcé." };
@@ -580,6 +582,15 @@ mod tests {
         s.db().unwrap().fact_set("cafe", "noir", "t").unwrap();
         assert!(js(s.fact_anchor(a(" cafe ", true)))["message"].is_string());
         assert!(s.db().unwrap().rappel(None, now_local(), 12).unwrap().iter().any(|r| r.ancre));
+    }
+
+    #[test]
+    fn fact_anchor_tries_raw_key_first() {
+        let s = srv();
+        s.db().unwrap().fact_set(" the ", "vert", "t").unwrap();
+        let m = js(s.fact_anchor(Parameters(FactAnchorArgs { key: " the ".into(), ancre: true })));
+        assert!(!m["message"].as_str().unwrap().contains("inconnu"));
+        assert!(s.db().unwrap().force("fait", " the ").unwrap().unwrap().ancre);
     }
 
     #[test]
