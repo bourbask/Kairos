@@ -350,7 +350,9 @@ impl MemoryServer {
         json_out(json!({"intentions": intentions, "journal": journal, "facts": facts, "conversations": conversations}))
     }
 
-    #[tool(description = "Accepter ou refuser une intention depuis l'application (acceptee ou refusee).")]
+    #[tool(
+        description = "Accepter ou refuser une intention depuis l'application (acceptee ou refusee). Rend `message` (à afficher) et `outcome` : `done`, ou `stale` (échue, déjà traitée ou inconnue : rien n'est changé)."
+    )]
     fn app_intention_set(&self, Parameters(a): Parameters<AppIntentionSetArgs>) -> Out {
         let state = match a.state.as_str() {
             "acceptee" => IntentionState::Acceptee,
@@ -360,11 +362,11 @@ impl MemoryServer {
         let db = self.db()?;
         // Seules les intentions encore ouvertes peuvent changer d'état.
         if !db.intentions_open(now_local()).map_err(err)?.iter().any(|i| i.id == a.id) {
-            return json_out(json!({"message": "Cette intention est échue ou déjà traitée."}));
+            return json_out(json!({"message": "Cette intention est échue ou déjà traitée.", "outcome": "stale"}));
         }
         db.intention_set_state(a.id, state).map_err(err)?;
         let message = if state == IntentionState::Acceptee { "Intention acceptée." } else { "Intention refusée." };
-        json_out(json!({ "message": message }))
+        json_out(json!({ "message": message, "outcome": "done" }))
     }
 
     #[tool(description = "Ajouter une intention depuis l'application, avec une échéance en jours.")]
@@ -591,7 +593,8 @@ mod tests {
         let s = srv();
         let a = s.db().unwrap().intention_create("a", "", far()).unwrap();
         let b = s.db().unwrap().intention_create("b", "", far()).unwrap();
-        assert!(js(set_state(&s, a, "acceptee"))["message"].is_string());
+        let v = js(set_state(&s, a, "acceptee"));
+        assert!(v["message"].is_string() && v["outcome"] == "done", "{v}");
         assert!(js(set_state(&s, b, "refusee"))["message"].is_string());
         assert!(js(s.app_memory())["intentions"].as_array().unwrap().is_empty());
         let c = s.db().unwrap().intention_create("c", "", far()).unwrap();
@@ -605,11 +608,12 @@ mod tests {
         let id = s.db().unwrap().intention_create("x", "", past).unwrap();
         let v = js(set_state(&s, id, "acceptee"));
         assert!(v["message"].as_str().unwrap().contains("échue"));
-        // Déjà traitée.
+        assert_eq!(v["outcome"], "stale");
+        // Déjà traitée, ou inconnue : même issue.
         let id = s.db().unwrap().intention_create("y", "", far()).unwrap();
         set_state(&s, id, "refusee").unwrap();
-        assert!(js(set_state(&s, id, "acceptee"))["message"].is_string());
-        assert!(js(set_state(&s, 9999, "acceptee"))["message"].is_string());
+        assert_eq!(js(set_state(&s, id, "acceptee"))["outcome"], "stale");
+        assert_eq!(js(set_state(&s, 9999, "acceptee"))["outcome"], "stale");
     }
 
     #[test]

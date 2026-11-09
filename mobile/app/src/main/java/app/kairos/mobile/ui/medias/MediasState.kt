@@ -9,6 +9,8 @@ import app.kairos.mobile.data.Medias
 import app.kairos.mobile.data.MediasSnapshot
 import app.kairos.mobile.data.Release
 import app.kairos.mobile.ui.finances.issueOf
+import app.kairos.mobile.ui.today.DoneOutcome
+import app.kairos.mobile.ui.today.surprise
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -79,7 +81,7 @@ fun watchedCard(w: Watch): Card = Card(
 )
 
 /** Message à afficher après « vu » : seul l'imprévu (déjà vu, introuvable) s'annonce. */
-fun watchedNotice(message: String): String? = message.takeUnless { it.endsWith("marqué vu.") }
+fun watchedNotice(out: DoneOutcome.Done): String? = out.surprise { it.endsWith("marqué vu.") }
 
 /** Retire un élément vu de l'état gardé, sans attendre la relecture. */
 fun withoutWatched(s: MediasSnapshot, key: String): MediasSnapshot = s.copy(

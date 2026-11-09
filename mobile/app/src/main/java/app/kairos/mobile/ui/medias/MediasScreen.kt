@@ -146,7 +146,7 @@ fun MediasScreen(
                     null,
                     mark = { m -> hidden = if (m == null) hidden - w.key else hidden + w.key },
                     undoWindow = { notifier.undo("Vu · ${w.title}") },
-                    call = repository::tool,
+                    call = repository::reply,
                     busy = busy,
                 )
             } catch (_: ApiError.Unauthorized) {
@@ -162,7 +162,7 @@ fun MediasScreen(
                         return@launch unauthorized()
                     }
                     if (repository.medias.value.issue == null) hidden = hidden - w.key
-                    watchedNotice(out.message)?.let { notifier.show(it) }
+                    watchedNotice(out)?.let { notifier.show(it) }
                 }
                 is DoneOutcome.Refused -> notifier.show(out.message)
                 else -> Unit

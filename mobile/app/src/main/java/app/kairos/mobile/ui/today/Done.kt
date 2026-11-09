@@ -4,6 +4,7 @@ import app.kairos.mobile.data.ApiError
 import app.kairos.mobile.data.Card
 import app.kairos.mobile.data.CardDone
 import app.kairos.mobile.data.Mark
+import app.kairos.mobile.data.ToolMessage
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.serialization.json.JsonElement
@@ -17,7 +18,8 @@ sealed interface DoneOutcome {
 
     /** Déjà en cours pour cette carte (double tap) : rien fait. */
     data object Ignored : DoneOutcome
-    data class Done(val message: String) : DoneOutcome
+    /** [outcome] : issue rendue par le module (voir [ToolMessage.outcome]), null s'il n'en donne pas. */
+    data class Done(val message: String, val outcome: String? = null) : DoneOutcome
     data class Refused(val message: String) : DoneOutcome
 }
 
@@ -65,7 +67,7 @@ suspend fun completeCard(
     choice: JsonElement?,
     mark: suspend (Mark?) -> Unit,
     undoWindow: suspend () -> Boolean,
-    call: suspend (module: String, tool: String, args: JsonObject) -> String,
+    call: suspend (module: String, tool: String, args: JsonObject) -> ToolMessage,
     busy: InFlight = InFlight(),
 ): DoneOutcome {
     if (!busy.claim(card.key)) return DoneOutcome.Ignored
@@ -81,7 +83,7 @@ private suspend fun run(
     choice: JsonElement?,
     mark: suspend (Mark?) -> Unit,
     undoWindow: suspend () -> Boolean,
-    call: suspend (String, String, JsonObject) -> String,
+    call: suspend (String, String, JsonObject) -> ToolMessage,
 ): DoneOutcome {
     mark(Mark.Fait)
     if (undoWindow()) {
@@ -90,11 +92,21 @@ private suspend fun run(
     }
     val done = card.done ?: return DoneOutcome.Local
     return try {
-        DoneOutcome.Done(call(card.module, done.tool, doneArgs(done, choice)))
+        call(card.module, done.tool, doneArgs(done, choice)).let { DoneOutcome.Done(it.message, it.outcome) }
     } catch (e: ApiError) {
         mark(null)
         DoneOutcome.Refused(refusal(e))
     }
+}
+
+/**
+ * Message à annoncer après un geste abouti : seul l'imprévu (issue autre que `done`).
+ * Module sans issue (plus ancien que l'application) : [quiet] juge sur le libellé.
+ */
+fun DoneOutcome.Done.surprise(quiet: (String) -> Boolean): String? = when (outcome) {
+    null -> message.takeUnless(quiet)
+    "done" -> null
+    else -> message
 }
 
 /** Raison lisible d'une écriture qui n'a pas abouti ; [ApiError.Unauthorized] remonte. */

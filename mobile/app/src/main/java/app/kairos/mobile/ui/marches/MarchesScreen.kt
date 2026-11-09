@@ -153,7 +153,7 @@ fun MarchesScreen(
                     null,
                     mark = { mark -> hidden = if (mark == null) hidden - m.id else hidden + m.id },
                     undoWindow = { undoWindow("Plus suivie · ${m.question}") },
-                    call = repository::tool,
+                    call = repository::reply,
                     busy = busy,
                 )
             } catch (_: ApiError.Unauthorized) {

@@ -419,6 +419,7 @@ async fn watched_by_key() {
     let e = setup().await;
     let v = call(&e.url, "app_media_watched", json!({"key": "700"})).await;
     assert!(v["message"].as_str().unwrap().contains("Film Delta"), "{v}");
+    assert_eq!(v["outcome"], "done");
     let l = logged(&e.w, "SCROBBLE");
     assert!(l.len() == 1 && l[0].starts_with("SCROBBLE key=700&"), "{l:?}");
 }
@@ -429,9 +430,11 @@ async fn watched_unknown_key_is_clear() {
     for key in ["999", "../x", ""] {
         let v = call(&e.url, "app_media_watched", json!({"key": key})).await;
         assert!(v["message"].as_str().unwrap().contains("introuvable"), "{key}: {v}");
+        assert_eq!(v["outcome"], "gone", "{key}: {v}");
     }
     let v = call(&e.url, "app_media_watched", json!({"key": "710"})).await;
     assert!(v["message"].as_str().unwrap().contains("déjà"), "{v}");
+    assert_eq!(v["outcome"], "already");
     assert!(logged(&e.w, "SCROBBLE").is_empty());
 }
 

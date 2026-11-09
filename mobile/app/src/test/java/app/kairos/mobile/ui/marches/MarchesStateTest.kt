@@ -1,6 +1,7 @@
 package app.kairos.mobile.ui.marches
 
 import app.kairos.mobile.data.ApiError
+import app.kairos.mobile.data.ToolMessage
 import app.kairos.mobile.data.FollowedMarket
 import app.kairos.mobile.data.KairosJson
 import app.kairos.mobile.data.MarchesSnapshot
@@ -94,7 +95,7 @@ class MarchesStateTest {
             card, null,
             mark = { if (it == null) hidden -= market.id else hidden += market.id },
             undoWindow = { assertTrue(market.id in hidden); true },
-            call = { _, tool, args -> calls += tool to args; "" },
+            call = { _, tool, args -> calls += tool to args; ToolMessage() },
         )
         assertEquals(DoneOutcome.Undone, undone)
         assertTrue(hidden.isEmpty())
@@ -105,7 +106,7 @@ class MarchesStateTest {
             card, null,
             mark = { if (it == null) hidden -= market.id else hidden += market.id },
             undoWindow = { false },
-            call = { module, tool, args -> calls += tool to args; assertEquals(MARCHES, module); "Ne suit plus." },
+            call = { module, tool, args -> calls += tool to args; assertEquals(MARCHES, module); ToolMessage("Ne suit plus.") },
         )
         assertEquals(DoneOutcome.Done("Ne suit plus."), done)
         assertEquals("app_market_unfollow", calls.single().first)

@@ -1,6 +1,7 @@
 package app.kairos.mobile.ui.today
 
 import app.kairos.mobile.data.ApiError
+import app.kairos.mobile.data.ToolMessage
 import app.kairos.mobile.data.Card
 import app.kairos.mobile.data.CardDone
 import app.kairos.mobile.data.KairosJson
@@ -29,10 +30,10 @@ class DoneTest {
         val log = mutableListOf<String>()
         val mark: suspend (Mark?) -> Unit = { log += "mark $it" }
         val window: suspend () -> Boolean = { log += "window"; gate?.await(); undo }
-        val call: suspend (String, String, JsonObject) -> String = { m, t, a ->
+        val call: suspend (String, String, JsonObject) -> ToolMessage = { m, t, a ->
             log += "call $m/$t $a"
             fail?.let { throw it }
-            "Repas noté : Curry"
+            ToolMessage("Repas noté : Curry")
         }
     }
 

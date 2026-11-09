@@ -36,6 +36,11 @@ fn message(m: impl Into<String>) -> Out {
     json_out(json!({ "message": m.into() }))
 }
 
+/// Message à afficher et issue lisible par l'application (`done`, `already`, `gone`).
+fn outcome(m: impl Into<String>, outcome: &str) -> Out {
+    json_out(json!({ "message": m.into(), "outcome": outcome }))
+}
+
 #[derive(Deserialize, schemars::JsonSchema)]
 struct KeyArgs {
     /// Clé de l'élément renvoyée par `app_medias`.
@@ -242,25 +247,27 @@ impl MediaServer {
         json_out(out)
     }
 
-    #[tool(description = "Marquer vu un élément du lecteur depuis l'application, par sa clé.")]
+    #[tool(
+        description = "Marquer vu un élément du lecteur depuis l'application, par sa clé. Rend `message` (à afficher) et `outcome` : `done` (marqué vu), `already` (déjà vu), `gone` (inconnu du lecteur). Lecteur injoignable : erreur."
+    )]
     async fn app_media_watched(&self, Parameters(a): Parameters<KeyArgs>) -> Out {
         let p = &self.stack.plex;
         let key = a.key.trim();
         // La clé finit dans un chemin d'URL : chiffres seulement.
         if key.is_empty() || !key.bytes().all(|b| b.is_ascii_digit()) {
-            return message(UNKNOWN_ITEM);
+            return outcome(UNKNOWN_ITEM, "gone");
         }
         let item = match sv::plex_metadata(p, key).await {
             Ok(i) => i,
-            Err(SvcError::Unavailable) => return message(UNKNOWN_ITEM),
+            Err(SvcError::Unavailable) => return outcome(UNKNOWN_ITEM, "gone"),
             Err(e) => return Err(why(PLAYER, &e)),
         };
         let name = clean(&item_name(&item));
         if item.view_count.unwrap_or(0) > 0 {
-            return message(format!("{name} est déjà vu."));
+            return outcome(format!("{name} est déjà vu."), "already");
         }
         sv::plex_scrobble(p, key, true).await.map_err(|e| why(PLAYER, &e))?;
-        message(format!("{name} marqué vu."))
+        outcome(format!("{name} marqué vu."), "done")
     }
 
     #[tool(description = "Mettre en pause ou relancer tous les téléchargements depuis l'application.")]

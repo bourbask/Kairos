@@ -69,6 +69,7 @@ import app.kairos.mobile.data.FactValue
 import app.kairos.mobile.data.Intention
 import app.kairos.mobile.data.JournalEntry
 import app.kairos.mobile.data.Mark
+import app.kairos.mobile.data.ToolMessage
 import app.kairos.mobile.data.Repository
 import app.kairos.mobile.ui.finances.syncLabel
 import app.kairos.mobile.ui.kit.LocalAmountsMasked
@@ -198,7 +199,7 @@ fun MemoireScreen(
                     null,
                     mark = { m -> hidden = if (m == null) hidden - i.id else hidden + i.id },
                     undoWindow = { undoWindow("${if (state == ACCEPT) "Acceptée" else "Refusée"} · ${i.what}") },
-                    call = repository::tool,
+                    call = repository::reply,
                     busy = busy,
                 )
             } catch (_: ApiError.Unauthorized) {
@@ -215,7 +216,7 @@ fun MemoireScreen(
                     }
                     if (repository.memoire.value.issue == null) hidden = hidden - i.id
                     // Seul l'imprévu s'annonce : un message de confirmation retarderait l'annulation du geste suivant.
-                    if (out.message == STALE) notifier.show(out.message)
+                    intentionNotice(out)?.let { notifier.show(it) }
                 }
                 is DoneOutcome.Refused -> notifier.show(out.message)
                 else -> Unit
@@ -232,7 +233,7 @@ fun MemoireScreen(
                     null,
                     mark = { m -> erased = if (m == null) erased - c.id else erased + c.id },
                     undoWindow = { undoWindow(label) },
-                    call = repository::tool,
+                    call = repository::reply,
                     busy = busy,
                 )
             } catch (_: ApiError.Unauthorized) {
@@ -261,7 +262,7 @@ fun MemoireScreen(
                 null,
                 mark = { m -> repository.mark(today, laterKey(i.id), m?.let { Mark.PlusTard }) },
                 undoWindow = { undoWindow("Plus tard · ${i.what}") },
-                call = { _, _, _ -> "" },
+                call = { _, _, _ -> ToolMessage() },
                 busy = busy,
             )
         }
