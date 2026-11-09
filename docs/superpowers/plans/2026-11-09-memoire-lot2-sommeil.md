@@ -19,6 +19,7 @@
 - Déductions : une valeur déduite ne remplace jamais une valeur déclarée ; une déduction qui contredit une valeur déclarée crée **une** intention proposée « Confirmer : … » (pas de doublon) ; confiance d'une déduction : `m ← m + 0,25 × (1 − m)` à chaque nouvel indice, départ 0,25 ; rappelée avec le préfixe « je crois que ».
 - Réactivation : une connaissance déclarée re-mentionnée par l'utilisateur dans la journée (extraction) est renforcée ; rien d'autre au lot 2.
 - Modèle : usages de routage `memoire_extraction` et `memoire_condensation`, auto-hébergés ; si un usage n'est pas configuré, l'étape est sautée sans erreur. Une sortie du modèle hors schéma n'applique rien.
+- **Aucun trou de mémoire** (décision de l'utilisateur) : l'état de chaque étape de nuit est conservé (`dernier jour traité`, dernière exécution, dernier statut) ; l'extraction traite **tous** les jours en attente depuis le dernier jour traité (au plus 7 par nuit, plus anciens d'abord), pas seulement la veille ; une étape sautée ou en échec apparaît dans la section mémoire du briefing du matin (« Mémoire : extraction en attente depuis le <jour> — modèle indisponible »), jusqu'à ce qu'elle soit rattrapée. Les usages de nuit sont déclarés stratégiques : jamais de moteur non auto-hébergé.
 - Outils `nuit_*` cachés au moteur. Aucune donnée personnelle dans les journaux (ni texte de souvenir ni valeur).
 - Dépôt public : commentaires d'intention, exemples fictifs. `git commit --no-gpg-sign`. Vérification : `cargo test -p kairos-memoire -p tete` puis `cargo test --workspace`.
 
@@ -97,7 +98,8 @@
   - `pub fn oublier(&self, maintenant: NaiveDateTime) -> Result<u32>` (règles des Global Constraints ; renvoie le nombre de souvenirs supprimés).
   - Outils : `nuit_episodes {jour}` → `[Element]` ; `nuit_cles {}` → liste des clés connues (déclarées et déduites) ; `nuit_appliquer {jour, indices:[{key,value}]}` → `Bilan` ; `nuit_condensables {max}` → `[Lot]` ; `nuit_condenser {niveau, periode, texte}` → `{"id"|null}` ; `nuit_oublier {}` → `{"supprimes"}`.
   - `is_app_tool` : tout nom commençant par `nuit_` est caché au moteur.
-- [ ] Tests : `forget_only_folded_and_deduced`, `forget_never_touches_declared_anchor_year`, `night_tools_shape`, `night_tools_hidden_from_model`.
+  - Table `nuit_etat(etape TEXT PRIMARY KEY, dernier_jour TEXT, derniere_execution TEXT, statut TEXT)` ; outils `nuit_etat {}` → états, `nuit_noter {etape, statut, dernier_jour?}` ; `brief_section` de la mémoire ajoute une ligne par étape en attente ou en échec (« Mémoire : <étape> en attente depuis le <jour> — <raison courte> »).
+- [ ] Tests : `pending_step_shows_in_morning_brief`, `forget_only_folded_and_deduced`, `forget_never_touches_declared_anchor_year`, `night_tools_shape`, `night_tools_hidden_from_model`.
 - [ ] Implémenter, tests verts, commit `feat(memoire): oubli réel et outils de nuit`.
 
 ### Task 6: La nuit dans la tête
@@ -107,11 +109,11 @@
 **Interfaces:**
 - Consumes: Task 5.
 - Produces:
-  - Étape **extraction** (usage `memoire_extraction`) : pour la veille, `nuit_episodes` + `nuit_cles` → prompt « liste d'indices `{key, value}` sur l'utilisateur, uniquement ce qu'il a dit ou fait, clés de la liste ou sous un préfixe existant, JSON seul » → `nuit_appliquer`.
+  - Étape **extraction** (usage `memoire_extraction`) : pour chaque jour en attente (depuis `nuit_etat`, au plus 7, plus anciens d'abord, jusqu'à la veille), `nuit_episodes` + `nuit_cles` → prompt « liste d'indices `{key, value}` sur l'utilisateur, uniquement ce qu'il a dit ou fait, clés de la liste ou sous un préfixe existant, JSON seul » → `nuit_appliquer`.
   - Étape **condensation** (usage `memoire_condensation`) : `nuit_condensables {max: 4}` → pour chaque lot, prompt « résume en 3 à 6 phrases, sans inventer, en gardant dates et décisions » → `nuit_condenser`.
   - Étape **oubli** : `nuit_oublier`, toujours (sans modèle).
-  - Moteur obtenu par la voie existante (`engine(...)` avec repli déclaré) ; usage absent ou moteur injoignable → étape sautée, journal sans contenu.
-- [ ] Tests : `night_runs_extraction_condensation_forget`, `bad_model_output_applies_nothing`, `night_without_model_still_forgets`, `night_twice_is_harmless`.
+  - Moteur obtenu par la voie existante (`engine(...)` avec repli déclaré), usages déclarés stratégiques ; usage absent ou moteur injoignable → étape sautée, notée par `nuit_noter` (statut « en attente : modèle indisponible »), journal sans contenu ; succès → `nuit_noter` avec le dernier jour traité.
+- [ ] Tests : `skipped_days_are_caught_up_next_night`, `skipped_step_is_recorded`, `night_runs_extraction_condensation_forget`, `bad_model_output_applies_nothing`, `night_without_model_still_forgets`, `night_twice_is_harmless`.
 - [ ] Implémenter, `cargo test -p tete` puis `cargo test --workspace` verts, commit `feat(tete): le sommeil de la mémoire`.
 
 **À la livraison (hôte) :** ajouter dans `config/llm.toml` du serveur `memoire_extraction` et `memoire_condensation` vers le moteur du poste de travail, qui a déjà un repli déclaré sur le serveur.
