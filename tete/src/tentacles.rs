@@ -17,7 +17,7 @@ pub const TOOL_TIMEOUT: Duration = Duration::from_secs(20);
 const TRUNCATED: &str = "… [tronqué]";
 /// Outils réservés à l'API de l'application (conventions et préfixe `app_`) : jamais proposés au moteur.
 pub fn is_app_tool(name: &str) -> bool {
-    matches!(name, "cards" | "decisions" | "decide") || name.starts_with("app_")
+    matches!(name, "cards" | "decisions" | "decide" | "rappel") || name.starts_with("app_")
 }
 
 type Client = RunningService<RoleClient, ()>;
@@ -294,5 +294,10 @@ mod tests {
         for t in ["stock_set", "meal_plan_set", "apple"] {
             assert!(!super::is_app_tool(t), "{t}");
         }
+    }
+
+    #[test]
+    fn rappel_is_hidden_from_the_model() {
+        assert!(super::is_app_tool("rappel"));
     }
 }
