@@ -57,3 +57,8 @@ protocol = "openai-compatible"
 # Association usage → nom de moteur.
 # [usages]
 # <usage> = ""
+#
+# Usages de nuit de la mémoire (stratégiques : moteur auto-hébergé seulement).
+# Absents, l'étape correspondante est sautée et signalée au brief du matin.
+# memoire_extraction = ""
+# memoire_condensation = ""

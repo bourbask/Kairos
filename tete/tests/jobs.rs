@@ -37,6 +37,20 @@ struct Rec {
     brief: Mutex<String>,
     /// Appels reçus par `brief_section`.
     brief_calls: AtomicU32,
+    /// Nuit : dernier jour traité et statut, par étape.
+    nuit: Mutex<HashMap<String, (Option<String>, String)>>,
+    /// Textes des épisodes, par jour.
+    episodes: Mutex<HashMap<String, Vec<String>>>,
+    /// Indices appliqués : `{jour, indices}`.
+    applied: Mutex<Vec<Value>>,
+    /// Lots encore condensables.
+    lots: Mutex<Vec<Value>>,
+    /// Synthèses enregistrées : `{periode, texte, empreinte}`.
+    condensed: Mutex<Vec<Value>>,
+    /// Outils de nuit appelés, dans l'ordre.
+    night_calls: Mutex<Vec<String>>,
+    /// Conversations encore à résumer, par jour.
+    unsummarized_days: Mutex<HashMap<String, u32>>,
 }
 
 #[derive(Clone)]
@@ -74,8 +88,125 @@ struct SetSummary {
     decisions: Vec<String>,
 }
 
+#[derive(Deserialize, schemars::JsonSchema)]
+struct Noter {
+    etape: String,
+    statut: String,
+    dernier_jour: Option<String>,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+struct Jour {
+    jour: String,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+struct Appliquer {
+    jour: String,
+    indices: Value,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+struct Max {
+    max: usize,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+struct Condenser {
+    niveau: String,
+    periode: String,
+    texte: String,
+    empreinte: String,
+}
+
+impl Fake {
+    fn night(&self, tool: &str) {
+        self.rec.night_calls.lock().unwrap().push(tool.into());
+    }
+}
+
 #[tool_router]
 impl Fake {
+    #[tool(description = "État de nuit.")]
+    fn nuit_etat(&self) -> Result<String, String> {
+        self.night("etat");
+        let n = self.rec.nuit.lock().unwrap();
+        let rows: Vec<Value> = ["condensation", "extraction", "oubli"]
+            .iter()
+            .map(|e| {
+                let (d, s) = n.get(*e).cloned().unwrap_or((None, "ok".into()));
+                json!({"etape": e, "dernier_jour": d, "derniere_execution": "2026-11-01T03:00:00", "statut": s, "illisible": false})
+            })
+            .collect();
+        Ok(Value::Array(rows).to_string())
+    }
+
+    #[tool(description = "Note une étape.")]
+    fn nuit_noter(&self, Parameters(a): Parameters<Noter>) -> Result<String, String> {
+        self.night("noter");
+        let mut n = self.rec.nuit.lock().unwrap();
+        let e = n.entry(a.etape).or_default();
+        if a.dernier_jour.is_some() {
+            e.0 = a.dernier_jour;
+        }
+        e.1 = a.statut;
+        Ok(r#"{"message":"État noté."}"#.into())
+    }
+
+    #[tool(description = "Épisodes d'un jour.")]
+    fn nuit_episodes(&self, Parameters(a): Parameters<Jour>) -> Result<String, String> {
+        self.night("episodes");
+        let texts = self.rec.episodes.lock().unwrap().get(&a.jour).cloned().unwrap_or_default();
+        let v: Vec<Value> =
+            texts.iter().map(|t| json!({"nature": "conversation", "ref": "1", "date": a.jour, "texte": t})).collect();
+        Ok(Value::Array(v).to_string())
+    }
+
+    #[tool(description = "Conversations à résumer d'un jour.")]
+    fn nuit_en_attente(&self, Parameters(a): Parameters<Jour>) -> Result<String, String> {
+        self.night("en_attente");
+        let n = self.rec.unsummarized_days.lock().unwrap().get(&a.jour).copied().unwrap_or(0);
+        Ok(json!({"conversations": n}).to_string())
+    }
+
+    #[tool(description = "Clés connues.")]
+    fn nuit_cles(&self) -> Result<String, String> {
+        self.night("cles");
+        Ok(r#"["sport", "ville"]"#.into())
+    }
+
+    #[tool(description = "Applique des indices.")]
+    fn nuit_appliquer(&self, Parameters(a): Parameters<Appliquer>) -> Result<String, String> {
+        self.night("appliquer");
+        self.rec.applied.lock().unwrap().push(json!({"jour": a.jour, "indices": a.indices}));
+        Ok(r#"{"renforces":0,"deduits":1,"questions":0,"ignores":0}"#.into())
+    }
+
+    #[tool(description = "Lots condensables.")]
+    fn nuit_condensables(&self, Parameters(a): Parameters<Max>) -> Result<String, String> {
+        self.night("condensables");
+        let lots: Vec<Value> = self.rec.lots.lock().unwrap().iter().take(a.max).cloned().collect();
+        Ok(Value::Array(lots).to_string())
+    }
+
+    #[tool(description = "Condense un lot.")]
+    fn nuit_condenser(&self, Parameters(a): Parameters<Condenser>) -> Result<String, String> {
+        self.night("condenser");
+        let mut lots = self.rec.lots.lock().unwrap();
+        let Some(i) = lots.iter().position(|l| l["niveau"] == a.niveau && l["periode"] == a.periode && l["empreinte"] == a.empreinte) else {
+            return Ok(r#"{"id":null}"#.into());
+        };
+        lots.remove(i);
+        self.rec.condensed.lock().unwrap().push(json!({"periode": a.periode, "texte": a.texte, "empreinte": a.empreinte}));
+        Ok(r#"{"id":1}"#.into())
+    }
+
+    #[tool(description = "Oubli.")]
+    fn nuit_oublier(&self) -> Result<String, String> {
+        self.night("oublier");
+        Ok(r#"{"supprimes":2}"#.into())
+    }
+
     #[tool(description = "Section de brief.")]
     fn brief_section(&self, Parameters(p): Parameters<Period>) -> Result<String, String> {
         self.rec.brief_calls.fetch_add(1, Ordering::SeqCst);
@@ -164,7 +295,10 @@ async fn completions(AxState(s): AxState<Shared>, Json(body): Json<Value>) -> (S
     match reply {
         // `"pendre"` simule un moteur qui ne répond jamais.
         Some(Value::String(h)) if h == "pendre" => std::future::pending().await,
-        Some(message) => (StatusCode::OK, Json(json!({"choices": [{"message": message}]}))),
+        Some(message) => {
+            let finish = message.get("finish_reason").cloned();
+            (StatusCode::OK, Json(json!({"choices": [{"message": message, "finish_reason": finish}]})))
+        }
         None => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({}))),
     }
 }
@@ -942,4 +1076,195 @@ async fn held_brief_logged_once_at_flush_with_retry_mixed() {
     run(Job::Flush, at(4, 17, 31), &mut fx.ctx).await.unwrap();
     assert_eq!(sent(&fx.gw).len(), 1);
     assert_eq!(kairos_log(&fx.ctx.state), vec!["Réponse.".to_string(), "Brief du matin\n\n- rendez-vous (matin) à 10:00".to_string()]);
+}
+
+// --- Nuit de la mémoire ---
+
+const NIGHT_USAGES: &[&str] = &["memoire_extraction", "memoire_condensation"];
+
+fn etat(rec: &Rec, etape: &str) -> (Option<String>, String) {
+    rec.nuit.lock().unwrap().get(etape).cloned().unwrap_or_default()
+}
+
+fn set_etat(rec: &Rec, etape: &str, jour: &str) {
+    rec.nuit.lock().unwrap().insert(etape.into(), (Some(jour.into()), "ok".into()));
+}
+
+fn episode(rec: &Rec, jour: &str, texte: &str) {
+    rec.episodes.lock().unwrap().entry(jour.into()).or_default().push(texte.into());
+}
+
+fn lot(periode: &str, complement: bool) -> Value {
+    json!({
+        "niveau": "semaine", "periode": periode, "complement": complement, "empreinte": format!("e-{periode}"),
+        "elements": [
+            {"nature": "synthese", "ref": "3", "date": "2026-10-05", "texte": "Semaine calme."},
+            {"nature": "conversation", "ref": "9", "date": "2026-10-06", "texte": "Course du matin décidée."}
+        ]
+    })
+}
+
+fn applied_days(rec: &Rec) -> Vec<String> {
+    rec.applied.lock().unwrap().iter().map(|a| a["jour"].as_str().unwrap().to_string()).collect()
+}
+
+#[tokio::test]
+async fn skipped_days_are_caught_up_next_night() {
+    // Aucune réponse scriptée : le moteur échoue au premier appel.
+    let mut fx = fixture("JB_N1", NIGHT_USAGES, vec![]).await;
+    set_etat(&fx.rec, "extraction", "2026-10-30");
+    episode(&fx.rec, "2026-10-31", "Je cours le samedi.");
+    episode(&fx.rec, "2026-11-08", "J'habite à Ville-A.");
+    run(Job::Summaries, at(9, 3, 0), &mut fx.ctx).await.unwrap();
+    assert!(applied_days(&fx.rec).is_empty());
+    assert_eq!(etat(&fx.rec, "extraction"), (Some("2026-10-30".into()), "modele_indisponible".into()));
+
+    // Nuit suivante : au plus sept jours, plus anciens d'abord.
+    let hint = text(r#"[{"key": "sport", "value": "course"}]"#);
+    fx.llm.lock().unwrap().replies.extend([hint.clone(), hint]);
+    run(Job::Summaries, at(9, 3, 0), &mut fx.ctx).await.unwrap();
+    assert_eq!(applied_days(&fx.rec), vec!["2026-10-31"]);
+    assert_eq!(etat(&fx.rec, "extraction"), (Some("2026-11-06".into()), "ok".into()));
+    run(Job::Summaries, at(10, 3, 0), &mut fx.ctx).await.unwrap();
+    assert_eq!(applied_days(&fx.rec), vec!["2026-10-31", "2026-11-08"]);
+    assert_eq!(etat(&fx.rec, "extraction"), (Some("2026-11-09".into()), "ok".into()));
+}
+
+#[tokio::test]
+async fn skipped_step_is_recorded() {
+    let mut fx = fixture("JB_N2", &[], vec![]).await;
+    set_etat(&fx.rec, "extraction", "2026-11-07");
+    episode(&fx.rec, "2026-11-08", "J'habite à Ville-A.");
+    fx.rec.lots.lock().unwrap().push(lot("2026-W41", false));
+    run(Job::Summaries, at(9, 3, 0), &mut fx.ctx).await.unwrap();
+    assert_eq!(etat(&fx.rec, "extraction"), (Some("2026-11-07".into()), "modele_indisponible".into()));
+    assert_eq!(etat(&fx.rec, "condensation").1, "modele_indisponible");
+    assert_eq!(etat(&fx.rec, "oubli").1, "ok");
+    assert!(fx.rec.condensed.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn night_runs_extraction_condensation_forget() {
+    let replies = vec![
+        text("```json\n[{\"key\": \"ville\", \"value\": \"Ville-A\"}]\n```"),
+        text("  Semaine calme, course du matin décidée le 06/10.  "),
+    ];
+    let mut fx = fixture("JB_N3", NIGHT_USAGES, replies).await;
+    episode(&fx.rec, "2026-11-08", "J'habite à Ville-A.");
+    fx.rec.lots.lock().unwrap().push(lot("2026-W41", true));
+    run(Job::Summaries, at(9, 3, 0), &mut fx.ctx).await.unwrap();
+
+    assert_eq!(
+        *fx.rec.applied.lock().unwrap(),
+        vec![json!({"jour": "2026-11-08", "indices": [{"key": "ville", "value": "Ville-A"}]})]
+    );
+    assert_eq!(
+        *fx.rec.condensed.lock().unwrap(),
+        vec![json!({"periode": "2026-W41", "texte": "Semaine calme, course du matin décidée le 06/10.", "empreinte": "e-2026-W41"})]
+    );
+    for e in ["extraction", "condensation", "oubli"] {
+        assert_eq!(etat(&fx.rec, e).1, "ok", "{e}");
+    }
+    assert_eq!(etat(&fx.rec, "extraction").0.as_deref(), Some("2026-11-08"));
+    let calls = fx.rec.night_calls.lock().unwrap().clone();
+    let pos = |t: &str| calls.iter().position(|c| c == t).unwrap();
+    assert!(pos("appliquer") < pos("condenser") && pos("condenser") < pos("oublier"));
+    // Le moteur reçoit les épisodes, les clés connues, et la synthèse existante à reprendre.
+    let reqs = requests_text(&fx.llm);
+    assert!(reqs.contains("J'habite à Ville-A.") && reqs.contains("sport, ville"));
+    assert!(reqs.contains("Semaine calme.") && reqs.contains("Course du matin décidée."));
+}
+
+#[tokio::test]
+async fn bad_model_output_applies_nothing() {
+    let replies = vec![text("Il habite à Ville-A."), text("   ")];
+    let mut fx = fixture("JB_N4", NIGHT_USAGES, replies).await;
+    set_etat(&fx.rec, "extraction", "2026-11-07");
+    episode(&fx.rec, "2026-11-08", "J'habite à Ville-A.");
+    fx.rec.lots.lock().unwrap().push(lot("2026-W41", false));
+    run(Job::Summaries, at(9, 3, 0), &mut fx.ctx).await.unwrap();
+    assert_eq!(etat(&fx.rec, "extraction"), (Some("2026-11-07".into()), "sortie_invalide".into()));
+    assert_eq!(etat(&fx.rec, "condensation").1, "sortie_invalide");
+
+    // Hors schéma : valeur non textuelle, champ en trop, objet au lieu d'une liste, liste trop longue.
+    let many: Vec<Value> = (0..51).map(|i| json!({"key": "sport", "value": i.to_string()})).collect();
+    for bad in [
+        r#"[{"key": "ville", "value": 3}]"#.to_string(),
+        r#"[{"key": "ville", "value": "Ville-A", "source": "x"}]"#.to_string(),
+        r#"{"key": "ville", "value": "Ville-A"}"#.to_string(),
+        Value::Array(many).to_string(),
+    ] {
+        fx.llm.lock().unwrap().replies.push_back(text(&bad));
+        run(Job::Summaries, at(9, 3, 0), &mut fx.ctx).await.unwrap();
+        assert_eq!(etat(&fx.rec, "extraction"), (Some("2026-11-07".into()), "sortie_invalide".into()), "{bad}");
+    }
+    assert!(fx.rec.applied.lock().unwrap().is_empty());
+    assert!(fx.rec.condensed.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn night_without_model_still_forgets() {
+    let mut fx = fixture("JB_N5", &[], vec![]).await;
+    run(Job::Summaries, at(9, 3, 0), &mut fx.ctx).await.unwrap();
+    assert_eq!(fx.rec.night_calls.lock().unwrap().iter().filter(|c| *c == "oublier").count(), 1);
+    assert_eq!(etat(&fx.rec, "oubli").1, "ok");
+    assert!(fx.llm.lock().unwrap().requests.is_empty());
+}
+
+#[tokio::test]
+async fn night_twice_is_harmless() {
+    let replies = vec![text(r#"[{"key": "ville", "value": "Ville-A"}]"#), text("Semaine calme.")];
+    let mut fx = fixture("JB_N6", NIGHT_USAGES, replies).await;
+    episode(&fx.rec, "2026-11-08", "J'habite à Ville-A.");
+    fx.rec.lots.lock().unwrap().push(lot("2026-W41", false));
+    run(Job::Summaries, at(9, 3, 0), &mut fx.ctx).await.unwrap();
+    run(Job::Summaries, at(9, 3, 0), &mut fx.ctx).await.unwrap();
+    assert_eq!(fx.rec.applied.lock().unwrap().len(), 1);
+    assert_eq!(fx.rec.condensed.lock().unwrap().len(), 1);
+    assert_eq!(fx.llm.lock().unwrap().requests.len(), 2);
+    for e in ["extraction", "condensation", "oubli"] {
+        assert_eq!(etat(&fx.rec, e).1, "ok", "{e}");
+    }
+}
+
+#[tokio::test]
+async fn unsummarized_day_stays_pending() {
+    let mut fx = fixture("JB_N7", NIGHT_USAGES, vec![]).await;
+    set_etat(&fx.rec, "extraction", "2026-11-07");
+    episode(&fx.rec, "2026-11-08", "Je cours le samedi.");
+    fx.rec.unsummarized_days.lock().unwrap().insert("2026-11-08".into(), 1);
+    run(Job::Summaries, at(9, 3, 0), &mut fx.ctx).await.unwrap();
+    assert!(fx.rec.applied.lock().unwrap().is_empty());
+    assert!(fx.llm.lock().unwrap().requests.is_empty());
+    assert_eq!(etat(&fx.rec, "extraction"), (Some("2026-11-07".into()), "modele_indisponible".into()));
+
+    // Conversation résumée entre-temps : la journée est extraite la nuit suivante.
+    fx.rec.unsummarized_days.lock().unwrap().clear();
+    fx.llm.lock().unwrap().replies.push_back(text(r#"[{"key": "sport", "value": "course"}]"#));
+    run(Job::Summaries, at(9, 3, 0), &mut fx.ctx).await.unwrap();
+    assert_eq!(applied_days(&fx.rec), vec!["2026-11-08"]);
+    assert_eq!(etat(&fx.rec, "extraction"), (Some("2026-11-08".into()), "ok".into()));
+}
+
+#[tokio::test]
+async fn cut_or_oversize_lot_is_not_condensed() {
+    // Réponse coupée faute de place : la synthèse serait tronquée.
+    let cut = json!({"content": "Semaine calme, course du", "finish_reason": "length"});
+    let mut fx = fixture("JB_N8", NIGHT_USAGES, vec![cut]).await;
+    fx.rec.lots.lock().unwrap().push(lot("2026-W41", false));
+    run(Job::Summaries, at(9, 3, 0), &mut fx.ctx).await.unwrap();
+    assert!(fx.rec.condensed.lock().unwrap().is_empty());
+    assert!(!fx.rec.night_calls.lock().unwrap().contains(&"condenser".to_string()));
+    assert_eq!(etat(&fx.rec, "condensation").1, "sortie_invalide");
+
+    // Lot trop long pour le contexte du moteur : écarté sans appel au moteur.
+    let mut big = lot("2026-W42", false);
+    big["elements"][1]["texte"] = json!("x".repeat(20_000));
+    *fx.rec.lots.lock().unwrap() = vec![big];
+    fx.llm.lock().unwrap().replies.push_back(text("Synthèse."));
+    let before = fx.llm.lock().unwrap().requests.len();
+    run(Job::Summaries, at(9, 3, 0), &mut fx.ctx).await.unwrap();
+    assert_eq!(fx.llm.lock().unwrap().requests.len(), before);
+    assert!(fx.rec.condensed.lock().unwrap().is_empty());
+    assert_eq!(etat(&fx.rec, "condensation").1, "sortie_invalide");
 }

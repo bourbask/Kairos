@@ -2,7 +2,7 @@
 
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use chrono::{Duration, NaiveDateTime, Utc};
+use chrono::{Duration, NaiveDate, NaiveDateTime, Utc};
 use kairos::calendar::USER_TZ;
 use rmcp::{
     ServerHandler,
@@ -15,8 +15,8 @@ use serde_json::{Value, json};
 use tentacle_common::BriefPeriod;
 
 use crate::store::{
-    ConversationCard, IntentionState, JournalEntry, MemoryStore, NewConversation, NewJournalEntry, NewLesson, PERSONA_KEY,
-    Sensitivity,
+    ConversationCard, Indice, IntentionState, JournalEntry, MemoryStore, NewConversation, NewJournalEntry, NewLesson,
+    PERSONA_KEY, Sensitivity,
 };
 
 /// Handler MCP ; bon marché à construire (le stockage est partagé).
@@ -51,6 +51,11 @@ fn parse_dt(s: &str) -> Result<NaiveDateTime, String> {
     NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
         .or_else(|_| NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M"))
         .map_err(|_| format!("date invalide « {s} » (attendu AAAA-MM-JJ HH:MM)"))
+}
+
+/// Jour `AAAA-MM-JJ`.
+fn parse_jour(s: &str) -> Result<NaiveDate, String> {
+    NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d").map_err(|_| format!("jour invalide « {s} » (attendu AAAA-MM-JJ)"))
 }
 
 fn now_local() -> NaiveDateTime {
@@ -213,6 +218,35 @@ struct LessonArgs {
     debrief: String,
     conclusion: String,
     actions: Vec<String>,
+}
+#[derive(Deserialize, schemars::JsonSchema)]
+struct JourArgs {
+    /// `AAAA-MM-JJ`.
+    jour: String,
+}
+#[derive(Deserialize, schemars::JsonSchema)]
+struct AppliquerArgs {
+    /// `AAAA-MM-JJ`.
+    jour: String,
+    indices: Vec<Indice>,
+}
+#[derive(Deserialize, schemars::JsonSchema)]
+struct MaxArgs {
+    max: usize,
+}
+#[derive(Deserialize, schemars::JsonSchema)]
+struct CondenserArgs {
+    niveau: String,
+    periode: String,
+    texte: String,
+    empreinte: String,
+}
+#[derive(Deserialize, schemars::JsonSchema)]
+struct NoterArgs {
+    etape: String,
+    statut: String,
+    /// `AAAA-MM-JJ` ; absent, le précédent est gardé.
+    dernier_jour: Option<String>,
 }
 #[derive(Deserialize, schemars::JsonSchema)]
 // La période est validée mais ne change pas encore le contenu.
@@ -474,7 +508,7 @@ impl MemoryServer {
         json_out(json!({"message": "Entrée supprimée."}))
     }
 
-    #[tool(description = "Oublier un fait depuis l'application : valeur courante et historique.")]
+    #[tool(description = "Oublier un fait depuis l'application : valeur courante, historique, déductions et questions de confirmation.")]
     fn app_fact_forget(&self, Parameters(a): Parameters<KeyArgs>) -> Out {
         if is_persona(&a.key) {
             return Err(PERSONA_REFUSED.into());
@@ -504,15 +538,100 @@ impl MemoryServer {
     #[tool(description = "Obtenir le texte court de la section mémoire d'un briefing (intentions expirant sous 24 h), vide si rien.")]
     fn brief_section(&self, Parameters(_): Parameters<BriefArgs>) -> Out {
         // Même contenu matin et soir pour l'instant.
-        let now = now_local();
+        self.brief_at(now_local())
+    }
+
+    // --- Nuit : usage interne de la tête, jamais proposé au modèle ---
+
+    #[tool(description = "Usage interne de la tête : épisodes complets d'une journée.")]
+    fn nuit_episodes(&self, Parameters(a): Parameters<JourArgs>) -> Out {
+        json_out(self.db()?.episodes_du_jour(parse_jour(&a.jour)?).map_err(err)?)
+    }
+
+    #[tool(description = "Usage interne de la tête : conversations d'une journée encore à résumer.")]
+    fn nuit_en_attente(&self, Parameters(a): Parameters<JourArgs>) -> Out {
+        json_out(json!({"conversations": self.db()?.conversations_non_resumees_le(parse_jour(&a.jour)?).map_err(err)?}))
+    }
+
+    #[tool(description = "Usage interne de la tête : clés connues, déclarées et déduites.")]
+    fn nuit_cles(&self) -> Out {
+        json_out(self.db()?.cles().map_err(err)?)
+    }
+
+    #[tool(description = "Usage interne de la tête : appliquer les indices extraits d'une journée.")]
+    fn nuit_appliquer(&self, Parameters(a): Parameters<AppliquerArgs>) -> Out {
+        json_out(self.db()?.appliquer_extraction(parse_jour(&a.jour)?, &a.indices, now_local()).map_err(err)?)
+    }
+
+    #[tool(description = "Usage interne de la tête : lots de souvenirs à condenser.")]
+    fn nuit_condensables(&self, Parameters(a): Parameters<MaxArgs>) -> Out {
+        json_out(self.db()?.condensables(now_local(), a.max).map_err(err)?)
+    }
+
+    #[tool(description = "Usage interne de la tête : enregistrer la synthèse d'un lot.")]
+    fn nuit_condenser(&self, Parameters(a): Parameters<CondenserArgs>) -> Out {
+        let id = self.db()?.condenser(&a.niveau, &a.periode, &a.texte, &a.empreinte, now_local()).map_err(err)?;
+        json_out(json!({"id": id}))
+    }
+
+    #[tool(description = "Usage interne de la tête : effacer les souvenirs oubliés.")]
+    fn nuit_oublier(&self) -> Out {
+        json_out(json!({"supprimes": self.db()?.oublier(now_local()).map_err(err)?}))
+    }
+
+    #[tool(description = "Usage interne de la tête : état des étapes de nuit.")]
+    fn nuit_etat(&self) -> Out {
+        json_out(self.db()?.nuit_etat().map_err(err)?)
+    }
+
+    #[tool(description = "Usage interne de la tête : noter l'exécution d'une étape de nuit.")]
+    fn nuit_noter(&self, Parameters(a): Parameters<NoterArgs>) -> Out {
+        let jour = a.dernier_jour.as_deref().map(parse_jour).transpose()?;
+        self.db()?.nuit_noter(&a.etape, &a.statut, jour, now_local()).map_err(err)?;
+        json_out(json!({"message": "État noté."}))
+    }
+}
+
+/// Au-delà de ce délai sans exécution, une étape de nuit est signalée arrêtée.
+const NUIT_MUETTE_HEURES: i64 = 36;
+
+/// Raison courte d'un statut d'étape, pour le briefing.
+fn raison(statut: &str) -> &'static str {
+    match statut {
+        "modele_indisponible" => "modèle indisponible",
+        "sortie_invalide" => "réponse du modèle inutilisable",
+        _ => "échec",
+    }
+}
+
+impl MemoryServer {
+    /// Section mémoire du briefing à l'instant `now`.
+    fn brief_at(&self, now: NaiveDateTime) -> Out {
         let limit = now + Duration::hours(24);
-        let soon: Vec<_> =
-            self.db()?.intentions_open(now).map_err(err)?.into_iter().filter(|i| i.expires_at <= limit).collect();
-        Ok(soon
-            .iter()
-            .map(|i| format!("- {} (avant le {})", i.what, i.expires_at.format("%d/%m %H:%M")))
-            .collect::<Vec<_>>()
-            .join("\n"))
+        let db = self.db()?;
+        let soon: Vec<_> = db.intentions_open(now).map_err(err)?.into_iter().filter(|i| i.expires_at <= limit).collect();
+        let mut lignes: Vec<String> =
+            soon.iter().map(|i| format!("- {} (avant le {})", i.what, i.expires_at.format("%d/%m %H:%M"))).collect();
+        // État de la nuit seulement : jamais le contenu de la mémoire.
+        let jj = |d: NaiveDate| d.format("%d/%m/%Y").to_string();
+        for e in db.nuit_etat().map_err(err)? {
+            let (Some(derniere), false) = (e.derniere_execution, e.illisible) else {
+                lignes.push("- Mémoire : état de nuit illisible".into());
+                continue;
+            };
+            if e.statut != "ok" {
+                let depuis = e.dernier_jour.and_then(|j| j.succ_opt()).unwrap_or(derniere.date());
+                lignes.push(format!("- Mémoire : {} en attente depuis le {} — {}", e.etape, jj(depuis), raison(&e.statut)));
+            }
+            if now - derniere > Duration::hours(NUIT_MUETTE_HEURES) {
+                lignes.push(format!("- Mémoire : {} n'a pas tourné depuis le {}", e.etape, jj(derniere.date())));
+            }
+        }
+        let n = db.conversations_non_resumees_avant(now.date() - Duration::days(7)).map_err(err)?;
+        if n > 0 {
+            lignes.push(format!("- Mémoire : {n} conversation(s) à résumer depuis plus d'une semaine"));
+        }
+        Ok(lignes.join("\n"))
     }
 }
 
@@ -798,6 +917,16 @@ mod tests {
     }
 
     #[test]
+    fn app_forgets_deduction_only_key() {
+        let s = srv();
+        s.db().unwrap().fact_set("goûts", "variés", "x").unwrap();
+        let indices = [crate::store::Indice { key: "goûts.loisir".into(), value: "poterie".into() }];
+        s.db().unwrap().appliquer_extraction(now_local().date(), &indices, now_local()).unwrap();
+        assert!(js(s.app_fact_forget(Parameters(KeyArgs { key: "goûts.loisir".into() })))["message"].is_string());
+        assert!(s.app_fact_forget(Parameters(KeyArgs { key: "goûts.loisir".into() })).is_err());
+    }
+
+    #[test]
     fn conversation_search_shape() {
         let s = srv();
         let c = NewConversation {
@@ -815,5 +944,116 @@ mod tests {
         assert!(v[0].get("summary").is_none());
         s.db().unwrap().conversation_set_summary(id, "bilan", &[], &[]).unwrap();
         assert_eq!(js(s.app_conversation_search(q("jardin")))[0]["summary"], "bilan");
+    }
+
+    #[test]
+    fn pending_step_shows_in_morning_brief() {
+        let s = srv();
+        // Instant figé : le test ne dépend pas de l'heure du lancement.
+        let now = NaiveDate::from_ymd_opt(2026, 11, 9).unwrap().and_hms_opt(7, 0, 0).unwrap();
+        let noter = |etape: &str, statut: &str, jour: Option<NaiveDate>| s.db().unwrap().nuit_noter(etape, statut, jour, now).unwrap();
+        for etape in crate::store::ETAPES_NUIT {
+            noter(etape, "ok", None);
+        }
+        assert_eq!(s.brief_at(now).unwrap(), "");
+        noter("extraction", "modele_indisponible", NaiveDate::from_ymd_opt(2026, 11, 3));
+        let b = s.brief_at(now).unwrap();
+        assert!(b.contains("Mémoire : extraction en attente depuis le 04/11/2026 — modèle indisponible"), "{b}");
+        assert!(!b.contains("condensation"), "{b}");
+        noter("oubli", "echec", None);
+        assert!(s.brief_at(now).unwrap().contains("Mémoire : oubli en attente depuis le 09/11/2026 — échec"));
+        noter("condensation", "sortie_invalide", None);
+        assert!(s.brief_at(now).unwrap().contains("condensation en attente depuis le 09/11/2026 — réponse du modèle inutilisable"));
+        // Rattrapée : la ligne disparaît.
+        noter("extraction", "ok", NaiveDate::from_ymd_opt(2026, 11, 8));
+        assert!(!s.brief_at(now).unwrap().contains("extraction"));
+        // Conversation sans résumé depuis plus d'une semaine, sans rien en révéler.
+        let vieux = now - Duration::days(9);
+        let c = NewConversation {
+            channel: "voix".into(),
+            device: "d".into(),
+            started_at: vieux,
+            ended_at: vieux,
+            transcript: "secret du jardin".into(),
+            session_id: None,
+        };
+        s.db().unwrap().conversation_ingest(&c).unwrap();
+        let b = s.brief_at(now).unwrap();
+        assert!(b.contains("Mémoire : 1 conversation(s) à résumer depuis plus d'une semaine"), "{b}");
+        assert!(!b.contains("jardin"));
+    }
+
+    #[test]
+    fn fresh_store_brief_is_silent() {
+        let s = srv();
+        assert_eq!(s.brief_section(Parameters(serde_json::from_value(json!({"period": "matin"})).unwrap())).unwrap(), "");
+    }
+
+    #[test]
+    fn stale_step_is_reported() {
+        let s = srv();
+        let now = NaiveDate::from_ymd_opt(2026, 11, 9).unwrap().and_hms_opt(7, 0, 0).unwrap();
+        for etape in crate::store::ETAPES_NUIT {
+            s.db().unwrap().nuit_noter(etape, "ok", None, now - Duration::hours(35)).unwrap();
+        }
+        assert_eq!(s.brief_at(now).unwrap(), "");
+        s.db().unwrap().nuit_noter("oubli", "ok", None, now - Duration::hours(37)).unwrap();
+        let b = s.brief_at(now).unwrap();
+        assert_eq!(b, "- Mémoire : oubli n'a pas tourné depuis le 07/11/2026");
+        // En échec et arrêtée : les deux se voient.
+        s.db().unwrap().nuit_noter("oubli", "echec", None, now - Duration::hours(37)).unwrap();
+        let b = s.brief_at(now).unwrap();
+        assert!(b.contains("oubli en attente") && b.contains("oubli n'a pas tourné"), "{b}");
+    }
+
+    #[test]
+    fn unreadable_state_keeps_the_brief() {
+        let chemin = std::env::temp_dir().join(format!("memoire-etat-{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&chemin);
+        let p = chemin.to_str().unwrap();
+        let s = MemoryServer::new(Arc::new(Mutex::new(MemoryStore::open(p).unwrap())));
+        let now = now_local();
+        s.db().unwrap().intention_create("arroser", "", now + Duration::hours(2)).unwrap();
+        rusqlite::Connection::open(p)
+            .unwrap()
+            .execute("UPDATE nuit_etat SET derniere_execution = 'secret', statut = 'secret' WHERE etape = 'oubli'", [])
+            .unwrap();
+        let b = s.brief_at(now).unwrap();
+        let _ = std::fs::remove_file(&chemin);
+        assert!(b.contains("arroser"), "{b}");
+        assert!(b.contains("- Mémoire : état de nuit illisible"), "{b}");
+        assert!(!b.contains("secret"), "{b}");
+    }
+
+    #[test]
+    fn night_tools_shape() {
+        let s = srv();
+        let j = now_local().format("%Y-%m-%d").to_string();
+        jw(&s, "promenade", Sensitivity::Commune);
+        let v = js(s.nuit_episodes(Parameters(JourArgs { jour: j.clone() })));
+        assert_eq!(v[0]["nature"], "journal");
+        assert!(v[0]["texte"].as_str().unwrap().contains("promenade"));
+        assert!(s.nuit_episodes(Parameters(JourArgs { jour: "hier".into() })).is_err());
+        assert_eq!(js(s.nuit_en_attente(Parameters(JourArgs { jour: j.clone() }))), json!({"conversations": 0}));
+
+        s.db().unwrap().fact_set("ville", "Ville-A", "x").unwrap();
+        let indices = vec![Indice { key: "ville.quartier".into(), value: "Nord".into() }, Indice { key: "ville".into(), value: "Ville-B".into() }];
+        let v = js(s.nuit_appliquer(Parameters(AppliquerArgs { jour: j.clone(), indices })));
+        assert_eq!((v["deduits"].as_u64(), v["questions"].as_u64()), (Some(1), Some(1)));
+        assert_eq!(js(s.nuit_cles()), json!(["ville", "ville.quartier"]));
+
+        assert_eq!(js(s.nuit_condensables(Parameters(MaxArgs { max: 5 }))), json!([]));
+        let a = CondenserArgs { niveau: "semaine".into(), periode: "2020-W01".into(), texte: "t".into(), empreinte: "x".into() };
+        assert_eq!(js(s.nuit_condenser(Parameters(a))), json!({"id": null}));
+        assert_eq!(js(s.nuit_oublier()), json!({"supprimes": 0}));
+
+        assert_eq!(js(s.nuit_etat()).as_array().unwrap().len(), 3);
+        let a = NoterArgs { etape: "extraction".into(), statut: "ok".into(), dernier_jour: Some("2026-11-08".into()) };
+        assert!(js(s.nuit_noter(Parameters(a)))["message"].is_string());
+        let e = &js(s.nuit_etat())[1];
+        assert_eq!((e["etape"].as_str(), e["dernier_jour"].as_str(), e["statut"].as_str()), (Some("extraction"), Some("2026-11-08"), Some("ok")));
+        assert!(e["derniere_execution"].is_string());
+        let a = NoterArgs { etape: "rêve".into(), statut: "ok".into(), dernier_jour: None };
+        assert!(s.nuit_noter(Parameters(a)).is_err());
     }
 }
