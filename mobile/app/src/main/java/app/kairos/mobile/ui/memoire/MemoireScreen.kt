@@ -1,10 +1,5 @@
 package app.kairos.mobile.ui.memoire
 
-import android.content.ActivityNotFoundException
-import android.content.Intent
-import android.speech.RecognizerIntent
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -67,6 +62,7 @@ import app.kairos.mobile.data.ConversationSummary
 import app.kairos.mobile.data.Fact
 import app.kairos.mobile.data.FactValue
 import app.kairos.mobile.data.Intention
+import app.kairos.mobile.voice.rememberDictation
 import app.kairos.mobile.data.JournalEntry
 import app.kairos.mobile.data.Mark
 import app.kairos.mobile.data.ToolMessage
@@ -385,29 +381,6 @@ fun MemoireScreen(
 private fun Caption(text: String, modifier: Modifier = Modifier) =
     Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = modifier)
 
-/** Dictée par la reconnaissance vocale du téléphone ; sans elle, le clavier reste. */
-@Composable
-private fun rememberDictation(prompt: String, onText: (String) -> Unit, onNote: (String) -> Unit): () -> Unit {
-    val text by rememberUpdatedState(onText)
-    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
-        r.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()?.trim()?.takeIf { it.isNotEmpty() }?.let(text)
-    }
-    return {
-        try {
-            launcher.launch(
-                Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
-                    .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                    .putExtra(RecognizerIntent.EXTRA_LANGUAGE, "fr-FR")
-                    .putExtra(RecognizerIntent.EXTRA_PROMPT, prompt)
-                    // Notes personnelles : reconnaissance sur l'appareil quand elle est disponible.
-                    .putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true),
-            )
-        } catch (_: ActivityNotFoundException) {
-            onNote("Pas de dictée sur ce téléphone : écris plutôt.")
-        }
-    }
-}
-
 /** Champ de saisie avec dictée et bouton d'envoi ; vidé quand l'envoi a abouti. */
 @Composable
 private fun Composer(
@@ -420,7 +393,7 @@ private fun Composer(
     val scope = rememberCoroutineScope()
     var text by rememberSaveable { mutableStateOf("") }
     var sending by remember { mutableStateOf(false) }
-    val dictate = rememberDictation(label, onText = { text = if (text.isBlank()) it else "$text $it" }, onNote = onNote)
+    val dictate = rememberDictation(label, "Pas de dictée sur ce téléphone : écris plutôt.", onText = { text = if (text.isBlank()) it else "$text $it" }, onNote = onNote)
     Column(Modifier.fillMaxWidth().padding(bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         OutlinedTextField(
             value = text,
