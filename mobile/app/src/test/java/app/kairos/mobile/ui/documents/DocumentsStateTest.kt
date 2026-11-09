@@ -7,6 +7,9 @@ import app.kairos.mobile.data.Documents
 import app.kairos.mobile.data.DocumentsSnapshot
 import app.kairos.mobile.data.KairosJson
 import app.kairos.mobile.ui.kit.Tone
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.yield
 import kotlinx.serialization.builtins.ListSerializer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -179,5 +182,50 @@ class DocumentsStateTest {
         assertEquals("Document privé · Expiration · dans 30 j", nextDeadline(priv, today))
         assertNull(nextDeadline(Documents(deadlines = listOf(sample.deadlines[0])), today))
         assertEquals(0, overdueCount(Documents(), today))
+    }
+
+    @Test
+    fun latest_search_wins() = runBlocking {
+        val gates = mapOf("riz" to CompletableDeferred<Unit>(), "pâtes" to CompletableDeferred<Unit>())
+        val asked = mutableListOf<String>()
+        val s = LatestSearch(this, { q -> asked += q; gates.getValue(q).await(); "résultats $q" }, onUnauthorized = {})
+        s.run("riz")
+        yield()
+        // Seconde demande pendant la première : elle n'est pas perdue, la première est abandonnée.
+        s.run(" pâtes ")
+        yield()
+        assertTrue(s.searching)
+        gates.getValue("riz").complete(Unit)
+        yield()
+        assertNull(s.results)
+        assertTrue("la fin de l'ancienne ne coupe pas l'indicateur de la nouvelle", s.searching)
+        gates.getValue("pâtes").complete(Unit)
+        yield()
+        assertEquals("résultats pâtes", s.results)
+        assertFalse(s.searching)
+        assertEquals(listOf("riz", "pâtes"), asked)
+
+        // Saisie modifiée : la recherche en cours est abandonnée, rien d'ancien ne revient.
+        val slow = CompletableDeferred<Unit>()
+        val t = LatestSearch(this, { _ -> slow.await(); "vieux" }, onUnauthorized = {})
+        t.run("a")
+        yield()
+        t.clear()
+        slow.complete(Unit)
+        yield()
+        assertNull(t.results)
+        assertFalse(t.searching)
+        // Requête vide : rien ne part.
+        t.run("  ")
+        assertFalse(t.searching)
+    }
+
+    @Test
+    fun search_failure_is_reported() = runBlocking {
+        val s = LatestSearch<String>(this, { throw ApiError.Offline }, onUnauthorized = {})
+        s.run("x")
+        yield()
+        assertEquals("Serveur injoignable : rien n'a été enregistré.", s.failed)
+        assertFalse(s.searching)
     }
 }
