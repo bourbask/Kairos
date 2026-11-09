@@ -315,6 +315,11 @@ Exemples, avec ces valeurs :
 Chaque lot est utile seul et mesurable : nombre de souvenirs actifs, taille de la base,
 habitudes détectées et confirmées.
 
+**Période d'essai** (décision de l'utilisateur) : une fois les lots livrés, quelques
+semaines d'usage réel, puis un premier bilan au bout d'un mois. Il s'appuie sur ces
+mesures et sur le ressenti : souvenirs utiles évoqués au bon moment, oublis gênants,
+habitudes justes ou fausses. Les valeurs du §5 sont ajustées à l'issue du bilan.
+
 ## 7. Risques et parades
 
 | Risque | Parade |
