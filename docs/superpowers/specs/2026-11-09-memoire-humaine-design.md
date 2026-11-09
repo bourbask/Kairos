@@ -147,6 +147,12 @@ Seules les étapes 1, 2 et 4 utilisent un modèle de langue, **local uniquement*
 calcul de l'oubli, du renforcement et des habitudes est déterministe : il ne coûte
 rien et ne dépend pas de la qualité du modèle.
 
+Modèle utilisé (décision de l'utilisateur) : le modèle du poste de travail quand il est
+joignable, meilleur pour résumer et extraire ; sinon, en secours, le modèle du serveur.
+Les deux sont auto-hébergés : aucune donnée ne part vers un modèle tiers. Le choix se fait
+au début de chaque étape, par un test de disponibilité ; une étape commencée sur l'un
+n'est pas reprise sur l'autre.
+
 Organisation : comme les résumés aujourd'hui, le modèle est appelé par le
 planificateur de la tête, qui lit et écrit dans le module mémoire par ses outils. Le
 module mémoire ne contient aucun appel à un modèle.
@@ -261,9 +267,9 @@ chargée : elle fait partie du noyau sans être une ligne de la table.
 - **Sensibilité** : les données de santé ou d'argent ne sont conservées que sous forme
   d'agrégat utile (déjà acté) ; l'archive chiffrée hors du serveur pour les données
   durables et sensibles est un lot ultérieur.
-- **Modèle de langue** : toujours local pour la mémoire, sans repli sur un modèle hébergé
-  ailleurs. Le modèle local du serveur est modeste : il sert à résumer et à extraire,
-  jamais à décider de l'oubli.
+- **Modèle de langue** : toujours auto-hébergé pour la mémoire — poste de travail s'il est
+  allumé, serveur en secours —, sans repli sur un modèle hébergé ailleurs. Il sert à
+  résumer et à extraire, jamais à décider de l'oubli.
 
 ## 5. Valeurs de départ (à régler à l'usage)
 
