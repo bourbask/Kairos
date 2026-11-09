@@ -670,7 +670,28 @@ async fn extract(name: &str, last: Option<NaiveDate>, now: NaiveDateTime, ctx: &
     OK
 }
 
+/// Issue d'un lot de condensation.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Issue {
+    Condense,
+    Refuse,
+    Panne,
+}
+
+/// Statut de l'étape d'après les issues des lots : une panne du moteur
+/// n'efface ni un refus ni une condensation qui la précèdent.
+fn condense_status(issues: &[Issue]) -> &'static str {
+    if issues.contains(&Issue::Refuse) {
+        INVALID
+    } else if issues.first() == Some(&Issue::Panne) {
+        NO_MODEL
+    } else {
+        OK
+    }
+}
+
 /// Un lot refusé (sortie vide) n'empêche pas les suivants ; il reste condensable.
+/// Une panne du moteur arrête la condensation.
 async fn condense(name: &str, ctx: &Ctx) -> &'static str {
     let Ok(lots) = night_tool(name, "nuit_condensables", json!({"max": NIGHT_LOTS}), ctx).await.and_then(|v| Ok(serde_json::from_value::<Vec<Lot>>(v)?)) else {
         return FAILED;
@@ -681,7 +702,7 @@ async fn condense(name: &str, ctx: &Ctx) -> &'static str {
     let Ok(client) = engine(ctx.agent.router(), "memoire_condensation", Urgency::Deferred).await else {
         return NO_MODEL;
     };
-    let mut status = OK;
+    let mut issues = Vec::new();
     for lot in lots {
         let line = |e: &Element| format!("- {} : {}", e.date, e.texte);
         let input = match lot.elements.split_first() {
@@ -693,16 +714,17 @@ async fn condense(name: &str, ctx: &Ctx) -> &'static str {
             _ => format!("Souvenirs ({} {}) :\n{}", lot.niveau, lot.periode, lot.elements.iter().map(line).collect::<Vec<_>>().join("\n")),
         };
         if input.chars().count() > LOT_MAX_CHARS {
-            status = INVALID;
+            issues.push(Issue::Refuse);
             continue;
         }
         let Ok(reply) = chat(&client, Urgency::Deferred, CONDENSATION_PROMPT, &[ChatTurn::User(input)], &[]).await else {
-            return NO_MODEL;
+            issues.push(Issue::Panne);
+            break;
         };
         // Une synthèse coupée remplacerait ses sources : refusée comme une sortie vide.
         let text = reply.text.filter(|_| !reply.truncated).unwrap_or_default();
         if text.trim().is_empty() {
-            status = INVALID;
+            issues.push(Issue::Refuse);
             continue;
         }
         let args = json!({"niveau": lot.niveau, "periode": lot.periode, "texte": text.trim(), "empreinte": lot.empreinte});
@@ -710,6 +732,22 @@ async fn condense(name: &str, ctx: &Ctx) -> &'static str {
         if night_tool(name, "nuit_condenser", args, ctx).await.is_err() {
             return FAILED;
         }
+        issues.push(Issue::Condense);
     }
-    status
+    condense_status(&issues)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use Issue::*;
+
+    #[test]
+    fn engine_failure_keeps_earlier_outcome() {
+        assert_eq!(condense_status(&[Panne]), NO_MODEL);
+        assert_eq!(condense_status(&[Refuse, Panne]), INVALID);
+        assert_eq!(condense_status(&[Condense, Panne]), OK);
+        assert_eq!(condense_status(&[Condense, Refuse, Condense]), INVALID);
+        assert_eq!(condense_status(&[Condense]), OK);
+    }
 }
