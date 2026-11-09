@@ -7,6 +7,8 @@ use kairos::calendar::USER_TZ;
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use serde::{Deserialize, Serialize};
 
+use crate::force::{Famille, recuperabilite, renforcer, stabilite_initiale};
+
 /// Clé réservée du fait portant la personnalité.
 pub const PERSONA_KEY: &str = "persona";
 /// Taille maximale d'une transcription acceptée.
@@ -169,6 +171,22 @@ pub struct MemoryStore {
     conn: Connection,
 }
 
+/// Force d'un souvenir (fait ou entrée de journal).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Force {
+    pub stabilite: f64,
+    pub dernier_rappel: NaiveDateTime,
+    pub rappels: u32,
+    pub importance: f64,
+    pub ancre: bool,
+    pub confiance: f64,
+}
+
+/// Importance par défaut d'une connaissance déclarée.
+const IMPORTANCE_FAIT: f64 = 0.5;
+/// Importance par défaut d'un épisode.
+const IMPORTANCE_EPISODE: f64 = 0.0;
+
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS journal (
     id INTEGER PRIMARY KEY, at TEXT NOT NULL, source TEXT NOT NULL, kind TEXT NOT NULL,
@@ -190,6 +208,12 @@ CREATE VIRTUAL TABLE IF NOT EXISTS conversations_fts USING fts5(text);
 CREATE TABLE IF NOT EXISTS lessons (
     id INTEGER PRIMARY KEY, context TEXT NOT NULL, qualification TEXT NOT NULL,
     debrief TEXT NOT NULL, conclusion TEXT NOT NULL, actions TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS souvenirs (
+    nature TEXT NOT NULL, ref TEXT NOT NULL, stabilite REAL NOT NULL,
+    dernier_rappel TEXT NOT NULL, rappels INTEGER NOT NULL DEFAULT 0,
+    importance REAL NOT NULL, ancre INTEGER NOT NULL DEFAULT 0, confiance REAL NOT NULL,
+    PRIMARY KEY (nature, ref));
+CREATE VIRTUAL TABLE IF NOT EXISTS facts_fts USING fts5(key, value);
 ";
 
 fn now_local() -> NaiveDateTime {
@@ -260,20 +284,84 @@ impl MemoryStore {
         conn.execute_batch(
             "CREATE UNIQUE INDEX IF NOT EXISTS conversations_session ON conversations(session_id) WHERE session_id IS NOT NULL;",
         )?;
+        Self::migrate_souvenirs(&conn)?;
         Ok(MemoryStore { conn })
+    }
+
+    /// Donne une force à chaque fait et chaque entrée de journal qui n'en a pas,
+    /// et indexe les valeurs courantes des faits. Idempotent ; ne touche ni
+    /// `fact_log` ni `journal`. La personnalité reste hors souvenirs.
+    fn migrate_souvenirs(conn: &Connection) -> Result<()> {
+        let tx = conn.unchecked_transaction()?;
+        tx.execute(
+            "INSERT OR IGNORE INTO souvenirs (nature, ref, stabilite, dernier_rappel, importance, confiance)
+             SELECT 'fait', key, ?1, updated_at, ?2, 1.0 FROM fact_log
+             WHERE id IN (SELECT MAX(id) FROM fact_log GROUP BY key) AND key <> ?3",
+            params![stabilite_initiale(Famille::Connaissance, IMPORTANCE_FAIT), IMPORTANCE_FAIT, PERSONA_KEY],
+        )?;
+        tx.execute(
+            "INSERT OR IGNORE INTO souvenirs (nature, ref, stabilite, dernier_rappel, importance, confiance)
+             SELECT 'journal', CAST(id AS TEXT), ?1, at, ?2, 1.0 FROM journal",
+            params![stabilite_initiale(Famille::Episode, IMPORTANCE_EPISODE), IMPORTANCE_EPISODE],
+        )?;
+        let indexed: bool = tx.prepare("SELECT 1 FROM facts_fts LIMIT 1")?.exists([])?;
+        if !indexed {
+            tx.execute(
+                "INSERT INTO facts_fts (key, value) SELECT key, value FROM fact_log
+                 WHERE id IN (SELECT MAX(id) FROM fact_log GROUP BY key) AND key <> ?",
+                [PERSONA_KEY],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    // --- Force des souvenirs ---
+
+    pub fn force(&self, nature: &str, r#ref: &str) -> Result<Option<Force>> {
+        self.conn
+            .query_row(
+                "SELECT stabilite, dernier_rappel, rappels, importance, ancre, confiance
+                 FROM souvenirs WHERE nature = ? AND ref = ?",
+                [nature, r#ref],
+                |r| {
+                    Ok((r.get::<_, f64>(0)?, r.get::<_, String>(1)?, r.get::<_, u32>(2)?,
+                        r.get::<_, f64>(3)?, r.get::<_, bool>(4)?, r.get::<_, f64>(5)?))
+                },
+            )
+            .optional()?
+            .map(|(stabilite, dr, rappels, importance, ancre, confiance)| {
+                Ok(Force { stabilite, dernier_rappel: parse_ts(&dr)?, rappels, importance, ancre, confiance })
+            })
+            .transpose()
+    }
+
+    /// Pose ou retire l'ancre ; `false` si le souvenir est inconnu.
+    pub fn ancrer(&self, nature: &str, r#ref: &str, ancre: bool) -> Result<bool> {
+        let n = self.conn.execute(
+            "UPDATE souvenirs SET ancre = ? WHERE nature = ? AND ref = ?",
+            params![ancre, nature, r#ref],
+        )?;
+        Ok(n > 0)
     }
 
     // --- Journal ---
 
     pub fn journal_write(&self, e: &NewJournalEntry) -> Result<i64> {
         let content = serde_json::to_string(&e.content)?;
+        let at = ts(now_local());
         let tx = self.conn.unchecked_transaction()?;
         tx.execute(
             "INSERT INTO journal (at, source, kind, content, sensitivity, provenance) VALUES (?,?,?,?,?,?)",
-            params![ts(now_local()), e.source, e.kind, content, e.sensitivity.as_str(), e.provenance],
+            params![at, e.source, e.kind, content, e.sensitivity.as_str(), e.provenance],
         )?;
         let id = tx.last_insert_rowid();
         tx.execute("INSERT INTO journal_fts (rowid, content) VALUES (?,?)", params![id, content])?;
+        tx.execute(
+            "INSERT INTO souvenirs (nature, ref, stabilite, dernier_rappel, importance, confiance)
+             VALUES ('journal', ?, ?, ?, ?, 1.0)",
+            params![id.to_string(), stabilite_initiale(Famille::Episode, IMPORTANCE_EPISODE), at, IMPORTANCE_EPISODE],
+        )?;
         tx.commit()?;
         Ok(id)
     }
@@ -333,6 +421,7 @@ impl MemoryStore {
         let tx = self.conn.unchecked_transaction()?;
         let n = tx.execute("DELETE FROM journal WHERE id = ?", [id])?;
         tx.execute("DELETE FROM journal_fts WHERE rowid = ?", [id])?;
+        tx.execute("DELETE FROM souvenirs WHERE nature = 'journal' AND ref = ?", [id.to_string()])?;
         tx.execute("INSERT INTO journal_fts (journal_fts) VALUES ('optimize')", [])?;
         tx.commit()?;
         Ok(n > 0)
@@ -341,10 +430,46 @@ impl MemoryStore {
     // --- Faits (journal d'écritures : le dernier gagne, le reste est l'historique) ---
 
     pub fn fact_set(&self, key: &str, value: &str, provenance: &str) -> Result<()> {
-        self.conn.execute(
+        self.fact_set_at(key, value, provenance, now_local())
+    }
+
+    /// Écrit la valeur ; une clé déjà connue est renforcée (rappel), une
+    /// nouvelle devient une connaissance déclarée.
+    fn fact_set_at(&self, key: &str, value: &str, provenance: &str, now: NaiveDateTime) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
             "INSERT INTO fact_log (key, value, provenance, updated_at) VALUES (?,?,?,?)",
-            params![key, value, provenance, ts(now_local())],
+            params![key, value, provenance, ts(now)],
         )?;
+        if key != PERSONA_KEY {
+            let prev = tx
+                .query_row(
+                    "SELECT stabilite, dernier_rappel, ancre FROM souvenirs WHERE nature = 'fait' AND ref = ?",
+                    [key],
+                    |r| Ok((r.get::<_, f64>(0)?, r.get::<_, String>(1)?, r.get::<_, bool>(2)?)),
+                )
+                .optional()?;
+            match prev {
+                Some((stabilite, dr, ancre)) => {
+                    let r = recuperabilite(parse_ts(&dr)?, stabilite, now, ancre);
+                    tx.execute(
+                        "UPDATE souvenirs SET stabilite = ?, dernier_rappel = ?, rappels = rappels + 1
+                         WHERE nature = 'fait' AND ref = ?",
+                        params![renforcer(stabilite, r), ts(now), key],
+                    )?;
+                }
+                None => {
+                    tx.execute(
+                        "INSERT INTO souvenirs (nature, ref, stabilite, dernier_rappel, importance, confiance)
+                         VALUES ('fait', ?, ?, ?, ?, 1.0)",
+                        params![key, stabilite_initiale(Famille::Connaissance, IMPORTANCE_FAIT), ts(now), IMPORTANCE_FAIT],
+                    )?;
+                }
+            }
+            tx.execute("DELETE FROM facts_fts WHERE key = ?", [key])?;
+            tx.execute("INSERT INTO facts_fts (key, value) VALUES (?,?)", [key, value])?;
+        }
+        tx.commit()?;
         Ok(())
     }
 
@@ -378,7 +503,12 @@ impl MemoryStore {
 
     /// Oublie une clé : valeur courante et historique. Renvoie le nombre de valeurs effacées.
     pub fn fact_forget(&self, key: &str) -> Result<usize> {
-        Ok(self.conn.execute("DELETE FROM fact_log WHERE key = ?", [key])?)
+        let tx = self.conn.unchecked_transaction()?;
+        let n = tx.execute("DELETE FROM fact_log WHERE key = ?", [key])?;
+        tx.execute("DELETE FROM souvenirs WHERE nature = 'fait' AND ref = ?", [key])?;
+        tx.execute("DELETE FROM facts_fts WHERE key = ?", [key])?;
+        tx.commit()?;
+        Ok(n)
     }
 
     /// Valeur courante de chaque clé commençant par `prefix` (comparaison littérale).
@@ -798,6 +928,100 @@ mod tests {
         drop(s);
         MemoryStore::open(p).unwrap(); // idempotent
         let _ = std::fs::remove_file(p);
+    }
+
+    #[test]
+    fn migration_is_idempotent_and_keeps_everything() {
+        let path = std::env::temp_dir().join(format!("kairos-mem-force-{}.db", std::process::id()));
+        let p = path.to_str().unwrap();
+        let _ = std::fs::remove_file(p);
+        {
+            let c = Connection::open(p).unwrap();
+            c.execute_batch("
+                CREATE TABLE journal (
+                    id INTEGER PRIMARY KEY, at TEXT NOT NULL, source TEXT NOT NULL, kind TEXT NOT NULL,
+                    content TEXT NOT NULL, sensitivity TEXT NOT NULL, provenance TEXT NOT NULL);
+                CREATE VIRTUAL TABLE journal_fts USING fts5(content);
+                CREATE TABLE fact_log (
+                    id INTEGER PRIMARY KEY, key TEXT NOT NULL, value TEXT NOT NULL,
+                    provenance TEXT NOT NULL, updated_at TEXT NOT NULL);
+                CREATE INDEX fact_log_key ON fact_log(key, id);
+                INSERT INTO fact_log (key, value, provenance, updated_at) VALUES
+                    ('k', 'a', 'p', '2026-01-01 10:00:00'),
+                    ('k', 'b', 'p', '2026-02-01 10:00:00'),
+                    ('kk', 'z', 'p', '2026-03-01 10:00:00'),
+                    ('persona', 'calme', 'hote', '2026-03-01 10:00:00');
+                INSERT INTO journal (at, source, kind, content, sensitivity, provenance) VALUES
+                    ('2026-04-01 08:00:00', 's', 'note', '{}', 'commune', 'p'),
+                    ('2026-04-02 08:00:00', 's', 'note', '{}', 'commune', 'p');
+            ").unwrap();
+        }
+        drop(MemoryStore::open(p).unwrap());
+        let s = MemoryStore::open(p).unwrap();
+        let count = |sql: &str| -> i64 { s.conn.query_row(sql, [], |r| r.get(0)).unwrap() };
+        assert_eq!(count("SELECT count(*) FROM souvenirs WHERE nature = 'fait'"), 2);
+        assert_eq!(count("SELECT count(*) FROM souvenirs WHERE nature = 'journal'"), 2);
+        assert_eq!(count("SELECT count(*) FROM facts_fts"), 2);
+        assert_eq!(count("SELECT count(*) FROM fact_log"), 4);
+        assert_eq!(count("SELECT count(*) FROM journal"), 2);
+        let f = s.force("fait", "k").unwrap().unwrap();
+        assert_eq!((f.confiance, f.importance, f.stabilite, f.rappels, f.ancre), (1.0, 0.5, 90.0, 0, false));
+        assert_eq!(f.dernier_rappel, parse_ts("2026-02-01 10:00:00").unwrap());
+        let j = s.force("journal", "1").unwrap().unwrap();
+        assert_eq!((j.stabilite, j.importance), (3.0, 0.0));
+        assert_eq!(j.dernier_rappel, parse_ts("2026-04-01 08:00:00").unwrap());
+        assert!(s.force("fait", PERSONA_KEY).unwrap().is_none());
+        assert_eq!(s.fact_get("k").unwrap().unwrap().value, "b");
+        drop(s);
+        let _ = std::fs::remove_file(p);
+    }
+
+    #[test]
+    fn redeclaring_a_fact_reinforces_it() {
+        let s = store();
+        s.fact_set_at("k", "a", "p", t()).unwrap();
+        let later = t() + Duration::days(60);
+        s.fact_set_at("k", "b", "p", later).unwrap();
+        let f = s.force("fait", "k").unwrap().unwrap();
+        assert_eq!(f.rappels, 1);
+        assert!(f.stabilite > 90.0, "{}", f.stabilite);
+        assert_eq!(f.dernier_rappel, later);
+        assert_eq!(s.fact_get("k").unwrap().unwrap().value, "b");
+        let v: String = s.conn.query_row("SELECT value FROM facts_fts WHERE key = 'k'", [], |r| r.get(0)).unwrap();
+        assert_eq!(v, "b");
+    }
+
+    #[test]
+    fn new_journal_entry_is_a_low_importance_episode() {
+        let s = store();
+        let id = note(&s, "x");
+        let f = s.force("journal", &id.to_string()).unwrap().unwrap();
+        assert_eq!((f.stabilite, f.importance, f.rappels), (3.0, 0.0, 0));
+    }
+
+    #[test]
+    fn anchor_and_forget_cleanup() {
+        let s = store();
+        s.fact_set("k", "a", "p").unwrap();
+        assert!(s.ancrer("fait", "k", true).unwrap());
+        assert!(s.force("fait", "k").unwrap().unwrap().ancre);
+        assert!(!s.ancrer("fait", "inconnue", true).unwrap());
+        s.fact_forget("k").unwrap();
+        assert!(s.force("fait", "k").unwrap().is_none());
+        let n: i64 = s.conn.query_row("SELECT count(*) FROM facts_fts", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 0);
+        let id = note(&s, "x");
+        assert!(s.journal_delete(id).unwrap());
+        assert!(s.force("journal", &id.to_string()).unwrap().is_none());
+    }
+
+    #[test]
+    fn persona_has_no_memory_row() {
+        let s = store();
+        s.fact_set(PERSONA_KEY, "calme", "hote").unwrap();
+        s.fact_set(PERSONA_KEY, "vif", "hote").unwrap();
+        assert!(s.force("fait", PERSONA_KEY).unwrap().is_none());
+        assert_eq!(s.fact_get(PERSONA_KEY).unwrap().unwrap().value, "vif");
     }
 
     #[test]
