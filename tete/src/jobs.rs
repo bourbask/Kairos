@@ -49,6 +49,9 @@ const HINTS_MAX: usize = 50;
 // ponytail: borne fixe en caractères (≈ 3 000 jetons) pour la plus petite fenêtre
 // de contexte courante ; la dériver de la configuration du moteur si un lot légitime la dépasse.
 const LOT_MAX_CHARS: usize = 10_000;
+/// Longueur maximale d'une synthèse : au-delà, la réponse n'est plus un résumé.
+/// Même borne côté mémoire.
+const SYNTHESIS_MAX_CHARS: usize = 4_000;
 const EXTRACTION_PROMPT: &str = "Extrais de la journée fournie ce que l'utilisateur a lui-même dit ou fait \
     et qui le décrit durablement. Réponds uniquement par un tableau JSON [{\"key\": texte, \"value\": texte}], \
     sans aucun autre texte. Chaque clé est une des clés connues, ou commence par un préfixe d'une clé connue \
@@ -690,6 +693,14 @@ fn condense_status(issues: &[Issue]) -> &'static str {
     }
 }
 
+/// Synthèse retenue d'une réponse du moteur, sinon `None`.
+fn synthesis(text: Option<String>, truncated: bool) -> Option<String> {
+    // Une synthèse coupée remplacerait ses sources : refusée comme une sortie vide.
+    let text = text.filter(|_| !truncated)?;
+    let text = text.trim();
+    (!text.is_empty() && text.chars().count() <= SYNTHESIS_MAX_CHARS).then(|| text.to_owned())
+}
+
 /// Un lot refusé (sortie vide) n'empêche pas les suivants ; il reste condensable.
 /// Une panne du moteur arrête la condensation.
 async fn condense(name: &str, ctx: &Ctx) -> &'static str {
@@ -721,13 +732,11 @@ async fn condense(name: &str, ctx: &Ctx) -> &'static str {
             issues.push(Issue::Panne);
             break;
         };
-        // Une synthèse coupée remplacerait ses sources : refusée comme une sortie vide.
-        let text = reply.text.filter(|_| !reply.truncated).unwrap_or_default();
-        if text.trim().is_empty() {
+        let Some(text) = synthesis(reply.text, reply.truncated) else {
             issues.push(Issue::Refuse);
             continue;
-        }
-        let args = json!({"niveau": lot.niveau, "periode": lot.periode, "texte": text.trim(), "empreinte": lot.empreinte});
+        };
+        let args = json!({"niveau": lot.niveau, "periode": lot.periode, "texte": text, "empreinte": lot.empreinte});
         // `id` nul : lot modifié ou déjà condensé entre-temps, rien à faire.
         if night_tool(name, "nuit_condenser", args, ctx).await.is_err() {
             return FAILED;
@@ -749,5 +758,14 @@ mod tests {
         assert_eq!(condense_status(&[Condense, Panne]), OK);
         assert_eq!(condense_status(&[Condense, Refuse, Condense]), INVALID);
         assert_eq!(condense_status(&[Condense]), OK);
+    }
+
+    #[test]
+    fn oversized_synthesis_refused() {
+        assert_eq!(synthesis(Some(" résumé ".into()), false).as_deref(), Some("résumé"));
+        assert_eq!(synthesis(Some("résumé".into()), true), None);
+        assert_eq!(synthesis(Some("  ".into()), false), None);
+        assert_eq!(synthesis(Some("x".repeat(4_000)), false).map(|t| t.len()), Some(4_000));
+        assert_eq!(synthesis(Some("x".repeat(4_001)), false), None);
     }
 }

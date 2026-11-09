@@ -292,6 +292,9 @@ fn renforcer_souvenir(c: &Connection, nature: &str, r#ref: &str, now: NaiveDateT
     Ok(true)
 }
 
+/// Longueur maximale d'une synthèse : au-delà, le texte n'est plus un résumé.
+const SYNTHESE_MAX: usize = 4_000;
+
 /// Un épisode n'est condensé qu'estompé depuis plus de ce délai, en jours.
 const D_COND: f64 = 14.0;
 
@@ -1183,11 +1186,11 @@ impl MemoryStore {
     /// Condense la période : recalcule son lot et, s'il est inchangé (même
     /// empreinte), crée la synthèse (ou réécrit l'existante pour un complément)
     /// et retire ses sources dans une seule transaction. `None` si le lot n'est
-    /// pas (ou plus) condensable, a changé, ou si le texte est vide ; rien n'est
-    /// alors modifié.
+    /// pas (ou plus) condensable, a changé, ou si le texte est vide ou démesuré ;
+    /// rien n'est alors modifié.
     pub fn condenser(&self, niveau: &str, periode: &str, texte: &str, empreinte: &str, maintenant: NaiveDateTime) -> Result<Option<i64>> {
         let texte = texte.trim();
-        if texte.is_empty() {
+        if texte.is_empty() || texte.chars().count() > SYNTHESE_MAX {
             return Ok(None);
         }
         let Some(lot) = self.lots(maintenant)?.into_iter().find(|l| l.niveau == niveau && l.periode == periode) else {
@@ -2339,6 +2342,9 @@ mod tests {
         assert_eq!(s.condensables(m, 10).unwrap()[0].elements.len(), 2);
         // Texte vide : rien.
         assert_eq!(condense(&s, "semaine", "2026-W44", "  \n", m).unwrap(), None);
+        // Texte démesuré : rien, les sources restent.
+        assert_eq!(condense(&s, "semaine", "2026-W44", &"x".repeat(4_001), m).unwrap(), None);
+        assert_eq!(compte(&s, "SELECT COUNT(*) FROM syntheses"), 0);
         // Erreur au milieu : tout est annulé.
         s.conn.execute_batch("CREATE TEMP TRIGGER bloque BEFORE DELETE ON conversations BEGIN SELECT RAISE(ABORT, 'refus'); END;").unwrap();
         assert!(condense(&s, "semaine", "2026-W44", "rosiers taillés", m).is_err());
