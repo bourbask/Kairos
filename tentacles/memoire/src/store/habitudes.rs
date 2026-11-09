@@ -36,6 +36,10 @@ pub const SOURCE_ABSENTE_JOURS: u64 = 14;
 /// Longueur maximale d'un code ou d'un nom de source.
 const CODE_MAX: usize = 64;
 const LIBELLE_MAX: usize = 120;
+/// Force minimale d'une habitude active.
+const SEUIL_ACTIVE: f64 = 0.5;
+/// Observations positives minimales avant la naissance.
+const POSITIFS_NAISSANCE: i64 = 3;
 const JOURS_QUOTIDIEN: [&str; 2] = ["ouvre", "weekend"];
 const JOURS_HEBDO: [&str; 7] = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"];
 
@@ -64,7 +68,7 @@ fn taux(o: &Observation) -> Option<f64> {
 
 /// Une occurrence du contexte de `o` : la valeur observée tend vers 1, les
 /// autres valeurs connues du contexte vers 0.
-fn compter(c: &Connection, source: &str, o: &Observation, a: f64) -> Result<()> {
+fn compter(c: &Connection, source: &str, o: &Observation, a: f64, maintenant: NaiveDateTime) -> Result<()> {
     c.execute(
         "UPDATE habitudes SET m = m + ?4 * (0 - m)
          WHERE source = ?1 AND quoi = ?2 AND contexte = ?3 AND valeur <> ?5",
@@ -84,11 +88,97 @@ fn compter(c: &Connection, source: &str, o: &Observation, a: f64) -> Result<()> 
             params![source, o.quoi, o.contexte, o.valeur, o.libelle, o.cadence, a],
         )?;
     }
+    // Souvenir d'une habitude née : rappelé si observée, confiance = force tant que non confirmée.
+    c.execute(
+        "UPDATE souvenirs SET dernier_rappel = ? WHERE nature = 'habitude' AND ref =
+         (SELECT CAST(id AS TEXT) FROM habitudes WHERE source = ? AND quoi = ? AND contexte = ? AND valeur = ?)",
+        params![ts(maintenant), source, o.quoi, o.contexte, o.valeur],
+    )?;
+    c.execute(
+        "UPDATE souvenirs SET confiance = (SELECT h.m FROM habitudes h WHERE CAST(h.id AS TEXT) = souvenirs.ref)
+         WHERE nature = 'habitude' AND ref IN (SELECT CAST(id AS TEXT) FROM habitudes
+             WHERE source = ? AND quoi = ? AND contexte = ? AND confirmee = 0)",
+        params![source, o.quoi, o.contexte],
+    )?;
+    Ok(())
+}
+
+/// Élit l'active du contexte : la valeur non rejetée de plus grande force,
+/// si elle dépasse le seuil et l'active courante. Une naissance est annoncée
+/// une fois ; un retour ne l'est jamais.
+fn elire(c: &Connection, source: &str, o: &Observation, j: &str, maintenant: NaiveDateTime, b: &mut BilanHabitudes) -> Result<()> {
+    // (id, etat, libelle, m, positifs), plus forte d'abord.
+    let lignes = c
+        .prepare(
+            "SELECT id, etat, libelle, m, positifs FROM habitudes
+             WHERE source = ? AND quoi = ? AND contexte = ? AND rejetee = 0 ORDER BY m DESC, id",
+        )?
+        .query_map(params![source, o.quoi, o.contexte], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, f64>(3)?, r.get::<_, i64>(4)?))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let Some((id, etat, libelle, m, positifs)) = lignes.first() else { return Ok(()) };
+    let active = lignes.iter().find(|l| l.1 == "active");
+    let eligible = match etat.as_str() {
+        "candidate" => *m >= SEUIL_ACTIVE && *positifs >= POSITIFS_NAISSANCE,
+        "ancienne" => *m >= SEUIL_ACTIVE,
+        _ => false,
+    };
+    if !eligible || active.is_some_and(|a| a.3 >= *m) {
+        return Ok(());
+    }
+    c.execute(
+        "UPDATE habitudes SET etat = 'ancienne', ancienne_depuis = ?4
+         WHERE source = ?1 AND quoi = ?2 AND contexte = ?3 AND etat = 'active'",
+        params![source, o.quoi, o.contexte, j],
+    )?;
+    if etat == "ancienne" {
+        c.execute("UPDATE habitudes SET etat = 'active', ancienne_depuis = NULL WHERE id = ?", [id])?;
+        b.retours += 1;
+        return Ok(());
+    }
+    let what = match active {
+        Some(a) => format!("Confirmer : habitude — {libelle} (avant : {}) ?", a.2),
+        None => format!("Confirmer : habitude — {libelle} ?"),
+    };
+    let question = proposer_question(c, &what, maintenant)?;
+    c.execute(
+        "UPDATE habitudes SET etat = 'active', nee_le = ?, question = ?, annoncee_le = ? WHERE id = ?",
+        params![j, question, ts(maintenant), id],
+    )?;
+    c.execute(
+        "INSERT OR REPLACE INTO souvenirs (nature, ref, stabilite, dernier_rappel, importance, confiance)
+         VALUES ('habitude', ?, ?, ?, 0.0, ?)",
+        params![id.to_string(), stabilite_initiale(Famille::Habitude, 0.0), ts(maintenant), m],
+    )?;
+    b.nees += 1;
+    if active.is_some() {
+        b.changements += 1;
+    }
+    Ok(())
+}
+
+/// Réponse à une question : une habitude acceptée est confirmée, une refusée
+/// n'est plus rappelée ni candidate au rôle d'active.
+pub(super) fn repondre(c: &Connection, question: i64, state: IntentionState) -> Result<()> {
+    let souvenir = "nature = 'habitude' AND ref IN (SELECT CAST(id AS TEXT) FROM habitudes WHERE question = ?)";
+    match state {
+        IntentionState::Acceptee => {
+            c.execute("UPDATE habitudes SET confirmee = 1 WHERE question = ?", [question])?;
+            c.execute(&format!("UPDATE souvenirs SET confiance = 1.0 WHERE {souvenir}"), [question])?;
+        }
+        IntentionState::Refusee => {
+            c.execute("UPDATE habitudes SET rejetee = 1 WHERE question = ?", [question])?;
+            c.execute(&format!("DELETE FROM souvenirs WHERE {souvenir}"), [question])?;
+        }
+        _ => {}
+    }
     Ok(())
 }
 
 impl MemoryStore {
-    /// Compte les observations de `jour`, source par source, en une transaction.
+    /// Compte les observations de `jour`, source par source, puis élit l'active
+    /// de chaque contexte touché, en une transaction.
     /// Un jour déjà appliqué pour une source ne compte plus. `complet` dit si
     /// toutes les sources encore attendues ont répondu.
     pub fn appliquer_observations(
@@ -97,7 +187,6 @@ impl MemoryStore {
         sources: &BTreeMap<String, Vec<Observation>>,
         maintenant: NaiveDateTime,
     ) -> Result<BilanHabitudes> {
-        let _ = maintenant;
         let j = jour.format("%Y-%m-%d").to_string();
         let mut b = BilanHabitudes::default();
         let tx = self.conn.unchecked_transaction()?;
@@ -116,7 +205,8 @@ impl MemoryStore {
             for (i, o) in obs.iter().enumerate() {
                 match taux(o) {
                     Some(a) if i < OBSERVATIONS_MAX && vus.insert((o.quoi.as_str(), o.contexte.as_str())) => {
-                        compter(&tx, source, o, a)?;
+                        compter(&tx, source, o, a, maintenant)?;
+                        elire(&tx, source, o, &j, maintenant, &mut b)?;
                         b.appliquees += 1;
                     }
                     _ => b.ignorees += 1,
@@ -257,5 +347,127 @@ mod tests {
         let v: Vec<_> = (0..51).map(|i| obs(&format!("c{i}.ouvre"), "maison")).collect();
         let b = s.appliquer_observations(jour(0), &lot("autre", v), quand(0)).unwrap();
         assert_eq!((b.appliquees, b.ignorees), (50, 1));
+    }
+
+    /// État et identifiant d'une valeur du contexte de test.
+    fn etat(s: &MemoryStore, valeur: &str) -> (String, i64) {
+        s.conn.query_row("SELECT etat, id FROM habitudes WHERE valeur = ?", [valeur], |r| Ok((r.get(0)?, r.get(1)?))).unwrap()
+    }
+
+    fn colonne(s: &MemoryStore, col: &str, valeur: &str) -> Option<String> {
+        s.conn.query_row(&format!("SELECT {col} FROM habitudes WHERE valeur = ?"), [valeur], |r| r.get(0)).unwrap()
+    }
+
+    fn intentions(s: &MemoryStore) -> Vec<Intention> {
+        let mut st = s.conn.prepare("SELECT id, what FROM intentions ORDER BY id").unwrap();
+        st.query_map([], |r| {
+            Ok(Intention { id: r.get(0)?, what: r.get(1)?, constraints: String::new(), expires_at: quand(0), state: IntentionState::Proposee })
+        })
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap()
+    }
+
+    /// Joue `n` jours de `valeur` à partir du jour `debut` ; renvoie le dernier bilan.
+    fn serie(s: &MemoryStore, debut: u64, n: u64, valeur: &str) -> BilanHabitudes {
+        (debut..debut + n).map(|d| jouer(s, d, valeur)).last().unwrap()
+    }
+
+    #[test]
+    fn habit_born_after_seven_evenings() {
+        let s = store();
+        serie(&s, 0, 6, "maison");
+        assert_eq!(etat(&s, "maison").0, "candidate");
+        assert!(s.intentions_open(quand(5)).unwrap().is_empty());
+        let b = jouer(&s, 6, "maison");
+        assert_eq!(b.nees, 1);
+        let (e, id) = etat(&s, "maison");
+        assert_eq!(e, "active");
+        assert_eq!(colonne(&s, "nee_le", "maison").as_deref(), Some("2026-01-11"));
+        assert!(s.force("habitude", &id.to_string()).unwrap().is_some());
+        let ouvertes = s.intentions_open(quand(6)).unwrap();
+        assert_eq!(ouvertes.len(), 1);
+        assert_eq!(ouvertes[0].what, "Confirmer : habitude — repas du soir : maison ?");
+    }
+
+    #[test]
+    fn birth_asks_once() {
+        let s = store();
+        serie(&s, 0, 7, "maison");
+        jouer(&s, 6, "maison");
+        serie(&s, 7, 10, "maison");
+        assert_eq!(intentions(&s).len(), 1);
+    }
+
+    #[test]
+    fn change_marks_old_habit() {
+        let s = store();
+        serie(&s, 0, 22, "maison");
+        serie(&s, 22, 6, "restaurant");
+        assert_eq!(etat(&s, "restaurant").0, "candidate");
+        let b = jouer(&s, 28, "restaurant");
+        assert_eq!(etat(&s, "restaurant").0, "active");
+        assert_eq!(etat(&s, "maison").0, "ancienne");
+        assert_eq!(colonne(&s, "ancienne_depuis", "maison").as_deref(), Some("2026-02-02"));
+        assert_eq!(b.changements, 1);
+        let q = intentions(&s);
+        assert_eq!(q.len(), 2);
+        assert!(q[1].what.contains("(avant : "), "{}", q[1].what);
+    }
+
+    #[test]
+    fn old_habit_fades_in_two_to_three_weeks() {
+        let s = store();
+        serie(&s, 0, 22, "maison");
+        serie(&s, 22, 10, "restaurant");
+        assert!(ligne(&s, "maison").0 >= 0.3);
+        jouer(&s, 32, "restaurant");
+        assert!(ligne(&s, "maison").0 < 0.3);
+    }
+
+    #[test]
+    fn return_is_fast() {
+        let s = store();
+        serie(&s, 0, 22, "maison");
+        serie(&s, 22, 12, "restaurant");
+        let avant = intentions(&s).len();
+        serie(&s, 34, 2, "maison");
+        assert_eq!(etat(&s, "maison").0, "ancienne");
+        assert!((ligne(&s, "maison").0 - 0.5230).abs() < 1e-3);
+        assert!((ligne(&s, "restaurant").0 - 0.5812).abs() < 1e-3);
+        let b = jouer(&s, 36, "maison");
+        assert!((ligne(&s, "maison").0 - 0.6184).abs() < 1e-3);
+        assert_eq!(etat(&s, "maison").0, "active");
+        assert_eq!(etat(&s, "restaurant").0, "ancienne");
+        assert_eq!(colonne(&s, "ancienne_depuis", "maison"), None);
+        assert_eq!((b.retours, b.nees), (1, 0));
+        assert_eq!(intentions(&s).len(), avant);
+    }
+
+    #[test]
+    fn confirmation_sets_confidence_one() {
+        let s = store();
+        serie(&s, 0, 7, "maison");
+        let id = etat(&s, "maison").1;
+        let q: i64 = s.conn.query_row("SELECT question FROM habitudes WHERE id = ?", [id], |r| r.get(0)).unwrap();
+        assert!(s.intention_set_state(q, IntentionState::Acceptee).unwrap());
+        assert_eq!(colonne(&s, "CAST(confirmee AS TEXT)", "maison").as_deref(), Some("1"));
+        assert_eq!(s.force("habitude", &id.to_string()).unwrap().unwrap().confiance, 1.0);
+        // Confirmée : la confiance ne suit plus le comptage.
+        jouer(&s, 7, "restaurant");
+        assert_eq!(s.force("habitude", &id.to_string()).unwrap().unwrap().confiance, 1.0);
+    }
+
+    #[test]
+    fn rejected_habit_never_asked_again() {
+        let s = store();
+        serie(&s, 0, 7, "maison");
+        let id = etat(&s, "maison").1;
+        let q: i64 = s.conn.query_row("SELECT question FROM habitudes WHERE id = ?", [id], |r| r.get(0)).unwrap();
+        assert!(s.intention_set_state(q, IntentionState::Refusee).unwrap());
+        assert!(s.force("habitude", &id.to_string()).unwrap().is_none());
+        serie(&s, 7, 20, "maison");
+        assert_eq!(intentions(&s).len(), 1);
+        assert!(s.force("habitude", &id.to_string()).unwrap().is_none());
     }
 }

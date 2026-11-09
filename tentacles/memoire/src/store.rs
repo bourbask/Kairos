@@ -274,6 +274,15 @@ fn ref_deduction(key: &str, value: &str) -> String {
     format!("{key}\u{1f}{value}")
 }
 
+/// Pose une question de confirmation, valable `QUESTION_JOURS` ; renvoie son identifiant.
+fn proposer_question(c: &Connection, what: &str, maintenant: NaiveDateTime) -> Result<i64> {
+    c.execute(
+        "INSERT INTO intentions (what, constraints, expires_at, state) VALUES (?, '', ?, ?)",
+        params![what, ts(maintenant + chrono::Duration::days(QUESTION_JOURS)), IntentionState::Proposee.as_str()],
+    )?;
+    Ok(c.last_insert_rowid())
+}
+
 /// Renforce un souvenir existant au moment `now` (rappel).
 fn renforcer_souvenir(c: &Connection, nature: &str, r#ref: &str, now: NaiveDateTime) -> Result<bool> {
     let prev = c
@@ -940,10 +949,7 @@ impl MemoryStore {
                         .iter()
                         .any(|w| norme(w) == norme(&what));
                     if !deja {
-                        tx.execute(
-                            "INSERT INTO intentions (what, constraints, expires_at, state) VALUES (?, '', ?, ?)",
-                            params![what, ts(maintenant + chrono::Duration::days(QUESTION_JOURS)), IntentionState::Proposee.as_str()],
-                        )?;
+                        proposer_question(&tx, &what, maintenant)?;
                         b.questions += 1;
                     }
                 }
@@ -999,10 +1005,15 @@ impl MemoryStore {
         Ok(self.conn.last_insert_rowid())
     }
 
+    /// Change l'état d'une intention ; une réponse à une question d'habitude
+    /// la confirme ou la rejette dans la même transaction.
     pub fn intention_set_state(&self, id: i64, state: IntentionState) -> Result<bool> {
-        let n = self
-            .conn
-            .execute("UPDATE intentions SET state = ? WHERE id = ?", params![state.as_str(), id])?;
+        let tx = self.conn.unchecked_transaction()?;
+        let n = tx.execute("UPDATE intentions SET state = ? WHERE id = ?", params![state.as_str(), id])?;
+        if n > 0 {
+            habitudes::repondre(&tx, id, state)?;
+        }
+        tx.commit()?;
         Ok(n > 0)
     }
 
