@@ -353,6 +353,12 @@ impl MemoryStore {
              (SELECT 1 FROM journal j WHERE j.id = CAST(souvenirs.ref AS INTEGER) AND j.at <= souvenirs.dernier_rappel)",
             [],
         )?;
+        // Même règle pour les conversations (identifiant réutilisable, date de début).
+        tx.execute(
+            "DELETE FROM souvenirs WHERE nature = 'conversation' AND NOT EXISTS
+             (SELECT 1 FROM conversations c WHERE c.id = CAST(souvenirs.ref AS INTEGER) AND c.started_at <= souvenirs.dernier_rappel)",
+            [],
+        )?;
         // Créés maintenant : réactivés à la migration pour ne pas s'estomper d'un coup.
         let maintenant = ts(now_local());
         tx.execute(
@@ -364,6 +370,11 @@ impl MemoryStore {
         tx.execute(
             "INSERT OR IGNORE INTO souvenirs (nature, ref, stabilite, dernier_rappel, importance, confiance)
              SELECT 'journal', CAST(id AS TEXT), ?1, ?3, ?2, 1.0 FROM journal",
+            params![stabilite_initiale(Famille::Episode, IMPORTANCE_EPISODE), IMPORTANCE_EPISODE, maintenant],
+        )?;
+        tx.execute(
+            "INSERT OR IGNORE INTO souvenirs (nature, ref, stabilite, dernier_rappel, importance, confiance)
+             SELECT 'conversation', CAST(id AS TEXT), ?1, ?3, ?2, 1.0 FROM conversations",
             params![stabilite_initiale(Famille::Episode, IMPORTANCE_EPISODE), IMPORTANCE_EPISODE, maintenant],
         )?;
         tx.execute("DELETE FROM facts_fts", [])?;
@@ -655,6 +666,11 @@ impl MemoryStore {
         )?;
         let id = tx.last_insert_rowid();
         tx.execute("INSERT INTO conversations_fts (rowid, text) VALUES (?,?)", params![id, c.transcript])?;
+        tx.execute(
+            "INSERT OR REPLACE INTO souvenirs (nature, ref, stabilite, dernier_rappel, importance, confiance)
+             VALUES ('conversation', ?, ?, ?, ?, 1.0)",
+            params![id.to_string(), stabilite_initiale(Famille::Episode, IMPORTANCE_EPISODE), ts(now_local()), IMPORTANCE_EPISODE],
+        )?;
         tx.commit()?;
         Ok(id)
     }
@@ -720,6 +736,7 @@ impl MemoryStore {
         let tx = self.conn.unchecked_transaction()?;
         let n = tx.execute("DELETE FROM conversations WHERE id = ?", [id])?;
         tx.execute("DELETE FROM conversations_fts WHERE rowid = ?", [id])?;
+        tx.execute("DELETE FROM souvenirs WHERE nature = 'conversation' AND ref = ?", [id.to_string()])?;
         tx.execute("INSERT INTO conversations_fts (conversations_fts) VALUES ('optimize')", [])?;
         tx.commit()?;
         Ok(n > 0)
@@ -774,11 +791,18 @@ impl MemoryStore {
                 let (rank, id) = r?;
                 hits.push((rank, "journal", id.to_string()));
             }
+            let mut st = self.conn.prepare("SELECT rowid, rank FROM conversations_fts WHERE conversations_fts MATCH ? ORDER BY rank LIMIT ?")?;
+            for r in st.query_map(params![q, RAPPEL_RECHERCHE_MAX], |r| Ok((r.get::<_, f64>(1)?, r.get::<_, i64>(0)?)))? {
+                let (rank, id) = r?;
+                hits.push((rank, "conversation", id.to_string()));
+            }
         }
         hits.sort_by(|a, b| a.0.total_cmp(&b.0));
         let rang: std::collections::HashMap<(&str, &str), usize> =
             hits.iter().enumerate().map(|(i, (_, n, r))| ((*n, r.as_str()), i)).collect();
-        let journal_hits: Vec<String> = hits.iter().filter(|h| h.1 == "journal").map(|h| h.2.clone()).collect();
+        let ids = |nature: &str| hits.iter().filter(|h| h.1 == nature).map(|h| h.2.clone()).collect::<Vec<_>>().join(",");
+        // Identifiants entiers issus de la base : pas de risque d'injection.
+        let (journal_hits, conv_hits) = (ids("journal"), ids("conversation"));
 
         // Candidats : tous les faits ; épisodes récents, ancrés ou trouvés.
         // ponytail: tous les faits sont lus à chaque rappel ; filtrer en SQL si leur nombre explose.
@@ -789,9 +813,13 @@ impl MemoryStore {
              SELECT 'journal', s.ref, substr(j.at, 1, 10) || char(1) || j.content, s.stabilite, s.dernier_rappel, s.importance, s.ancre
              FROM souvenirs s JOIN journal j ON j.id = CAST(s.ref AS INTEGER) WHERE s.nature = 'journal'
                AND (s.ancre OR j.id IN (SELECT id FROM journal ORDER BY id DESC LIMIT {RAPPEL_JOURNAL_RECENT})
-                    OR j.id IN ({}))",
-            // Identifiants entiers issus de la base : pas de risque d'injection.
-            journal_hits.join(",")
+                    OR j.id IN ({journal_hits}))
+             UNION ALL
+             SELECT 'conversation', s.ref, substr(c.started_at, 1, 10) || char(1) || coalesce(c.summary, '') || char(1) || c.topics,
+                    s.stabilite, s.dernier_rappel, s.importance, s.ancre
+             FROM souvenirs s JOIN conversations c ON c.id = CAST(s.ref AS INTEGER) WHERE s.nature = 'conversation'
+               AND (s.ancre OR c.id IN (SELECT id FROM conversations ORDER BY id DESC LIMIT {RAPPEL_JOURNAL_RECENT})
+                    OR c.id IN ({conv_hits}))"
         );
         struct Cand { r: Rappel, importance: f64, dernier: NaiveDateTime, rang: Option<usize> }
         let mut st = self.conn.prepare(&sql)?;
@@ -805,6 +833,14 @@ impl MemoryStore {
             let (nature, r#ref, brut, stabilite, dr, importance, ancre) = row?;
             let texte = match brut.split_once('\u{1}') {
                 Some((date, content)) if nature == "journal" => format!("{date} : {}", texte_journal(content)),
+                Some((date, reste)) if nature == "conversation" => {
+                    let (resume, sujets) = reste.split_once('\u{1}').unwrap_or((reste, "[]"));
+                    let sujets: Vec<String> = serde_json::from_str(sujets).unwrap_or_default();
+                    let corps = if resume.is_empty() { sujets.join(", ") } else { resume.to_string() };
+                    // Conversation sans résumé ni sujets : rien à rappeler.
+                    if corps.is_empty() { continue }
+                    format!("{date} : {corps}")
+                }
                 _ => brut,
             };
             // Ligne illisible : ignorée sans bloquer le rappel ni exposer son contenu.
@@ -929,6 +965,45 @@ mod tests {
         assert!(s.conversation_search("jardin", 10).unwrap().is_empty());
         let n: i64 = s.conn.query_row("SELECT count(*) FROM conversations_fts", [], |r| r.get(0)).unwrap();
         assert_eq!(n, 0);
+    }
+
+    #[test]
+    fn conversations_become_episodes() {
+        let s = store();
+        let id = s.conversation_ingest(&conv("parlons du jardin")).unwrap();
+        let f = s.force("conversation", &id.to_string()).unwrap().unwrap();
+        assert_eq!((f.stabilite, f.importance, f.rappels), (3.0, 0.0, 0));
+        // Migration : ligne manquante recréée, orpheline retirée, transcription purgée sans effet.
+        s.conn.execute("DELETE FROM souvenirs WHERE nature = 'conversation'", []).unwrap();
+        s.conn.execute("INSERT INTO souvenirs VALUES ('conversation', '999', 3.0, '2999-01-01 00:00:00', 0, 0.0, 0, 1.0)", []).unwrap();
+        MemoryStore::migrate_souvenirs(&s.conn).unwrap();
+        assert!(s.force("conversation", &id.to_string()).unwrap().is_some());
+        assert!(s.force("conversation", "999").unwrap().is_none());
+        s.conversation_set_summary(id, "jardin", &[], &[]).unwrap();
+        s.purge_transcripts(t() + Duration::days(1)).unwrap();
+        assert!(s.force("conversation", &id.to_string()).unwrap().is_some());
+    }
+
+    #[test]
+    fn conversation_delete_removes_memory() {
+        let s = store();
+        let id = s.conversation_ingest(&conv("parlons du jardin")).unwrap();
+        assert!(s.conversation_delete(id).unwrap());
+        assert!(s.force("conversation", &id.to_string()).unwrap().is_none());
+    }
+
+    #[test]
+    fn recall_finds_conversation_by_summary() {
+        let s = store();
+        let id = s.conversation_ingest(&conv("bavardage")).unwrap();
+        s.conversation_set_summary(id, "projet de potager", &[], &[]).unwrap();
+        let r = s.rappel(Some("potager"), t(), 10).unwrap();
+        let c = r.iter().find(|x| x.nature == "conversation").unwrap();
+        assert_eq!(c.texte, "2026-10-29 : projet de potager");
+        // Sans résumé ni sujets : ignorée.
+        let s2 = store();
+        s2.conversation_ingest(&conv("bavardage")).unwrap();
+        assert!(s2.rappel(None, t(), 10).unwrap().iter().all(|x| x.nature != "conversation"));
     }
 
     #[test]
