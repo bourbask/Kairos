@@ -233,8 +233,8 @@ pub struct Bilan {
 
 /// Étapes de la nuit dont l'état est conservé.
 pub const ETAPES_NUIT: [&str; 3] = ["extraction", "condensation", "oubli"];
-/// Longueur maximale d'un statut d'étape, en caractères.
-const STATUT_MAX: usize = 100;
+/// Statuts possibles d'une étape de nuit : des codes, jamais de texte libre.
+pub const STATUTS_NUIT: [&str; 4] = ["ok", "modele_indisponible", "sortie_invalide", "echec"];
 /// En dessous de cette récupérabilité, un souvenir oubliable est effacé.
 const SEUIL_OUBLI: f64 = 0.05;
 
@@ -245,6 +245,8 @@ pub struct EtatNuit {
     pub dernier_jour: Option<NaiveDate>,
     pub derniere_execution: Option<NaiveDateTime>,
     pub statut: String,
+    /// Ligne altérée : étape, dates ou statut inexploitables.
+    pub illisible: bool,
 }
 
 /// Longueur maximale d'une valeur d'indice, en caractères.
@@ -560,7 +562,21 @@ impl MemoryStore {
             "CREATE UNIQUE INDEX IF NOT EXISTS conversations_session ON conversations(session_id) WHERE session_id IS NOT NULL;",
         )?;
         Self::migrate_souvenirs(&conn)?;
+        Self::migrer_nuit(&conn)?;
         Ok(MemoryStore { conn })
+    }
+
+    /// Donne un état à chaque étape de nuit qui n'en a pas : son horloge part
+    /// de maintenant, pour qu'une nuit qui ne tourne jamais finisse signalée.
+    fn migrer_nuit(conn: &Connection) -> Result<()> {
+        let maintenant = ts(now_local());
+        for etape in ETAPES_NUIT {
+            conn.execute(
+                "INSERT OR IGNORE INTO nuit_etat (etape, derniere_execution, statut) VALUES (?, ?, 'ok')",
+                [etape, maintenant.as_str()],
+            )?;
+        }
+        Ok(())
     }
 
     /// Aligne les souvenirs sur `fact_log` et `journal` à chaque ouverture, y
@@ -1226,11 +1242,20 @@ impl MemoryStore {
         })?
         .map(|row| {
             let (etape, dj, de, statut) = row?;
+            let dernier_jour = dj.map(|j| NaiveDate::parse_from_str(&j, "%Y-%m-%d").ok());
+            let derniere_execution = de.map(|t| parse_ts(&t).ok());
+            let statut = statut.unwrap_or_default();
+            // Ligne altérée : signalée sans faire échouer la lecture des autres.
+            let illisible = !ETAPES_NUIT.contains(&etape.as_str())
+                || !STATUTS_NUIT.contains(&statut.as_str())
+                || dernier_jour == Some(None)
+                || matches!(derniere_execution, None | Some(None));
             Ok(EtatNuit {
                 etape,
-                dernier_jour: dj.map(|j| NaiveDate::parse_from_str(&j, "%Y-%m-%d")).transpose()?,
-                derniere_execution: de.map(|t| parse_ts(&t)).transpose()?,
-                statut: statut.unwrap_or_default(),
+                dernier_jour: dernier_jour.flatten(),
+                derniere_execution: derniere_execution.flatten(),
+                statut,
+                illisible,
             })
         })
         .collect()
@@ -1241,9 +1266,8 @@ impl MemoryStore {
         if !ETAPES_NUIT.contains(&etape) {
             bail!("étape inconnue : {etape}");
         }
-        let statut = statut.split_whitespace().collect::<Vec<_>>().join(" ");
-        if statut.is_empty() || statut.chars().count() > STATUT_MAX {
-            bail!("statut vide ou trop long");
+        if !STATUTS_NUIT.contains(&statut) {
+            bail!("statut inconnu : {statut} (attendu : {})", STATUTS_NUIT.join(", "));
         }
         self.conn.execute(
             "INSERT INTO nuit_etat (etape, dernier_jour, derniere_execution, statut) VALUES (?1, ?2, ?3, ?4)
@@ -2649,16 +2673,37 @@ mod tests {
     #[test]
     fn night_state_keeps_last_day() {
         let s = store();
-        assert!(s.nuit_etat().unwrap().is_empty());
-        s.nuit_noter("extraction", "ok", Some(d(3)), jour(2026, 11, 4)).unwrap();
-        s.nuit_noter("extraction", "modèle indisponible", None, jour(2026, 11, 5)).unwrap();
+        // Chaque étape existe dès l'ouverture : son horloge part de là.
         let e = s.nuit_etat().unwrap();
-        assert_eq!(e.len(), 1);
+        assert_eq!(e.iter().map(|e| e.etape.as_str()).collect::<Vec<_>>(), ["condensation", "extraction", "oubli"]);
+        assert!(e.iter().all(|e| e.statut == "ok" && e.derniere_execution.is_some() && e.dernier_jour.is_none() && !e.illisible));
+        s.nuit_noter("extraction", "ok", Some(d(3)), jour(2026, 11, 4)).unwrap();
+        s.nuit_noter("extraction", "modele_indisponible", None, jour(2026, 11, 5)).unwrap();
+        // Rouverte : l'état existant n'est pas écrasé.
+        MemoryStore::migrer_nuit(&s.conn).unwrap();
+        let e: Vec<_> = s.nuit_etat().unwrap().into_iter().filter(|e| e.etape == "extraction").collect();
         assert_eq!(e[0].dernier_jour, Some(d(3)));
         assert_eq!(e[0].derniere_execution, Some(jour(2026, 11, 5)));
-        assert_eq!(e[0].statut, "modèle indisponible");
+        assert_eq!(e[0].statut, "modele_indisponible");
         assert!(s.nuit_noter("inconnue", "ok", None, jour(2026, 11, 5)).is_err());
-        assert!(s.nuit_noter("oubli", " ", None, jour(2026, 11, 5)).is_err());
+        for statut in [" ", "erreur", "modèle indisponible", "texte libre quelconque"] {
+            assert!(s.nuit_noter("oubli", statut, None, jour(2026, 11, 5)).is_err(), "{statut}");
+        }
+        for statut in STATUTS_NUIT {
+            s.nuit_noter("oubli", statut, None, jour(2026, 11, 5)).unwrap();
+        }
+    }
+
+    #[test]
+    fn unreadable_night_state_is_flagged() {
+        let s = store();
+        s.conn.execute("UPDATE nuit_etat SET derniere_execution = 'hier soir' WHERE etape = 'oubli'", []).unwrap();
+        s.conn.execute("UPDATE nuit_etat SET statut = 'n''importe quoi' WHERE etape = 'extraction'", []).unwrap();
+        s.conn.execute("INSERT INTO nuit_etat VALUES ('autre', NULL, NULL, 'ok')", []).unwrap();
+        let e = s.nuit_etat().unwrap();
+        let illisibles: Vec<_> = e.iter().filter(|e| e.illisible).map(|e| e.etape.as_str()).collect();
+        assert_eq!(illisibles, ["autre", "extraction", "oubli"]);
+        assert!(e.iter().find(|e| e.etape == "condensation").is_some_and(|e| !e.illisible));
     }
 
     #[test]
