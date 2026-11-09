@@ -346,19 +346,24 @@ fn texte_conversation(resume: &str, sujets: &str, decisions: &str) -> String {
 /// une sous-clé `<connue>.<suite>` ; toute autre clé est refusée.
 fn cle_connue(connues: &[String], cle: &str) -> Option<String> {
     let bas = cle.to_lowercase();
-    connues.iter().find_map(|c| {
-        let c_bas = c.to_lowercase();
-        if bas == c_bas {
-            return Some(c.clone());
-        }
-        let suite = bas.strip_prefix(&c_bas)?.strip_prefix('.')?;
-        (!suite.trim().is_empty()).then(|| format!("{c}.{}", &cle[cle.len() - suite.len()..]))
-    })
+    if let Some(c) = connues.iter().find(|c| c.to_lowercase() == bas) {
+        return Some(c.clone());
+    }
+    // Préfixe connu le plus long ; la suite est gardée en minuscules.
+    connues
+        .iter()
+        .filter_map(|c| {
+            let suite = bas.strip_prefix(&c.to_lowercase())?.strip_prefix('.')?.to_owned();
+            (!suite.trim().is_empty()).then(|| (c.len(), format!("{c}.{suite}")))
+        })
+        .max_by_key(|(n, _)| *n)
+        .map(|(_, k)| k)
 }
 
-/// Conversation pas encore résumée : ni résumé, ni sujets, ni décisions. Sa
-/// négation définit les conversations qui sont des épisodes.
-const NON_RESUMEE: &str = "trim(coalesce(summary, '')) = '' AND trim(topics) IN ('', '[]') AND trim(decisions) IN ('', '[]')";
+/// Conversation pas encore passée au résumé. Un résumé vide est un résultat :
+/// rien à retenir, la conversation n'attend plus. Sa négation définit les
+/// conversations qui sont des épisodes.
+const NON_RESUMEE: &str = "summary IS NULL";
 
 /// Premier jour d'une période de synthèse.
 fn debut_periode(niveau: &str, periode: &str) -> Option<NaiveDate> {
@@ -1332,13 +1337,13 @@ impl MemoryStore {
             "SELECT 'journal', j.id, substr(j.at, 1, 10), j.content, '', '', s.stabilite, s.dernier_rappel, s.ancre
              FROM journal j LEFT JOIN souvenirs s ON s.nature = 'journal' AND s.ref = CAST(j.id AS TEXT)
              UNION ALL
-             SELECT 'conversation', c.id, substr(c.started_at, 1, 10), coalesce(c.summary, ''), c.topics, c.decisions,
+             SELECT 'conversation', c.id, substr(c.started_at, 1, 10), c.summary, c.topics, c.decisions,
                     s.stabilite, s.dernier_rappel, s.ancre
              FROM conversations c LEFT JOIN souvenirs s ON s.nature = 'conversation' AND s.ref = CAST(c.id AS TEXT)
              ORDER BY 3, 1, 2",
         )?;
         let rows = st.query_map([], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?,
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, String>(2)?, r.get::<_, Option<String>>(3)?,
                 r.get::<_, String>(4)?, r.get::<_, String>(5)?,
                 r.get::<_, Option<f64>>(6)?, r.get::<_, Option<String>>(7)?, r.get::<_, Option<bool>>(8)?))
         })?;
@@ -1346,9 +1351,9 @@ impl MemoryStore {
             let (nature, id, date, brut, sujets, decisions, stabilite, dernier, ancre) = row?;
             // Date illisible : l'épisode ne peut être rangé dans aucune semaine.
             let Ok(date) = NaiveDate::parse_from_str(&date, "%Y-%m-%d") else { continue };
-            // Une conversation sans résumé, sujets ni décisions n'a rien à transmettre : elle attend.
-            let liste_pleine = |l: &str| serde_json::from_str::<Vec<String>>(l).map_or(!l.trim().is_empty(), |v| !v.is_empty());
-            let a_contenu = !brut.trim().is_empty() || (nature == "conversation" && (liste_pleine(&sujets) || liste_pleine(&decisions)));
+            // Une conversation pas encore résumée attend ; une entrée de journal vide aussi.
+            let a_contenu = if nature == "conversation" { brut.is_some() } else { brut.as_deref().is_some_and(|b| !b.trim().is_empty()) };
+            let brut = brut.unwrap_or_default();
             let texte = if nature == "journal" { texte_journal_complet(&brut) } else { texte_conversation(&brut, &sujets, &decisions) };
             // Estompé depuis plus de D_COND : instant d'estompage = dernier rappel + S × ln 2.
             let estompe = match (stabilite, dernier.as_deref().map(parse_ts), ancre) {
@@ -2366,21 +2371,25 @@ mod tests {
         let c = s.conversation_ingest(&NewConversation { session_id: Some("y".into()), ..conv("résumée") }).unwrap();
         s.conversation_set_summary(c, "bilan", &[], &[]).unwrap();
         let sujets = s.conversation_ingest(&NewConversation { session_id: Some("z".into()), ..conv("sujets seuls") }).unwrap();
-        s.conn.execute("UPDATE conversations SET topics = '[\"jardin\"]' WHERE id = ?", [sujets]).unwrap();
+        s.conversation_set_summary(sujets, "", &["jardin".into()], &[]).unwrap();
         let blanc = s.conversation_ingest(&NewConversation { session_id: Some("w".into()), ..conv("résumé blanc") }).unwrap();
         s.conn.execute("UPDATE conversations SET summary = '   ' WHERE id = ?", [blanc]).unwrap();
         s.conn.execute("UPDATE conversations SET started_at = '2026-10-01 10:00:00'", []).unwrap();
         let jour = NaiveDate::from_ymd_opt(2026, 10, 1).unwrap();
-        assert_eq!(s.conversations_non_resumees_le(jour).unwrap(), 2);
+        assert_eq!(s.conversations_non_resumees_le(jour).unwrap(), 1);
         assert_eq!(s.conversations_non_resumees_le(jour.succ_opt().unwrap()).unwrap(), 0);
-        // Les conversations en attente sont celles reproposées au résumé, résumé blanc compris.
+        // Seules les conversations jamais résumées sont reproposées : un résumé
+        // blanc est un résultat (rien à retenir) et n'occupe pas la file.
         let a_resumer: Vec<i64> = s.conversations_unsummarized(10).unwrap().iter().map(|c| c.id).collect();
-        assert_eq!(a_resumer.len(), 2);
-        assert!(a_resumer.contains(&blanc));
+        assert_eq!(a_resumer.len(), 1);
+        assert!(!a_resumer.contains(&blanc));
         // Chaque conversation est soit en attente, soit un épisode : jamais les deux, jamais aucun.
         let ep = s.episodes_du_jour(jour).unwrap();
         let textes: Vec<(&str, &str)> = ep.iter().map(|e| (e.r#ref.as_str(), e.texte.as_str())).collect();
-        assert_eq!(textes, vec![(c.to_string().as_str(), "bilan"), (sujets.to_string().as_str(), "Sujets : jardin")]);
+        assert_eq!(
+            textes,
+            vec![(c.to_string().as_str(), "bilan"), (sujets.to_string().as_str(), "Sujets : jardin"), (blanc.to_string().as_str(), "")]
+        );
     }
 
     #[test]
@@ -2506,8 +2515,9 @@ mod tests {
         let d = s.conversation_ingest(&NewConversation { session_id: Some("y".into()), ..conv("muette") }).unwrap();
         s.conversation_set_summary(d, "", &[], &["arroser".into()]).unwrap();
         assert_eq!(s.conversations_non_resumees_avant(t().date() + Duration::days(1)).unwrap(), 0);
+        // Résumé blanc : un résultat, rien à retenir ; la conversation n'attend plus.
         s.conversation_set_summary(d, " ", &[], &[]).unwrap();
-        assert_eq!(s.conversations_non_resumees_avant(t().date() + Duration::days(1)).unwrap(), 1);
+        assert_eq!(s.conversations_non_resumees_avant(t().date() + Duration::days(1)).unwrap(), 0);
     }
 
     // --- Déductions ---
@@ -2558,6 +2568,21 @@ mod tests {
         assert_eq!((b.deduits, b.ignores), (1, 1));
         assert_eq!(confiance(&s, "ville.quartier", "Nord"), 0.25);
         assert_eq!(compte(&s, "SELECT COUNT(*) FROM deductions WHERE key <> 'ville.quartier'"), 0);
+    }
+
+    #[test]
+    fn extraction_key_exact_match_wins_and_never_panics() {
+        let s = store();
+        s.fact_set_at("ville", "Ville-A", "utilisateur", t()).unwrap();
+        s.fact_set_at("ville.quartier", "Nord", "utilisateur", t()).unwrap();
+        s.fact_set_at("café", "noir", "utilisateur", t()).unwrap();
+        // Clé déclarée en casse différente : jamais une déduction sous une variante.
+        let b = s.appliquer_extraction(d(1), &[indice("VILLE.QUARTIER", "Sud")], jour(2026, 11, 1)).unwrap();
+        assert_eq!((b.deduits, b.questions), (0, 1));
+        // Suite dont la minuscule change de longueur : ni panique ni clé tronquée.
+        let b = s.appliquer_extraction(d(2), &[indice("café.İİ", "x")], jour(2026, 11, 2)).unwrap();
+        assert_eq!(b.deduits, 1);
+        assert_eq!(compte(&s, "SELECT COUNT(*) FROM deductions WHERE key LIKE 'café.%'"), 1);
     }
 
     #[test]
