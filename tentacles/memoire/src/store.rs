@@ -215,6 +215,57 @@ impl Lot {
     }
 }
 
+/// Indice tiré des épisodes d'une journée : une valeur supposée d'une clé.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Indice {
+    pub key: String,
+    pub value: String,
+}
+
+/// Effet de l'application d'une extraction.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct Bilan {
+    pub renforces: u32,
+    pub deduits: u32,
+    pub questions: u32,
+    pub ignores: u32,
+}
+
+/// Longueur maximale d'une valeur d'indice, en caractères.
+const INDICE_VALEUR_MAX: usize = 300;
+/// Confiance d'une déduction à son premier indice, et part gagnée à chaque jour d'indice nouveau.
+const PAS_CONFIANCE: f64 = 0.25;
+/// Durée de vie d'une question de confirmation, en jours.
+const QUESTION_JOURS: i64 = 7;
+
+/// Forme comparable d'une valeur : sans casse, espaces réduits.
+fn norme(v: &str) -> String {
+    v.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+}
+
+/// Référence du souvenir d'une déduction.
+fn ref_deduction(key: &str, value: &str) -> String {
+    format!("{key}\u{1f}{value}")
+}
+
+/// Renforce un souvenir existant au moment `now` (rappel).
+fn renforcer_souvenir(c: &Connection, nature: &str, r#ref: &str, now: NaiveDateTime) -> Result<bool> {
+    let prev = c
+        .query_row(
+            "SELECT stabilite, dernier_rappel, ancre FROM souvenirs WHERE nature = ? AND ref = ?",
+            [nature, r#ref],
+            |r| Ok((r.get::<_, f64>(0)?, r.get::<_, String>(1)?, r.get::<_, bool>(2)?)),
+        )
+        .optional()?;
+    let Some((stabilite, dr, ancre)) = prev else { return Ok(false) };
+    let r = recuperabilite(parse_ts(&dr)?, stabilite, now, ancre);
+    c.execute(
+        "UPDATE souvenirs SET stabilite = ?, dernier_rappel = ?, rappels = rappels + 1 WHERE nature = ? AND ref = ?",
+        params![renforcer(stabilite, r), ts(now), nature, r#ref],
+    )?;
+    Ok(true)
+}
+
 /// Un épisode n'est condensé qu'estompé depuis plus de ce délai, en jours.
 const D_COND: f64 = 14.0;
 
@@ -363,6 +414,11 @@ CREATE TABLE IF NOT EXISTS syntheses (
     periode TEXT NOT NULL, texte TEXT NOT NULL, fondue INTEGER NOT NULL DEFAULT 0,
     cree_le TEXT NOT NULL, UNIQUE(niveau, periode));
 CREATE VIRTUAL TABLE IF NOT EXISTS syntheses_fts USING fts5(texte);
+CREATE TABLE IF NOT EXISTS deductions (
+    key TEXT NOT NULL, value TEXT NOT NULL, confiance REAL NOT NULL, cree_le TEXT NOT NULL,
+    dernier_jour TEXT NOT NULL, PRIMARY KEY (key, value));
+CREATE TABLE IF NOT EXISTS renforcements_jour (
+    key TEXT NOT NULL, jour TEXT NOT NULL, PRIMARY KEY (key, jour));
 ";
 
 fn now_local() -> NaiveDateTime {
@@ -513,6 +569,11 @@ impl MemoryStore {
              AND CAST(ref AS INTEGER) NOT IN (SELECT id FROM syntheses)",
             [],
         )?;
+        tx.execute(
+            "DELETE FROM souvenirs WHERE nature = 'deduction' AND NOT EXISTS
+             (SELECT 1 FROM deductions d WHERE d.key || char(31) || d.value = souvenirs.ref)",
+            [],
+        )?;
         // Créés maintenant : réactivés à la migration pour ne pas s'estomper d'un coup.
         let maintenant = ts(now_local());
         tx.execute(
@@ -536,6 +597,11 @@ impl MemoryStore {
              SELECT 'synthese', CAST(id AS TEXT),
                     CASE niveau WHEN 'semaine' THEN ?1 ELSE ?2 END, ?3, 0.0, niveau = 'annee', 1.0 FROM syntheses",
             params![stabilite_initiale(Famille::Synthese, 0.0), stabilite_initiale(Famille::SyntheseMois, 0.0), maintenant],
+        )?;
+        tx.execute(
+            "INSERT OR IGNORE INTO souvenirs (nature, ref, stabilite, dernier_rappel, importance, confiance)
+             SELECT 'deduction', key || char(31) || value, ?1, ?2, 0.0, confiance FROM deductions",
+            params![stabilite_initiale(Famille::Connaissance, 0.0), maintenant],
         )?;
         tx.execute("DELETE FROM facts_fts", [])?;
         tx.execute(
@@ -672,29 +738,12 @@ impl MemoryStore {
             params![key, value, provenance, ts(now)],
         )?;
         if key != PERSONA_KEY {
-            let prev = tx
-                .query_row(
-                    "SELECT stabilite, dernier_rappel, ancre FROM souvenirs WHERE nature = 'fait' AND ref = ?",
-                    [key],
-                    |r| Ok((r.get::<_, f64>(0)?, r.get::<_, String>(1)?, r.get::<_, bool>(2)?)),
-                )
-                .optional()?;
-            match prev {
-                Some((stabilite, dr, ancre)) => {
-                    let r = recuperabilite(parse_ts(&dr)?, stabilite, now, ancre);
-                    tx.execute(
-                        "UPDATE souvenirs SET stabilite = ?, dernier_rappel = ?, rappels = rappels + 1
-                         WHERE nature = 'fait' AND ref = ?",
-                        params![renforcer(stabilite, r), ts(now), key],
-                    )?;
-                }
-                None => {
-                    tx.execute(
-                        "INSERT INTO souvenirs (nature, ref, stabilite, dernier_rappel, importance, confiance)
-                         VALUES ('fait', ?, ?, ?, ?, 1.0)",
-                        params![key, stabilite_initiale(Famille::Connaissance, IMPORTANCE_FAIT), ts(now), IMPORTANCE_FAIT],
-                    )?;
-                }
+            if !renforcer_souvenir(&tx, "fait", key, now)? {
+                tx.execute(
+                    "INSERT INTO souvenirs (nature, ref, stabilite, dernier_rappel, importance, confiance)
+                     VALUES ('fait', ?, ?, ?, ?, 1.0)",
+                    params![key, stabilite_initiale(Famille::Connaissance, IMPORTANCE_FAIT), ts(now), IMPORTANCE_FAIT],
+                )?;
             }
             tx.execute("DELETE FROM facts_fts WHERE key = ?", [key])?;
             tx.execute("INSERT INTO facts_fts (key, value) VALUES (?,?)", [key, value])?;
@@ -750,6 +799,87 @@ impl MemoryStore {
                AND substr(key, 1, length(?1)) = ?1 ORDER BY key",
         )?;
         st.query_map([prefix], Self::fact_from)?.map(|r| Self::fact_build(r?)).collect()
+    }
+
+    // --- Déductions ---
+
+    /// Applique les indices extraits des épisodes de `jour` : une valeur
+    /// déclarée re-mentionnée est renforcée (une fois par clé et par jour), une
+    /// valeur qui la contredit devient une question de confirmation, le reste
+    /// une déduction. Ne modifie jamais une valeur déclarée. Rejouable sans effet.
+    pub fn appliquer_extraction(&self, jour: NaiveDate, indices: &[Indice], maintenant: NaiveDateTime) -> Result<Bilan> {
+        let j = jour.format("%Y-%m-%d").to_string();
+        let mut b = Bilan::default();
+        let tx = self.conn.unchecked_transaction()?;
+        for i in indices {
+            let (key, value) = (i.key.trim(), i.value.trim());
+            if key.is_empty() || key == PERSONA_KEY || value.is_empty() || value.chars().count() > INDICE_VALEUR_MAX {
+                b.ignores += 1;
+                continue;
+            }
+            let declaree: Option<String> = tx
+                .query_row("SELECT value FROM fact_log WHERE key = ? ORDER BY id DESC LIMIT 1", [key], |r| r.get(0))
+                .optional()?;
+            match declaree {
+                Some(v) if norme(&v) == norme(value) => {
+                    let nouveau = tx.execute("INSERT OR IGNORE INTO renforcements_jour (key, jour) VALUES (?, ?)", [key, &j])? > 0;
+                    if nouveau && renforcer_souvenir(&tx, "fait", key, maintenant)? {
+                        b.renforces += 1;
+                    }
+                }
+                Some(_) => {
+                    let what = format!("Confirmer : {key} = {value} ?");
+                    let deja = tx
+                        .prepare("SELECT 1 FROM intentions WHERE what = ? AND state IN ('ouverte','proposee') AND expires_at > ?")?
+                        .exists(params![what, ts(maintenant)])?;
+                    if !deja {
+                        tx.execute(
+                            "INSERT INTO intentions (what, constraints, expires_at, state) VALUES (?, '', ?, ?)",
+                            params![what, ts(maintenant + chrono::Duration::days(QUESTION_JOURS)), IntentionState::Proposee.as_str()],
+                        )?;
+                        b.questions += 1;
+                    }
+                }
+                None => {
+                    let existante = {
+                        let mut st = tx.prepare("SELECT value, confiance, dernier_jour FROM deductions WHERE key = ?")?;
+                        st.query_map([key], |r| Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?, r.get::<_, String>(2)?)))?
+                            .collect::<rusqlite::Result<Vec<_>>>()?
+                            .into_iter()
+                            .find(|(v, _, _)| norme(v) == norme(value))
+                    };
+                    match existante {
+                        // Même jour ou jour déjà compté : rien de nouveau.
+                        Some((_, _, dernier)) if dernier.as_str() >= j.as_str() => {}
+                        Some((v, m, _)) => {
+                            let m = m + PAS_CONFIANCE * (1.0 - m);
+                            let r#ref = ref_deduction(key, &v);
+                            tx.execute(
+                                "UPDATE deductions SET confiance = ?, dernier_jour = ? WHERE key = ? AND value = ?",
+                                params![m, j, key, v],
+                            )?;
+                            renforcer_souvenir(&tx, "deduction", &r#ref, maintenant)?;
+                            tx.execute("UPDATE souvenirs SET confiance = ? WHERE nature = 'deduction' AND ref = ?", params![m, r#ref])?;
+                            b.deduits += 1;
+                        }
+                        None => {
+                            tx.execute(
+                                "INSERT INTO deductions (key, value, confiance, cree_le, dernier_jour) VALUES (?,?,?,?,?)",
+                                params![key, value, PAS_CONFIANCE, ts(maintenant), j],
+                            )?;
+                            tx.execute(
+                                "INSERT OR REPLACE INTO souvenirs (nature, ref, stabilite, dernier_rappel, importance, confiance)
+                                 VALUES ('deduction', ?, ?, ?, 0.0, ?)",
+                                params![ref_deduction(key, value), stabilite_initiale(Famille::Connaissance, 0.0), ts(maintenant), PAS_CONFIANCE],
+                            )?;
+                            b.deduits += 1;
+                        }
+                    }
+                }
+            }
+        }
+        tx.commit()?;
+        Ok(b)
     }
 
     // --- Intentions ---
@@ -995,10 +1125,12 @@ impl MemoryStore {
         Ok(Some(id))
     }
 
-    /// Conversations sans résumé commencées avant `jour` : elles ne peuvent pas être condensées.
+    /// Conversations sans résumé, sujets ni décisions commencées avant `jour` :
+    /// elles ne peuvent pas être condensées.
     pub fn conversations_non_resumees_avant(&self, jour: NaiveDate) -> Result<u32> {
         Ok(self.conn.query_row(
-            "SELECT COUNT(*) FROM conversations WHERE coalesce(summary, '') = '' AND started_at < ?",
+            "SELECT COUNT(*) FROM conversations WHERE trim(coalesce(summary, '')) = ''
+             AND trim(topics) IN ('', '[]') AND trim(decisions) IN ('', '[]') AND started_at < ?",
             [jour.format("%Y-%m-%d").to_string()],
             |r| r.get(0),
         )?)
@@ -1031,8 +1163,9 @@ impl MemoryStore {
             let (nature, id, date, brut, sujets, decisions, stabilite, dernier, ancre) = row?;
             // Date illisible : l'épisode ne peut être rangé dans aucune semaine.
             let Ok(date) = NaiveDate::parse_from_str(&date, "%Y-%m-%d") else { continue };
-            // Une conversation pas encore résumée n'a rien à transmettre : elle attend.
-            let a_contenu = !brut.trim().is_empty();
+            // Une conversation sans résumé, sujets ni décisions n'a rien à transmettre : elle attend.
+            let liste_pleine = |l: &str| serde_json::from_str::<Vec<String>>(l).map_or(!l.trim().is_empty(), |v| !v.is_empty());
+            let a_contenu = !brut.trim().is_empty() || (nature == "conversation" && (liste_pleine(&sujets) || liste_pleine(&decisions)));
             let texte = if nature == "journal" { texte_journal_complet(&brut) } else { texte_conversation(&brut, &sujets, &decisions) };
             // Estompé depuis plus de D_COND : instant d'estompage = dernier rappel + S × ln 2.
             let estompe = match (stabilite, dernier.as_deref().map(parse_ts), ancre) {
@@ -1178,7 +1311,13 @@ impl MemoryStore {
                     OR c.id IN ({conv_hits}))
              UNION ALL
              SELECT 'synthese', s.ref, y.periode || ' : ' || y.texte, s.stabilite, s.dernier_rappel, s.importance, s.ancre
-             FROM souvenirs s JOIN syntheses y ON y.id = CAST(s.ref AS INTEGER) WHERE s.nature = 'synthese'"
+             FROM souvenirs s JOIN syntheses y ON y.id = CAST(s.ref AS INTEGER) WHERE s.nature = 'synthese'
+             UNION ALL
+             SELECT 'deduction', s.ref, 'je crois que ' || d.key || ' : ' || d.value, s.stabilite, s.dernier_rappel, s.importance, s.ancre
+             FROM souvenirs s JOIN deductions d ON s.ref = d.key || char(31) || d.value WHERE s.nature = 'deduction'
+               AND d.key NOT IN (SELECT key FROM fact_log)
+               AND NOT EXISTS (SELECT 1 FROM deductions e WHERE e.key = d.key
+                   AND (e.confiance > d.confiance OR (e.confiance = d.confiance AND e.value < d.value)))"
         );
         struct Cand { r: Rappel, importance: f64, dernier: NaiveDateTime, rang: Option<usize> }
         let mut st = self.conn.prepare(&sql)?;
@@ -2111,5 +2250,139 @@ mod tests {
         s.conversation_ingest(&NewConversation { transcript: "suite".into(), ..c }).unwrap();
         s.conversation_set_summary(id, "bilan complet", &[], &[]).unwrap();
         assert!(s.condensables(maintenant, 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn conversation_with_topics_only_has_content() {
+        let s = store();
+        let c = s.conversation_ingest(&conv("bavardage")).unwrap();
+        s.conversation_set_summary(c, "", &["jardin".into()], &[]).unwrap();
+        vieillir(&s, "conversation", &c.to_string(), t());
+        assert_eq!(s.conversations_non_resumees_avant(t().date() + Duration::days(1)).unwrap(), 0);
+        let lots = s.condensables(t() + Duration::days(30), 10).unwrap();
+        assert_eq!(lots.len(), 1);
+        assert!(lots[0].elements[0].texte.contains("Sujets : jardin"));
+        let d = s.conversation_ingest(&NewConversation { session_id: Some("y".into()), ..conv("muette") }).unwrap();
+        s.conversation_set_summary(d, "", &[], &["arroser".into()]).unwrap();
+        assert_eq!(s.conversations_non_resumees_avant(t().date() + Duration::days(1)).unwrap(), 0);
+        s.conversation_set_summary(d, " ", &[], &[]).unwrap();
+        assert_eq!(s.conversations_non_resumees_avant(t().date() + Duration::days(1)).unwrap(), 1);
+    }
+
+    // --- Déductions ---
+
+    fn indice(k: &str, v: &str) -> Indice {
+        Indice { key: k.into(), value: v.into() }
+    }
+
+    fn d(j: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(2026, 11, j).unwrap()
+    }
+
+    fn confiance(s: &MemoryStore, k: &str, v: &str) -> f64 {
+        s.conn.query_row("SELECT confiance FROM deductions WHERE key = ? AND value = ?", [k, v], |r| r.get(0)).unwrap()
+    }
+
+    #[test]
+    fn deduction_never_overrides_declared() {
+        let s = store();
+        s.fact_set_at("ville", "Lorient", "utilisateur", t()).unwrap();
+        for j in 1..=5 {
+            s.appliquer_extraction(d(j), &[indice("ville", "Quimper")], jour(2026, 11, j)).unwrap();
+        }
+        assert_eq!(s.fact_get("ville").unwrap().unwrap().value, "Lorient");
+        assert_eq!(s.fact_history("ville").unwrap().len(), 1);
+        assert_eq!(compte(&s, "SELECT COUNT(*) FROM deductions"), 0);
+        // Même valeur, casse et espaces près : renforcement, une fois par jour.
+        let b = s.appliquer_extraction(d(6), &[indice("ville", "  lorient "), indice("ville", "LORIENT")], jour(2026, 11, 6)).unwrap();
+        assert_eq!((b.renforces, b.deduits, b.questions), (1, 0, 0));
+        let f = s.force("fait", "ville").unwrap().unwrap();
+        assert_eq!((f.rappels, f.dernier_rappel), (1, jour(2026, 11, 6)));
+        s.appliquer_extraction(d(6), &[indice("ville", "Lorient")], jour(2026, 11, 6) + Duration::hours(1)).unwrap();
+        assert_eq!(s.force("fait", "ville").unwrap().unwrap().rappels, 1);
+        s.appliquer_extraction(d(7), &[indice("ville", "Lorient")], jour(2026, 11, 7)).unwrap();
+        assert_eq!(s.force("fait", "ville").unwrap().unwrap().rappels, 2);
+        assert_eq!(s.fact_history("ville").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn repeated_hint_raises_confidence_once_per_day() {
+        let s = store();
+        let b = s.appliquer_extraction(d(1), &[indice("sport", "natation")], jour(2026, 11, 1)).unwrap();
+        assert_eq!(b.deduits, 1);
+        assert_eq!(confiance(&s, "sport", "natation"), 0.25);
+        s.appliquer_extraction(d(1), &[indice("sport", "Natation ")], jour(2026, 11, 1)).unwrap();
+        assert_eq!(confiance(&s, "sport", "natation"), 0.25);
+        s.appliquer_extraction(d(2), &[indice("sport", "natation")], jour(2026, 11, 2)).unwrap();
+        assert!((confiance(&s, "sport", "natation") - 0.4375).abs() < 1e-9);
+        // Nuit relancée : rien de plus.
+        s.appliquer_extraction(d(2), &[indice("sport", "natation")], jour(2026, 11, 2)).unwrap();
+        assert!((confiance(&s, "sport", "natation") - 0.4375).abs() < 1e-9);
+        let r = s.force("deduction", "sport\u{1f}natation").unwrap().unwrap();
+        assert_eq!((r.rappels, r.importance), (1, 0.0));
+        assert!((r.confiance - 0.4375).abs() < 1e-9);
+        assert_eq!(compte(&s, "SELECT COUNT(*) FROM deductions"), 1);
+        assert!(s.fact_get("sport").unwrap().is_none());
+    }
+
+    #[test]
+    fn contradiction_asks_once() {
+        let s = store();
+        s.fact_set_at("animal", "chat", "utilisateur", t()).unwrap();
+        let m = jour(2026, 11, 1);
+        let b = s.appliquer_extraction(d(1), &[indice("animal", "chien")], m).unwrap();
+        assert_eq!(b.questions, 1);
+        let b = s.appliquer_extraction(d(2), &[indice("animal", "chien")], jour(2026, 11, 2)).unwrap();
+        assert_eq!(b.questions, 0);
+        let ouvertes = s.intentions_open(m).unwrap();
+        assert_eq!(ouvertes.len(), 1);
+        assert_eq!(ouvertes[0].what, "Confirmer : animal = chien ?");
+        assert_eq!(ouvertes[0].state, IntentionState::Proposee);
+        assert_eq!(ouvertes[0].expires_at, m + Duration::days(7));
+        // Expirée : la question peut revenir.
+        assert!(s.intentions_open(m + Duration::days(8)).unwrap().is_empty());
+        let b = s.appliquer_extraction(d(9), &[indice("animal", "chien")], m + Duration::days(8)).unwrap();
+        assert_eq!(b.questions, 1);
+        assert_eq!(s.fact_get("animal").unwrap().unwrap().value, "chat");
+    }
+
+    #[test]
+    fn extraction_rejects_out_of_schema() {
+        let s = store();
+        let long = "x".repeat(301);
+        let b = s
+            .appliquer_extraction(
+                d(1),
+                &[indice("", "rien"), indice("  ", "rien"), indice(PERSONA_KEY, "bavard"), indice("note", &long), indice("note", " ")],
+                jour(2026, 11, 1),
+            )
+            .unwrap();
+        assert_eq!((b.renforces, b.deduits, b.questions, b.ignores), (0, 0, 0, 5));
+        for table in ["fact_log", "deductions", "intentions"] {
+            assert_eq!(compte(&s, &format!("SELECT COUNT(*) FROM {table}")), 0, "{table}");
+        }
+        assert_eq!(compte(&s, "SELECT COUNT(*) FROM souvenirs"), 0);
+        // 300 caractères : accepté.
+        assert_eq!(s.appliquer_extraction(d(1), &[indice("note", &"x".repeat(300))], jour(2026, 11, 1)).unwrap().deduits, 1);
+    }
+
+    #[test]
+    fn recall_marks_deductions() {
+        let s = store();
+        let m = jour(2026, 11, 3);
+        s.appliquer_extraction(d(1), &[indice("boisson", "thé"), indice("boisson", "café")], jour(2026, 11, 1)).unwrap();
+        s.appliquer_extraction(d(2), &[indice("boisson", "café")], jour(2026, 11, 2)).unwrap();
+        s.appliquer_extraction(d(2), &[indice("musique", "jazz")], jour(2026, 11, 2)).unwrap();
+        s.fact_set_at("animal", "chat", "utilisateur", m).unwrap();
+        s.conn.execute("INSERT INTO deductions VALUES ('animal', 'chien', 0.9, ?, '2026-11-01')", [ts(m)]).unwrap();
+        let textes: Vec<String> = s.rappel(None, m, 50).unwrap().into_iter().map(|r| r.texte).collect();
+        assert!(textes.contains(&"je crois que boisson : café".to_string()), "{textes:?}");
+        assert!(textes.contains(&"je crois que musique : jazz".to_string()));
+        assert!(!textes.iter().any(|t| t.contains("thé") || t.contains("chien")), "{textes:?}");
+        // Migration : une déduction sans source disparaît, une sans souvenir en reçoit un.
+        s.conn.execute("DELETE FROM deductions WHERE key = 'musique'", []).unwrap();
+        MemoryStore::migrate_souvenirs(&s.conn).unwrap();
+        assert!(s.force("deduction", "musique\u{1f}jazz").unwrap().is_none());
+        assert!(s.force("deduction", "animal\u{1f}chien").unwrap().is_some());
     }
 }
