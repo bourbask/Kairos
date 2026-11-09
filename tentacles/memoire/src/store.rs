@@ -13,6 +13,9 @@ use sha2::{Digest, Sha256};
 
 use crate::force::{Famille, est_actif, recuperabilite, renforcer, stabilite_initiale};
 
+mod habitudes;
+pub use habitudes::{BilanHabitudes, Observation};
+
 /// Clé réservée du fait portant la personnalité.
 pub const PERSONA_KEY: &str = "persona";
 /// Taille maximale d'une transcription acceptée.
@@ -467,6 +470,16 @@ CREATE TABLE IF NOT EXISTS renforcements_jour (
     key TEXT NOT NULL, jour TEXT NOT NULL, PRIMARY KEY (key, jour));
 CREATE TABLE IF NOT EXISTS nuit_etat (
     etape TEXT PRIMARY KEY, dernier_jour TEXT, derniere_execution TEXT, statut TEXT);
+CREATE TABLE IF NOT EXISTS habitudes (
+    id INTEGER PRIMARY KEY, source TEXT NOT NULL, quoi TEXT NOT NULL, contexte TEXT NOT NULL,
+    valeur TEXT NOT NULL, libelle TEXT NOT NULL,
+    cadence TEXT NOT NULL CHECK(cadence IN ('quotidien','hebdomadaire')),
+    m REAL NOT NULL, positifs INTEGER NOT NULL,
+    etat TEXT NOT NULL DEFAULT 'candidate' CHECK(etat IN ('candidate','active','ancienne')),
+    nee_le TEXT, ancienne_depuis TEXT, question INTEGER, annoncee_le TEXT,
+    confirmee INTEGER NOT NULL DEFAULT 0, rejetee INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(source, quoi, contexte, valeur));
+CREATE TABLE IF NOT EXISTS habitudes_sources (source TEXT PRIMARY KEY, dernier_jour TEXT NOT NULL);
 ";
 
 fn now_local() -> NaiveDateTime {
