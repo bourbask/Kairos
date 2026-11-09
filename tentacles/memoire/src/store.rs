@@ -7,7 +7,7 @@ use kairos::calendar::USER_TZ;
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use serde::{Deserialize, Serialize};
 
-use crate::force::{Famille, recuperabilite, renforcer, stabilite_initiale};
+use crate::force::{Famille, est_actif, recuperabilite, renforcer, stabilite_initiale};
 
 /// Clé réservée du fait portant la personnalité.
 pub const PERSONA_KEY: &str = "persona";
@@ -236,6 +236,51 @@ fn fts_literal(query: &str) -> Option<String> {
         .map(|t| format!("\"{}\"", t.replace('"', "\"\"")))
         .collect();
     (!terms.is_empty()).then(|| terms.join(" "))
+}
+
+/// Variante en OU pour le rappel : termes d'au moins 3 caractères, chacun
+/// littéral. `None` si aucun terme cherchable.
+fn fts_any(query: &str) -> Option<String> {
+    let terms: Vec<String> = query
+        .split_whitespace()
+        .filter(|t| t.chars().count() >= 3)
+        .map(|t| format!("\"{}\"", t.replace('"', "\"\"")))
+        .collect();
+    (!terms.is_empty()).then(|| terms.join(" OR "))
+}
+
+/// Souvenir proposé au modèle par le rappel.
+#[derive(Debug, Clone, Serialize)]
+pub struct Rappel {
+    pub nature: String,
+    pub r#ref: String,
+    pub texte: String,
+    pub score: f64,
+    pub estompe: bool,
+    pub ancre: bool,
+}
+
+/// Budget de texte des ancres, toujours fournies.
+const BUDGET_ANCRES: usize = 3_200;
+/// Longueur maximale du texte d'un souvenir rappelé.
+const TEXTE_MAX: usize = 300;
+/// Épisodes candidats sans recherche : les plus récents.
+const RAPPEL_JOURNAL_RECENT: u32 = 50;
+/// Résultats retenus par recherche plein texte.
+const RAPPEL_RECHERCHE_MAX: u32 = 50;
+/// Un souvenir estompé ne remonte que dans ces premiers rangs de recherche.
+const RANG_ESTOMPE: usize = 3;
+
+fn tronquer(t: &str) -> String {
+    t.chars().take(TEXTE_MAX).collect()
+}
+
+/// Texte lisible d'une entrée de journal : champ texte s'il existe, sinon le JSON brut.
+fn texte_journal(content: &str) -> String {
+    serde_json::from_str::<serde_json::Value>(content)
+        .ok()
+        .and_then(|v| ["texte", "text"].iter().find_map(|k| v.get(k)?.as_str().map(str::to_owned)))
+        .unwrap_or_else(|| content.to_owned())
 }
 
 fn card_from_row(r: &Row) -> rusqlite::Result<(ConversationCard, String, String, String, String)> {
@@ -693,6 +738,90 @@ impl MemoryStore {
         )?;
         Ok(self.conn.last_insert_rowid())
     }
+
+    // --- Rappel (lecture seule : ne renforce rien) ---
+
+    /// Souvenirs à proposer au modèle : ancres d'abord dans leur budget, puis
+    /// les autres par `R + importance + pertinence` jusqu'à `limite`.
+    pub fn rappel(&self, requete: Option<&str>, maintenant: NaiveDateTime, limite: usize) -> Result<Vec<Rappel>> {
+        // Rang commun : les deux recherches fusionnées par score bm25 (plus bas = meilleur).
+        let mut hits: Vec<(f64, &str, String)> = Vec::new();
+        if let Some(q) = requete.and_then(fts_any) {
+            let mut st = self.conn.prepare("SELECT key, rank FROM facts_fts WHERE facts_fts MATCH ? ORDER BY rank LIMIT ?")?;
+            for r in st.query_map(params![q, RAPPEL_RECHERCHE_MAX], |r| Ok((r.get::<_, f64>(1)?, r.get::<_, String>(0)?)))? {
+                let (rank, k) = r?;
+                hits.push((rank, "fait", k));
+            }
+            let mut st = self.conn.prepare("SELECT rowid, rank FROM journal_fts WHERE journal_fts MATCH ? ORDER BY rank LIMIT ?")?;
+            for r in st.query_map(params![q, RAPPEL_RECHERCHE_MAX], |r| Ok((r.get::<_, f64>(1)?, r.get::<_, i64>(0)?)))? {
+                let (rank, id) = r?;
+                hits.push((rank, "journal", id.to_string()));
+            }
+        }
+        hits.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let rang: std::collections::HashMap<(&str, &str), usize> =
+            hits.iter().enumerate().map(|(i, (_, n, r))| ((*n, r.as_str()), i)).collect();
+        let journal_hits: Vec<String> = hits.iter().filter(|h| h.1 == "journal").map(|h| h.2.clone()).collect();
+
+        // Candidats : tous les faits ; épisodes récents, ancrés ou trouvés.
+        // ponytail: tous les faits sont lus à chaque rappel ; filtrer en SQL si leur nombre explose.
+        let sql = format!(
+            "SELECT 'fait', s.ref, s.ref || ' : ' || f.value, s.stabilite, s.dernier_rappel, s.importance, s.ancre
+             FROM souvenirs s JOIN facts_fts f ON f.key = s.ref WHERE s.nature = 'fait'
+             UNION ALL
+             SELECT 'journal', s.ref, substr(j.at, 1, 10) || char(1) || j.content, s.stabilite, s.dernier_rappel, s.importance, s.ancre
+             FROM souvenirs s JOIN journal j ON j.id = CAST(s.ref AS INTEGER) WHERE s.nature = 'journal'
+               AND (s.ancre OR j.id IN (SELECT id FROM journal ORDER BY id DESC LIMIT {RAPPEL_JOURNAL_RECENT})
+                    OR j.id IN ({}))",
+            // Identifiants entiers issus de la base : pas de risque d'injection.
+            journal_hits.join(",")
+        );
+        struct Cand { r: Rappel, importance: f64, dernier: NaiveDateTime, rang: Option<usize> }
+        let mut st = self.conn.prepare(&sql)?;
+        let rows = st.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, f64>(3)?,
+                r.get::<_, String>(4)?, r.get::<_, f64>(5)?, r.get::<_, bool>(6)?))
+        })?;
+        let mut ancres = Vec::new();
+        let mut autres = Vec::new();
+        for row in rows {
+            let (nature, r#ref, brut, stabilite, dr, importance, ancre) = row?;
+            let texte = match brut.split_once('\u{1}') {
+                Some((date, content)) if nature == "journal" => format!("{date} : {}", texte_journal(content)),
+                _ => brut,
+            };
+            let dernier = parse_ts(&dr)?;
+            let rec = recuperabilite(dernier, stabilite, maintenant, ancre);
+            let rang = rang.get(&(nature.as_str(), r#ref.as_str())).copied();
+            let pertinence = rang.map_or(0.0, |i| 1.0 / (1.0 + i as f64));
+            let r = Rappel {
+                texte: tronquer(&texte),
+                score: rec + importance + pertinence,
+                estompe: !est_actif(rec),
+                ancre,
+                nature,
+                r#ref,
+            };
+            let c = Cand { r, importance, dernier, rang };
+            if ancre { ancres.push(c) } else { autres.push(c) }
+        }
+
+        ancres.sort_by(|a, b| b.importance.total_cmp(&a.importance).then(b.dernier.cmp(&a.dernier)));
+        let mut out = Vec::new();
+        let mut budget = 0;
+        for c in ancres {
+            let n = c.r.texte.chars().count();
+            if budget + n <= BUDGET_ANCRES {
+                budget += n;
+                out.push(c.r);
+            }
+        }
+        autres.retain(|c| !c.r.estompe || c.rang.is_some_and(|i| i < RANG_ESTOMPE));
+        autres.sort_by(|a, b| b.r.score.total_cmp(&a.r.score));
+        let place = limite.saturating_sub(out.len());
+        out.extend(autres.into_iter().take(place).map(|c| c.r));
+        Ok(out)
+    }
 }
 
 #[cfg(test)]
@@ -1038,5 +1167,82 @@ mod tests {
             .lesson_record(&NewLesson { context: "c".into(), qualification: "q".into(), debrief: "d".into(), conclusion: "k".into(), actions: vec!["a".into()] })
             .unwrap();
         assert!(id > 0);
+    }
+
+    // --- Rappel ---
+
+    fn vieillir(s: &MemoryStore, nature: &str, r#ref: &str, quand: NaiveDateTime) {
+        s.conn
+            .execute("UPDATE souvenirs SET dernier_rappel = ? WHERE nature = ? AND ref = ?", params![ts(quand), nature, r#ref])
+            .unwrap();
+    }
+
+    #[test]
+    fn recall_never_reinforces() {
+        let s = store();
+        s.fact_set_at("ville", "Lyon", "p", t()).unwrap();
+        let id = note(&s, "promenade au parc").to_string();
+        let avant = (s.force("fait", "ville").unwrap(), s.force("journal", &id).unwrap());
+        let plus_tard = t() + Duration::days(40);
+        s.rappel(Some("Lyon promenade"), plus_tard, 10).unwrap();
+        s.rappel(None, plus_tard, 10).unwrap();
+        assert_eq!(avant, (s.force("fait", "ville").unwrap(), s.force("journal", &id).unwrap()));
+    }
+
+    #[test]
+    fn anchors_always_first_even_without_match() {
+        let s = store();
+        s.fact_set_at("animal", "chat noir", "p", t()).unwrap();
+        s.fact_set_at("transport", "velo rouge", "p", t()).unwrap();
+        s.ancrer("fait", "animal", true).unwrap();
+        let r = s.rappel(Some("velo"), t(), 10).unwrap();
+        assert_eq!((r[0].r#ref.as_str(), r[0].ancre), ("animal", true));
+        assert_eq!(r[1].r#ref, "transport");
+    }
+
+    #[test]
+    fn faded_only_when_top_three() {
+        let s = store();
+        let id = note(&s, "vu une baleine").to_string();
+        vieillir(&s, "journal", &id, t() - Duration::days(30));
+        let a_id = |r: &Vec<Rappel>| r.iter().any(|x| x.nature == "journal" && x.r#ref == id);
+        assert!(!a_id(&s.rappel(None, t(), 10).unwrap()));
+        let r = s.rappel(Some("baleine"), t(), 10).unwrap();
+        assert!(a_id(&r));
+        assert!(r.iter().find(|x| x.r#ref == id).unwrap().estompe);
+    }
+
+    #[test]
+    fn relevance_orders_results() {
+        let s = store();
+        s.fact_set_at("aaa", "pomme", "p", t()).unwrap();
+        s.fact_set_at("bbb", "banane", "p", t()).unwrap();
+        let r = s.rappel(Some("banane"), t(), 10).unwrap();
+        assert_eq!(r[0].r#ref, "bbb");
+        assert_eq!(r[0].texte, "bbb : banane");
+        assert!(r[0].score > r[1].score);
+    }
+
+    #[test]
+    fn recall_query_is_escaped() {
+        let s = store();
+        s.fact_set_at("k", "v", "p", t()).unwrap();
+        note(&s, "x");
+        for q in ["\"", "a AND", "*", "NEAR(", "-x", "((", "le la de", "\"\"\"", "(((", "abc\"def"] {
+            assert!(s.rappel(Some(q), t(), 10).is_ok(), "{q}");
+        }
+    }
+
+    #[test]
+    fn anchor_budget_is_respected() {
+        let s = store();
+        for i in 0..50 {
+            let k = format!("cle{i}");
+            s.fact_set_at(&k, &"x".repeat(250), "p", t()).unwrap();
+            s.ancrer("fait", &k, true).unwrap();
+        }
+        let r = s.rappel(None, t(), 10).unwrap();
+        let total: usize = r.iter().filter(|x| x.ancre).map(|x| x.texte.chars().count()).sum();
+        assert!(total <= 3200 && total > 0, "{total}");
     }
 }
