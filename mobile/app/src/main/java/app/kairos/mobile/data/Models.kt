@@ -523,3 +523,46 @@ data class MediasSnapshot(
     val fetchedAt: String? = null,
     val issue: String? = null,
 )
+
+/** Échéance d'un document ; [date] AAAA-MM-JJ, [org] absent pour une nature privée. */
+@Serializable
+data class DocDeadline(
+    val date: String = "",
+    val kind: String = "",
+    val what: String = "",
+    val org: String? = null,
+    val private: Boolean = false,
+    val overdue: Boolean = false,
+)
+
+/** Pièce attendue de la liste de contrôle ; [present] vrai aussi pour « pas encore requise ». */
+@Serializable
+data class DocPiece(val domain: String = "", val item: String = "", val present: Boolean = false)
+
+/** Nature (dossier) : nombre de documents et ceux sans texte lisible. */
+@Serializable
+data class DocNature(val name: String = "", val count: Int = 0, val unreadable: Int = 0, val private: Boolean = false)
+
+@Serializable
+data class DocExtraction(val done: Int = 0, val total: Int = 0)
+
+/** Vue de l'espace Documents (`app_documents`), lecture seule. */
+@Serializable
+data class Documents(
+    val deadlines: List<DocDeadline> = emptyList(),
+    val missing: List<DocPiece> = emptyList(),
+    val natures: List<DocNature> = emptyList(),
+    val extraction: DocExtraction = DocExtraction(),
+)
+
+/** Résultat de recherche (`app_documents_search`) ; [passage] : mots trouvés entre « ». */
+@Serializable
+data class DocHit(val name: String = "", val nature: String = "", val date: String? = null, val passage: String = "")
+
+/** Dernier état de l'espace Documents, gardé hors ligne. */
+@Serializable
+data class DocumentsSnapshot(
+    val documents: Documents? = null,
+    val fetchedAt: String? = null,
+    val issue: String? = null,
+)

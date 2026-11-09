@@ -153,3 +153,28 @@ Données externes (titres, raisons) : non fiables, nettoyées et bornées côté
 module. Hors du premier jet : statistiques, musique, lecture et livres audio,
 obligations de partage, résumé « previously », relance et liste noire des
 versions, ne plus suivre.
+
+## Espace Documents
+
+Sources : module documents (index des documents administratifs, faits
+extraits, échéances calculées, liste de contrôle des pièces attendues). Rôle de
+l'écran : **« qu'est-ce qui arrive à échéance, où est tel papier, que me
+manque-t-il ? »**. Lecture seule : aucune écriture (déplacer, renommer,
+corbeille) depuis l'application.
+
+- **Échéances** (en tête) : retards d'abord, puis les 90 prochains jours,
+  datées, avec le temps restant (couleur ambre sous 30 jours, brique en
+  retard) ; type, organisme et motif (fin, résiliation, renouvellement,
+  expiration, contrôle). Nature privée : seulement « document privé », le motif
+  et la date.
+- **Chercher** : champ de recherche plein texte ; résultats avec nom, nature,
+  date et un court passage autour des mots cherchés. Aucun résultat d'une
+  nature privée.
+- **Pièces attendues** : liste de contrôle par domaine, présentes / à fournir,
+  les manquantes d'abord.
+- **Classement** : natures (dossiers) avec leur nombre de documents et ceux
+  sans texte lisible ; avancement de l'extraction.
+- Carte Espaces : prochaine échéance et nombre de retards.
+
+Hors du premier jet : ouvrir le fichier, écritures, doublons, plan de
+renommage, faits détaillés d'un contrat.

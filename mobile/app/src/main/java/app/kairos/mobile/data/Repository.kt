@@ -21,6 +21,7 @@ import kotlinx.serialization.json.put
 import app.kairos.mobile.ui.agenda.agendaAfter
 import app.kairos.mobile.ui.finances.financesAfter
 import app.kairos.mobile.ui.marches.marchesAfter
+import app.kairos.mobile.ui.documents.documentsAfter
 import app.kairos.mobile.ui.medias.mediasAfter
 import app.kairos.mobile.ui.medias.withoutWatched
 import app.kairos.mobile.ui.memoire.cacheable
@@ -52,6 +53,7 @@ class Repository(
     private val marchesFile = File(dir, "marches.json")
     private val memoireFile = File(dir, "memoire.json")
     private val mediasFile = File(dir, "medias.json")
+    private val documentsFile = File(dir, "documents.json")
     private val loadLock = Mutex()
     private val maisonLock = Mutex()
     private val financesLock = Mutex()
@@ -60,6 +62,8 @@ class Repository(
     private val memoireLock = Mutex()
     private val mediasLock = Mutex()
     private var mediasTried: Long? = null
+    private val documentsLock = Mutex()
+    private var documentsTried: Long? = null
     private var memoireTried: Long? = null
     private var marchesTried: Long? = null
     private var agendaTried: Long? = null
@@ -90,6 +94,9 @@ class Repository(
     private val _medias = MutableStateFlow(MediasSnapshot())
     val medias: StateFlow<MediasSnapshot> = _medias.asStateFlow()
 
+    private val _documents = MutableStateFlow(DocumentsSnapshot())
+    val documents: StateFlow<DocumentsSnapshot> = _documents.asStateFlow()
+
     /** Relit l'état enregistré (une seule fois) ; appelé d'office par [refresh] et [mark]. */
     suspend fun load() = loadLock.withLock {
         if (loaded) return@withLock
@@ -100,6 +107,7 @@ class Repository(
         read(marchesFile, MarchesSnapshot.serializer())?.let { saved -> _marches.update { if (it.fetchedAt == null) saved else it } }
         read(memoireFile, MemoireSnapshot.serializer())?.let { saved -> _memoire.update { if (it.fetchedAt == null) saved else it } }
         read(mediasFile, MediasSnapshot.serializer())?.let { saved -> _medias.update { if (it.fetchedAt == null) saved else it } }
+        read(documentsFile, DocumentsSnapshot.serializer())?.let { saved -> _documents.update { if (it.fetchedAt == null) saved else it } }
         val savedMarks = read(marksFile, MARKS).orEmpty()
         _marks.update { current -> (savedMarks + current).filterKeys { it >= today().toString() } }
         loaded = true
@@ -277,6 +285,21 @@ class Repository(
         write(mediasFile, MediasSnapshot.serializer(), next)
     }
 
+    /**
+     * Échéances, pièces attendues et classement (lecture seule) ; sans réponse, le dernier état reste.
+     * Sans [force], ignorée si la précédente date de moins de [FRESH_MS].
+     */
+    suspend fun refreshDocuments(force: Boolean = true) = documentsLock.withLock {
+        val last = documentsTried
+        if (!force && last != null && System.nanoTime() - last < FRESH_MS * 1_000_000) return@withLock
+        load()
+        val d = attempt { api.tool(DOCUMENTS, "app_documents", Documents.serializer()) }
+        documentsTried = System.nanoTime()
+        val next = documentsAfter(_documents.value, d, LocalDateTime.now().withNano(0).toString())
+        _documents.value = next
+        if (d.isSuccess) write(documentsFile, DocumentsSnapshot.serializer(), next)
+    }
+
     /** Lecture ponctuelle d'un outil `app_*` (recherche, historique) : rien n'est gardé. */
     suspend fun <T> lookup(module: String, name: String, result: DeserializationStrategy<T>, args: JsonObject): T =
         api.tool(module, name, result, args)
@@ -332,6 +355,8 @@ class Repository(
         _marches.value = MarchesSnapshot()
         _memoire.value = MemoireSnapshot()
         _medias.value = MediasSnapshot()
+        _documents.value = DocumentsSnapshot()
+        documentsTried = null
         mediasTried = null
         memoireTried = null
         marchesTried = null
@@ -344,6 +369,7 @@ class Repository(
             marchesFile.delete()
             memoireFile.delete()
             mediasFile.delete()
+            documentsFile.delete()
             snapshotFile.delete()
             marksFile.delete()
         }
@@ -384,6 +410,7 @@ class Repository(
         const val MARCHES = app.kairos.mobile.ui.marches.MARCHES
         const val MEMOIRE = app.kairos.mobile.ui.memoire.MEMOIRE
         const val MEDIAS = app.kairos.mobile.ui.medias.MEDIAS
+        const val DOCUMENTS = app.kairos.mobile.ui.documents.DOCUMENTS
         const val FRESH_MS = 30_000L
         val ORDERS = ListSerializer(Order.serializer())
         val PROPOSALS = ListSerializer(MarketProposal.serializer())
