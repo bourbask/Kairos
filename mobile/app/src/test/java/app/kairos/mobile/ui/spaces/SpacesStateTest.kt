@@ -28,4 +28,14 @@ class SpacesStateTest {
         assertEquals("1 dépassée", countLabel(1, "dépassée"))
         assertEquals("3 dépassées", countLabel(3, "dépassée"))
     }
+
+    @Test
+    fun agenda_status_never_says_empty_without_the_week() {
+        val today = java.time.LocalDate.of(2026, 11, 9)
+        // Semaine pas encore lue (jours seuls) : on ne sait pas, on ne dit pas « rien ».
+        assertEquals("À venir : pas encore lu", agendaStatus(null, today))
+        assertEquals("Rien de prévu", agendaStatus(app.kairos.mobile.data.AgendaWeek(), today))
+        val week = app.kairos.mobile.data.AgendaWeek(upcoming = listOf(app.kairos.mobile.data.Upcoming("u", "Dentiste", "2026-11-09", "10:00")))
+        assertEquals(true, agendaStatus(week, today).startsWith("Dentiste · "))
+    }
 }

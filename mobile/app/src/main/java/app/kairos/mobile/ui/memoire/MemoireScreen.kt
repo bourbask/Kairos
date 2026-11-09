@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -87,6 +88,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
@@ -494,7 +496,7 @@ private fun IntentionRow(i: Intention, now: LocalDateTime, onAccept: (Intention)
             modifier = Modifier.fillMaxWidth(),
         ) {
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Column(Modifier.semantics(mergeDescendants = true) {}) {
+                Column {
                     Text(i.what, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
                     i.constraints?.let { Caption(it) }
                     Text(
@@ -614,24 +616,30 @@ private fun EntryRow(e: JournalEntry, revealed: Set<Long>, masked: Boolean, onRe
     } else {
         Modifier
     }
-    Column(Modifier.fillMaxWidth().then(tap).semantics(mergeDescendants = true) {}) {
-        Caption(listOfNotNull(at, e.kind.takeIf { it.isNotBlank() && it != "note" }).joinToString(" · "))
-        if (text == null) {
-            Text(
-                if (masked) "Entrée sensible · masquée" else "Entrée sensible · touche pour afficher",
-                style = MaterialTheme.typography.bodyMedium,
-                fontStyle = FontStyle.Italic,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        } else {
-            Text(text, style = MaterialTheme.typography.bodyMedium, maxLines = 6, overflow = TextOverflow.Ellipsis)
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f).then(tap).semantics(mergeDescendants = true) {}) {
+            Caption(listOfNotNull(at, e.kind.takeIf { it.isNotBlank() && it != "note" }).joinToString(" · "))
+            if (text == null) {
+                Text(
+                    if (masked) "Entrée sensible · masquée" else "Entrée sensible · touche pour afficher",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontStyle = FontStyle.Italic,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                Text(text, style = MaterialTheme.typography.bodyMedium, maxLines = 6, overflow = TextOverflow.Ellipsis)
+            }
         }
+        // Visible seulement quand le texte l'est : une entrée sensible se révèle d'abord.
+        if (text != null) EraseButton("Supprimer l'entrée du $at") { onDelete(e.id) }
     }
-    // Visible seulement quand le texte l'est : une entrée sensible se révèle d'abord.
-    if (text != null) {
-        TextButton(onClick = { onDelete(e.id) }, Modifier.semantics { contentDescription = "Supprimer l'entrée du $at" }) {
-            Text("Supprimer", color = MaterialTheme.colorScheme.error)
-        }
+}
+
+/** Effacement discret : icône neutre ; le rouge n'apparaît qu'au message d'annulation. */
+@Composable
+private fun EraseButton(description: String, onClick: () -> Unit) {
+    IconButton(onClick = onClick) {
+        Icon(KairosIcons.Trash, contentDescription = description, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
     }
 }
 
@@ -709,14 +717,14 @@ private fun Conversations(recent: List<ConversationSummary>, erased: Set<String>
 @Composable
 private fun ConversationRow(c: ConversationSummary, onDelete: (Long) -> Unit) {
     val at = syncLabel(c.at)
-    Column(Modifier.fillMaxWidth().semantics(mergeDescendants = true) {}, verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Caption(at)
-        Text(c.summary ?: "Pas encore résumée.", style = MaterialTheme.typography.bodyMedium, fontStyle = if (c.summary == null) FontStyle.Italic else null)
-        if (c.topics.isNotEmpty()) Caption("Sujets : ${c.topics.joinToString(", ")}")
-        c.decisions.forEach { d -> Text("→ $d", style = MaterialTheme.typography.bodySmall) }
-    }
-    TextButton(onClick = { onDelete(c.id) }, Modifier.semantics { contentDescription = "Supprimer la conversation du $at" }) {
-        Text("Supprimer", color = MaterialTheme.colorScheme.error)
+    Row(verticalAlignment = Alignment.Top) {
+        Column(Modifier.weight(1f).semantics(mergeDescendants = true) {}, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Caption(at)
+            Text(c.summary ?: "Pas encore résumée.", style = MaterialTheme.typography.bodyMedium, fontStyle = if (c.summary == null) FontStyle.Italic else null)
+            if (c.topics.isNotEmpty()) Caption("Sujets : ${c.topics.joinToString(", ")}")
+            c.decisions.forEach { d -> Text("→ $d", style = MaterialTheme.typography.bodySmall) }
+        }
+        EraseButton("Supprimer la conversation du $at") { onDelete(c.id) }
     }
 }
 

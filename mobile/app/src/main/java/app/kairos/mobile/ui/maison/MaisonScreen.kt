@@ -100,6 +100,7 @@ import app.kairos.mobile.data.Tone
 import app.kairos.mobile.ui.theme.Motion
 import app.kairos.mobile.ui.kit.LocalNotifier
 import app.kairos.mobile.ui.kit.PrimaryAction
+import app.kairos.mobile.ui.kit.primaryActionClearance
 import app.kairos.mobile.ui.kit.SpaceHeader
 import app.kairos.mobile.ui.kit.StatusBanner
 import app.kairos.mobile.ui.kit.SwipeRow
@@ -343,7 +344,7 @@ fun MaisonScreen(
                                 .nestedScroll(sheet.connection)
                                 // Hors de la zone du geste retour : un glissement depuis le bord reste à la ligne.
                                 .windowInsetsPadding(WindowInsets.systemGestures.only(WindowInsetsSides.Horizontal)),
-                            contentPadding = PaddingValues(bottom = padding.calculateBottomPadding() + 72.dp),
+                            contentPadding = PaddingValues(bottom = padding.calculateBottomPadding() + primaryActionClearance()),
                         ) {
                             items(lots, key = { it.id }) { lot ->
                                 LotItem(

@@ -129,7 +129,9 @@ class Conversation(
                 watch()
             } catch (e: ApiError) {
                 pending = pending - message
-                if (e == ApiError.Unauthorized) onUnauthorized() else failed = failed + Failed(message, failedNote(e))
+                if (e == ApiError.Unauthorized && draft.isBlank()) draft = message
+                else failed = failed + Failed(message, failedNote(e))
+                if (e == ApiError.Unauthorized) onUnauthorized()
             }
         }
     }
@@ -140,10 +142,10 @@ class Conversation(
         send(f.text, handsFree = false)
     }
 
-    /** Reprend un message en échec dans la saisie, pour le corriger. */
+    /** Reprend un message en échec dans la saisie, pour le corriger ; un brouillon en cours est complété, jamais écrasé. */
     fun edit(f: Failed) {
         failed = failed - f
-        if (draft.isBlank()) draft = f.text
+        draft = if (draft.isBlank()) f.text else "${draft.trimEnd()}\n${f.text}"
     }
 
     /** Premier plan : état léger régulier, et reprise de l'attente d'une réponse. */

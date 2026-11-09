@@ -80,6 +80,7 @@ import app.kairos.mobile.data.Repository
 import app.kairos.mobile.ui.kit.BlockKind
 import app.kairos.mobile.ui.kit.LocalNotifier
 import app.kairos.mobile.ui.kit.PrimaryAction
+import app.kairos.mobile.ui.kit.primaryActionClearance
 import app.kairos.mobile.ui.kit.SectionHeader
 import app.kairos.mobile.ui.kit.SpaceHeader
 import app.kairos.mobile.ui.kit.colors
@@ -224,7 +225,7 @@ fun AgendaScreen(
                         .fillMaxSize()
                         .verticalScroll(scroll)
                         .padding(horizontal = 20.dp)
-                        .padding(top = 8.dp, bottom = padding.calculateBottomPadding() + 96.dp),
+                        .padding(top = 8.dp, bottom = padding.calculateBottomPadding() + primaryActionClearance()),
                 ) {
                     agenda.issue?.let { issue ->
                         val (title, detail) = issueBanner("Agenda", issue, agenda.fetchedAt?.let { "Dernier état : ${dayTime(it)}" })
@@ -448,7 +449,7 @@ private fun TaskRow(task: AgendaTask, day: LocalDate, onDone: (AgendaTask) -> Un
                     Text(task.title, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     late?.let { Text("en retard depuis le ${it.format(DateTimeFormatter.ofPattern("d MMMM", Fr))}", style = MaterialTheme.typography.bodySmall, color = KairosColors.current.attentionText) }
                 }
-                TextButton(onClick = { onDone(task) }) { Text("Faite") }
+                TextButton(onClick = { onDone(task) }, Modifier.semantics { contentDescription = "Faite : ${task.title}" }) { Text("Faite") }
             }
         }
     }

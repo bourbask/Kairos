@@ -7,11 +7,15 @@ import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
+import androidx.compose.material3.SnackbarVisuals
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
@@ -28,24 +32,51 @@ fun undoWindowMs(touchExploration: Boolean, recommendedMs: Long): Long =
 
 /**
  * File unique des messages de l'application. Fenêtres d'annulation : une à la fois, chacune
- * avec son délai complet, compté seulement une fois « Annuler » affiché ; un message
- * d'information en cours est écarté, un geste suivant attend son tour au lieu de partir sans
- * avoir été annulable. [undoMs] est relu à chaque fenêtre (service d'accessibilité activé entre-temps).
+ * avec son délai complet, compté seulement une fois « Annuler » affiché ; tout message
+ * d'information qui occupe l'hôte avant elle est écarté puis reproposé après elle (un refus
+ * n'est jamais effacé par le geste suivant). [undoMs] est relu à chaque fenêtre (service
+ * d'accessibilité activé entre-temps).
  */
 class Notifier(val host: SnackbarHostState = SnackbarHostState(), private val undoMs: () -> Long = { UNDO_WINDOW_MS }) {
     private val lock = Mutex()
 
+    /** Messages écartés par une fenêtre, à reproposer après elle. Accès depuis le fil principal. */
+    private val deferred = mutableSetOf<SnackbarVisuals>()
+
     /** Vrai si « Annuler » a été touché pendant la fenêtre. */
     suspend fun undo(text: String): Boolean = lock.withLock {
-        host.currentSnackbarData?.dismiss()
-        withTimeoutOrNull(undoMs()) {
-            host.showSnackbar(text, actionLabel = "Annuler", duration = SnackbarDuration.Indefinite)
-        } == SnackbarResult.ActionPerformed
+        coroutineScope {
+            val visuals = Visuals(text, "Annuler", SnackbarDuration.Indefinite)
+            val result = async { host.showSnackbar(visuals) }
+            // ponytail: scrutation toutes les 16 ms, l'hôte n'expose pas de file observable hors composition.
+            while (host.currentSnackbarData?.visuals !== visuals) {
+                host.currentSnackbarData?.let {
+                    deferred += it.visuals
+                    it.dismiss()
+                }
+                delay(16)
+            }
+            val r = withTimeoutOrNull(undoMs()) { result.await() }
+            result.cancel()
+            r == SnackbarResult.ActionPerformed
+        }
     }
 
-    /** Message d'information ; attend la fin du message en cours. */
+    /** Message d'information ; attend la fin du message en cours, revient après une fenêtre qui l'a écarté. */
     suspend fun show(text: String) {
-        host.showSnackbar(text)
+        val visuals = Visuals(text, null, SnackbarDuration.Short)
+        while (host.showSnackbar(visuals) == SnackbarResult.Dismissed && deferred.remove(visuals)) {
+            lock.withLock {} // la fenêtre en cours passe d'abord
+        }
+    }
+
+    /** Identité propre à chaque message : deux textes égaux restent deux messages. */
+    private class Visuals(
+        override val message: String,
+        override val actionLabel: String?,
+        override val duration: SnackbarDuration,
+    ) : SnackbarVisuals {
+        override val withDismissAction = false
     }
 }
 

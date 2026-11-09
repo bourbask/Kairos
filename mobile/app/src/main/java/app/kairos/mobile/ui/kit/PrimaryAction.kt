@@ -14,6 +14,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import app.kairos.mobile.ui.theme.Motion
 
@@ -32,8 +33,7 @@ fun PrimaryAction(
     icon: ImageVector = KairosIcons.Plus,
 ) {
     val colors = MaterialTheme.colorScheme
-    // ponytail: hauteur fixe d'un message sur deux lignes ; mesurer l'hôte si un message plus haut apparaît.
-    val lift by animateDpAsState(if (LocalNotifier.current.host.currentSnackbarData != null) 80.dp else 0.dp, Motion.settle(), label = "message")
+    val lift by animateDpAsState(messageLift(), Motion.settle(), label = "message")
     ExtendedFloatingActionButton(
         text = { Text(text, fontWeight = FontWeight.Bold) },
         icon = { Icon(icon, contentDescription = null) },
@@ -47,3 +47,17 @@ fun PrimaryAction(
         },
     )
 }
+
+/** Hauteur dont l'action remonte pendant un message de la file commune. */
+@Composable
+private fun messageLift(): Dp =
+    // ponytail: hauteur fixe d'un message sur deux lignes ; mesurer l'hôte si un message plus haut apparaît.
+    if (LocalNotifier.current.host.currentSnackbarData != null) 80.dp else 0.dp
+
+/**
+ * Marge basse (en plus de celle de la coque) qu'un contenu défilant doit laisser sous une
+ * [PrimaryAction] : sa hauteur, ses marges et sa remontée pendant un message. Ainsi la fin
+ * du contenu n'est jamais masquée.
+ */
+@Composable
+fun primaryActionClearance(): Dp = 96.dp + messageLift()

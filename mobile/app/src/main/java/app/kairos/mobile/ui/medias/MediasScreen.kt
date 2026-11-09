@@ -211,7 +211,17 @@ fun MediasScreen(
             AskPanel(
                 search = { q -> repository.lookup(MEDIAS, "app_media_search", RESULTS, buildJsonObject { put("query", q) }) },
                 request = { r -> repository.tool(MEDIAS, "app_media_request", requestArgs(r)) },
-                onRequested = { scope.launch { runCatching { repository.refreshMedias() } } },
+                onRequested = {
+                    scope.launch {
+                        // Relecture de confort : un échec se voit au prochain rafraîchissement, une session expirée tout de suite.
+                        try {
+                            repository.refreshMedias()
+                        } catch (_: ApiError.Unauthorized) {
+                            unauthorized()
+                        } catch (_: ApiError) {
+                        }
+                    }
+                },
                 onUnauthorized = unauthorized,
             )
         }
@@ -258,7 +268,7 @@ private fun WatchRow(w: Watch, onWatched: (Watch) -> Unit) {
             modifier = Modifier.fillMaxWidth(),
         ) {
             Row(Modifier.padding(start = 14.dp, end = 4.dp, top = 10.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f).semantics(mergeDescendants = true) {}) {
+                Column(Modifier.weight(1f)) {
                     Text(w.title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     Text(w.note, style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
                 }
@@ -271,7 +281,7 @@ private fun WatchRow(w: Watch, onWatched: (Watch) -> Unit) {
 @Composable
 private fun DownloadsSection(m: Medias, onControl: suspend (String) -> Unit) {
     val scope = rememberCoroutineScope()
-    var sending by remember { mutableStateOf(false) }
+    var sending by remember { mutableStateOf<String?>(null) }
     val d = m.downloads
     // Section tombée : l'état de la file est inconnu, mais pause et reprise restent possibles.
     SectionHeader("Téléchargements") {
@@ -279,14 +289,17 @@ private fun DownloadsSection(m: Medias, onControl: suspend (String) -> Unit) {
             pauseChoices(d).forEach { (label, action) ->
                 TextButton(
                     onClick = {
-                        sending = true
+                        sending = action
                         scope.launch {
-                            onControl(action)
-                            sending = false
+                            try {
+                                onControl(action)
+                            } finally {
+                                sending = null
+                            }
                         }
                     },
-                    enabled = !sending,
-                ) { Text(if (sending) "Envoi…" else label) }
+                    enabled = sending == null,
+                ) { Text(if (sending == action) "Envoi…" else label) }
             }
         }
     }

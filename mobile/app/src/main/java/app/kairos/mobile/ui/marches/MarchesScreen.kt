@@ -63,6 +63,7 @@ import app.kairos.mobile.ui.kit.Columns
 import app.kairos.mobile.ui.kit.KairosIcons
 import app.kairos.mobile.ui.kit.LocalNotifier
 import app.kairos.mobile.ui.kit.PrimaryAction
+import app.kairos.mobile.ui.kit.primaryActionClearance
 import app.kairos.mobile.ui.kit.SpaceHeader
 import app.kairos.mobile.ui.finances.issueBanner
 import app.kairos.mobile.ui.kit.LineChart
@@ -186,7 +187,7 @@ fun MarchesScreen(
                             .fillMaxSize()
                             .verticalScroll(rememberScrollState())
                             .padding(horizontal = 20.dp)
-                            .padding(top = 8.dp, bottom = padding.calculateBottomPadding() + if (pending.isNotEmpty()) 96.dp else 24.dp),
+                            .padding(top = 8.dp, bottom = padding.calculateBottomPadding() + if (pending.isNotEmpty()) primaryActionClearance() else 24.dp),
                     ) {
                         snapshot.issue?.let { issue ->
                             val (title, detail) = issueBanner("Marchés", issue, snapshot.fetchedAt?.let { "Dernier état : ${syncLabel(it)}" })

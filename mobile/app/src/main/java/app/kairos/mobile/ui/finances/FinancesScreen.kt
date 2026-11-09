@@ -60,6 +60,7 @@ import app.kairos.mobile.ui.kit.Amount
 import app.kairos.mobile.ui.kit.KairosIcons
 import app.kairos.mobile.ui.kit.MaskToggle
 import app.kairos.mobile.ui.kit.PrimaryAction
+import app.kairos.mobile.ui.kit.primaryActionClearance
 import app.kairos.mobile.ui.kit.SpaceHeader
 import app.kairos.mobile.ui.kit.Bar
 import app.kairos.mobile.ui.kit.Donut
@@ -137,7 +138,7 @@ fun FinancesScreen(
                             .fillMaxSize()
                             .verticalScroll(rememberScrollState())
                             .padding(horizontal = 20.dp)
-                            .padding(top = 8.dp, bottom = padding.calculateBottomPadding() + 96.dp),
+                            .padding(top = 8.dp, bottom = padding.calculateBottomPadding() + primaryActionClearance()),
                     ) {
                         // Bandeaux de la source de cet onglet seulement.
                         val source = if (t == Page.Cycle) {

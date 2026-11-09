@@ -514,8 +514,9 @@ private fun HoldContent(talk: TalkController, level: Float) {
         style = MaterialTheme.typography.bodyLarge,
         color = if (text.isEmpty() || cancelled) colors.onSurfaceVariant else colors.onSurface,
         textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-        // Lue au fil de la reconnaissance ; au départ, « Je t'écoute » (jamais une description vide).
-        modifier = Modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite },
+        // Jamais lue pendant l'écoute (la voix du lecteur d'écran partirait dans le micro) ;
+        // seule l'annulation, micro coupé, est annoncée.
+        modifier = Modifier.fillMaxWidth().semantics { if (cancelled) liveRegion = LiveRegionMode.Polite },
     )
     Spacer(Modifier.height(4.dp))
     Text(

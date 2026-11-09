@@ -89,7 +89,7 @@ fun SpaceScaffold(
                 Box(Modifier.padding(horizontal = 20.dp, vertical = 4.dp)) { banner() }
             }
             Box(Modifier.fillMaxWidth().weight(1f)) {
-                content(PaddingValues(bottom = bottom + if (primaryAction != null) 96.dp else 24.dp))
+                content(PaddingValues(bottom = bottom + if (primaryAction != null) primaryActionClearance() else 24.dp))
             }
         }
         if (primaryAction != null) {

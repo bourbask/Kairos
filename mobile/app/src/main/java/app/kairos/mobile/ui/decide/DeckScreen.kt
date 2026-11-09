@@ -30,6 +30,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -254,7 +257,20 @@ fun DeckScreen(
             contentAlignment = Alignment.Center,
         ) {
             // Carte à la hauteur de son contenu, centrée ; les alternatives juste dessous.
-            if (current == null) Done(deck.done > 0) else Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            // Alternatives ouvertes : la zone défile (carte longue, police agrandie) et s'y place,
+            // pour qu'aucun choix ne passe sous la barre d'actions. Fermées : pas de défilement,
+            // l'envol de la carte n'est pas rogné.
+            val altScroll = rememberScrollState()
+            LaunchedEffect(deck.alternativesOpen) {
+                if (!deck.alternativesOpen) return@LaunchedEffect
+                withFrameNanos {} // alternatives mesurées : maxValue à jour
+                altScroll.animateScrollTo(altScroll.maxValue)
+            }
+            if (current == null) Done(deck.done > 0) else Column(
+                (if (deck.alternativesOpen) Modifier.verticalScroll(altScroll) else Modifier),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
                 Box(contentAlignment = Alignment.Center) {
                     val next = deck.cards.getOrNull(1)
                     val o = offset.value

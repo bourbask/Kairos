@@ -151,7 +151,7 @@ class MainActivity : ComponentActivity() {
                     LocalAmountsMasked provides model.amountsMasked,
                     LocalNotifier provides rememberNotifier(),
                 ) {
-                    KairosRoot(model)
+                    KairosRoot(model, dark)
                 }
             }
         }
@@ -497,7 +497,7 @@ class AppModel(app: Application) : AndroidViewModel(app) {
 }
 
 @Composable
-private fun KairosRoot(model: AppModel) {
+private fun KairosRoot(model: AppModel, dark: Boolean) {
     if (!model.loaded) {
         Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background))
         return
@@ -856,6 +856,7 @@ private fun KairosRoot(model: AppModel) {
         Overlay(settings, settingsOpen, onClose = { settingsOpen = false }) {
             SettingsScreen(
                 theme = model.theme,
+                dark = dark,
                 onTheme = model::changeTheme,
                 speakReplies = model.speakReplies,
                 onSpeakReplies = model::changeSpeakReplies,

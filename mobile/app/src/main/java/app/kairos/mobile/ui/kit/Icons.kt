@@ -50,6 +50,15 @@ object KairosIcons {
         }
     }
     val Search by lazy { icon("Chercher") { circle(10.5f, 10.5f, 6f); moveTo(15f, 15f); lineTo(20f, 20f) } }
+    val Trash by lazy {
+        icon("Supprimer") {
+            moveTo(4f, 7f); horizontalLineTo(20f)
+            moveTo(9f, 7f); verticalLineTo(4f); horizontalLineTo(15f); verticalLineTo(7f)
+            moveTo(6f, 7f); lineTo(7f, 20f); horizontalLineTo(17f); lineTo(18f, 7f)
+            moveTo(10f, 11f); verticalLineTo(16f)
+            moveTo(14f, 11f); verticalLineTo(16f)
+        }
+    }
     val EyeOff by lazy { icon("Masquer") { eye(); moveTo(4f, 4f); lineTo(20f, 20f) } }
 
     private fun PathBuilder.circle(cx: Float, cy: Float, r: Float) {

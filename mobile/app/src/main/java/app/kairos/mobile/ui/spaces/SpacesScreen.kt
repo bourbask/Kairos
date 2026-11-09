@@ -42,7 +42,6 @@ import app.kairos.mobile.data.MaisonSnapshot
 import app.kairos.mobile.data.MarchesSnapshot
 import app.kairos.mobile.data.MediasSnapshot
 import app.kairos.mobile.data.MemoireSnapshot
-import app.kairos.mobile.ui.agenda.upcomingWhen
 import app.kairos.mobile.ui.documents.nextDeadline
 import app.kairos.mobile.ui.documents.overdueCount
 import app.kairos.mobile.ui.kit.KairosIcons
@@ -285,10 +284,9 @@ private fun FinancesRow(finances: FinancesSnapshot, onClick: () -> Unit, onAffor
 
 @Composable
 private fun AgendaRow(agenda: AgendaSnapshot, onClick: () -> Unit, onRetry: () -> Unit, modifier: Modifier) {
-    val next = agenda.week?.upcoming?.firstOrNull()
     val load = spaceLoad(agenda.week != null || agenda.days.isNotEmpty(), agenda.issue)
     StateRow("Agenda", load, onClick, onRetry, modifier, { CalendarIcon() }) {
-        Status(if (next == null) "Rien de prévu" else "${next.title} · ${upcomingWhen(next, LocalDate.now())}")
+        Status(agendaStatus(agenda.week, LocalDate.now()))
     }
 }
 

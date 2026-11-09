@@ -39,8 +39,6 @@ import androidx.compose.ui.semantics.Role
 import app.kairos.mobile.ui.kit.KairosIcons
 import app.kairos.mobile.ui.kit.SectionHeader
 import app.kairos.mobile.ui.kit.SpaceHeader
-import app.kairos.mobile.ui.theme.DarkKairosColors
-import app.kairos.mobile.ui.theme.KairosColors
 
 /** Adresse du serveur montrée en partie seulement : de quoi reconnaître l'appareil, pas de quoi la relever. */
 internal fun maskAddress(baseUrl: String): String {
@@ -54,6 +52,7 @@ internal fun maskAddress(baseUrl: String): String {
 @Composable
 fun SettingsScreen(
     theme: ThemeMode,
+    dark: Boolean,
     onTheme: (ThemeMode) -> Unit,
     speakReplies: Boolean,
     onSpeakReplies: (Boolean) -> Unit,
@@ -73,7 +72,7 @@ fun SettingsScreen(
     var confirm by remember { mutableStateOf(false) }
     // Vérification discrète à l'ouverture ; le bouton « Vérifier » dit le résultat.
     LaunchedEffect(Unit) { onCheck(false) }
-    val applied = if (KairosColors.current == DarkKairosColors) "sombre" else "clair"
+    val applied = if (dark) "sombre" else "clair"
     Column(
         Modifier
             .fillMaxSize()
