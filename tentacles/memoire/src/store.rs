@@ -1074,9 +1074,10 @@ impl MemoryStore {
         st.query_map([limit], card_from_row)?.map(|r| finish_card(r?)).collect()
     }
 
+    /// Conversations en attente de résumé : la même règle que pour l'extraction.
     pub fn conversations_unsummarized(&self, limit: u32) -> Result<Vec<ConversationCard>> {
         let mut st = self.conn.prepare(&format!(
-            "SELECT {CARD_COLS} FROM conversations c WHERE c.summary IS NULL ORDER BY c.id LIMIT ?"
+            "SELECT {CARD_COLS} FROM conversations c WHERE {NON_RESUMEE} ORDER BY c.id LIMIT ?"
         ))?;
         st.query_map([limit], card_from_row)?.map(|r| finish_card(r?)).collect()
     }
@@ -2342,6 +2343,10 @@ mod tests {
         let jour = NaiveDate::from_ymd_opt(2026, 10, 1).unwrap();
         assert_eq!(s.conversations_non_resumees_le(jour).unwrap(), 2);
         assert_eq!(s.conversations_non_resumees_le(jour.succ_opt().unwrap()).unwrap(), 0);
+        // Les conversations en attente sont celles reproposées au résumé, résumé blanc compris.
+        let a_resumer: Vec<i64> = s.conversations_unsummarized(10).unwrap().iter().map(|c| c.id).collect();
+        assert_eq!(a_resumer.len(), 2);
+        assert!(a_resumer.contains(&blanc));
         // Chaque conversation est soit en attente, soit un épisode : jamais les deux, jamais aucun.
         let ep = s.episodes_du_jour(jour).unwrap();
         let textes: Vec<(&str, &str)> = ep.iter().map(|e| (e.r#ref.as_str(), e.texte.as_str())).collect();
