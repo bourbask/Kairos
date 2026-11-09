@@ -1398,9 +1398,18 @@ impl MemoryStore {
             Some(cible) => out.push(Lot::new(niveau, p, true, std::iter::once(cible.clone()).chain(elements).collect())),
             None => out.push(Lot::new(niveau, p, false, elements)),
         };
+        // Une semaine n'est condensée qu'une fois tous ses jours passés par l'extraction.
+        let extrait_jusquau: Option<NaiveDate> = self
+            .conn
+            .query_row("SELECT dernier_jour FROM nuit_etat WHERE etape = 'extraction'", [], |r| r.get::<_, Option<String>>(0))
+            .optional()?
+            .flatten()
+            .and_then(|j| NaiveDate::parse_from_str(&j, "%Y-%m-%d").ok());
         for (p, (elements, pret)) in semaines {
-            let finie = jour_semaine(&p, Weekday::Sun).is_some_and(|d| d < aujourdhui);
-            if pret && finie {
+            let dimanche = jour_semaine(&p, Weekday::Sun);
+            let finie = dimanche.is_some_and(|d| d < aujourdhui);
+            let extraite = dimanche.zip(extrait_jusquau).is_some_and(|(d, e)| d <= e);
+            if pret && finie && extraite {
                 pousser("semaine", p, elements);
             }
         }
@@ -1569,6 +1578,13 @@ mod tests {
 
     fn store() -> MemoryStore {
         MemoryStore::open(":memory:").unwrap()
+    }
+
+    /// Mémoire dont l'extraction est à jour : seule la condensation décide.
+    fn store_extrait() -> MemoryStore {
+        let s = store();
+        s.nuit_noter("extraction", "ok", NaiveDate::from_ymd_opt(2099, 12, 31), t()).unwrap();
+        s
     }
 
     fn t() -> NaiveDateTime {
@@ -2229,8 +2245,22 @@ mod tests {
     }
 
     #[test]
-    fn week_condensable_only_when_all_faded_14_days() {
+    fn condensation_waits_for_extraction() {
         let s = store();
+        episode_le(&s, "semis de radis", t()); // semaine 44, finie le dimanche 1er novembre
+        let m = t() + Duration::days(20);
+        // Extraction jamais passée, puis en retard sur la semaine : rien à condenser.
+        s.conn.execute("UPDATE nuit_etat SET dernier_jour = NULL WHERE etape = 'extraction'", []).unwrap();
+        assert!(s.condensables(m, 10).unwrap().is_empty());
+        s.nuit_noter("extraction", "ok", Some(jour(2026, 10, 31).date()), m).unwrap();
+        assert!(s.condensables(m, 10).unwrap().is_empty());
+        s.nuit_noter("extraction", "ok", Some(jour(2026, 11, 1).date()), m).unwrap();
+        assert_eq!(s.condensables(m, 10).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn week_condensable_only_when_all_faded_14_days() {
+        let s = store_extrait();
         // Estompage à 3 × ln 2 ≈ 2,08 jours après le dernier rappel.
         let a = episode_le(&s, "semis de radis", t());
         let b = episode_le(&s, "arrosage du soir", t() + Duration::days(1));
@@ -2284,7 +2314,7 @@ mod tests {
 
     #[test]
     fn condensation_is_atomic_and_idempotent() {
-        let s = store();
+        let s = store_extrait();
         let j = episode_le(&s, "taille des rosiers", t());
         let c = s.conversation_ingest(&conv("discussion sur les rosiers")).unwrap();
         s.conversation_set_summary(c, "conseils de taille", &[], &[]).unwrap();
@@ -2312,7 +2342,7 @@ mod tests {
 
     #[test]
     fn condensed_sources_leave_no_index_trace() {
-        let s = store();
+        let s = store_extrait();
         let j = episode_le(&s, "zygomorphe", t());
         let c = s.conversation_ingest(&conv("xylophone")).unwrap();
         s.conversation_set_summary(c, "quokka", &[], &[]).unwrap();
@@ -2355,7 +2385,7 @@ mod tests {
 
     #[test]
     fn condensed_lot_carries_full_information() {
-        let s = store();
+        let s = store_extrait();
         let j = s
             .journal_write(&NewJournalEntry {
                 source: "s".into(),
@@ -2402,7 +2432,7 @@ mod tests {
 
     #[test]
     fn late_episode_completes_existing_synthesis() {
-        let s = store();
+        let s = store_extrait();
         let m = t() + Duration::days(30);
         episode_le(&s, "semis de fèves", t());
         let id = condense(&s, "semaine", "2026-W44", "semaine de semis", m).unwrap().unwrap();
@@ -2435,7 +2465,7 @@ mod tests {
 
     #[test]
     fn stale_fingerprint_is_refused() {
-        let s = store();
+        let s = store_extrait();
         let m = t() + Duration::days(30);
         let a = episode_le(&s, "taille de la haie", t());
         let ancien = s.condensables(m, 10).unwrap()[0].empreinte.clone();
@@ -2450,7 +2480,7 @@ mod tests {
 
     #[test]
     fn reingested_conversation_is_fresh_again() {
-        let s = store();
+        let s = store_extrait();
         let maintenant = now_local();
         let debut = maintenant - Duration::days(30);
         let c = NewConversation { started_at: debut, ended_at: debut, session_id: Some("s".into()), ..conv("première") };
@@ -2465,7 +2495,7 @@ mod tests {
 
     #[test]
     fn conversation_with_topics_only_has_content() {
-        let s = store();
+        let s = store_extrait();
         let c = s.conversation_ingest(&conv("bavardage")).unwrap();
         s.conversation_set_summary(c, "", &["jardin".into()], &[]).unwrap();
         vieillir(&s, "conversation", &c.to_string(), t());
