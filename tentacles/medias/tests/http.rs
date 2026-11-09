@@ -219,6 +219,11 @@ async fn lists_tools_and_writes_require_confirmation() {
         names,
         [
             "abandoned",
+            "app_downloads_control",
+            "app_media_request",
+            "app_media_search",
+            "app_media_watched",
+            "app_medias",
             "audiobooks",
             "blocklist_release",
             "brief_section",

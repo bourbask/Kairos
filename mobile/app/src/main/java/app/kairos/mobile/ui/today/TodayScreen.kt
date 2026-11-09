@@ -46,6 +46,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Surface
+import app.kairos.mobile.ui.kit.UndoWindows
 import app.kairos.mobile.data.AppRelease
 import app.kairos.mobile.ui.settings.updateLabel
 import androidx.compose.material3.Text
@@ -136,6 +137,7 @@ fun TodayScreen(
     val marks by repository.marks.collectAsState()
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
+    val undo = remember { UndoWindows(snackbar) }
     var refreshing by remember { mutableStateOf(false) }
     var week by rememberSaveable { mutableStateOf(false) }
     var now by remember { mutableStateOf(LocalDateTime.now()) }
@@ -180,11 +182,7 @@ fun TodayScreen(
      * « Annuler » a été touché. Un second geste ne chasse pas la fenêtre en cours :
      * son snackbar attend son tour, pour le temps qui reste à sa propre fenêtre.
      */
-    suspend fun undoWindow(text: String): Boolean {
-        return withTimeoutOrNull(UNDO_MS) {
-            snackbar.showSnackbar(text, actionLabel = "Annuler", duration = SnackbarDuration.Indefinite)
-        } == SnackbarResult.ActionPerformed
-    }
+    suspend fun undoWindow(text: String): Boolean = undo.open(text)
 
     fun later(day: String, card: Card) {
         if (!busy.claim(card.key)) return

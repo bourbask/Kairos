@@ -51,6 +51,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
+import app.kairos.mobile.ui.kit.UndoWindows
 import app.kairos.mobile.data.ApiError
 import app.kairos.mobile.data.FollowedMarket
 import app.kairos.mobile.data.MarchesSnapshot
@@ -113,6 +114,7 @@ fun MarchesScreen(
     val scope = rememberCoroutineScope()
     val unauthorized by rememberUpdatedState(onUnauthorized)
     val snackbar = remember { SnackbarHostState() }
+    val undo = remember { UndoWindows(snackbar) }
     var refreshing by remember { mutableStateOf(false) }
     var detailId by rememberSaveable { mutableStateOf<String?>(null) }
     var deckOpen by rememberSaveable { mutableStateOf(false) }
@@ -140,9 +142,7 @@ fun MarchesScreen(
         onPauseOrDispose {}
     }
 
-    suspend fun undoWindow(text: String): Boolean = withTimeoutOrNull(UNDO_MS) {
-        snackbar.showSnackbar(text, actionLabel = "Annuler", duration = SnackbarDuration.Indefinite)
-    } == SnackbarResult.ActionPerformed
+    suspend fun undoWindow(text: String): Boolean = undo.open(text)
 
     // Depuis appScope : quitter l'espace pendant la fenêtre n'abandonne pas l'action.
     fun unfollow(m: FollowedMarket) {
