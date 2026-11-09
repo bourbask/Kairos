@@ -21,6 +21,10 @@ import kotlinx.serialization.json.put
 import app.kairos.mobile.ui.agenda.agendaAfter
 import app.kairos.mobile.ui.finances.financesAfter
 import app.kairos.mobile.ui.marches.marchesAfter
+import app.kairos.mobile.ui.memoire.cacheable
+import app.kairos.mobile.ui.memoire.memoireAfter
+import app.kairos.mobile.ui.memoire.withoutIntention
+import kotlinx.serialization.DeserializationStrategy
 import java.io.File
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -43,11 +47,14 @@ class Repository(
     private val financesFile = File(dir, "finances.json")
     private val agendaFile = File(dir, "agenda.json")
     private val marchesFile = File(dir, "marches.json")
+    private val memoireFile = File(dir, "memoire.json")
     private val loadLock = Mutex()
     private val maisonLock = Mutex()
     private val financesLock = Mutex()
     private val agendaLock = Mutex()
     private val marchesLock = Mutex()
+    private val memoireLock = Mutex()
+    private var memoireTried: Long? = null
     private var marchesTried: Long? = null
     private var agendaTried: Long? = null
     private var financesTried: Long? = null
@@ -71,6 +78,9 @@ class Repository(
     private val _marches = MutableStateFlow(MarchesSnapshot())
     val marches: StateFlow<MarchesSnapshot> = _marches.asStateFlow()
 
+    private val _memoire = MutableStateFlow(MemoireSnapshot())
+    val memoire: StateFlow<MemoireSnapshot> = _memoire.asStateFlow()
+
     /** Relit l'état enregistré (une seule fois) ; appelé d'office par [refresh] et [mark]. */
     suspend fun load() = loadLock.withLock {
         if (loaded) return@withLock
@@ -79,6 +89,7 @@ class Repository(
         read(financesFile, FinancesSnapshot.serializer())?.let { saved -> _finances.update { if (it.fetchedAt == null) saved else it } }
         read(agendaFile, AgendaSnapshot.serializer())?.let { saved -> _agenda.update { if (it.fetchedAt == null) saved else it } }
         read(marchesFile, MarchesSnapshot.serializer())?.let { saved -> _marches.update { if (it.fetchedAt == null) saved else it } }
+        read(memoireFile, MemoireSnapshot.serializer())?.let { saved -> _memoire.update { if (it.fetchedAt == null) saved else it } }
         val savedMarks = read(marksFile, MARKS).orEmpty()
         _marks.update { current -> (savedMarks + current).filterKeys { it >= today().toString() } }
         loaded = true
@@ -213,6 +224,32 @@ class Repository(
         write(marchesFile, MarchesSnapshot.serializer(), next)
     }
 
+    /**
+     * Intentions, journal, faits et conversations ; sans réponse, le dernier état reste.
+     * Écrit sur l'appareil sans les entrées sensibles. Sans [force], ignorée si la
+     * précédente date de moins de [FRESH_MS].
+     */
+    suspend fun refreshMemoire(force: Boolean = true) = memoireLock.withLock {
+        val last = memoireTried
+        if (!force && last != null && System.nanoTime() - last < FRESH_MS * 1_000_000) return@withLock
+        load()
+        val m = attempt { api.tool(MEMOIRE, "app_memory", Memory.serializer()) }
+        memoireTried = System.nanoTime()
+        val next = memoireAfter(_memoire.value, m, LocalDateTime.now().withNano(0).toString())
+        _memoire.value = next
+        if (m.isSuccess) write(memoireFile, MemoireSnapshot.serializer(), cacheable(next))
+    }
+
+    /** Retire une intention traitée sans attendre le module (relue à la prochaine actualisation). */
+    suspend fun dropIntention(id: Long) = memoireLock.withLock {
+        val next = _memoire.updateAndGet { withoutIntention(it, id) }
+        write(memoireFile, MemoireSnapshot.serializer(), cacheable(next))
+    }
+
+    /** Lecture ponctuelle d'un outil `app_*` (recherche, historique) : rien n'est gardé. */
+    suspend fun <T> lookup(module: String, name: String, result: DeserializationStrategy<T>, args: JsonObject): T =
+        api.tool(module, name, result, args)
+
     /** Verdict « puis-je me permettre » pour [amount] euros, sur [poste] s'il est donné. */
     suspend fun afford(amount: Double, poste: String?): Affordability =
         api.tool(FINANCES, "app_afford", Affordability.serializer(), buildJsonObject {
@@ -262,6 +299,8 @@ class Repository(
         _finances.value = FinancesSnapshot()
         _agenda.value = AgendaSnapshot()
         _marches.value = MarchesSnapshot()
+        _memoire.value = MemoireSnapshot()
+        memoireTried = null
         marchesTried = null
         financesTried = null
         agendaTried = null
@@ -270,6 +309,7 @@ class Repository(
             financesFile.delete()
             agendaFile.delete()
             marchesFile.delete()
+            memoireFile.delete()
             snapshotFile.delete()
             marksFile.delete()
         }
@@ -296,6 +336,7 @@ class Repository(
         const val FINANCES = "finances"
         const val AGENDA = "agenda"
         const val MARCHES = app.kairos.mobile.ui.marches.MARCHES
+        const val MEMOIRE = app.kairos.mobile.ui.memoire.MEMOIRE
         const val FRESH_MS = 30_000L
         val ORDERS = ListSerializer(Order.serializer())
         val PROPOSALS = ListSerializer(MarketProposal.serializer())

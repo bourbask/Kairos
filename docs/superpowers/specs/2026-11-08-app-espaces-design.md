@@ -101,3 +101,24 @@ Lecture seule du monde : aucun pari, aucun compte.
 
 Hors du premier jet : créer ou modifier un scénario depuis l'application,
 recherche libre de marchés.
+
+## Espace Mémoire
+
+Sources : module mémoire (intentions avec échéance, journal avec niveau de
+sensibilité, faits connus sur l'utilisateur avec historique, conversations
+résumées, leçons).
+
+- **Intentions** en cours, l'échéance la plus proche d'abord, avec le temps
+  restant : glisser → accepter, ← refuser, bouton « plus tard ». Une intention
+  échue disparaît sans relance (règle existante). Ajout rapide : texte (clavier
+  ou dictée) et échéance en puces (aujourd'hui, 3 jours, 1 semaine, 1 mois).
+- **Journal** : les entrées récentes datées, recherche ; ajout d'une note
+  (clavier ou dictée). Les entrées marquées sensibles sont masquées par défaut
+  (tap pour afficher), et toujours masquées quand les montants le sont.
+- **Ce que Kairos sait de toi** : faits groupés par thème (préfixe de clé),
+  valeur courante ; tap = historique des valeurs ; correction d'une valeur.
+- **Conversations** : les dernières, avec leur résumé, sujets et décisions ;
+  recherche.
+
+Hors du premier jet : modifier la personnalité de l'assistant, supprimer un
+fait ou une entrée de journal, éditer une leçon.
