@@ -26,7 +26,7 @@ const UPCOMING_DAYS: i64 = 7;
 // ponytail: file bornée, regroupement par œuvre si une saison entière encombre la liste.
 const MAX_DOWNLOADS: usize = 30;
 const MAX_SEARCH: usize = 10;
-const UNKNOWN_ITEM: &str = "Élément introuvable dans le lecteur (déjà retiré, ou lecteur injoignable).";
+const UNKNOWN_ITEM: &str = "Élément introuvable dans le lecteur (déjà retiré).";
 
 fn json_out(v: Value) -> Out {
     serde_json::to_string(&v).map_err(|e| e.to_string())
@@ -259,7 +259,7 @@ impl MediaServer {
         }
         let item = match sv::plex_metadata(p, key).await {
             Ok(i) => i,
-            Err(SvcError::Unavailable) => return outcome(UNKNOWN_ITEM, "gone"),
+            Err(SvcError::NotFound) => return outcome(UNKNOWN_ITEM, "gone"),
             Err(e) => return Err(why(PLAYER, &e)),
         };
         let name = clean(&item_name(&item));

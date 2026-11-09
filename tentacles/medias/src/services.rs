@@ -137,14 +137,17 @@ pub async fn plex_unwatched_leaves(p: &Opt, show_key: &str) -> R<Vec<PlexItem>> 
 }
 
 /// Fiche complète (pistes audio et sous-titres, identifiants externes).
+/// Élément inconnu du lecteur : [`SvcError::NotFound`], distinct d'un lecteur injoignable.
 pub async fn plex_metadata(p: &Opt, key: &str) -> R<PlexItem> {
-    let q = [("includeGuids", "1".to_string())];
-    plex_get(need(p)?, &format!("/library/metadata/{key}"), &q, None)
+    let s = need(p)?;
+    let req = s.raw().get(s.url(&format!("/library/metadata/{key}"))).query(&[("includeGuids", "1")]);
+    s.send_or_missing::<PlexEnvelope>(req)
         .await?
+        .mc
         .items
         .into_iter()
         .next()
-        .ok_or(SvcError::Unavailable)
+        .ok_or(SvcError::NotFound)
 }
 
 // ---------------------------------------------------------------- Sonarr / Radarr
