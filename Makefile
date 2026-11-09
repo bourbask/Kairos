@@ -1,4 +1,4 @@
-.PHONY: build test check scrape briefing status clean fmt clippy deploy build-linux
+.PHONY: build test check scrape briefing status clean fmt clippy deploy build-linux hooks
 
 build:
 	cargo build --release
@@ -35,3 +35,7 @@ build-linux:
 # Usage : VPS_HOST=user@vps [KAIROS_SERVICES="…"] make deploy
 deploy:
 	VPS_HOST=$(VPS_HOST) ./deploy/docker/deploy.sh
+
+# Active les contrôles de publication (données personnelles, secrets) sur ce clone.
+hooks:
+	git config core.hooksPath .githooks

@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Le message de commit est public lui aussi.
+exec "$(git rev-parse --show-toplevel)/scripts/osint-scan.sh" --text "$1"
