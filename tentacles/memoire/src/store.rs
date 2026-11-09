@@ -335,12 +335,16 @@ fn texte_conversation(resume: &str, sujets: &str, decisions: &str) -> String {
     let mut t = resume.to_owned();
     for (titre, brut) in [("Sujets", sujets), ("Décisions", decisions)] {
         let v: Vec<String> = serde_json::from_str(brut).unwrap_or_else(|_| vec![brut.to_owned()]);
-        if !v.is_empty() {
+        if !v.is_empty() && !brut.trim().is_empty() {
             t.push_str(&format!("\n{titre} : {}", v.join(", ")));
         }
     }
-    t
+    t.trim().to_owned()
 }
+
+/// Conversation pas encore résumée : ni résumé, ni sujets, ni décisions. Sa
+/// négation définit les conversations qui sont des épisodes.
+const NON_RESUMEE: &str = "trim(coalesce(summary, '')) = '' AND trim(topics) IN ('', '[]') AND trim(decisions) IN ('', '[]')";
 
 /// Premier jour d'une période de synthèse.
 fn debut_periode(niveau: &str, periode: &str) -> Option<NaiveDate> {
@@ -1291,10 +1295,7 @@ impl MemoryStore {
     }
 
     fn non_resumees(&self, filtre_date: &str, jour: NaiveDate) -> Result<u32> {
-        let sql = format!(
-            "SELECT COUNT(*) FROM conversations WHERE trim(coalesce(summary, '')) = ''
-             AND trim(topics) IN ('', '[]') AND trim(decisions) IN ('', '[]') AND {filtre_date}"
-        );
+        let sql = format!("SELECT COUNT(*) FROM conversations WHERE {NON_RESUMEE} AND {filtre_date}");
         Ok(self.conn.query_row(&sql, [jour.format("%Y-%m-%d").to_string()], |r| r.get(0))?)
     }
 
@@ -1409,12 +1410,16 @@ impl MemoryStore {
             let (id, content) = r?;
             out.push(Element { nature: "journal".into(), r#ref: id.to_string(), date: jour, texte: texte_journal(&content) });
         }
-        let mut st = self.conn.prepare(
-            "SELECT id, summary FROM conversations WHERE substr(started_at, 1, 10) = ? AND coalesce(summary, '') <> '' ORDER BY id",
-        )?;
-        for r in st.query_map([&j], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))? {
-            let (id, summary) = r?;
-            out.push(Element { nature: "conversation".into(), r#ref: id.to_string(), date: jour, texte: summary });
+        // Exactement les conversations du jour qui ne sont pas en attente de résumé.
+        let mut st = self.conn.prepare(&format!(
+            "SELECT id, coalesce(summary, ''), topics, decisions FROM conversations
+             WHERE substr(started_at, 1, 10) = ? AND NOT ({NON_RESUMEE}) ORDER BY id"
+        ))?;
+        let lignes = st.query_map([&j], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?)))?;
+        for r in lignes {
+            let (id, resume, sujets, decisions) = r?;
+            let texte = texte_conversation(resume.trim(), &sujets, &decisions);
+            out.push(Element { nature: "conversation".into(), r#ref: id.to_string(), date: jour, texte });
         }
         Ok(out)
     }
@@ -2310,10 +2315,18 @@ mod tests {
         s.conversation_ingest(&NewConversation { session_id: Some("x".into()), ..conv("pas résumée") }).unwrap();
         let c = s.conversation_ingest(&NewConversation { session_id: Some("y".into()), ..conv("résumée") }).unwrap();
         s.conversation_set_summary(c, "bilan", &[], &[]).unwrap();
+        let sujets = s.conversation_ingest(&NewConversation { session_id: Some("z".into()), ..conv("sujets seuls") }).unwrap();
+        s.conn.execute("UPDATE conversations SET topics = '[\"jardin\"]' WHERE id = ?", [sujets]).unwrap();
+        let blanc = s.conversation_ingest(&NewConversation { session_id: Some("w".into()), ..conv("résumé blanc") }).unwrap();
+        s.conn.execute("UPDATE conversations SET summary = '   ' WHERE id = ?", [blanc]).unwrap();
         s.conn.execute("UPDATE conversations SET started_at = '2026-10-01 10:00:00'", []).unwrap();
         let jour = NaiveDate::from_ymd_opt(2026, 10, 1).unwrap();
-        assert_eq!(s.conversations_non_resumees_le(jour).unwrap(), 1);
+        assert_eq!(s.conversations_non_resumees_le(jour).unwrap(), 2);
         assert_eq!(s.conversations_non_resumees_le(jour.succ_opt().unwrap()).unwrap(), 0);
+        // Chaque conversation est soit en attente, soit un épisode : jamais les deux, jamais aucun.
+        let ep = s.episodes_du_jour(jour).unwrap();
+        let textes: Vec<(&str, &str)> = ep.iter().map(|e| (e.r#ref.as_str(), e.texte.as_str())).collect();
+        assert_eq!(textes, vec![(c.to_string().as_str(), "bilan"), (sujets.to_string().as_str(), "Sujets : jardin")]);
     }
 
     #[test]

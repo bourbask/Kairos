@@ -304,7 +304,7 @@ mod tests {
 
     #[test]
     fn night_tools_hidden_from_model() {
-        for t in ["nuit_episodes", "nuit_cles", "nuit_appliquer", "nuit_condensables", "nuit_condenser", "nuit_oublier", "nuit_etat", "nuit_noter"] {
+        for t in ["nuit_episodes", "nuit_cles", "nuit_appliquer", "nuit_condensables", "nuit_condenser", "nuit_oublier", "nuit_etat", "nuit_noter", "nuit_en_attente"] {
             assert!(super::is_app_tool(t), "{t}");
         }
         assert!(!super::is_app_tool("nuitee"));
