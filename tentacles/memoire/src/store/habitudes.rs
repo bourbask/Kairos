@@ -231,6 +231,15 @@ pub(super) fn migrer(c: &Connection, maintenant: NaiveDateTime) -> Result<()> {
 }
 
 impl MemoryStore {
+    /// Libellés des habitudes annoncées depuis `depuis` dont la question attend une réponse.
+    pub fn habitudes_annoncees(&self, depuis: NaiveDateTime) -> Result<Vec<String>> {
+        let mut st = self.conn.prepare(
+            "SELECT h.libelle FROM habitudes h JOIN intentions i ON i.id = h.question
+             WHERE i.state = 'proposee' AND h.rejetee = 0 AND h.annoncee_le >= ? ORDER BY h.annoncee_le, h.id",
+        )?;
+        Ok(st.query_map([ts(depuis)], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?)
+    }
+
     /// Efface pour de bon une habitude, son souvenir et sa question ouverte ;
     /// `false` si elle est inconnue.
     pub fn habitude_oublier(&self, id: i64) -> Result<bool> {

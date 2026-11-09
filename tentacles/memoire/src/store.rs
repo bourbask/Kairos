@@ -235,9 +235,9 @@ pub struct Bilan {
 }
 
 /// Étapes de la nuit dont l'état est conservé.
-pub const ETAPES_NUIT: [&str; 3] = ["extraction", "condensation", "oubli"];
+pub const ETAPES_NUIT: [&str; 4] = ["extraction", "habitudes", "condensation", "oubli"];
 /// Statuts possibles d'une étape de nuit : des codes, jamais de texte libre.
-pub const STATUTS_NUIT: [&str; 4] = ["ok", "modele_indisponible", "sortie_invalide", "echec"];
+pub const STATUTS_NUIT: [&str; 5] = ["ok", "modele_indisponible", "sortie_invalide", "echec", "source_indisponible"];
 /// En dessous de cette force, une habitude est estompée.
 const SEUIL_ESTOMPE_HABITUDE: f64 = 0.3;
 /// En dessous de cette récupérabilité, un souvenir oubliable est effacé.
@@ -2844,7 +2844,7 @@ mod tests {
         let s = store();
         // Chaque étape existe dès l'ouverture : son horloge part de là.
         let e = s.nuit_etat().unwrap();
-        assert_eq!(e.iter().map(|e| e.etape.as_str()).collect::<Vec<_>>(), ["condensation", "extraction", "oubli"]);
+        assert_eq!(e.iter().map(|e| e.etape.as_str()).collect::<Vec<_>>(), ["condensation", "extraction", "habitudes", "oubli"]);
         assert!(e.iter().all(|e| e.statut == "ok" && e.derniere_execution.is_some() && e.dernier_jour.is_none() && !e.illisible));
         s.nuit_noter("extraction", "ok", Some(d(3)), jour(2026, 11, 4)).unwrap();
         s.nuit_noter("extraction", "modele_indisponible", None, jour(2026, 11, 5)).unwrap();
