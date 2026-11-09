@@ -34,6 +34,10 @@ import app.kairos.mobile.data.AgendaSnapshot
 import app.kairos.mobile.data.FinancesSnapshot
 import app.kairos.mobile.data.MaisonSnapshot
 import app.kairos.mobile.data.MarchesSnapshot
+import app.kairos.mobile.data.MemoireSnapshot
+import app.kairos.mobile.ui.memoire.openIntentions
+import app.kairos.mobile.ui.memoire.timeLeft
+import java.time.LocalDateTime
 import app.kairos.mobile.ui.marches.color
 import app.kairos.mobile.ui.marches.deltaLabel
 import app.kairos.mobile.ui.marches.headline
@@ -84,18 +88,25 @@ fun SpacesScreen(
     onOpenMarches: () -> Unit,
     onCloseMarches: () -> Unit,
     marchesContent: @Composable () -> Unit,
+    memoire: MemoireSnapshot,
+    memoireOpen: Boolean,
+    onOpenMemoire: () -> Unit,
+    onCloseMemoire: () -> Unit,
+    memoireContent: @Composable () -> Unit,
+    memoireLater: Set<Long> = emptySet(),
     maisonContent: @Composable () -> Unit,
 ) {
     val overlay = rememberOverlayState(maisonOpen, Origin.Anchor)
     val financesOverlay = rememberOverlayState(financesOpen, Origin.Anchor)
     val agendaOverlay = rememberOverlayState(agendaOpen, Origin.Anchor)
     val marchesOverlay = rememberOverlayState(marchesOpen, Origin.Anchor)
+    val memoireOverlay = rememberOverlayState(memoireOpen, Origin.Anchor)
     val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.outlineVariant)) {
         Column(
             Modifier
                 .fillMaxSize()
-                .underOverlays(rtl, overlay, financesOverlay, agendaOverlay, marchesOverlay)
+                .underOverlays(rtl, overlay, financesOverlay, agendaOverlay, marchesOverlay, memoireOverlay)
                 .background(MaterialTheme.colorScheme.background)
                 .padding(padding)
                 .padding(horizontal = 20.dp, vertical = 20.dp),
@@ -111,6 +122,8 @@ fun SpacesScreen(
             AgendaCard(agenda, onOpenAgenda, Modifier.overlayAnchor(agendaOverlay, CardCorner))
             Spacer(Modifier.height(12.dp))
             MarchesCard(marches, onOpenMarches, Modifier.overlayAnchor(marchesOverlay, CardCorner))
+            Spacer(Modifier.height(12.dp))
+            MemoireCard(memoire, memoireLater, onOpenMemoire, Modifier.overlayAnchor(memoireOverlay, CardCorner))
             Spacer(Modifier.height(16.dp))
             Text(
                 "D'autres espaces viendront ici.",
@@ -129,6 +142,9 @@ fun SpacesScreen(
         }
         Overlay(marchesOverlay, marchesOpen, onClose = onCloseMarches, anchorColor = MaterialTheme.colorScheme.surface) {
             marchesContent()
+        }
+        Overlay(memoireOverlay, memoireOpen, onClose = onCloseMemoire, anchorColor = MaterialTheme.colorScheme.surface) {
+            memoireContent()
         }
     }
 }
@@ -278,6 +294,63 @@ private fun MarchesCard(marches: MarchesSnapshot, onClick: () -> Unit, modifier:
             }
             Text("›", style = MaterialTheme.typography.headlineSmall, color = colors.onSurfaceVariant)
         }
+    }
+}
+
+/** Intentions à traiter et la plus proche de l'échéance. */
+@Composable
+private fun MemoireCard(memoire: MemoireSnapshot, later: Set<Long>, onClick: () -> Unit, modifier: Modifier) {
+    val colors = MaterialTheme.colorScheme
+    val now = LocalDateTime.now()
+    val open = memoire.memory?.intentions?.let { openIntentions(it, now, later) }
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(CardCorner),
+        color = colors.surface,
+        border = BorderStroke(1.dp, colors.outlineVariant),
+        modifier = modifier.fillMaxWidth(),
+    ) {
+        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            NoteIcon(colors.primary, colors.primaryContainer)
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text("Mémoire", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                val next = open?.firstOrNull()
+                if (open == null || next == null) {
+                    Text(
+                        if (open == null) "Intentions, journal et ce que Kairos sait de toi" else "Aucune intention à traiter",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = colors.onSurfaceVariant,
+                    )
+                } else {
+                    Text(
+                        "${open.size} intention${if (open.size > 1) "s" else ""} à traiter",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = colors.onSurfaceVariant,
+                    )
+                    Text(
+                        listOfNotNull(next.what, timeLeft(next.expires, now)).joinToString(" · "),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colors.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            Text("›", style = MaterialTheme.typography.headlineSmall, color = colors.onSurfaceVariant)
+        }
+    }
+}
+
+/** Carnet : page et lignes. */
+@Composable
+private fun NoteIcon(line: Color, fill: Color) = Canvas(Modifier.size(44.dp).background(fill, RoundedCornerShape(12.dp)).padding(9.dp)) {
+    val r = CornerRadius(3.dp.toPx())
+    val stroke = 2.5.dp.toPx()
+    drawRoundRect(line.copy(alpha = 0.35f), Offset(size.width * 0.1f, 0f), Size(size.width * 0.8f, size.height), r)
+    for (i in 0 until 3) {
+        val y = size.height * (0.28f + i * 0.22f)
+        drawLine(line, Offset(size.width * 0.25f, y), Offset(size.width * (if (i == 2) 0.55f else 0.75f), y), stroke, StrokeCap.Round)
     }
 }
 

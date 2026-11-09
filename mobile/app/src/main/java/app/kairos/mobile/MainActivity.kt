@@ -85,6 +85,8 @@ import app.kairos.mobile.ui.agenda.AgendaScreen
 import java.time.LocalDate
 import app.kairos.mobile.ui.finances.FinancesScreen
 import app.kairos.mobile.ui.marches.MarchesScreen
+import app.kairos.mobile.ui.memoire.laterIds
+import app.kairos.mobile.ui.memoire.MemoireScreen
 import app.kairos.mobile.ui.kit.LocalAmountsMasked
 import app.kairos.mobile.ui.pairing.PairingScreen
 import app.kairos.mobile.ui.talk.ChatScreen
@@ -492,6 +494,7 @@ private fun KairosRoot(model: AppModel) {
     var financesOpen by rememberSaveable { mutableStateOf(false) }
     var agendaOpen by rememberSaveable { mutableStateOf(false) }
     var marchesOpen by rememberSaveable { mutableStateOf(false) }
+    var memoireOpen by rememberSaveable { mutableStateOf(false) }
     var unpackOrder by rememberSaveable { mutableStateOf<Long?>(null) }
     var adding by rememberSaveable { mutableStateOf(false) }
     var focusInput by remember { mutableStateOf(false) }
@@ -595,6 +598,8 @@ private fun KairosRoot(model: AppModel) {
                 val finances by session.repository.finances.collectAsState()
                 val agenda by session.repository.agenda.collectAsState()
                 val marches by session.repository.marches.collectAsState()
+                val memoire by session.repository.memoire.collectAsState()
+                val marks by session.repository.marks.collectAsState()
                 // Une actualisation à l'arrivée sur l'onglet : les chiffres des cartes sont à jour.
                 LaunchedEffect(Unit) {
                     val refreshes = listOf<suspend () -> Unit>(
@@ -602,6 +607,7 @@ private fun KairosRoot(model: AppModel) {
                         { session.repository.refreshFinances(force = false) },
                         { session.repository.refreshAgenda(LocalDate.now(), force = false) },
                         { session.repository.refreshMarches(force = false) },
+                        { session.repository.refreshMemoire(force = false) },
                     )
                     for (refresh in refreshes) {
                         launch {
@@ -614,6 +620,7 @@ private fun KairosRoot(model: AppModel) {
                     }
                 }
                 SpacesScreen(
+                    memoireLater = laterIds(marks[LocalDate.now().toString()].orEmpty().keys),
                     padding = padding,
                     maison = maison,
                     maisonOpen = maisonOpen,
@@ -656,6 +663,19 @@ private fun KairosRoot(model: AppModel) {
                             padding = padding,
                             appScope = model.viewModelScope,
                             onClose = { marchesOpen = false },
+                            onUnauthorized = model::unauthorized,
+                        )
+                    },
+                    memoire = memoire,
+                    memoireOpen = memoireOpen,
+                    onOpenMemoire = { memoireOpen = true },
+                    onCloseMemoire = { memoireOpen = false },
+                    memoireContent = {
+                        MemoireScreen(
+                            repository = session.repository,
+                            padding = padding,
+                            appScope = model.viewModelScope,
+                            onClose = { memoireOpen = false },
                             onUnauthorized = model::unauthorized,
                         )
                     },
