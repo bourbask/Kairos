@@ -788,7 +788,7 @@ private fun KairosRoot(model: AppModel) {
                     }
                 },
                 onUnauthorized = model::unauthorized,
-                onNotice = { scope.launch { snackbar.showSnackbar(it) } },
+                onNotice = { scope.launch { notifier.show(it) } },
                 onClose = { decisionsOpen = false },
             )
         }
@@ -810,7 +810,7 @@ private fun KairosRoot(model: AppModel) {
                     repository = session.repository,
                     appScope = model.viewModelScope,
                     onUnauthorized = model::unauthorized,
-                    onNotice = { scope.launch { snackbar.showSnackbar(it) } },
+                    onNotice = { scope.launch { notifier.show(it) } },
                     onClose = { unpackOrder = null },
                     others = maison.orders.count { o -> o.id != shown.id && o.lines.any { !it.done } },
                     onOther = { UnpackState.nextOrder(maison.orders, shown.id)?.let { unpackOrder = it.id } },

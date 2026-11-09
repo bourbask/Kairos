@@ -2,7 +2,6 @@ package app.kairos.mobile.ui.decide
 
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.VectorConverter
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -12,11 +11,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -27,11 +24,9 @@ import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.systemGestures
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -59,6 +54,16 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
+import app.kairos.mobile.ui.kit.ActionBar
+import app.kairos.mobile.ui.kit.PanelHeader
+import app.kairos.mobile.ui.kit.SecondaryAction
+import app.kairos.mobile.ui.kit.StatusBanner
 import app.kairos.mobile.data.ApiError
 import app.kairos.mobile.data.Decision
 import app.kairos.mobile.ui.mascot.Mascot
@@ -213,38 +218,31 @@ fun DeckScreen(
         }
     }
 
+    val current = deck.current
+    // Un geste, un bouton, une action d'accessibilité : mêmes chemins.
+    fun accept() = exclusive { act(Swipe.Right) }
+    fun other() = exclusive { act(Swipe.Left) }
+    fun later() = exclusive { act(Swipe.Up) }
+
     Column(
         Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
             .systemBarsPadding(),
     ) {
-        val progress by animateFloatAsState(
-            if (deck.total == 0) 1f else deck.done.toFloat() / deck.total,
-            Motion.enter(),
-            label = "progression",
+        PanelHeader(
+            title = "Décider",
+            onClose = onClose,
+            subtitle = current?.module?.replaceFirstChar { it.titlecase(Locale.FRENCH) },
+            done = deck.done,
+            total = deck.total,
+            position = if (current != null) deck.done + 1 else deck.done,
+            onUndo = ::undo,
+            canUndo = deck.canUndo,
         )
-        LinearProgressIndicator(
-            progress = { progress },
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-            drawStopIndicator = {},
-        )
-        val current = deck.current
-        if (current != null) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(
-                    current.module.replaceFirstChar { it.titlecase(Locale.FRENCH) },
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text(
-                    "${deck.done + 1} / ${deck.total}",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
+        if (offline) StatusBanner("Hors ligne : décisions en pause, la pile reste lisible.", Modifier.padding(horizontal = 16.dp))
 
+        val minCard = with(LocalDensity.current) { (area.height * 0.5f).toDp() }
         Box(
             Modifier
                 .weight(1f)
@@ -255,100 +253,98 @@ fun DeckScreen(
                 .onSizeChanged { area = it },
             contentAlignment = Alignment.Center,
         ) {
-            val next = deck.cards.getOrNull(1)
-            val o = offset.value
-            val lift = (maxOf(abs(o.x), abs(o.y)) / threshold).coerceIn(0f, 1f)
-            if (next != null) {
-                DecisionCard(
-                    next,
-                    message = null,
-                    Modifier.graphicsLayer {
-                        val s = 0.92f + 0.08f * lift
-                        scaleX = s
-                        scaleY = s
-                        translationY = (1f - lift) * 18.dp.toPx()
-                        alpha = 0.6f + 0.4f * lift
-                    },
-                )
-            }
-            if (current != null) {
-                DecisionCard(
-                    current,
-                    message = deck.message,
-                    Modifier
-                        .graphicsLayer {
-                            translationX = o.x
-                            translationY = o.y
-                            rotationZ = (o.x / width) * 14f
+            // Carte à la hauteur de son contenu, centrée ; les alternatives juste dessous.
+            if (current == null) Done(deck.done > 0) else Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                Box(contentAlignment = Alignment.Center) {
+                    val next = deck.cards.getOrNull(1)
+                    val o = offset.value
+                    val lift = (maxOf(abs(o.x), abs(o.y)) / threshold).coerceIn(0f, 1f)
+                    if (next != null) {
+                        DecisionCard(
+                            next,
+                            message = null,
+                            Modifier
+                                .heightIn(min = minCard)
+                                .clearAndSetSemantics {}
+                                .graphicsLayer {
+                                    val s = 0.92f + 0.08f * lift
+                                    scaleX = s
+                                    scaleY = s
+                                    translationY = (1f - lift) * 18.dp.toPx()
+                                    alpha = 0.6f + 0.4f * lift
+                                },
+                        )
+                    }
+                    val actions = buildList {
+                        if (!offline) {
+                            add(CustomAccessibilityAction(current.proposal?.let { "Accepter ${it.label}" } ?: "Choisir") { accept(); true })
+                            add(CustomAccessibilityAction(otherLabel(current, directLeft)) { other(); true })
                         }
-                        .pointerInput(current.module, current.id, area, offline) {
-                            // Déplacement cumulé ici : ne dépend pas de l'avance de l'animation.
-                            var acc = Offset.Zero
-                            var armed: Swipe? = null
-                            val tracker = VelocityTracker()
-                            detectDragGestures(
-                                onDragStart = {
-                                    acc = offset.value
-                                    armed = null
-                                    tracker.resetTracking()
-                                },
-                                onDragEnd = {
-                                    val swipe = direction(acc, tracker.calculateVelocity().let { Offset(it.x, it.y) })
-                                    exclusive { act(swipe) }
-                                },
-                                onDragCancel = { exclusive { back() } },
-                            ) { change, drag ->
-                                if (busy) return@detectDragGestures
-                                change.consume()
-                                acc += drag
-                                tracker.addPosition(change.uptimeMillis, acc)
-                                val target = acc
-                                scope.launch { offset.snapTo(target) }
-                                val now = direction(acc)
-                                if (now != null && now != armed) haptic.performHapticFeedback(HapticFeedbackType.GestureThresholdActivate)
-                                armed = now
+                        add(CustomAccessibilityAction("Plus tard") { later(); true })
+                        add(CustomAccessibilityAction("Fermer la pile") { onClose(); true })
+                    }
+                    DecisionCard(
+                        current,
+                        message = deck.message,
+                        Modifier
+                            .heightIn(min = minCard)
+                            .semantics(mergeDescendants = true) { customActions = actions }
+                            .graphicsLayer {
+                                translationX = o.x
+                                translationY = o.y
+                                rotationZ = (o.x / width) * 14f
                             }
+                            .pointerInput(current.module, current.id, area, offline) {
+                                // Déplacement cumulé ici : ne dépend pas de l'avance de l'animation.
+                                var acc = Offset.Zero
+                                var armed: Swipe? = null
+                                val tracker = VelocityTracker()
+                                detectDragGestures(
+                                    onDragStart = {
+                                        acc = offset.value
+                                        armed = null
+                                        tracker.resetTracking()
+                                    },
+                                    onDragEnd = {
+                                        val swipe = direction(acc, tracker.calculateVelocity().let { Offset(it.x, it.y) })
+                                        exclusive { act(swipe) }
+                                    },
+                                    onDragCancel = { exclusive { back() } },
+                                ) { change, drag ->
+                                    if (busy) return@detectDragGestures
+                                    change.consume()
+                                    acc += drag
+                                    tracker.addPosition(change.uptimeMillis, acc)
+                                    val target = acc
+                                    scope.launch { offset.snapTo(target) }
+                                    val now = direction(acc)
+                                    if (now != null && now != armed) haptic.performHapticFeedback(HapticFeedbackType.GestureThresholdActivate)
+                                    armed = now
+                                }
+                            },
+                        stamps = {
+                            val yes = if (current.proposal != null && !offline) "OUI" else "CHOISIR"
+                            Stamp(yes, MaterialTheme.colorScheme.primary, (o.x / threshold).coerceIn(0f, 1f), 12f, Alignment.TopEnd)
+                            Stamp("NON", MaterialTheme.colorScheme.error, (-o.x / threshold).coerceIn(0f, 1f), -12f, Alignment.TopStart)
+                            Stamp("PLUS TARD", MaterialTheme.colorScheme.tertiary, (-o.y / threshold).coerceIn(0f, 1f), -4f, Alignment.BottomCenter)
                         },
-                    stamps = {
-                        val yes = if (current.proposal != null && !offline) "OUI" else "CHOISIR"
-                        Stamp(yes, MaterialTheme.colorScheme.primary, (o.x / threshold).coerceIn(0f, 1f), 12f, Alignment.TopEnd)
-                        Stamp("NON", MaterialTheme.colorScheme.error, (-o.x / threshold).coerceIn(0f, 1f), -12f, Alignment.TopStart)
-                        Stamp("PLUS TARD", MaterialTheme.colorScheme.tertiary, (-o.y / threshold).coerceIn(0f, 1f), -4f, Alignment.BottomCenter)
-                    },
-                )
-            } else {
-                Done(deck.done > 0)
-            }
-        }
-
-        if (offline) {
-            Text(
-                "Hors ligne : décisions en pause, la pile reste lisible.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
-            )
-        }
-
-        if (current != null && deck.alternativesOpen) {
-            Alternatives(current, enabled = !offline, onChoose = { exclusive { commit(it) } }, onBack = deck::dismissAlternatives)
-        } else if (current != null) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                TextButton(onClick = { exclusive { act(Swipe.Left) } }, enabled = !offline) {
-                    Text(current.alternatives.firstOrNull()?.takeIf { directLeft }?.let { "← ${it.label.lowercase(Locale.FRENCH)}" } ?: "← autre")
+                    )
                 }
-                TextButton(onClick = { exclusive { act(Swipe.Up) } }) { Text("↑ plus tard") }
-                TextButton(onClick = { exclusive { act(Swipe.Right) } }, enabled = !offline) {
-                    Text(if (current.proposal != null) "oui →" else "choisir →", fontWeight = FontWeight.Bold)
+                if (deck.alternativesOpen) {
+                    Alternatives(current, enabled = !offline, onChoose = { exclusive { commit(it) } })
                 }
             }
         }
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            TextButton(onClick = onClose) { Text("↓ fermer") }
-            TextButton(onClick = ::undo, enabled = deck.canUndo) { Text("⟲ annuler") }
+
+        if (current != null) {
+            ActionBar(acceptLabel(current), onPrimary = ::accept, primaryEnabled = !offline) {
+                if (deck.alternativesOpen) {
+                    SecondaryAction("Retour à la carte", onClick = deck::dismissAlternatives)
+                } else {
+                    SecondaryAction(otherLabel(current, directLeft), onClick = ::other, enabled = !offline)
+                }
+                SecondaryAction("Plus tard", onClick = ::later)
+            }
         }
     }
 
@@ -375,10 +371,9 @@ private fun DecisionCard(
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         modifier = modifier
             .fillMaxWidth()
-            .fillMaxHeight(0.92f)
             .shadow(10.dp, shape, ambientColor = Color.Black.copy(alpha = 0.1f), spotColor = Color.Black.copy(alpha = 0.12f)),
     ) {
-        Box(Modifier.fillMaxSize().padding(20.dp)) {
+        Box(Modifier.padding(20.dp)) {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(
                     card.title.uppercase(Locale.FRENCH),
@@ -418,7 +413,12 @@ private fun DecisionCard(
                     }
                 }
                 message?.let {
-                    Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+                    )
                 }
             }
             stamps()
@@ -449,9 +449,9 @@ internal fun BoxScope.Stamp(
     )
 }
 
-/** Alternatives en grosses puces, sous le pouce. */
+/** Alternatives en grosses puces, juste sous la carte. */
 @Composable
-private fun Alternatives(card: Decision, enabled: Boolean, onChoose: (String) -> Unit, onBack: () -> Unit) {
+private fun Alternatives(card: Decision, enabled: Boolean, onChoose: (String) -> Unit) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         FlowRow(
             horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
@@ -476,7 +476,6 @@ private fun Alternatives(card: Decision, enabled: Boolean, onChoose: (String) ->
         if (card.alternatives.isEmpty()) {
             Text("Aucun autre choix proposé.", style = MaterialTheme.typography.bodyMedium)
         }
-        TextButton(onClick = onBack) { Text("Retour à la carte") }
     }
 }
 

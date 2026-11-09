@@ -51,6 +51,7 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import app.kairos.mobile.ui.kit.PanelHeader
 import app.kairos.mobile.data.ApiError
 import app.kairos.mobile.data.Day
 import app.kairos.mobile.data.KairosApi
@@ -291,7 +292,7 @@ fun AddScreen(
             .systemBarsPadding()
             .imePadding(),
     ) {
-        TopBar("Ajouter", if (added > 0) "$added ajouté${if (added > 1) "s" else ""}" else "hors commande", 0, 0, onClose)
+        PanelHeader("Ajouter", onClose, subtitle = if (added > 0) "$added ajouté${if (added > 1) "s" else ""}" else "hors commande")
         if (offline) Note("Hors ligne : ajout impossible pour l'instant.", error = true)
         note?.let { Note(it) }
         AnimatedContent(step, Modifier.weight(1f), transitionSpec = { Motion.fadeThrough() }, label = "étape") { s ->
