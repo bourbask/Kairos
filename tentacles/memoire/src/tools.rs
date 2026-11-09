@@ -919,10 +919,11 @@ mod tests {
     #[test]
     fn app_forgets_deduction_only_key() {
         let s = srv();
-        let indices = [crate::store::Indice { key: "loisir".into(), value: "poterie".into() }];
+        s.db().unwrap().fact_set("goûts", "variés", "x").unwrap();
+        let indices = [crate::store::Indice { key: "goûts.loisir".into(), value: "poterie".into() }];
         s.db().unwrap().appliquer_extraction(now_local().date(), &indices, now_local()).unwrap();
-        assert!(js(s.app_fact_forget(Parameters(KeyArgs { key: "loisir".into() })))["message"].is_string());
-        assert!(s.app_fact_forget(Parameters(KeyArgs { key: "loisir".into() })).is_err());
+        assert!(js(s.app_fact_forget(Parameters(KeyArgs { key: "goûts.loisir".into() })))["message"].is_string());
+        assert!(s.app_fact_forget(Parameters(KeyArgs { key: "goûts.loisir".into() })).is_err());
     }
 
     #[test]
@@ -1035,11 +1036,11 @@ mod tests {
         assert!(s.nuit_episodes(Parameters(JourArgs { jour: "hier".into() })).is_err());
         assert_eq!(js(s.nuit_en_attente(Parameters(JourArgs { jour: j.clone() }))), json!({"conversations": 0}));
 
-        s.db().unwrap().fact_set("ville", "Lorient", "x").unwrap();
-        let indices = vec![Indice { key: "sport".into(), value: "voile".into() }, Indice { key: "ville".into(), value: "Brest".into() }];
+        s.db().unwrap().fact_set("ville", "Ville-A", "x").unwrap();
+        let indices = vec![Indice { key: "ville.quartier".into(), value: "Nord".into() }, Indice { key: "ville".into(), value: "Ville-B".into() }];
         let v = js(s.nuit_appliquer(Parameters(AppliquerArgs { jour: j.clone(), indices })));
         assert_eq!((v["deduits"].as_u64(), v["questions"].as_u64()), (Some(1), Some(1)));
-        assert_eq!(js(s.nuit_cles()), json!(["sport", "ville"]));
+        assert_eq!(js(s.nuit_cles()), json!(["ville", "ville.quartier"]));
 
         assert_eq!(js(s.nuit_condensables(Parameters(MaxArgs { max: 5 }))), json!([]));
         let a = CondenserArgs { niveau: "semaine".into(), periode: "2020-W01".into(), texte: "t".into(), empreinte: "x".into() };

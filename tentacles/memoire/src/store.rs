@@ -342,6 +342,20 @@ fn texte_conversation(resume: &str, sujets: &str, decisions: &str) -> String {
     t.trim().to_owned()
 }
 
+/// Clé proposée par le modèle ramenée à une clé connue (casse ignorée), ou à
+/// une sous-clé `<connue>.<suite>` ; toute autre clé est refusée.
+fn cle_connue(connues: &[String], cle: &str) -> Option<String> {
+    let bas = cle.to_lowercase();
+    connues.iter().find_map(|c| {
+        let c_bas = c.to_lowercase();
+        if bas == c_bas {
+            return Some(c.clone());
+        }
+        let suite = bas.strip_prefix(&c_bas)?.strip_prefix('.')?;
+        (!suite.trim().is_empty()).then(|| format!("{c}.{}", &cle[cle.len() - suite.len()..]))
+    })
+}
+
 /// Conversation pas encore résumée : ni résumé, ni sujets, ni décisions. Sa
 /// négation définit les conversations qui sont des épisodes.
 const NON_RESUMEE: &str = "trim(coalesce(summary, '')) = '' AND trim(topics) IN ('', '[]') AND trim(decisions) IN ('', '[]')";
@@ -872,11 +886,16 @@ impl MemoryStore {
     pub fn appliquer_extraction(&self, jour: NaiveDate, indices: &[Indice], maintenant: NaiveDateTime) -> Result<Bilan> {
         let j = jour.format("%Y-%m-%d").to_string();
         let mut b = Bilan::default();
+        let connues = self.cles()?;
         let tx = self.conn.unchecked_transaction()?;
         tx.execute("DELETE FROM renforcements_jour WHERE jour < ?", [&j])?;
         for i in indices {
-            let (key, value) = (i.key.trim(), i.value.trim());
-            if key.is_empty() || key == PERSONA_KEY || value.is_empty() || value.chars().count() > INDICE_VALEUR_MAX {
+            let (Some(key), value) = (cle_connue(&connues, i.key.trim()), i.value.trim()) else {
+                b.ignores += 1;
+                continue;
+            };
+            let key = key.as_str();
+            if key == PERSONA_KEY || value.is_empty() || value.chars().count() > INDICE_VALEUR_MAX {
                 b.ignores += 1;
                 continue;
             }
@@ -2037,11 +2056,11 @@ mod tests {
     #[test]
     fn recall_never_reinforces() {
         let s = store();
-        s.fact_set_at("ville", "Lyon", "p", t()).unwrap();
+        s.fact_set_at("ville", "Ville-A", "p", t()).unwrap();
         let id = note(&s, "promenade au parc").to_string();
         let avant = (s.force("fait", "ville").unwrap(), s.force("journal", &id).unwrap());
         let plus_tard = t() + Duration::days(40);
-        s.rappel(Some("Lyon promenade"), plus_tard, 10).unwrap();
+        s.rappel(Some("Ville-A promenade"), plus_tard, 10).unwrap();
         s.rappel(None, plus_tard, 10).unwrap();
         assert_eq!(avant, (s.force("fait", "ville").unwrap(), s.force("journal", &id).unwrap()));
     }
@@ -2473,43 +2492,58 @@ mod tests {
     #[test]
     fn deduction_never_overrides_declared() {
         let s = store();
-        s.fact_set_at("ville", "Lorient", "utilisateur", t()).unwrap();
+        s.fact_set_at("ville", "Ville-A", "utilisateur", t()).unwrap();
         for j in 1..=5 {
-            s.appliquer_extraction(d(j), &[indice("ville", "Quimper")], jour(2026, 11, j)).unwrap();
+            s.appliquer_extraction(d(j), &[indice("ville", "Ville-B")], jour(2026, 11, j)).unwrap();
         }
-        assert_eq!(s.fact_get("ville").unwrap().unwrap().value, "Lorient");
+        assert_eq!(s.fact_get("ville").unwrap().unwrap().value, "Ville-A");
         assert_eq!(s.fact_history("ville").unwrap().len(), 1);
         assert_eq!(compte(&s, "SELECT COUNT(*) FROM deductions"), 0);
         // Même valeur, casse et espaces près : renforcement, une fois par jour.
-        let b = s.appliquer_extraction(d(6), &[indice("ville", "  lorient "), indice("ville", "LORIENT")], jour(2026, 11, 6)).unwrap();
+        let b = s.appliquer_extraction(d(6), &[indice("ville", "  ville-a "), indice("ville", "VILLE-A")], jour(2026, 11, 6)).unwrap();
         assert_eq!((b.renforces, b.deduits, b.questions), (1, 0, 0));
         let f = s.force("fait", "ville").unwrap().unwrap();
         assert_eq!((f.rappels, f.dernier_rappel), (1, jour(2026, 11, 6)));
-        s.appliquer_extraction(d(6), &[indice("ville", "Lorient")], jour(2026, 11, 6) + Duration::hours(1)).unwrap();
+        s.appliquer_extraction(d(6), &[indice("ville", "Ville-A")], jour(2026, 11, 6) + Duration::hours(1)).unwrap();
         assert_eq!(s.force("fait", "ville").unwrap().unwrap().rappels, 1);
-        s.appliquer_extraction(d(7), &[indice("ville", "Lorient")], jour(2026, 11, 7)).unwrap();
+        s.appliquer_extraction(d(7), &[indice("ville", "Ville-A")], jour(2026, 11, 7)).unwrap();
         assert_eq!(s.force("fait", "ville").unwrap().unwrap().rappels, 2);
         assert_eq!(s.fact_history("ville").unwrap().len(), 1);
     }
 
     #[test]
+    fn extraction_keys_must_be_known() {
+        let s = store();
+        s.fact_set_at("ville", "Ville-A", "utilisateur", t()).unwrap();
+        // Casse et espaces près, la clé du modèle est ramenée à la clé connue.
+        let b = s.appliquer_extraction(d(1), &[indice(" Ville ", "ville-a"), indice("VILLE", "Ville-B")], jour(2026, 11, 1)).unwrap();
+        assert_eq!((b.renforces, b.questions, b.deduits), (1, 1, 0));
+        // Sous-clé d'une clé connue : acceptée, rangée sous la clé connue ; clé inventée : ignorée.
+        let b = s.appliquer_extraction(d(2), &[indice("Ville.quartier", "Nord"), indice("humeur", "gaie")], jour(2026, 11, 2)).unwrap();
+        assert_eq!((b.deduits, b.ignores), (1, 1));
+        assert_eq!(confiance(&s, "ville.quartier", "Nord"), 0.25);
+        assert_eq!(compte(&s, "SELECT COUNT(*) FROM deductions WHERE key <> 'ville.quartier'"), 0);
+    }
+
+    #[test]
     fn repeated_hint_raises_confidence_once_per_day() {
         let s = store();
-        let b = s.appliquer_extraction(d(1), &[indice("sport", "natation")], jour(2026, 11, 1)).unwrap();
+        s.fact_set_at("goûts", "variés", "utilisateur", t()).unwrap();
+        let b = s.appliquer_extraction(d(1), &[indice("goûts.sport", "natation")], jour(2026, 11, 1)).unwrap();
         assert_eq!(b.deduits, 1);
-        assert_eq!(confiance(&s, "sport", "natation"), 0.25);
-        s.appliquer_extraction(d(1), &[indice("sport", "Natation ")], jour(2026, 11, 1)).unwrap();
-        assert_eq!(confiance(&s, "sport", "natation"), 0.25);
-        s.appliquer_extraction(d(2), &[indice("sport", "natation")], jour(2026, 11, 2)).unwrap();
-        assert!((confiance(&s, "sport", "natation") - 0.4375).abs() < 1e-9);
+        assert_eq!(confiance(&s, "goûts.sport", "natation"), 0.25);
+        s.appliquer_extraction(d(1), &[indice("goûts.sport", "Natation ")], jour(2026, 11, 1)).unwrap();
+        assert_eq!(confiance(&s, "goûts.sport", "natation"), 0.25);
+        s.appliquer_extraction(d(2), &[indice("goûts.sport", "natation")], jour(2026, 11, 2)).unwrap();
+        assert!((confiance(&s, "goûts.sport", "natation") - 0.4375).abs() < 1e-9);
         // Nuit relancée : rien de plus.
-        s.appliquer_extraction(d(2), &[indice("sport", "natation")], jour(2026, 11, 2)).unwrap();
-        assert!((confiance(&s, "sport", "natation") - 0.4375).abs() < 1e-9);
-        let r = s.force("deduction", "sport\u{1f}natation").unwrap().unwrap();
+        s.appliquer_extraction(d(2), &[indice("goûts.sport", "natation")], jour(2026, 11, 2)).unwrap();
+        assert!((confiance(&s, "goûts.sport", "natation") - 0.4375).abs() < 1e-9);
+        let r = s.force("deduction", "goûts.sport\u{1f}natation").unwrap().unwrap();
         assert_eq!((r.rappels, r.importance), (1, 0.0));
         assert!((r.confiance - 0.4375).abs() < 1e-9);
         assert_eq!(compte(&s, "SELECT COUNT(*) FROM deductions"), 1);
-        assert!(s.fact_get("sport").unwrap().is_none());
+        assert!(s.fact_get("goûts.sport").unwrap().is_none());
     }
 
     #[test]
@@ -2550,7 +2584,8 @@ mod tests {
         }
         assert_eq!(compte(&s, "SELECT COUNT(*) FROM souvenirs"), 0);
         // 300 caractères : accepté.
-        assert_eq!(s.appliquer_extraction(d(1), &[indice("note", &"x".repeat(300))], jour(2026, 11, 1)).unwrap().deduits, 1);
+        s.fact_set_at("goûts", "variés", "utilisateur", t()).unwrap();
+        assert_eq!(s.appliquer_extraction(d(1), &[indice("goûts.note", &"x".repeat(300))], jour(2026, 11, 1)).unwrap().deduits, 1);
     }
 
     #[test]
@@ -2561,14 +2596,14 @@ mod tests {
         s.appliquer_extraction(d(1), &[indice("animal", "chat"), indice("animal", "chien")], m).unwrap();
         s.conn.execute("INSERT INTO deductions VALUES ('animal', 'lapin', 0.5, ?, '2026-11-01')", [ts(m)]).unwrap();
         s.conn.execute("INSERT INTO souvenirs VALUES ('deduction', 'animal' || char(31) || 'lapin', 30.0, ?, 0, 0.0, 0, 0.5)", [ts(m)]).unwrap();
-        s.appliquer_extraction(d(1), &[indice("animaux", "deux")], m).unwrap();
-        let autre = s.intention_create("Confirmer : animaux = trois ?", "", m + Duration::days(7)).unwrap();
+        s.appliquer_extraction(d(1), &[indice("animal.nombre", "deux")], m).unwrap();
+        let autre = s.intention_create("Confirmer : animal.nombre = trois ?", "", m + Duration::days(7)).unwrap();
         // Une valeur déclarée et une déduction.
         assert_eq!(s.fact_forget("animal").unwrap(), 2);
         assert!(!s.rappel(None, m, 50).unwrap().iter().any(|r| r.texte.contains("animal :")));
         for (table, n) in [
             ("deductions WHERE key = 'animal'", 0),
-            ("souvenirs WHERE ref LIKE 'animal%'", 0),
+            ("souvenirs WHERE ref LIKE 'animal%' AND ref NOT LIKE 'animal.%'", 0),
             ("renforcements_jour", 0),
             ("intentions", 1),
             ("deductions", 1),
@@ -2576,7 +2611,7 @@ mod tests {
             assert_eq!(compte(&s, &format!("SELECT COUNT(*) FROM {table}")), n, "{table}");
         }
         assert_eq!(s.intentions_open(m).unwrap()[0].id, autre);
-        assert_eq!(s.fact_forget("animaux").unwrap(), 1);
+        assert_eq!(s.fact_forget("animal.nombre").unwrap(), 1);
     }
 
     #[test]
@@ -2595,9 +2630,9 @@ mod tests {
     #[test]
     fn daily_reinforcement_marks_are_pruned() {
         let s = store();
-        s.fact_set_at("ville", "Lorient", "utilisateur", t()).unwrap();
-        s.appliquer_extraction(d(1), &[indice("ville", "Lorient")], jour(2026, 11, 1)).unwrap();
-        s.appliquer_extraction(d(2), &[indice("ville", "Lorient")], jour(2026, 11, 2)).unwrap();
+        s.fact_set_at("ville", "Ville-A", "utilisateur", t()).unwrap();
+        s.appliquer_extraction(d(1), &[indice("ville", "Ville-A")], jour(2026, 11, 1)).unwrap();
+        s.appliquer_extraction(d(2), &[indice("ville", "Ville-A")], jour(2026, 11, 2)).unwrap();
         assert_eq!(compte(&s, "SELECT COUNT(*) FROM renforcements_jour WHERE jour < '2026-11-02'"), 0);
         assert_eq!(compte(&s, "SELECT COUNT(*) FROM renforcements_jour"), 1);
     }
@@ -2605,20 +2640,21 @@ mod tests {
     #[test]
     fn recall_marks_deductions() {
         let s = store();
+        s.fact_set_at("goûts", "variés", "utilisateur", t()).unwrap();
         let m = jour(2026, 11, 3);
-        s.appliquer_extraction(d(1), &[indice("boisson", "thé"), indice("boisson", "café")], jour(2026, 11, 1)).unwrap();
-        s.appliquer_extraction(d(2), &[indice("boisson", "café")], jour(2026, 11, 2)).unwrap();
-        s.appliquer_extraction(d(2), &[indice("musique", "jazz")], jour(2026, 11, 2)).unwrap();
+        s.appliquer_extraction(d(1), &[indice("goûts.boisson", "thé"), indice("goûts.boisson", "café")], jour(2026, 11, 1)).unwrap();
+        s.appliquer_extraction(d(2), &[indice("goûts.boisson", "café")], jour(2026, 11, 2)).unwrap();
+        s.appliquer_extraction(d(2), &[indice("goûts.musique", "jazz")], jour(2026, 11, 2)).unwrap();
         s.fact_set_at("animal", "chat", "utilisateur", m).unwrap();
         s.conn.execute("INSERT INTO deductions VALUES ('animal', 'chien', 0.9, ?, '2026-11-01')", [ts(m)]).unwrap();
         let textes: Vec<String> = s.rappel(None, m, 50).unwrap().into_iter().map(|r| r.texte).collect();
-        assert!(textes.contains(&"je crois que boisson : café".to_string()), "{textes:?}");
-        assert!(textes.contains(&"je crois que musique : jazz".to_string()));
+        assert!(textes.contains(&"je crois que goûts.boisson : café".to_string()), "{textes:?}");
+        assert!(textes.contains(&"je crois que goûts.musique : jazz".to_string()));
         assert!(!textes.iter().any(|t| t.contains("thé") || t.contains("chien")), "{textes:?}");
         // Migration : une déduction sans source disparaît, une sans souvenir en reçoit un.
-        s.conn.execute("DELETE FROM deductions WHERE key = 'musique'", []).unwrap();
+        s.conn.execute("DELETE FROM deductions WHERE key = 'goûts.musique'", []).unwrap();
         MemoryStore::migrate_souvenirs(&s.conn).unwrap();
-        assert!(s.force("deduction", "musique\u{1f}jazz").unwrap().is_none());
+        assert!(s.force("deduction", "goûts.musique\u{1f}jazz").unwrap().is_none());
         assert!(s.force("deduction", "animal\u{1f}chien").unwrap().is_some());
     }
 
@@ -2634,6 +2670,7 @@ mod tests {
     #[test]
     fn forget_only_folded_and_deduced() {
         let s = store();
+        s.fact_set_at("goûts", "variés", "utilisateur", t()).unwrap();
         let m = jour(2026, 11, 1);
         let vieux = m - Duration::days(600);
         let w_oubliee = synthese_le(&s, "semaine", "2025-W01", "grimoire", true, vieux);
@@ -2642,8 +2679,8 @@ mod tests {
         let mo_oublie = synthese_le(&s, "mois", "2024-12", "almanach", true, vieux);
         // Mois : S₀ 180 j, R ≈ 0,11 à 400 jours.
         let mo_garde = synthese_le(&s, "mois", "2025-01", "chronique", true, m - Duration::days(400));
-        s.appliquer_extraction(d(1), &[indice("sport", "escrime")], vieux).unwrap();
-        s.appliquer_extraction(d(1), &[indice("boisson", "thé")], m).unwrap();
+        s.appliquer_extraction(d(1), &[indice("goûts.sport", "escrime")], vieux).unwrap();
+        s.appliquer_extraction(d(1), &[indice("goûts.boisson", "thé")], m).unwrap();
         assert!(index_garde(&s, "syntheses_fts", "grimoire"));
 
         assert_eq!(s.oublier(m).unwrap(), 3);
@@ -2657,8 +2694,8 @@ mod tests {
         assert!(!index_garde(&s, "syntheses_fts", "grimoire"));
         assert!(!index_garde(&s, "syntheses_fts", "almanach"));
         assert_eq!(compte(&s, "SELECT COUNT(*) FROM syntheses_fts"), 3);
-        assert_eq!(compte(&s, "SELECT COUNT(*) FROM deductions WHERE key = 'sport'"), 0);
-        assert!(s.force("deduction", "sport\u{1f}escrime").unwrap().is_none());
+        assert_eq!(compte(&s, "SELECT COUNT(*) FROM deductions WHERE key = 'goûts.sport'"), 0);
+        assert!(s.force("deduction", "goûts.sport\u{1f}escrime").unwrap().is_none());
         assert_eq!(compte(&s, "SELECT COUNT(*) FROM deductions"), 1);
         // Rejouable sans effet.
         assert_eq!(s.oublier(m).unwrap(), 0);
@@ -2669,7 +2706,7 @@ mod tests {
         let s = store();
         let m = jour(2026, 11, 1);
         let vieux = m - Duration::days(3000);
-        s.fact_set_at("ville", "Lorient", "utilisateur", vieux).unwrap();
+        s.fact_set_at("ville", "Ville-A", "utilisateur", vieux).unwrap();
         let annee = synthese_le(&s, "annee", "2018", "decennie", true, vieux);
         vieillir(&s, "synthese", &annee.to_string(), vieux);
         s.ancrer("synthese", &annee.to_string(), false).unwrap();
@@ -2743,9 +2780,9 @@ mod tests {
     #[test]
     fn known_keys_sorted_unique() {
         let s = store();
-        s.fact_set_at("ville", "Lorient", "utilisateur", t()).unwrap();
+        s.fact_set_at("ville", "Ville-A", "utilisateur", t()).unwrap();
         s.fact_set_at(PERSONA_KEY, "calme", "hote", t()).unwrap();
-        s.appliquer_extraction(d(1), &[indice("boisson", "thé"), indice("boisson", "café"), indice("zen", "oui")], t()).unwrap();
-        assert_eq!(s.cles().unwrap(), ["boisson", "ville", "zen"]);
+        s.appliquer_extraction(d(1), &[indice("ville.quartier", "Nord"), indice("ville.quartier", "Sud"), indice("zen", "oui")], t()).unwrap();
+        assert_eq!(s.cles().unwrap(), ["ville", "ville.quartier"]);
     }
 }
