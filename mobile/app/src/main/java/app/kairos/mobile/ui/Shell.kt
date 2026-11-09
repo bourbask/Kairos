@@ -33,7 +33,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -95,8 +94,9 @@ fun Shell(
     spaces: @Composable (PaddingValues) -> Unit = {},
     kairosModifier: Modifier = Modifier,
     modifier: Modifier = Modifier,
+    tab: Tab = Tab.Aujourdhui,
+    onTab: (Tab) -> Unit = {},
 ) {
-    var tab by rememberSaveable { mutableStateOf(Tab.Aujourdhui) }
     val top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val nav = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     val padding = PaddingValues(top = top, bottom = DockHeight + nav)
@@ -110,7 +110,7 @@ fun Shell(
         }
         Dock(
             tab = tab,
-            onTab = { tab = it },
+            onTab = onTab,
             mascotState = mascotState,
             kairosState = kairosState,
             onTap = onTap,

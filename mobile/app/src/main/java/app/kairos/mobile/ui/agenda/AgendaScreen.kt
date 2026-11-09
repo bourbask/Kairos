@@ -125,6 +125,7 @@ fun AgendaScreen(
     appScope: CoroutineScope,
     onClose: () -> Unit,
     onUnauthorized: () -> Unit,
+    initialDay: LocalDate? = null,
 ) {
     val agenda by repository.agenda.collectAsState()
     val days by repository.snapshot.collectAsState()
@@ -134,7 +135,7 @@ fun AgendaScreen(
     val undo = rememberNotifier(snackbar)
     var today by remember { mutableStateOf(LocalDate.now()) }
     val strip = remember(today) { dayStrip(today) }
-    var selectedText by rememberSaveable { mutableStateOf(today.toString()) }
+    var selectedText by rememberSaveable { mutableStateOf((initialDay ?: today).toString()) }
     val selected = runCatching { LocalDate.parse(selectedText) }.getOrNull()?.takeIf { it in strip } ?: today
     var loading by remember { mutableIntStateOf(0) }
     var addOpen by rememberSaveable { mutableStateOf(false) }

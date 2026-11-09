@@ -3,15 +3,11 @@ package app.kairos.mobile.ui.today
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.animate
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculateZoom
-import androidx.compose.foundation.gestures.draggable
-import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,31 +21,25 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.contentColorFor
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Snackbar
-import androidx.compose.material3.SnackbarDuration
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.SnackbarResult
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedIconButton
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
-import app.kairos.mobile.ui.kit.rememberNotifier
-import app.kairos.mobile.ui.kit.SwipeRow
-import app.kairos.mobile.data.AppRelease
-import app.kairos.mobile.ui.settings.updateLabel
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
@@ -57,8 +47,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -69,55 +57,57 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import app.kairos.mobile.data.ApiError
+import app.kairos.mobile.data.AppRelease
 import app.kairos.mobile.data.Card
-import app.kairos.mobile.data.Chip
 import app.kairos.mobile.data.Mark
 import app.kairos.mobile.data.Repository
 import app.kairos.mobile.data.Snapshot
-import app.kairos.mobile.data.Tone
+import app.kairos.mobile.ui.kit.KairosIcons
+import app.kairos.mobile.ui.kit.LocalNotifier
+import app.kairos.mobile.ui.kit.SectionHeader
+import app.kairos.mobile.ui.kit.StatePill
+import app.kairos.mobile.ui.kit.StatusBanner
+import app.kairos.mobile.ui.kit.SwipeRow
+import app.kairos.mobile.ui.kit.Tone
 import app.kairos.mobile.ui.mascot.Mascot
 import app.kairos.mobile.ui.mascot.MascotState
 import app.kairos.mobile.ui.theme.Motion
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonElement
 import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
-import kotlin.math.abs
-import kotlin.math.roundToInt
+import app.kairos.mobile.data.Tone as ChipTone
 
 private val Fr = Locale.FRENCH
 
-private const val UNDO_MS = 4_000L
-
 /**
  * Accueil : salutation, lendemain, pile de décisions, fil du jour.
- * Pincer bascule sur la semaine (bouton « Semaine » équivalent), tirer actualise.
+ * Pincer bascule sur la semaine (bascule Jour / Semaine équivalente), tirer actualise.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -126,9 +116,9 @@ fun TodayScreen(
     padding: PaddingValues,
     onOpenDecisions: () -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenAgenda: (LocalDate) -> Unit,
     onUnauthorized: () -> Unit,
     appScope: CoroutineScope,
-    onNotice: (String) -> Unit,
     update: AppRelease?,
     updateProgress: Float?,
     onUpdate: () -> Unit,
@@ -137,8 +127,7 @@ fun TodayScreen(
     val snapshot by repository.snapshot.collectAsState()
     val marks by repository.marks.collectAsState()
     val scope = rememberCoroutineScope()
-    val snackbar = remember { SnackbarHostState() }
-    val undo = rememberNotifier(snackbar)
+    val notifier = LocalNotifier.current
     var refreshing by remember { mutableStateOf(false) }
     var week by rememberSaveable { mutableStateOf(false) }
     var now by remember { mutableStateOf(LocalDateTime.now()) }
@@ -173,24 +162,20 @@ fun TodayScreen(
 
     val haptic = LocalHapticFeedback.current
     val unauthorized by rememberUpdatedState(onUnauthorized)
-    val notice by rememberUpdatedState(onNotice)
 
     val busy = remember { InFlight() }
     val pending by busy.keys.collectAsState()
 
-    /**
-     * Fenêtre d'annulation propre à chaque carte, comptée depuis son geste ; vrai si
-     * « Annuler » a été touché. Un second geste ne chasse pas la fenêtre en cours :
-     * son snackbar attend son tour, pour le temps qui reste à sa propre fenêtre.
-     */
-    suspend fun undoWindow(text: String): Boolean = undo.undo(text)
+    fun notice(text: String) {
+        appScope.launch { notifier.show(text) }
+    }
 
     fun later(day: String, card: Card) {
         if (!busy.claim(card.key)) return
         scope.launch {
             try {
                 repository.mark(day, card.key, Mark.PlusTard)
-                if (undoWindow("Plus tard · ${card.title}")) repository.mark(day, card.key, null)
+                if (notifier.undo("Plus tard · ${card.title}")) repository.mark(day, card.key, null)
             } finally {
                 busy.release(card.key)
             }
@@ -205,7 +190,7 @@ fun TodayScreen(
                     card,
                     choice,
                     mark = { repository.mark(day, card.key, it) },
-                    undoWindow = { undoWindow("Fait · ${card.title}") },
+                    undoWindow = { notifier.undo("Fait · ${card.title}") },
                     call = repository::tool,
                     busy = busy,
                 )
@@ -267,6 +252,7 @@ fun TodayScreen(
                         bottom = padding.calculateBottomPadding(),
                         onRefresh = ::refresh,
                         onBack = { week = false },
+                        onOpenDay = onOpenAgenda,
                     )
                 } else {
                     DayContent(
@@ -306,21 +292,6 @@ fun TodayScreen(
                 }, onCancel = { chooserOpen = false })
             }
         }
-        SnackbarHost(
-            snackbar,
-            Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = padding.calculateBottomPadding())
-                .padding(horizontal = 16.dp),
-        ) { data ->
-            Snackbar(
-                data,
-                shape = MaterialTheme.shapes.medium,
-                containerColor = MaterialTheme.colorScheme.onBackground,
-                contentColor = MaterialTheme.colorScheme.background,
-                actionColor = MaterialTheme.colorScheme.primaryContainer,
-            )
-        }
     }
 }
 
@@ -350,39 +321,45 @@ private fun DayContent(
         timeline(today?.cards.orEmpty(), marks[todayKey].orEmpty(), now.toLocalTime(), pending)
     }
     var expanded by rememberSaveable { mutableStateOf<String?>(null) }
-    val listState = rememberLazyListState()
-    // À l'ouverture du jour : le fil est amené à l'élément en cours, une seule fois (jamais pendant un geste).
-    val leading = listOf(snapshot.offline, update != null, true, snapshot.decisions.isNotEmpty(), true).count { it }
-    var scrolledFor by rememberSaveable { mutableStateOf<String?>(null) }
-    LaunchedEffect(todayKey, items.isNotEmpty()) {
-        val at = currentIndex(items)
-        if (scrolledFor != todayKey && at > 0) {
-            listState.scrollToItem((leading + at - 1).coerceAtLeast(0))
-            scrolledFor = todayKey
-        }
-    }
+    // Le fil s'ouvre sur l'élément en cours : ce qui le précède est replié sous « N plus tôt ».
+    var showEarlier by rememberSaveable(todayKey) { mutableStateOf(false) }
+    val hidden = if (showEarlier) 0 else earlierCount(items)
 
     LazyColumn(
         Modifier.fillMaxSize(),
-        state = listState,
         contentPadding = PaddingValues(bottom = bottom + 16.dp),
     ) {
-        if (snapshot.offline) item(key = "offline") { OfflineBanner(snapshot.fetchedAt, onRefresh) }
+        if (snapshot.offline) item(key = "offline") { OfflineStatus(snapshot.fetchedAt, onRefresh) }
         if (update != null) {
-            item(key = "update") { UpdateBanner(update.version, updateProgress, onUpdate, Modifier.animateItem()) }
+            item(key = "update") { UpdateStatus(update.version, updateProgress, onUpdate, Modifier.animateItem()) }
         }
-        item(key = "header") { Header(now, tomorrow?.work, onWeek, onRefresh, onSettings) }
+        item(key = "header") { Header(now, tomorrow?.work, onSettings) }
         if (snapshot.decisions.isNotEmpty()) {
             item(key = "decisions") { DecisionsPeek(snapshot.decisions.size, onOpenDecisions, decisionsAnchor) }
         }
-        item(key = "label") { SectionLabel("Fil du jour") }
-        if (items.isEmpty()) {
-            item(key = "empty") { EmptyDay(loaded = snapshot.fetchedAt != null) }
+        item(key = "label") {
+            SectionHeader("Fil du jour", Modifier.padding(start = 22.dp, end = 14.dp)) {
+                DayWeekToggle(week = false) { if (it) onWeek() }
+            }
         }
-        items(items, key = { it.card.key }) { item ->
+        if (items.isEmpty()) {
+            item(key = "empty") { EmptyDay(loaded = snapshot.fetchedAt != null, offline = snapshot.offline) }
+        }
+        if (hidden > 0) {
+            item(key = "earlier") {
+                TextButton(
+                    onClick = { showEarlier = true },
+                    modifier = Modifier
+                        .padding(start = 30.dp)
+                        .semantics { contentDescription = "Afficher $hidden élément${if (hidden > 1) "s" else ""} plus tôt" },
+                ) { Text("$hidden plus tôt · afficher") }
+            }
+        }
+        items(items.drop(hidden), key = { it.card.key }) { item ->
             val marked = item.phase == Phase.Fait || item.phase == Phase.PlusTard
             TimelineRow(
                 item = item,
+                now = now.toLocalTime(),
                 expanded = expanded == item.card.key,
                 onToggle = { expanded = if (expanded == item.card.key) null else item.card.key },
                 onDone = { onDone(todayKey, item.card) },
@@ -396,28 +373,36 @@ private fun DayContent(
 }
 
 @Composable
-private fun Header(now: LocalDateTime, tomorrowWork: String?, onWeek: () -> Unit, onRefresh: () -> Unit, onSettings: () -> Unit) {
+private fun Header(now: LocalDateTime, tomorrowWork: String?, onSettings: () -> Unit) {
     val date = now.format(DateTimeFormatter.ofPattern("EEEE d MMMM", Fr)).replaceFirstChar { it.titlecase(Fr) }
-    Row(
-        Modifier.fillMaxWidth().padding(start = 22.dp, end = 14.dp, top = 18.dp, bottom = 4.dp),
-        verticalAlignment = Alignment.Top,
-    ) {
-        Column(Modifier.weight(1f)) {
-            Text(greeting(now.toLocalTime()), style = MaterialTheme.typography.headlineMedium)
-            Text(
-                listOfNotNull(date, tomorrowLine(tomorrowWork)).joinToString(" · "),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
+    Column(Modifier.fillMaxWidth().padding(start = 22.dp, end = 4.dp, top = 8.dp, bottom = 4.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = onRefresh, modifier = Modifier.semantics { contentDescription = "Actualiser" }) {
-                Text("↻", fontSize = 20.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                greeting(now.toLocalTime()),
+                style = MaterialTheme.typography.headlineMedium,
+                modifier = Modifier.weight(1f).semantics { heading() },
+            )
+            IconButton(onClick = onSettings) {
+                Icon(KairosIcons.Gear, contentDescription = "Réglages", tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            Pill("Semaine", onWeek)
-            TextButton(onClick = onSettings, modifier = Modifier.semantics { contentDescription = "Réglages" }) {
-                Text("⚙", fontSize = 20.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
+        }
+        Text(date, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        tomorrowLine(tomorrowWork)?.let { StatePill(it, Modifier.padding(top = 8.dp)) }
+    }
+}
+
+/** Bascule Jour / Semaine, en tête du fil comme de la semaine. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun DayWeekToggle(week: Boolean, onWeek: (Boolean) -> Unit) {
+    SingleChoiceSegmentedButtonRow {
+        listOf("Jour" to false, "Semaine" to true).forEachIndexed { i, (label, value) ->
+            SegmentedButton(
+                selected = week == value,
+                onClick = { if (week != value) onWeek(value) },
+                shape = SegmentedButtonDefaults.itemShape(i, 2),
+                icon = {},
+            ) { Text(label) }
         }
     }
 }
@@ -434,67 +419,46 @@ internal fun Pill(label: String, onClick: () -> Unit) {
     }
 }
 
-@Composable
-internal fun OfflineBanner(fetchedAt: String?, onRetry: () -> Unit) {
-    val since = fetchedAt?.let {
-        runCatching {
-            val t = LocalDateTime.parse(it)
-            if (t.toLocalDate() == LocalDate.now()) "à " + t.format(DateTimeFormatter.ofPattern("H:mm"))
-            else "du " + t.format(DateTimeFormatter.ofPattern("d MMMM", Fr))
-        }.getOrNull()
-    }
-    Surface(
-        color = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.16f),
-        shape = MaterialTheme.shapes.medium,
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 6.dp),
-    ) {
-        Row(Modifier.padding(start = 14.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                "Hors ligne" + (since?.let { " · dernier état $it" } ?: ""),
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.weight(1f),
-            )
-            TextButton(onClick = onRetry) { Text("Réessayer") }
-        }
-    }
-}
-
-/** Bandeau discret : nouvelle version sur le serveur, puis avancement du téléchargement. */
-@Composable
-private fun UpdateBanner(version: String, progress: Float?, onUpdate: () -> Unit, modifier: Modifier) {
-    Surface(
-        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.10f),
-        shape = MaterialTheme.shapes.medium,
-        modifier = modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 6.dp),
-    ) {
-        Column(Modifier.padding(start = 14.dp, end = 4.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    if (progress == null) "Kairos $version disponible" else updateLabel(progress),
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.weight(1f).padding(vertical = 12.dp),
-                )
-                // À 100 % : confirmation du système quittée sans réponse, à remontrer ou abandonner.
-                when {
-                    progress == null -> TextButton(onClick = onUpdate) { Text("Mettre à jour") }
-                    progress >= 1f -> TextButton(onClick = onUpdate) { Text("Reprendre") }
-                }
-            }
-            if (progress != null) {
-                LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth().padding(end = 10.dp, bottom = 10.dp))
-            }
-        }
-    }
+/** « à 14:05 » aujourd'hui, « du 8 novembre » avant. */
+private fun offlineSince(fetchedAt: String?): String? = fetchedAt?.let {
+    runCatching {
+        val t = LocalDateTime.parse(it)
+        if (t.toLocalDate() == LocalDate.now()) "à " + t.format(DateTimeFormatter.ofPattern("H:mm"))
+        else "du " + t.format(DateTimeFormatter.ofPattern("d MMMM", Fr))
+    }.getOrNull()
 }
 
 @Composable
-internal fun SectionLabel(text: String) {
-    Text(
-        text.uppercase(Fr),
-        style = MaterialTheme.typography.labelSmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(start = 22.dp, top = 18.dp, bottom = 8.dp),
+internal fun OfflineStatus(fetchedAt: String?, onRetry: () -> Unit) {
+    StatusBanner(
+        "Hors ligne",
+        Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+        detail = offlineSince(fetchedAt)?.let { "Dernier état $it" },
+        actionLabel = "Réessayer",
+        onAction = onRetry,
     )
+}
+
+/** Nouvelle version sur le serveur, puis avancement du téléchargement (détail dans la barre). */
+@Composable
+private fun UpdateStatus(version: String, progress: Float?, onUpdate: () -> Unit, modifier: Modifier) {
+    // À 100 % : confirmation du système quittée sans réponse, à remontrer ou abandonner.
+    val action = when {
+        progress == null -> "Mettre à jour"
+        progress >= 1f -> "Reprendre"
+        else -> null
+    }
+    Column(modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 6.dp)) {
+        StatusBanner(
+            updateBannerText(version, progress),
+            tone = Tone.Neutral,
+            actionLabel = action,
+            onAction = action?.let { onUpdate },
+        )
+        if (progress != null) {
+            LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth().padding(top = 4.dp))
+        }
+    }
 }
 
 /** Coins de la carte de tête de l'aperçu (la pile de décisions en naît). */
@@ -532,9 +496,10 @@ private fun DecisionsPeek(count: Int, onOpen: () -> Unit, anchor: Modifier) {
             modifier = anchor
                 .fillMaxWidth()
                 .height(66.dp)
-                .shadow(8.dp, shape, ambientColor = MaterialTheme.colorScheme.primary, spotColor = MaterialTheme.colorScheme.primary),
+                .shadow(8.dp, shape, ambientColor = MaterialTheme.colorScheme.primary, spotColor = MaterialTheme.colorScheme.primary)
+                .semantics { contentDescription = decisionsSpoken(count) },
         ) {
-            Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.padding(start = 16.dp, end = 12.dp).clearAndSetSemantics {}, verticalAlignment = Alignment.CenterVertically) {
                 Text("$count", fontSize = 28.sp, fontWeight = FontWeight.ExtraBold)
                 Spacer(Modifier.width(14.dp))
                 Column(Modifier.weight(1f)) {
@@ -542,20 +507,16 @@ private fun DecisionsPeek(count: Int, onOpen: () -> Unit, anchor: Modifier) {
                         if (count > 1) "décisions en attente" else "décision en attente",
                         style = MaterialTheme.typography.titleSmall,
                     )
-                    Text(
-                        "${decisionsEta(count)} · glisse pour trier",
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.alpha(0.85f),
-                    )
+                    Text(decisionsEta(count), style = MaterialTheme.typography.bodySmall)
                 }
-                Text("›", fontSize = 26.sp)
+                Icon(KairosIcons.ChevronForward, contentDescription = null)
             }
         }
     }
 }
 
 @Composable
-private fun EmptyDay(loaded: Boolean) {
+private fun EmptyDay(loaded: Boolean, offline: Boolean) {
     Column(
         Modifier.fillMaxWidth().padding(vertical = 36.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -563,7 +524,12 @@ private fun EmptyDay(loaded: Boolean) {
         Mascot(MascotState.Repos, size = 56.dp, onBackground = MaterialTheme.colorScheme.background)
         Spacer(Modifier.height(12.dp))
         Text(
-            if (loaded) "Rien de prévu aujourd'hui." else "Le fil du jour arrive…",
+            when {
+                loaded -> "Rien de prévu aujourd'hui."
+                // Jamais reçu et serveur injoignable : on ne sait pas, on ne dit pas « rien ».
+                offline -> "Fil du jour indisponible pour l'instant."
+                else -> "Le fil du jour arrive…"
+            },
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -574,6 +540,7 @@ private fun EmptyDay(loaded: Boolean) {
 @Composable
 private fun TimelineRow(
     item: TimelineItem,
+    now: LocalTime,
     expanded: Boolean,
     onToggle: () -> Unit,
     onDone: () -> Unit,
@@ -586,6 +553,7 @@ private fun TimelineRow(
     val line = MaterialTheme.colorScheme.outlineVariant
     val bg = MaterialTheme.colorScheme.background
     val dimmed = item.phase != Phase.Maintenant && item.phase != Phase.Ensuite
+    val toggle by rememberUpdatedState(onToggle)
     Row(modifier.fillMaxWidth().height(IntrinsicSize.Min).padding(start = 14.dp, end = 14.dp)) {
         Box(
             Modifier
@@ -602,23 +570,34 @@ private fun TimelineRow(
                 },
         )
         // La carte reste dans le fil pendant le geste (marquée sur place) : elle revient se poser, sans partir.
+        // Le dépli est porté par le nœud de la rangée (texte + actions de glissement), pas par un clic imbriqué.
         SwipeRow(
             enabled = swipeEnabled,
             onRight = onDone,
             onLeft = onLater,
-            modifier = Modifier.weight(1f).padding(bottom = 8.dp),
+            modifier = Modifier
+                .weight(1f)
+                .padding(bottom = 8.dp)
+                .semantics { onClick(label = if (expanded) "Replier" else "Afficher le détail") { toggle(); true } },
             rightStays = true,
             leftStays = true,
         ) {
-            ItemCard(item, expanded, onToggle, onDone, onLater, onRestore, swipeEnabled)
+            ItemCard(item, now, expanded, { toggle() }, onDone, onLater, onRestore, swipeEnabled)
         }
     }
+}
+
+private fun ChipTone.kit(): Tone = when (this) {
+    ChipTone.Neutre -> Tone.Neutral
+    ChipTone.Attention -> Tone.Attention
+    ChipTone.Urgent -> Tone.Urgent
 }
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ItemCard(
     item: TimelineItem,
+    now: LocalTime,
     expanded: Boolean,
     onToggle: () -> Unit,
     onDone: () -> Unit,
@@ -628,43 +607,55 @@ private fun ItemCard(
 ) {
     val card = item.card
     val marked = item.phase == Phase.Fait || item.phase == Phase.PlusTard
-    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    val current = item.phase == Phase.Maintenant
+    val scheme = MaterialTheme.colorScheme
+    val muted = if (current) scheme.onPrimaryContainer else scheme.onSurfaceVariant
+    // Fondu sur le texte seulement : la pastille d'état et les boutons gardent leur contraste.
+    val fade = Modifier.alpha(if (marked) 0.7f else if (item.phase == Phase.Passe) 0.75f else 1f)
     Surface(
-        onClick = onToggle,
         shape = MaterialTheme.shapes.medium,
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        color = if (current) scheme.primaryContainer else scheme.surface,
+        border = BorderStroke(1.dp, scheme.outlineVariant),
         shadowElevation = if (marked) 0.dp else 1.dp,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().pointerInput(Unit) { detectTapGestures(onTap = { onToggle() }) },
     ) {
-        Column(
-            Modifier
-                .alpha(if (marked) 0.55f else if (item.phase == Phase.Passe) 0.75f else 1f)
-                .padding(horizontal = 14.dp, vertical = 11.dp),
-        ) {
-            Row(verticalAlignment = Alignment.Top) {
-                Text(
-                    card.title,
-                    style = MaterialTheme.typography.titleSmall,
-                    textDecoration = if (item.phase == Phase.Fait) TextDecoration.LineThrough else null,
-                    modifier = Modifier.weight(1f),
-                )
-                val trailing = when (item.phase) {
-                    Phase.Fait -> "fait"
-                    Phase.PlusTard -> "plus tard"
-                    else -> card.time
+        Column(Modifier.padding(start = 14.dp, end = if (actionable) 4.dp else 14.dp, top = 11.dp, bottom = 11.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(fade.weight(1f)) {
+                    Text(
+                        card.title,
+                        style = MaterialTheme.typography.titleSmall,
+                        textDecoration = if (item.phase == Phase.Fait) TextDecoration.LineThrough else null,
+                    )
+                    val time = card.time
+                    if (current) {
+                        val label = listOfNotNull(time, startsIn(time, now)).joinToString(" · ")
+                        if (label.isNotEmpty()) {
+                            Text(label, style = MaterialTheme.typography.labelMedium, color = scheme.primary, fontWeight = FontWeight.Bold)
+                        }
+                    } else if (time != null) {
+                        Text(time, style = MaterialTheme.typography.labelMedium, color = muted)
+                    }
                 }
-                if (trailing != null) {
+                if (actionable) {
+                    OutlinedIconButton(
+                        onClick = onDone,
+                        modifier = Modifier.size(48.dp),
+                        border = BorderStroke(1.5.dp, scheme.primary),
+                    ) {
+                        Icon(KairosIcons.Check, contentDescription = "Marquer fait : ${card.title}", tint = scheme.primary)
+                    }
+                } else if (marked) {
                     Spacer(Modifier.width(8.dp))
-                    Text(trailing, style = MaterialTheme.typography.labelMedium, color = muted)
+                    StatePill(if (item.phase == Phase.Fait) "fait" else "plus tard")
                 }
             }
             card.body?.let {
-                Text(it, style = MaterialTheme.typography.bodySmall, color = muted, modifier = Modifier.padding(top = 2.dp))
+                Text(it, style = MaterialTheme.typography.bodySmall, color = muted, modifier = fade.padding(top = 2.dp))
             }
             if (card.chips.isNotEmpty()) {
-                FlowRow(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    card.chips.forEach { ChipView(it) }
+                FlowRow(fade.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    card.chips.forEach { StatePill(it.text, tone = it.tone.kit()) }
                 }
             }
             AnimatedVisibility(expanded, enter = Motion.expand, exit = Motion.collapse) {
@@ -672,9 +663,8 @@ private fun ItemCard(
                     card.detail?.let {
                         Text(it, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(bottom = 10.dp))
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         if (actionable) {
-                            Pill("Fait ✓", onDone)
                             Pill("Plus tard", onLater)
                         } else if (restorable(item)) {
                             Pill("Remettre dans le fil", onRestore)
@@ -718,26 +708,6 @@ private fun Chooser(card: Card, onPick: (JsonElement) -> Unit, onCancel: () -> U
         }
     }
 }
-
-@Composable
-internal fun ChipView(chip: Chip) {
-    val scheme = MaterialTheme.colorScheme
-    val (bg, fg) = when (chip.tone) {
-        Tone.Neutre -> scheme.primaryContainer to scheme.onPrimaryContainer
-        Tone.Attention -> scheme.tertiary.copy(alpha = 0.18f) to scheme.tertiary.darken()
-        Tone.Urgent -> scheme.error.copy(alpha = 0.14f) to scheme.error
-    }
-    Text(
-        chip.text,
-        style = MaterialTheme.typography.labelMedium,
-        color = fg,
-        modifier = Modifier.clip(CircleShape).background(bg).padding(horizontal = 9.dp, vertical = 2.dp),
-    )
-}
-
-/** Ambre lisible sur fond clair ; inchangé quand la couleur est déjà claire (thème sombre). */
-private fun Color.darken(): Color =
-    if (red + green + blue > 2.2f) this else Color(red * 0.64f, green * 0.62f, blue * 0.6f, alpha)
 
 /** Pincer (deux doigts qui se rapprochent) ou écarter ; un seul doigt laisse défiler la liste. */
 internal fun Modifier.pinch(onPinchIn: () -> Unit, onSpread: () -> Unit): Modifier = composed {

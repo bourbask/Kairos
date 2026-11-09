@@ -67,6 +67,7 @@ import app.kairos.mobile.data.Repository
 import app.kairos.mobile.data.SecureStore
 import app.kairos.mobile.ui.KairosButtonCorner
 import app.kairos.mobile.ui.Shell
+import app.kairos.mobile.ui.Tab
 import app.kairos.mobile.ui.overlay.Origin
 import app.kairos.mobile.ui.overlay.Overlay
 import app.kairos.mobile.ui.overlay.overlayAnchor
@@ -520,6 +521,8 @@ private fun KairosRoot(model: AppModel) {
     var maisonOpen by rememberSaveable { mutableStateOf(false) }
     var financesOpen by rememberSaveable { mutableStateOf(false) }
     var agendaOpen by rememberSaveable { mutableStateOf(false) }
+    var agendaDay by rememberSaveable { mutableStateOf<String?>(null) }
+    var tab by rememberSaveable { mutableStateOf(Tab.Aujourdhui) }
     var marchesOpen by rememberSaveable { mutableStateOf(false) }
     var memoireOpen by rememberSaveable { mutableStateOf(false) }
     var mediasOpen by rememberSaveable { mutableStateOf(false) }
@@ -600,6 +603,8 @@ private fun KairosRoot(model: AppModel) {
             kairosModifier = Modifier.overlayAnchor(chat, KairosButtonCorner),
             mascotState = mascot,
             kairosState = mascotDescription(mascot, conversation.decisions),
+            tab = tab,
+            onTab = { tab = it },
             onTap = {
                 focusInput = false
                 chatOpen = true
@@ -614,9 +619,14 @@ private fun KairosRoot(model: AppModel) {
                     padding = padding,
                     onOpenDecisions = { decisionsOpen = true },
                     onOpenSettings = { settingsOpen = true },
+                    // Un jour de la semaine ouvre l'Agenda sur ce jour, dans son espace.
+                    onOpenAgenda = { day ->
+                        agendaDay = day.toString()
+                        tab = Tab.Espaces
+                        agendaOpen = true
+                    },
                     onUnauthorized = model::unauthorized,
                     appScope = model.viewModelScope,
-                    onNotice = { scope.launch { snackbar.showSnackbar(it) } },
                     update = model.update,
                     updateProgress = model.updateProgress,
                     onUpdate = model::startUpdate,
@@ -676,13 +686,17 @@ private fun KairosRoot(model: AppModel) {
                     },
                     agenda = agenda,
                     agendaOpen = agendaOpen,
-                    onOpenAgenda = { agendaOpen = true },
+                    onOpenAgenda = {
+                        agendaDay = null
+                        agendaOpen = true
+                    },
                     onCloseAgenda = { agendaOpen = false },
                     agendaContent = {
                         AgendaScreen(
                             repository = session.repository,
                             padding = padding,
                             appScope = model.viewModelScope,
+                            initialDay = agendaDay?.let(LocalDate::parse),
                             onClose = { agendaOpen = false },
                             onUnauthorized = model::unauthorized,
                         )
