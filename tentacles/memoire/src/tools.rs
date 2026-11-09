@@ -798,6 +798,15 @@ mod tests {
     }
 
     #[test]
+    fn app_forgets_deduction_only_key() {
+        let s = srv();
+        let indices = [crate::store::Indice { key: "loisir".into(), value: "poterie".into() }];
+        s.db().unwrap().appliquer_extraction(now_local().date(), &indices, now_local()).unwrap();
+        assert!(js(s.app_fact_forget(Parameters(KeyArgs { key: "loisir".into() })))["message"].is_string());
+        assert!(s.app_fact_forget(Parameters(KeyArgs { key: "loisir".into() })).is_err());
+    }
+
+    #[test]
     fn conversation_search_shape() {
         let s = srv();
         let c = NewConversation {

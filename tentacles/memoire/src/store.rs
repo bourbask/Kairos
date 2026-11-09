@@ -243,6 +243,11 @@ fn norme(v: &str) -> String {
     v.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
 }
 
+/// Début du texte d'une question de confirmation sur `key`.
+fn question_prefixe(key: &str) -> String {
+    format!("Confirmer : {key} = ")
+}
+
 /// Référence du souvenir d'une déduction.
 fn ref_deduction(key: &str, value: &str) -> String {
     format!("{key}\u{1f}{value}")
@@ -780,11 +785,22 @@ impl MemoryStore {
         st.query_map([key], Self::fact_from)?.map(|r| Self::fact_build(r?)).collect()
     }
 
-    /// Oublie une clé : valeur courante et historique. Renvoie le nombre de valeurs effacées.
+    /// Oublie une clé : valeur courante, historique, déductions et questions de
+    /// confirmation en cours. Renvoie le nombre de valeurs effacées, déduites comprises.
     pub fn fact_forget(&self, key: &str) -> Result<usize> {
         let tx = self.conn.unchecked_transaction()?;
-        let n = tx.execute("DELETE FROM fact_log WHERE key = ?", [key])?;
+        let mut n = tx.execute("DELETE FROM fact_log WHERE key = ?", [key])?;
         tx.execute("DELETE FROM souvenirs WHERE nature = 'fait' AND ref = ?", [key])?;
+        tx.execute(
+            "DELETE FROM souvenirs WHERE nature = 'deduction' AND ref IN (SELECT key || char(31) || value FROM deductions WHERE key = ?)",
+            [key],
+        )?;
+        n += tx.execute("DELETE FROM deductions WHERE key = ?", [key])?;
+        tx.execute("DELETE FROM renforcements_jour WHERE key = ?", [key])?;
+        tx.execute(
+            "DELETE FROM intentions WHERE state IN ('ouverte','proposee') AND substr(what, 1, length(?1)) = ?1",
+            [question_prefixe(key)],
+        )?;
         tx.execute("DELETE FROM facts_fts WHERE key = ?", [key])?;
         tx.execute("INSERT INTO facts_fts (facts_fts) VALUES ('optimize')", [])?;
         tx.commit()?;
@@ -811,6 +827,7 @@ impl MemoryStore {
         let j = jour.format("%Y-%m-%d").to_string();
         let mut b = Bilan::default();
         let tx = self.conn.unchecked_transaction()?;
+        tx.execute("DELETE FROM renforcements_jour WHERE jour < ?", [&j])?;
         for i in indices {
             let (key, value) = (i.key.trim(), i.value.trim());
             if key.is_empty() || key == PERSONA_KEY || value.is_empty() || value.chars().count() > INDICE_VALEUR_MAX {
@@ -828,10 +845,17 @@ impl MemoryStore {
                     }
                 }
                 Some(_) => {
-                    let what = format!("Confirmer : {key} = {value} ?");
+                    let what = format!("{}{value} ?", question_prefixe(key));
+                    // Question en cours, ou refusée dans sa durée de vie : pas de nouvelle question.
                     let deja = tx
-                        .prepare("SELECT 1 FROM intentions WHERE what = ? AND state IN ('ouverte','proposee') AND expires_at > ?")?
-                        .exists(params![what, ts(maintenant)])?;
+                        .prepare(
+                            "SELECT what FROM intentions WHERE state IN ('ouverte','proposee','refusee')
+                             AND expires_at > ?2 AND substr(what, 1, length(?1)) = ?1",
+                        )?
+                        .query_map(params![question_prefixe(key), ts(maintenant)], |r| r.get::<_, String>(0))?
+                        .collect::<rusqlite::Result<Vec<_>>>()?
+                        .iter()
+                        .any(|w| norme(w) == norme(&what));
                     if !deja {
                         tx.execute(
                             "INSERT INTO intentions (what, constraints, expires_at, state) VALUES (?, '', ?, ?)",
@@ -2364,6 +2388,55 @@ mod tests {
         assert_eq!(compte(&s, "SELECT COUNT(*) FROM souvenirs"), 0);
         // 300 caractères : accepté.
         assert_eq!(s.appliquer_extraction(d(1), &[indice("note", &"x".repeat(300))], jour(2026, 11, 1)).unwrap().deduits, 1);
+    }
+
+    #[test]
+    fn forget_drops_deductions() {
+        let s = store();
+        let m = jour(2026, 11, 1);
+        s.fact_set_at("animal", "chat", "utilisateur", t()).unwrap();
+        s.appliquer_extraction(d(1), &[indice("animal", "chat"), indice("animal", "chien")], m).unwrap();
+        s.conn.execute("INSERT INTO deductions VALUES ('animal', 'lapin', 0.5, ?, '2026-11-01')", [ts(m)]).unwrap();
+        s.conn.execute("INSERT INTO souvenirs VALUES ('deduction', 'animal' || char(31) || 'lapin', 30.0, ?, 0, 0.0, 0, 0.5)", [ts(m)]).unwrap();
+        s.appliquer_extraction(d(1), &[indice("animaux", "deux")], m).unwrap();
+        let autre = s.intention_create("Confirmer : animaux = trois ?", "", m + Duration::days(7)).unwrap();
+        // Une valeur déclarée et une déduction.
+        assert_eq!(s.fact_forget("animal").unwrap(), 2);
+        assert!(!s.rappel(None, m, 50).unwrap().iter().any(|r| r.texte.contains("animal :")));
+        for (table, n) in [
+            ("deductions WHERE key = 'animal'", 0),
+            ("souvenirs WHERE ref LIKE 'animal%'", 0),
+            ("renforcements_jour", 0),
+            ("intentions", 1),
+            ("deductions", 1),
+        ] {
+            assert_eq!(compte(&s, &format!("SELECT COUNT(*) FROM {table}")), n, "{table}");
+        }
+        assert_eq!(s.intentions_open(m).unwrap()[0].id, autre);
+        assert_eq!(s.fact_forget("animaux").unwrap(), 1);
+    }
+
+    #[test]
+    fn question_dedup_ignores_case_and_refusal_holds() {
+        let s = store();
+        let m = jour(2026, 11, 1);
+        s.fact_set_at("animal", "chat", "utilisateur", t()).unwrap();
+        let b = s.appliquer_extraction(d(1), &[indice("animal", "Chien"), indice("animal", " chien ")], m).unwrap();
+        assert_eq!(b.questions, 1);
+        let id = s.intentions_open(m).unwrap()[0].id;
+        s.intention_set_state(id, IntentionState::Refusee).unwrap();
+        assert_eq!(s.appliquer_extraction(d(3), &[indice("animal", "chien")], m + Duration::days(2)).unwrap().questions, 0);
+        assert_eq!(s.appliquer_extraction(d(9), &[indice("animal", "chien")], m + Duration::days(8)).unwrap().questions, 1);
+    }
+
+    #[test]
+    fn daily_reinforcement_marks_are_pruned() {
+        let s = store();
+        s.fact_set_at("ville", "Lorient", "utilisateur", t()).unwrap();
+        s.appliquer_extraction(d(1), &[indice("ville", "Lorient")], jour(2026, 11, 1)).unwrap();
+        s.appliquer_extraction(d(2), &[indice("ville", "Lorient")], jour(2026, 11, 2)).unwrap();
+        assert_eq!(compte(&s, "SELECT COUNT(*) FROM renforcements_jour WHERE jour < '2026-11-02'"), 0);
+        assert_eq!(compte(&s, "SELECT COUNT(*) FROM renforcements_jour"), 1);
     }
 
     #[test]
