@@ -24,6 +24,10 @@ fun KairosTheme(dark: Boolean, content: @Composable () -> Unit) {
     val colors = if (dark) DarkColors else LightColors
     MaterialTheme(colorScheme = colors, typography = KairosTypography, shapes = KairosShapes) {
         // Texte posé hors d'une Surface : couleur du thème, pas le noir par défaut de Compose.
-        CompositionLocalProvider(LocalContentColor provides colors.onBackground, content = content)
+        CompositionLocalProvider(
+            LocalContentColor provides colors.onBackground,
+            LocalKairosColors provides if (dark) DarkKairosColors else LightKairosColors,
+            content = content,
+        )
     }
 }

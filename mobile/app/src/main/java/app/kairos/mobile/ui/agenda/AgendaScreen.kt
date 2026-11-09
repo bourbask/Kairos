@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -30,17 +31,11 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Snackbar
-import androidx.compose.material3.SnackbarDuration
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -59,6 +54,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
@@ -81,17 +77,23 @@ import app.kairos.mobile.data.ApiError
 import app.kairos.mobile.data.Card
 import app.kairos.mobile.data.CardDone
 import app.kairos.mobile.data.Repository
+import app.kairos.mobile.ui.kit.BlockKind
+import app.kairos.mobile.ui.kit.LocalNotifier
+import app.kairos.mobile.ui.kit.PrimaryAction
+import app.kairos.mobile.ui.kit.primaryActionClearance
 import app.kairos.mobile.ui.kit.SectionHeader
+import app.kairos.mobile.ui.kit.SpaceHeader
+import app.kairos.mobile.ui.kit.colors
+import app.kairos.mobile.ui.finances.issueBanner
+import app.kairos.mobile.ui.theme.KairosColors
 import app.kairos.mobile.ui.kit.StatusBanner
 import app.kairos.mobile.ui.kit.Timeline
 import app.kairos.mobile.ui.kit.clockText
-import app.kairos.mobile.ui.maison.ChevronBackIcon
-import app.kairos.mobile.ui.talk.IconButton
 import app.kairos.mobile.ui.theme.Motion
 import app.kairos.mobile.ui.today.DoneOutcome
 import app.kairos.mobile.ui.today.InFlight
 import app.kairos.mobile.ui.today.Pill
-import app.kairos.mobile.ui.today.SwipeRow
+import app.kairos.mobile.ui.kit.SwipeRow
 import app.kairos.mobile.ui.today.completeCard
 import java.time.Duration
 import java.time.LocalDate
@@ -102,11 +104,9 @@ import java.util.Locale
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
-private const val UNDO_MS = 4_000L
 private val Fr = Locale.FRENCH
 private val DAY_TITLE = DateTimeFormatter.ofPattern("EEEE d MMMM", Fr)
 
@@ -124,15 +124,17 @@ fun AgendaScreen(
     appScope: CoroutineScope,
     onClose: () -> Unit,
     onUnauthorized: () -> Unit,
+    initialDay: LocalDate? = null,
 ) {
     val agenda by repository.agenda.collectAsState()
     val days by repository.snapshot.collectAsState()
     val scope = rememberCoroutineScope()
     val unauthorized by rememberUpdatedState(onUnauthorized)
-    val snackbar = remember { SnackbarHostState() }
+    val notifier = LocalNotifier.current
+    val scroll = rememberScrollState()
     var today by remember { mutableStateOf(LocalDate.now()) }
     val strip = remember(today) { dayStrip(today) }
-    var selectedText by rememberSaveable { mutableStateOf(today.toString()) }
+    var selectedText by rememberSaveable { mutableStateOf((initialDay ?: today).toString()) }
     val selected = runCatching { LocalDate.parse(selectedText) }.getOrNull()?.takeIf { it in strip } ?: today
     var loading by remember { mutableIntStateOf(0) }
     var addOpen by rememberSaveable { mutableStateOf(false) }
@@ -172,9 +174,7 @@ fun AgendaScreen(
         shownDay = selected
     }
 
-    suspend fun undoWindow(text: String): Boolean = withTimeoutOrNull(UNDO_MS) {
-        snackbar.showSnackbar(text, actionLabel = "Annuler", duration = SnackbarDuration.Indefinite)
-    } == SnackbarResult.ActionPerformed
+    suspend fun undoWindow(text: String): Boolean = notifier.undo(text)
 
     // Depuis appScope : quitter l'espace pendant la fenêtre n'abandonne pas l'action.
     fun taskDone(task: AgendaTask) {
@@ -191,7 +191,7 @@ fun AgendaScreen(
                     null,
                     mark = { m -> hidden = if (m == null) hidden - task.id else hidden + task.id },
                     undoWindow = { undoWindow("Faite · ${task.title}") },
-                    call = repository::tool,
+                    call = repository::reply,
                     busy = tasksBusy,
                 )
             } catch (_: ApiError.Unauthorized) {
@@ -199,7 +199,7 @@ fun AgendaScreen(
             }
             when (out) {
                 is DoneOutcome.Done -> load(selected, sync = false)
-                is DoneOutcome.Refused -> snackbar.showSnackbar(out.message)
+                is DoneOutcome.Refused -> notifier.show(out.message)
                 else -> Unit
             }
         }
@@ -209,7 +209,9 @@ fun AgendaScreen(
     val work = days.days.firstOrNull { it.day == selected.toString() }?.work
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         Column(Modifier.fillMaxSize().padding(top = padding.calculateTopPadding())) {
-            Header(onClose, showToday = selected != today) { selectedText = today.toString() }
+            SpaceHeader("Agenda", onClose) {
+                if (selected != today) Pill("Aujourd'hui") { selectedText = today.toString() }
+            }
             DayStrip(strip, selected, today, agenda.week?.days?.filter { it.events.isNotEmpty() }?.map { it.day }.orEmpty().toSet()) {
                 selectedText = it.toString()
             }
@@ -221,12 +223,13 @@ fun AgendaScreen(
                 Column(
                     Modifier
                         .fillMaxSize()
-                        .verticalScroll(rememberScrollState())
+                        .verticalScroll(scroll)
                         .padding(horizontal = 20.dp)
-                        .padding(top = 8.dp, bottom = padding.calculateBottomPadding() + 88.dp),
+                        .padding(top = 8.dp, bottom = padding.calculateBottomPadding() + primaryActionClearance()),
                 ) {
                     agenda.issue?.let { issue ->
-                        StatusBanner(issue, detail = agenda.fetchedAt?.let { "Dernier état : ${dayTime(it)}" })
+                        val (title, detail) = issueBanner("Agenda", issue, agenda.fetchedAt?.let { "Dernier état : ${dayTime(it)}" })
+                        StatusBanner(title, detail = detail, actionLabel = "Réessayer", onAction = { load(selected, sync = true) })
                         Spacer(Modifier.height(8.dp))
                     }
                     syncBanner(agenda)?.let {
@@ -254,27 +257,15 @@ fun AgendaScreen(
                 }
             }
         }
-        ExtendedFloatingActionButton(
-            onClick = { addOpen = true },
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(end = 16.dp, bottom = padding.calculateBottomPadding() + 8.dp),
-        ) { Text("Ajouter un événement") }
-        SnackbarHost(
-            snackbar,
+        // Court, et replié en bouton rond dès que la page défile : le bas de la frise reste visible.
+        PrimaryAction(
+            "Ajouter",
+            { addOpen = true },
             Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = padding.calculateBottomPadding())
-                .padding(horizontal = 16.dp),
-        ) { data ->
-            Snackbar(
-                data,
-                shape = MaterialTheme.shapes.medium,
-                containerColor = MaterialTheme.colorScheme.onBackground,
-                contentColor = MaterialTheme.colorScheme.background,
-                actionColor = MaterialTheme.colorScheme.primaryContainer,
-            )
-        }
+                .align(Alignment.BottomEnd)
+                .padding(end = 16.dp, bottom = padding.calculateBottomPadding() + 16.dp),
+            expanded = !scroll.canScrollBackward,
+        )
         if (addOpen) {
             ModalBottomSheet(onDismissRequest = { addOpen = false }) {
                 AddPanel(strip, selected, adding) { form, done ->
@@ -295,10 +286,10 @@ fun AgendaScreen(
                                 } catch (_: ApiError.Unauthorized) {
                                     return@launch unauthorized()
                                 }
-                                snackbar.showSnackbar(out.message.ifBlank { "Événement ajouté." })
+                                notifier.show(out.message.ifBlank { "Événement ajouté." })
                             }
                             // Panneau fermé entre-temps : la raison ne doit pas se perdre.
-                            is AddOutcome.Refused -> if (!addOpen) snackbar.showSnackbar(out.message)
+                            is AddOutcome.Refused -> if (!addOpen) notifier.show(out.message)
                             else -> Unit
                         }
                     }
@@ -336,25 +327,6 @@ private fun Modifier.swipeDays(strip: List<LocalDate>, selected: LocalDate, onDa
                 change.consume()
             }
         }
-}
-
-@Composable
-private fun Header(onClose: () -> Unit, showToday: Boolean, onToday: () -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().padding(start = 4.dp, end = 12.dp, top = 8.dp, bottom = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        IconButton(label = "Retour aux espaces", onClick = onClose) { ChevronBackIcon(MaterialTheme.colorScheme.onSurfaceVariant) }
-        Spacer(Modifier.width(4.dp))
-        Text(
-            "Agenda",
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.onBackground,
-            modifier = Modifier.weight(1f),
-        )
-        if (showToday) Pill("Aujourd'hui", onToday)
-    }
 }
 
 /** Sept puces ; un point sous les jours qui ont des événements. */
@@ -429,7 +401,8 @@ private fun DayTitle(day: LocalDate, work: String?) {
 private fun DayView(day: LocalDate, content: AgendaDay, hidden: Set<Long>, onDone: (AgendaTask) -> Unit) {
     Legend()
     Spacer(Modifier.height(6.dp))
-    Timeline(day, blocksOf(content.events), highlights = freeSpans(content))
+    // Sans défilement propre : la page seule défile.
+    Timeline(day, blocksOf(content.events), highlights = freeSpans(content), viewport = null)
     if (content.events.isEmpty()) Caption("Rien de prévu ce jour-là.")
     val tasks = content.tasks.filter { it.id !in hidden }
     if (tasks.isNotEmpty()) {
@@ -443,15 +416,23 @@ private fun DayView(day: LocalDate, content: AgendaDay, hidden: Set<Long>, onDon
 /** Perso et travail : les deux familles de blocs de la frise. */
 @Composable
 private fun Legend() {
-    val colors = MaterialTheme.colorScheme
     Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
-        listOf(Cal.Perso to colors.primaryContainer, Cal.Travail to colors.secondaryContainer).forEach { (c, color) ->
+        listOf(Cal.Perso to BlockKind.Primary, Cal.Travail to BlockKind.Secondary).forEach { (c, kind) ->
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(10.dp).background(color, RoundedCornerShape(3.dp)))
+                CalendarSwatch(kind)
                 Spacer(Modifier.width(6.dp))
                 Caption(c.label)
             }
         }
+    }
+}
+
+/** Pastille d'un calendrier : fond et liseré de ses blocs dans la frise. */
+@Composable
+private fun CalendarSwatch(kind: BlockKind) {
+    val (bg, _, side) = kind.colors()
+    Row(Modifier.size(width = 12.dp, height = 12.dp).clip(RoundedCornerShape(3.dp)).background(bg)) {
+        Box(Modifier.width(if (kind == BlockKind.Primary) 3.dp else 5.dp).fillMaxHeight().background(side))
     }
 }
 
@@ -466,9 +447,9 @@ private fun TaskRow(task: AgendaTask, day: LocalDate, onDone: (AgendaTask) -> Un
             Row(Modifier.fillMaxWidth().padding(start = 14.dp, end = 4.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text(task.title, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    late?.let { Text("en retard depuis le ${it.format(DateTimeFormatter.ofPattern("d MMMM", Fr))}", style = MaterialTheme.typography.bodySmall, color = colors.tertiary) }
+                    late?.let { Text("en retard depuis le ${it.format(DateTimeFormatter.ofPattern("d MMMM", Fr))}", style = MaterialTheme.typography.bodySmall, color = KairosColors.current.attentionText) }
                 }
-                TextButton(onClick = { onDone(task) }) { Text("Faite") }
+                TextButton(onClick = { onDone(task) }, Modifier.semantics { contentDescription = "Faite : ${task.title}" }) { Text("Faite") }
             }
         }
     }
@@ -477,16 +458,11 @@ private fun TaskRow(task: AgendaTask, day: LocalDate, onDone: (AgendaTask) -> Un
 @Composable
 private fun Upcoming(items: List<app.kairos.mobile.data.Upcoming>, today: LocalDate) {
     if (items.isEmpty()) return
-    val colors = MaterialTheme.colorScheme
     SectionHeader("À venir")
     items.take(UPCOMING_MAX).forEach { u ->
         val description = "${u.title}, ${calendarLabel(u.calendar)}, ${upcomingWhen(u, today)}"
         Row(Modifier.fillMaxWidth().padding(vertical = 6.dp).clearAndSetSemantics { contentDescription = description }, verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                Modifier
-                    .size(10.dp)
-                    .background(if (u.calendar == "travail") colors.secondaryContainer else colors.primaryContainer, RoundedCornerShape(3.dp)),
-            )
+            CalendarSwatch(if (u.calendar == "travail") BlockKind.Secondary else BlockKind.Primary)
             Spacer(Modifier.width(10.dp))
             Text(u.title, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
             Spacer(Modifier.width(12.dp))
@@ -499,7 +475,7 @@ private const val UPCOMING_MAX = 8
 
 @Composable
 private fun Hint(issue: String?) {
-    Caption(if (issue != null) "$issue, et rien en mémoire pour ce jour." else "Chargement…", Modifier.padding(vertical = 24.dp))
+    Caption(if (issue != null) "Rien en mémoire pour ce jour." else "Chargement…", Modifier.padding(vertical = 24.dp))
 }
 
 @Composable

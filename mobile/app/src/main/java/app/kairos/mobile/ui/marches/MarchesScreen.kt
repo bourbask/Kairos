@@ -2,6 +2,8 @@ package app.kairos.mobile.ui.marches
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,11 +21,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Snackbar
-import androidx.compose.material3.SnackbarDuration
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
@@ -40,6 +37,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -60,7 +58,14 @@ import app.kairos.mobile.data.Scenario
 import app.kairos.mobile.ui.decide.DeckScreen
 import app.kairos.mobile.ui.finances.dayLabel
 import app.kairos.mobile.ui.finances.syncLabel
+import app.kairos.mobile.ui.kit.AlertRow
 import app.kairos.mobile.ui.kit.Columns
+import app.kairos.mobile.ui.kit.KairosIcons
+import app.kairos.mobile.ui.kit.LocalNotifier
+import app.kairos.mobile.ui.kit.PrimaryAction
+import app.kairos.mobile.ui.kit.primaryActionClearance
+import app.kairos.mobile.ui.kit.SpaceHeader
+import app.kairos.mobile.ui.finances.issueBanner
 import app.kairos.mobile.ui.kit.LineChart
 import app.kairos.mobile.ui.kit.Metric
 import app.kairos.mobile.ui.kit.SectionHeader
@@ -76,14 +81,11 @@ import app.kairos.mobile.ui.overlay.underOverlays
 import app.kairos.mobile.ui.talk.IconButton
 import app.kairos.mobile.ui.today.DoneOutcome
 import app.kairos.mobile.ui.today.InFlight
-import app.kairos.mobile.ui.today.Pill
-import app.kairos.mobile.ui.today.SwipeRow
+import app.kairos.mobile.ui.kit.SwipeRow
 import app.kairos.mobile.ui.today.completeCard
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
 
-private const val UNDO_MS = 4_000L
 private val RowCorner = 16.dp
 
 /** Couleur d'un sens de variation : fougère à la hausse, brique à la baisse (toujours avec flèche et texte). */
@@ -112,7 +114,7 @@ fun MarchesScreen(
     val snapshot by repository.marches.collectAsState()
     val scope = rememberCoroutineScope()
     val unauthorized by rememberUpdatedState(onUnauthorized)
-    val snackbar = remember { SnackbarHostState() }
+    val notifier = LocalNotifier.current
     var refreshing by remember { mutableStateOf(false) }
     var detailId by rememberSaveable { mutableStateOf<String?>(null) }
     var deckOpen by rememberSaveable { mutableStateOf(false) }
@@ -140,9 +142,7 @@ fun MarchesScreen(
         onPauseOrDispose {}
     }
 
-    suspend fun undoWindow(text: String): Boolean = withTimeoutOrNull(UNDO_MS) {
-        snackbar.showSnackbar(text, actionLabel = "Annuler", duration = SnackbarDuration.Indefinite)
-    } == SnackbarResult.ActionPerformed
+    suspend fun undoWindow(text: String): Boolean = notifier.undo(text)
 
     // Depuis appScope : quitter l'espace pendant la fenêtre n'abandonne pas l'action.
     fun unfollow(m: FollowedMarket) {
@@ -153,7 +153,7 @@ fun MarchesScreen(
                     null,
                     mark = { mark -> hidden = if (mark == null) hidden - m.id else hidden + m.id },
                     undoWindow = { undoWindow("Plus suivie · ${m.question}") },
-                    call = repository::tool,
+                    call = repository::reply,
                     busy = busy,
                 )
             } catch (_: ApiError.Unauthorized) {
@@ -169,7 +169,7 @@ fun MarchesScreen(
                     // Relue sans elle : plus besoin de la cacher, et suivie à nouveau plus tard, elle doit réapparaître.
                     if (repository.marches.value.issue == null) hidden = hidden - m.id
                 }
-                is DoneOutcome.Refused -> snackbar.showSnackbar(out.message)
+                is DoneOutcome.Refused -> notifier.show(out.message)
                 else -> Unit
             }
         }
@@ -177,79 +177,72 @@ fun MarchesScreen(
 
     val pending = pendingProposals(snapshot)
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.outlineVariant)) {
-        Column(
-            Modifier
-                .fillMaxSize()
-                .underOverlays(rtl, detail, deck)
-                .background(MaterialTheme.colorScheme.background)
-                .padding(top = padding.calculateTopPadding()),
-        ) {
-            Row(
-                Modifier.fillMaxWidth().padding(start = 4.dp, end = 12.dp, top = 8.dp, bottom = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                IconButton(label = "Retour aux espaces", onClick = onClose) { ChevronBackIcon(MaterialTheme.colorScheme.onSurfaceVariant) }
-                Spacer(Modifier.width(4.dp))
-                Text(
-                    "Marchés",
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onBackground,
-                    modifier = Modifier.weight(1f),
-                )
-                if (pending.isNotEmpty()) {
-                    Box(Modifier.overlayAnchor(deck, RowCorner)) {
-                        Pill("Propositions · ${pending.size}") { deckOpen = true }
-                    }
-                }
-            }
-            PullToRefreshBox(isRefreshing = refreshing, onRefresh = { refresh() }, modifier = Modifier.fillMaxWidth().weight(1f)) {
-                Column(
-                    Modifier
-                        .fillMaxSize()
-                        .verticalScroll(rememberScrollState())
-                        .padding(horizontal = 20.dp)
-                        .padding(top = 8.dp, bottom = padding.calculateBottomPadding() + 24.dp),
-                ) {
-                    snapshot.issue?.let { issue ->
-                        StatusBanner(issue, detail = snapshot.fetchedAt?.let { "Dernier état : ${syncLabel(it)}" })
-                        Spacer(Modifier.height(8.dp))
-                    }
-                    val markets = snapshot.markets
-                    if (markets == null) {
-                        Hint(snapshot.issue)
-                    } else {
-                        val followed = sortedByVariation(markets.followed).filter { it.id !in hidden }
-                        SectionHeader("Questions suivies")
-                        if (followed.isEmpty()) Caption("Aucune question suivie pour l'instant.")
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            followed.forEach { m ->
-                                MarketRow(
-                                    m,
-                                    onOpen = { at ->
-                                        detail.anchorTo(at, RowCorner)
-                                        detailId = m.id
-                                    },
-                                    onUnfollow = { unfollow(m) },
-                                )
-                            }
+        // L'action principale vit sous les panneaux : masquée au lecteur d'écran avec le reste quand l'un est ouvert.
+        Box(Modifier.fillMaxSize().underOverlays(rtl, detail, deck).background(MaterialTheme.colorScheme.background)) {
+            Column(Modifier.fillMaxSize().padding(top = padding.calculateTopPadding())) {
+                SpaceHeader("Marchés", onClose)
+                PullToRefreshBox(isRefreshing = refreshing, onRefresh = { refresh() }, modifier = Modifier.fillMaxWidth().weight(1f)) {
+                    Column(
+                        Modifier
+                            .fillMaxSize()
+                            .verticalScroll(rememberScrollState())
+                            .padding(horizontal = 20.dp)
+                            .padding(top = 8.dp, bottom = padding.calculateBottomPadding() + if (pending.isNotEmpty()) primaryActionClearance() else 24.dp),
+                    ) {
+                        snapshot.issue?.let { issue ->
+                            val (title, detail) = issueBanner("Marchés", issue, snapshot.fetchedAt?.let { "Dernier état : ${syncLabel(it)}" })
+                            StatusBanner(title, detail = detail, actionLabel = "Réessayer", onAction = { refresh() })
+                            Spacer(Modifier.height(8.dp))
                         }
-                        if (markets.scenarios.isNotEmpty()) {
-                            SectionHeader("Scénarios")
-                            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                                markets.scenarios.forEach { ScenarioBlock(it, markets.followed) }
-                            }
-                        }
-                        if (markets.alerts.isNotEmpty()) {
-                            SectionHeader("Alertes récentes")
+                        val markets = snapshot.markets
+                        if (markets == null) {
+                            Hint(snapshot.issue)
+                        } else {
+                            val followed = sortedByVariation(markets.followed).filter { it.id !in hidden }
+                            SectionHeader("Questions suivies")
+                            if (followed.isEmpty()) Caption("Aucune question suivie pour l'instant.")
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                markets.alerts.forEach { a ->
-                                    StatusBanner(a.text, detail = a.at?.let(::syncLabel))
+                                followed.forEach { m ->
+                                    MarketRow(
+                                        m,
+                                        onOpen = { at ->
+                                            detail.anchorTo(at, RowCorner)
+                                            detailId = m.id
+                                        },
+                                        onUnfollow = { unfollow(m) },
+                                    )
+                                }
+                            }
+                            if (markets.scenarios.isNotEmpty()) {
+                                SectionHeader("Scénarios")
+                                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    markets.scenarios.forEach { ScenarioBlock(it, markets.followed) }
+                                }
+                            }
+                            if (markets.alerts.isNotEmpty()) {
+                                SectionHeader("Alertes récentes")
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    markets.alerts.forEach { a ->
+                                        AlertRow(a.text, at = a.at?.let(::syncLabel))
+                                    }
                                 }
                             }
                         }
                     }
                 }
+            }
+            // Action principale : trier les propositions, absente quand il n'y en a pas.
+            if (pending.isNotEmpty()) {
+                val n = pending.size
+                PrimaryAction(
+                    "Trier $n proposition${if (n > 1) "s" else ""}",
+                    { deckOpen = true },
+                    Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(end = 16.dp, bottom = padding.calculateBottomPadding() + 16.dp)
+                        .overlayAnchor(deck, RowCorner),
+                    icon = KairosIcons.ChevronForward,
+                )
             }
         }
         Overlay(detail, detailId != null, onClose = { detailId = null }, anchorColor = MaterialTheme.colorScheme.surface) {
@@ -291,33 +284,18 @@ fun MarchesScreen(
                         }
                     },
                     onUnauthorized = unauthorized,
-                    onNotice = { scope.launch { snackbar.showSnackbar(it) } },
+                    onNotice = { scope.launch { notifier.show(it) } },
                     onClose = { deckOpen = false },
                     directLeft = true,
                 )
             }
-        }
-        SnackbarHost(
-            snackbar,
-            Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = padding.calculateBottomPadding())
-                .padding(horizontal = 16.dp),
-        ) { data ->
-            Snackbar(
-                data,
-                shape = MaterialTheme.shapes.medium,
-                containerColor = MaterialTheme.colorScheme.onBackground,
-                contentColor = MaterialTheme.colorScheme.background,
-                actionColor = MaterialTheme.colorScheme.primaryContainer,
-            )
         }
     }
 }
 
 @Composable
 private fun Hint(issue: String?) =
-    Caption(if (issue != null) "$issue, et rien en mémoire pour l'instant." else "Chargement…", Modifier.padding(vertical = 24.dp))
+    Caption(if (issue != null) "Rien en mémoire pour l'instant." else "Chargement…", Modifier.padding(vertical = 24.dp))
 
 @Composable
 private fun Caption(text: String, modifier: Modifier = Modifier) =
@@ -341,7 +319,11 @@ private fun Deltas(m: FollowedMarket) {
     }
 }
 
-/** Question suivie : touche = détail ; glisser ← = ne plus suivre (bouton dans le détail). */
+/**
+ * Question suivie : touche = détail ; glisser ← = ne plus suivre (bouton dans le détail).
+ * Le tap porte sur le même nœud que le texte et l'action « Ne plus suivre » : un seul arrêt
+ * du lecteur d'écran.
+ */
 @Composable
 private fun MarketRow(m: FollowedMarket, onOpen: (androidx.compose.ui.layout.LayoutCoordinates) -> Unit, onUnfollow: () -> Unit) {
     val colors = MaterialTheme.colorScheme
@@ -354,16 +336,18 @@ private fun MarketRow(m: FollowedMarket, onOpen: (androidx.compose.ui.layout.Lay
         leftLabel = "Ne plus suivre",
         leftColor = colors.error,
         rightStays = true,
+        modifier = Modifier
+            .clip(RoundedCornerShape(RowCorner))
+            .clickable(onClickLabel = "Voir le détail") { at?.let(onOpen) },
     ) {
         Surface(
-            onClick = { at?.let(onOpen) },
-            shape = androidx.compose.foundation.shape.RoundedCornerShape(RowCorner),
+            shape = RoundedCornerShape(RowCorner),
             color = colors.surface,
             border = BorderStroke(1.dp, colors.outlineVariant),
             modifier = Modifier.fillMaxWidth().onGloballyPositioned { at = it },
         ) {
             Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f).semantics(mergeDescendants = true) {}, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text(m.question, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(

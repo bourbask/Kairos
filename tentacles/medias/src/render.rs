@@ -184,16 +184,48 @@ pub fn protocol_fr(p: &str) -> &'static str {
     }
 }
 
-/// « 00:12:30 » ou « 1.02:00:00 » (format .NET) → « 12 min », « 26 h ».
-pub fn timeleft(t: &str) -> Option<String> {
+/// « 00:12:30 » ou « 1.02:00:00 » (format .NET) → minutes.
+pub fn timeleft_min(t: &str) -> Option<i64> {
     let (days, rest) = match t.split_once('.') {
         Some((d, r)) if !d.contains(':') => (d.parse::<i64>().ok()?, r),
         _ => (0, t),
     };
     let mut parts = rest.split(':').map(|p| p.parse::<i64>().ok());
     let (h, m) = (parts.next()??, parts.next()??);
-    let total_min = days * 1440 + h * 60 + m;
+    Some(days * 1440 + h * 60 + m)
+}
+
+/// « 00:12:30 » ou « 1.02:00:00 » (format .NET) → « 12 min », « 26 h ».
+pub fn timeleft(t: &str) -> Option<String> {
+    let total_min = timeleft_min(t)?;
     Some(if total_min >= 120 { format!("{} h", (total_min + 30) / 60) } else { format!("{total_min} min") })
+}
+
+/// Texte externe non fiable : contrôles retirés, sauts de ligne en espaces, 200 caractères au plus.
+pub fn clean(s: &str) -> String {
+    s.chars().map(|c| if c == '\n' || c == '\r' { ' ' } else { c }).filter(|c| !c.is_control()).take(200).collect()
+}
+
+/// Code d'état des sous-titres pour l'application.
+pub fn subs_code(s: Subs, vf: bool) -> &'static str {
+    match (s, vf) {
+        (_, true) => "vf",
+        (Subs::Fr, _) => "st_fr",
+        (Subs::Wanted, _) => "recherche",
+        _ => "absents",
+    }
+}
+
+/// Code d'état d'un élément de file pour l'application.
+pub fn queue_code(q: &QueueItem) -> &'static str {
+    match queue_state(q) {
+        "bloqué" => "bloque",
+        "en échec" => "erreur",
+        _ if q.has_problem() => "erreur",
+        "en cours" => "en_cours",
+        "en pause" => "pause",
+        _ => "attente",
+    }
 }
 
 /// Raison la plus parlante d'un élément en échec.

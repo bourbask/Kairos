@@ -101,3 +101,80 @@ Lecture seule du monde : aucun pari, aucun compte.
 
 Hors du premier jet : créer ou modifier un scénario depuis l'application,
 recherche libre de marchés.
+
+## Espace Mémoire
+
+Sources : module mémoire (intentions avec échéance, journal avec niveau de
+sensibilité, faits connus sur l'utilisateur avec historique, conversations
+résumées, leçons).
+
+- **Intentions** en cours, l'échéance la plus proche d'abord, avec le temps
+  restant : glisser → accepter, ← refuser, bouton « plus tard ». Une intention
+  échue disparaît sans relance (règle existante). Ajout rapide : texte (clavier
+  ou dictée) et échéance en puces (aujourd'hui, 3 jours, 1 semaine, 1 mois).
+- **Journal** : les entrées récentes datées, recherche ; ajout d'une note
+  (clavier ou dictée). Les entrées marquées sensibles sont masquées par défaut
+  (tap pour afficher), et toujours masquées quand les montants le sont.
+  « Supprimer » sur une entrée affichée (une entrée sensible se révèle d'abord).
+- **Ce que Kairos sait de toi** : faits groupés par thème (préfixe de clé),
+  valeur courante ; tap = historique des valeurs ; correction d'une valeur ;
+  « Oublier ce fait » efface la valeur et tout son historique.
+- **Conversations** : les dernières, avec leur résumé, sujets et décisions ;
+  recherche ; « Supprimer ».
+
+Les effacements sont définitifs, après la fenêtre d'annulation de 4 s des
+autres gestes. Ils passent par des outils `app_*`, que le moteur ne voit pas.
+
+Hors du premier jet : modifier la personnalité de l'assistant (seulement depuis
+l'hôte), éditer une leçon.
+
+## Espace Médias
+
+Sources : module médias (sur la machine qui héberge la pile média, joint par la
+tête comme les autres). Rôle de l'écran : **« qu'est-ce que je peux regarder
+maintenant, qu'est-ce qui arrive, quelque chose bloque-t-il ? »**.
+
+- **À regarder** (en tête) : reprises en cours (temps restant) puis prochains
+  épisodes et films récents prêts, avec l'état des sous-titres (VF, ST FR,
+  absents, recherche en cours). Glisser → « vu » (annulable 4 s), bouton
+  visible. Les éléments sans sous-titres français sont regroupés à part.
+- **Téléchargements** : avancement en barres, temps restant, éléments bloqués
+  avec la raison ; un bouton pause / reprise global.
+- **À venir** : sorties suivies des 7 prochains jours (épisodes, films), datées
+  en heure locale, « déjà là » signalé.
+- **Demandes** : demandes suivies et leur état ; **ajouter** : recherche
+  (séries et films) puis « demander » sur un résultat.
+- **Problèmes** : bandeau quand un service est injoignable ou que la
+  bibliothèque signale des échecs ; une section dont le service est absent
+  affiche sa raison sans masquer les autres.
+- Carte Espaces : nombre d'éléments prêts et la prochaine sortie.
+
+Données externes (titres, raisons) : non fiables, nettoyées et bornées côté
+module. Hors du premier jet : statistiques, musique, lecture et livres audio,
+obligations de partage, résumé « previously », relance et liste noire des
+versions, ne plus suivre.
+
+## Espace Documents
+
+Sources : module documents (index des documents administratifs, faits
+extraits, échéances calculées, liste de contrôle des pièces attendues). Rôle de
+l'écran : **« qu'est-ce qui arrive à échéance, où est tel papier, que me
+manque-t-il ? »**. Lecture seule : aucune écriture (déplacer, renommer,
+corbeille) depuis l'application.
+
+- **Échéances** (en tête) : retards d'abord, puis les 90 prochains jours,
+  datées, avec le temps restant (couleur ambre sous 30 jours, brique en
+  retard) ; type, organisme et motif (fin, résiliation, renouvellement,
+  expiration, contrôle). Nature privée : seulement « document privé », le motif
+  et la date.
+- **Chercher** : champ de recherche plein texte ; résultats avec nom, nature,
+  date et un court passage autour des mots cherchés. Aucun résultat d'une
+  nature privée.
+- **Pièces attendues** : liste de contrôle par domaine, présentes / à fournir,
+  les manquantes d'abord.
+- **Classement** : natures (dossiers) avec leur nombre de documents et ceux
+  sans texte lisible ; avancement de l'extraction.
+- Carte Espaces : prochaine échéance et nombre de retards.
+
+Hors du premier jet : ouvrir le fichier, écritures, doublons, plan de
+renommage, faits détaillés d'un contrat.

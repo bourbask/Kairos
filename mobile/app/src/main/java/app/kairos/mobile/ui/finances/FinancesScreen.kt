@@ -1,9 +1,6 @@
 package app.kairos.mobile.ui.finances
 
-import android.app.Activity
-import android.view.WindowManager
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -26,7 +23,6 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -36,7 +32,6 @@ import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -47,12 +42,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -66,7 +55,13 @@ import app.kairos.mobile.data.ApiError
 import app.kairos.mobile.data.FinanceCycle
 import app.kairos.mobile.data.FinanceWealth
 import app.kairos.mobile.data.Repository
+import app.kairos.mobile.ui.kit.AlertRow
 import app.kairos.mobile.ui.kit.Amount
+import app.kairos.mobile.ui.kit.KairosIcons
+import app.kairos.mobile.ui.kit.MaskToggle
+import app.kairos.mobile.ui.kit.PrimaryAction
+import app.kairos.mobile.ui.kit.primaryActionClearance
+import app.kairos.mobile.ui.kit.SpaceHeader
 import app.kairos.mobile.ui.kit.Bar
 import app.kairos.mobile.ui.kit.Donut
 import app.kairos.mobile.ui.kit.Gauge
@@ -78,8 +73,6 @@ import app.kairos.mobile.ui.kit.Tone
 import app.kairos.mobile.ui.kit.amountText
 import app.kairos.mobile.ui.kit.color
 import app.kairos.mobile.ui.kit.donutColors
-import app.kairos.mobile.ui.maison.ChevronBackIcon
-import app.kairos.mobile.ui.talk.IconButton
 import app.kairos.mobile.ui.theme.Motion
 import java.time.LocalDate
 import kotlinx.coroutines.CancellationException
@@ -101,13 +94,14 @@ fun FinancesScreen(
     onToggleMasked: () -> Unit,
     onClose: () -> Unit,
     onUnauthorized: () -> Unit,
+    openAfford: Boolean = false,
 ) {
     val snapshot by repository.finances.collectAsState()
     val scope = rememberCoroutineScope()
     val unauthorized by rememberUpdatedState(onUnauthorized)
     var refreshing by remember { mutableStateOf(false) }
     var tab by rememberSaveable { mutableStateOf(Page.Cycle) }
-    var affordOpen by rememberSaveable { mutableStateOf(false) }
+    var affordOpen by rememberSaveable { mutableStateOf(openAfford) }
 
     fun refresh(force: Boolean = true) {
         if (refreshing) return
@@ -128,17 +122,10 @@ fun FinancesScreen(
         onPauseOrDispose {}
     }
 
-    // Montants visibles : ni capture d'écran ni aperçu dans les applications récentes.
-    val activity = LocalContext.current as? Activity
-    DisposableEffect(activity, masked) {
-        if (!masked) activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
-        onDispose { activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_SECURE) }
-    }
-
     val cycle = snapshot.cycle
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         Column(Modifier.fillMaxSize().padding(top = padding.calculateTopPadding())) {
-            Header(masked, onToggleMasked, onClose)
+            SpaceHeader("Finances", onClose) { MaskToggle(masked, onToggleMasked) }
             PrimaryTabRow(selectedTabIndex = tab.ordinal, containerColor = MaterialTheme.colorScheme.background) {
                 Page.entries.forEach { t ->
                     Tab(selected = tab == t, onClick = { tab = t }, text = { Text(t.label) })
@@ -151,16 +138,19 @@ fun FinancesScreen(
                             .fillMaxSize()
                             .verticalScroll(rememberScrollState())
                             .padding(horizontal = 20.dp)
-                            .padding(top = 8.dp, bottom = padding.calculateBottomPadding() + 88.dp),
+                            .padding(top = 8.dp, bottom = padding.calculateBottomPadding() + primaryActionClearance()),
                     ) {
                         // Bandeaux de la source de cet onglet seulement.
                         val source = if (t == Page.Cycle) {
-                            sourceBanner(snapshot.cycleIssue, snapshot.cycleAt)
+                            sourceBanner("Finances", snapshot.cycleIssue, snapshot.cycleAt)
                         } else {
-                            sourceBanner(snapshot.wealthIssue, snapshot.wealthAt)
+                            sourceBanner("Patrimoine", snapshot.wealthIssue, snapshot.wealthAt)
                         }
-                        val fresh = freshnessBanner(if (t == Page.Cycle) cycle?.freshness else snapshot.wealth?.freshness)
-                        listOfNotNull(source, fresh).forEach { (title, detail) ->
+                        source?.let { (title, detail) ->
+                            StatusBanner(title, detail = detail, actionLabel = "Réessayer", onAction = { refresh() })
+                            Spacer(Modifier.height(8.dp))
+                        }
+                        freshnessBanner(if (t == Page.Cycle) cycle?.freshness else snapshot.wealth?.freshness)?.let { (title, detail) ->
                             StatusBanner(title, detail = detail)
                             Spacer(Modifier.height(8.dp))
                         }
@@ -173,12 +163,14 @@ fun FinancesScreen(
             }
         }
         if (tab == Page.Cycle && cycle != null) {
-            ExtendedFloatingActionButton(
-                onClick = { affordOpen = true },
-                modifier = Modifier
+            PrimaryAction(
+                "Puis-je me permettre ?",
+                { affordOpen = true },
+                Modifier
                     .align(Alignment.BottomEnd)
-                    .padding(end = 16.dp, bottom = padding.calculateBottomPadding() + 8.dp),
-            ) { Text("Puis-je me permettre ?") }
+                    .padding(end = 16.dp, bottom = padding.calculateBottomPadding() + 16.dp),
+                icon = KairosIcons.Check,
+            )
         }
         if (affordOpen) {
             ModalBottomSheet(onDismissRequest = { affordOpen = false }) {
@@ -191,51 +183,12 @@ fun FinancesScreen(
 @Composable
 private fun Hint(issue: String?) {
     Text(
-        if (issue != null) "$issue, et rien en mémoire pour l'instant." else "Chargement…",
+        // L'indisponibilité est dite par le bandeau : ici, seulement l'absence de données connues.
+        if (issue != null) "Rien en mémoire pour l'instant." else "Chargement…",
         style = MaterialTheme.typography.bodyMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(vertical = 24.dp),
     )
-}
-
-@Composable
-private fun Header(masked: Boolean, onToggleMasked: () -> Unit, onClose: () -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().padding(start = 4.dp, end = 8.dp, top = 8.dp, bottom = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        IconButton(label = "Retour aux espaces", onClick = onClose) { ChevronBackIcon(MaterialTheme.colorScheme.onSurfaceVariant) }
-        Spacer(Modifier.width(4.dp))
-        Text(
-            "Finances",
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.onBackground,
-            modifier = Modifier.weight(1f),
-        )
-        IconButton(
-            label = if (masked) "Afficher les montants" else "Masquer les montants",
-            state = if (masked) "montants masqués" else "montants visibles",
-            onClick = onToggleMasked,
-        ) { EyeIcon(MaterialTheme.colorScheme.onSurfaceVariant, crossed = masked) }
-    }
-}
-
-/** Œil ; barré quand les montants sont masqués. */
-@Composable
-private fun EyeIcon(color: Color, crossed: Boolean) = Canvas(Modifier.size(24.dp)) {
-    val s = Stroke(2.dp.toPx(), cap = StrokeCap.Round)
-    val w = size.width
-    val h = size.height
-    val eye = Path().apply {
-        moveTo(w * 0.06f, h * 0.5f)
-        quadraticTo(w * 0.5f, h * 0.05f, w * 0.94f, h * 0.5f)
-        quadraticTo(w * 0.5f, h * 0.95f, w * 0.06f, h * 0.5f)
-        close()
-    }
-    drawPath(eye, color, style = s)
-    drawCircle(color, radius = w * 0.13f, center = Offset(w / 2, h / 2))
-    if (crossed) drawLine(color, Offset(w * 0.15f, h * 0.12f), Offset(w * 0.85f, h * 0.88f), s.width, StrokeCap.Round)
 }
 
 @Composable
@@ -291,8 +244,11 @@ private fun CycleContent(c: FinanceCycle, masked: Boolean) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 c.alerts.orEmpty().forEach { a ->
                     // Texte libre du module : peut contenir des montants.
-                    val detail = listOfNotNull(a.details.ifBlank { null }, a.remedy).joinToString("\n").ifBlank { null }
-                    StatusBanner(maskDigits(a.title, masked), detail = detail?.let { maskDigits(it, masked) })
+                    AlertRow(
+                        maskDigits(a.title, masked),
+                        detail = a.details.ifBlank { null }?.let { maskDigits(it, masked) },
+                        remedy = a.remedy?.ifBlank { null }?.let { maskDigits(it, masked) },
+                    )
                 }
             }
         }

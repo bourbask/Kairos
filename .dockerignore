@@ -14,3 +14,4 @@ private/
 deploy/docker/radicale/config/
 CLAUDE.local.md
 .claude/
+.worktrees/

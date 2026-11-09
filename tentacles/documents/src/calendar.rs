@@ -160,6 +160,9 @@ mod tests {
             path: "a.pdf".into(),
             org: None,
             rolled: false,
+            what: "Assurance".into(),
+            kind: "échéance".into(),
+            organisme: None,
         };
         let (uid, ics) = event(&d);
         assert_eq!(uid, event(&d).0);

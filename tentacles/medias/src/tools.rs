@@ -6,7 +6,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use chrono::{Duration, NaiveDate, Utc};
+use chrono::{DateTime, Duration, NaiveDate, Utc};
 use rmcp::{
     ServerHandler,
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
@@ -21,8 +21,8 @@ use crate::config::Stack;
 use crate::http::SvcError;
 use crate::render::{
     Subs, audio_fr, day, fold, go, kind_fr, local_date, minutes, next_episode, parse_utc, plex_link, progress,
-    protocol_fr, queue_reason, queue_state, se, seerr_status, subs_label, subs_of, timeleft, title_matches, watchable,
-    when,
+    protocol_fr, queue_reason, queue_state, se, seerr_status, subs_code, subs_label, subs_of, timeleft, title_matches,
+    watchable, when,
 };
 use crate::services::{self as sv, PlexItem, QueueItem};
 use crate::store::Store;
@@ -36,6 +36,7 @@ pub(crate) fn why(name: &str, e: &SvcError) -> String {
     match e {
         SvcError::NotConfigured => format!("{name} non configuré"),
         SvcError::Unavailable => format!("{name} injoignable"),
+        SvcError::NotFound => format!("{name} : élément introuvable"),
         SvcError::Denied => format!("{name} : accès refusé"),
     }
 }
@@ -49,8 +50,39 @@ pub struct MediaServer {
     tool_router: ToolRouter<Self>,
 }
 
+/// Élément prêt à regarder, pour l'application.
+pub(crate) struct ReadyItem {
+    pub key: String,
+    pub title: String,
+    pub kind: &'static str,
+    pub subs: &'static str,
+    pub minutes: Option<i64>,
+}
+
+/// Sortie suivie : épisode (avec heure) ou film (date seule).
+pub(crate) struct Release {
+    /// Jour local du module.
+    pub day: NaiveDate,
+    pub at: Option<DateTime<Utc>>,
+    pub title: String,
+    pub what: String,
+    pub have: bool,
+}
+
+/// Nom lisible d'un élément du lecteur : « Série S01E02 « Titre » » ou « Film (2024) ».
+pub(crate) fn item_name(i: &PlexItem) -> String {
+    match i.kind.as_str() {
+        "episode" => {
+            format!("{} {} « {} »", i.grandparent_title.clone().unwrap_or_default(), se(i.parent_index, i.index), i.title)
+        }
+        _ => format!("{}{}", i.title, i.year.map(|y| format!(" ({y})")).unwrap_or_default()),
+    }
+}
+
 #[derive(Default)]
-struct Ready {
+pub(crate) struct Ready {
+    /// Tous les éléments examinés, regardables ou non (application).
+    pub items: Vec<ReadyItem>,
     /// Regardables (VF ou ST FR complets).
     ok: Vec<String>,
     /// Présents mais sans sous-titres français exploitables.
@@ -69,7 +101,7 @@ impl MediaServer {
             stack,
             store,
             machine,
-            tool_router: Self::tool_router() + Self::action_router() + Self::library_router(),
+            tool_router: Self::tool_router() + Self::action_router() + Self::library_router() + Self::app_router(),
         }
     }
 
@@ -94,19 +126,25 @@ impl MediaServer {
         (wanted, ids)
     }
 
-    async fn ready(&self, max_min: Option<i64>, shows: bool, movies: bool, limit: usize) -> Result<Ready, String> {
+    pub(crate) async fn ready(
+        &self,
+        max_min: Option<i64>,
+        shows: bool,
+        movies: bool,
+        limit: usize,
+    ) -> Result<Ready, SvcError> {
         let p = &self.stack.plex;
         let mut out = Ready::default();
         let cutoff = (Utc::now() - Duration::days(IN_PROGRESS_DAYS)).timestamp();
         let fits = |m: Option<i64>| max_min.is_none_or(|max| m.is_some_and(|m| m <= max));
 
         if shows {
-            let sections = sv::plex_sections(p, "show").await.map_err(|e| why("Plex", &e))?;
+            let sections = sv::plex_sections(p, "show").await?;
             let (wanted, tvdb_to_sonarr) = self.wanted_subs().await;
             let q = [("sort", "lastViewedAt:desc".to_string())];
             let mut in_progress: Vec<PlexItem> = Vec::new();
             for sec in &sections {
-                let items = sv::plex_section_items(p, sec, &q, 60).await.map_err(|e| why("Plex", &e))?;
+                let items = sv::plex_section_items(p, sec, &q, 60).await?;
                 in_progress.extend(items.into_iter().filter(|s| {
                     let (seen, all) = (s.viewed_leaf_count.unwrap_or(0), s.leaf_count.unwrap_or(0));
                     seen > 0 && all > seen && s.last_viewed_at.unwrap_or(0) >= cutoff
@@ -140,6 +178,13 @@ impl MediaServer {
                     left,
                     self.link(&full.rating_key).await,
                 );
+                out.items.push(ReadyItem {
+                    key: full.rating_key.clone(),
+                    title: format!("{} {} « {} »", show.title, se(full.parent_index, full.index), full.title),
+                    kind: "episode",
+                    subs: subs_code(subs, vf),
+                    minutes: mins,
+                });
                 if watchable(subs, vf) {
                     out.ok.push(line);
                     out.ok_titles.push(show.title.clone());
@@ -163,6 +208,13 @@ impl MediaServer {
                             }
                             let vf = audio_fr(&full);
                             let subs = subs_of(&full, false);
+                            out.items.push(ReadyItem {
+                                key: full.rating_key.clone(),
+                                title: item_name(&full),
+                                kind: "film",
+                                subs: subs_code(subs, vf),
+                                minutes: mins,
+                            });
                             out.movies.push(format!(
                                 "- {}{}{} — {}{}",
                                 full.title,
@@ -212,6 +264,54 @@ impl MediaServer {
             }
         }
         (items, notes)
+    }
+
+    /// Sorties suivies d'ici `days` jours : (épisodes triés par heure, films).
+    pub(crate) async fn releases(
+        &self,
+        days: i64,
+        now: DateTime<Utc>,
+    ) -> (Result<Vec<Release>, SvcError>, Result<Vec<Release>, SvcError>) {
+        let s = &self.stack;
+        let (start, end) =
+            (now.format("%Y-%m-%d").to_string(), (now + Duration::days(days)).format("%Y-%m-%d").to_string());
+        let (eps, films) =
+            tokio::join!(sv::sonarr_calendar(&s.sonarr, &start, &end), sv::radarr_calendar(&s.radarr, &start, &end));
+        let eps = eps.map(|mut v| {
+            v.retain(|e| e.monitored);
+            v.sort_by(|a, b| a.air_date_utc.cmp(&b.air_date_utc));
+            v.iter()
+                .filter_map(|e| {
+                    let t = parse_utc(e.air_date_utc.as_deref()?)?;
+                    (t >= now - Duration::hours(12)).then(|| Release {
+                        day: t.with_timezone(&s.tz).date_naive(),
+                        at: Some(t),
+                        title: e.series.as_ref().map(|x| x.title.clone()).unwrap_or_else(|| "?".into()),
+                        what: se(Some(e.season_number), Some(e.episode_number)),
+                        have: e.has_file,
+                    })
+                })
+                .collect()
+        });
+        let films = films.map(|v| {
+            let today = now.with_timezone(&s.tz).date_naive();
+            let horizon = today + Duration::days(days);
+            let mut out = Vec::new();
+            for m in v.iter().filter(|m| m.monitored) {
+                for (date, what) in [
+                    (&m.in_cinemas, "au cinéma"),
+                    (&m.digital_release, "sortie numérique"),
+                    (&m.physical_release, "sortie physique"),
+                ] {
+                    let Some(d) = date.as_deref().and_then(|d| local_date(d, s.tz)) else { continue };
+                    if d >= today && d <= horizon {
+                        out.push(Release { day: d, at: None, title: m.title.clone(), what: what.into(), have: m.has_file });
+                    }
+                }
+            }
+            out
+        });
+        (eps, films)
     }
 }
 
@@ -297,7 +397,10 @@ impl MediaServer {
         let kind = a.kind.as_deref().map(fold);
         let shows = !matches!(kind.as_deref(), Some("films" | "film" | "movies"));
         let movies = !matches!(kind.as_deref(), Some("series" | "serie" | "shows"));
-        let r = self.ready(a.max_minutes, shows, movies, a.limit.unwrap_or(8).clamp(1, 30)).await?;
+        let r = self
+            .ready(a.max_minutes, shows, movies, a.limit.unwrap_or(8).clamp(1, 30))
+            .await
+            .map_err(|e| why("Plex", &e))?;
         let mut out = Vec::new();
         if shows {
             out.push(if r.ok.is_empty() && r.blocked.is_empty() && r.too_long > 0 {
@@ -332,15 +435,7 @@ impl MediaServer {
         }
         let mut lines = Vec::new();
         for i in items {
-            let name = match i.kind.as_str() {
-                "episode" => format!(
-                    "{} {} « {} »",
-                    i.grandparent_title.clone().unwrap_or_default(),
-                    se(i.parent_index, i.index),
-                    i.title
-                ),
-                _ => format!("{}{}", i.title, i.year.map(|y| format!(" ({y})")).unwrap_or_default()),
-            };
+            let name = item_name(&i);
             let state = match (i.view_offset, i.duration) {
                 (Some(o), Some(d)) if o > 0 => format!(
                     "reprise à {} min, reste {} min",
@@ -361,28 +456,16 @@ impl MediaServer {
         let s = &self.stack;
         let days = a.days.unwrap_or(7).clamp(1, 60);
         let now = Utc::now();
-        let (start, end) =
-            (now.format("%Y-%m-%d").to_string(), (now + Duration::days(days)).format("%Y-%m-%d").to_string());
-        let (eps, films) =
-            tokio::join!(sv::sonarr_calendar(&s.sonarr, &start, &end), sv::radarr_calendar(&s.radarr, &start, &end));
+        let (eps, films) = self.releases(days, now).await;
+        let have = |r: &Release| if r.have { " (déjà là)" } else { "" };
         let mut out = Vec::new();
         match eps {
-            Ok(mut v) => {
-                v.retain(|e| e.monitored);
-                v.sort_by(|a, b| a.air_date_utc.cmp(&b.air_date_utc));
+            Ok(v) => {
                 let lines: Vec<_> = v
                     .iter()
-                    .filter_map(|e| {
-                        let t = parse_utc(e.air_date_utc.as_deref()?)?;
-                        (t >= now - Duration::hours(12)).then(|| {
-                            format!(
-                                "- {} — {} {}{}",
-                                when(t, now, s.tz),
-                                e.series.as_ref().map(|x| x.title.as_str()).unwrap_or("?"),
-                                se(Some(e.season_number), Some(e.episode_number)),
-                                if e.has_file { " (déjà là)" } else { "" }
-                            )
-                        })
+                    .map(|r| {
+                        let at = r.at.map(|t| when(t, now, s.tz)).unwrap_or_default();
+                        format!("- {at} — {} {}{}", r.title, r.what, have(r))
                     })
                     .collect();
                 out.push(if lines.is_empty() {
@@ -397,21 +480,10 @@ impl MediaServer {
         match films {
             Ok(v) => {
                 let today = now.with_timezone(&s.tz).date_naive();
-                let horizon = today + Duration::days(days);
-                let mut rows: Vec<(NaiveDate, String)> = Vec::new();
-                for m in v.iter().filter(|m| m.monitored) {
-                    for (date, what) in [
-                        (&m.in_cinemas, "au cinéma"),
-                        (&m.digital_release, "sortie numérique"),
-                        (&m.physical_release, "sortie physique"),
-                    ] {
-                        let Some(d) = date.as_deref().and_then(|d| local_date(d, s.tz)) else { continue };
-                        if d >= today && d <= horizon {
-                            let have = if m.has_file { " (déjà là)" } else { "" };
-                            rows.push((d, format!("- {} — {} : {what}{have}", day(d, today), m.title)));
-                        }
-                    }
-                }
+                let mut rows: Vec<(NaiveDate, String)> = v
+                    .iter()
+                    .map(|r| (r.day, format!("- {} — {} : {}{}", day(r.day, today), r.title, r.what, have(r))))
+                    .collect();
                 rows.sort();
                 if !rows.is_empty() {
                     out.push(format!("Films :\n{}", rows.into_iter().map(|r| r.1).collect::<Vec<_>>().join("\n")));

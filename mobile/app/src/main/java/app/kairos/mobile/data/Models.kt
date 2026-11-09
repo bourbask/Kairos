@@ -161,7 +161,14 @@ const val PIECE = "pièce"
 
 /** Réponse d'un outil d'écriture. */
 @Serializable
-data class ToolMessage(val message: String = "")
+data class ToolMessage(
+    val message: String = "",
+    /**
+     * Issue d'un geste, pour décider sans lire le libellé : `done`, `already` (déjà fait),
+     * `stale` (plus à traiter), `gone` (inconnu). Absente d'un module plus ancien.
+     */
+    val outcome: String? = null,
+)
 
 /** Dernier état connu de la maison ; [offline] = la dernière actualisation a échoué. */
 @Serializable
@@ -417,6 +424,152 @@ data class MarchesSnapshot(
     val proposals: List<MarketProposal> = emptyList(),
     val details: Map<String, MarketDetail> = emptyMap(),
     val ignored: Set<String> = emptySet(),
+    val fetchedAt: String? = null,
+    val issue: String? = null,
+)
+
+/** Intention à traiter : proposée ou acceptée, avec son échéance. */
+@Serializable
+data class Intention(val id: Long, val what: String = "", val expires: String? = null, val state: String = "", val constraints: String? = null)
+
+/** Entrée du journal ; [sensitive] : masquée par défaut, jamais gardée hors ligne. */
+@Serializable
+data class JournalEntry(val id: Long, val at: String = "", val kind: String = "", val text: String = "", val sensitive: Boolean = false)
+
+/** Fait connu sur l'utilisateur ; le préfixe de [key] en donne le thème. */
+@Serializable
+data class Fact(val key: String, val value: String = "", val updated: String? = null)
+
+@Serializable
+data class FactValue(val value: String = "", val at: String = "")
+
+@Serializable
+data class ConversationSummary(
+    val id: Long,
+    val at: String = "",
+    val summary: String? = null,
+    val topics: List<String> = emptyList(),
+    val decisions: List<String> = emptyList(),
+)
+
+/** Vue de la mémoire pour l'application (`app_memory`). */
+@Serializable
+data class Memory(
+    val intentions: List<Intention> = emptyList(),
+    val journal: List<JournalEntry> = emptyList(),
+    val facts: List<Fact> = emptyList(),
+    val conversations: List<ConversationSummary> = emptyList(),
+)
+
+/** Dernier état de l'espace Mémoire, gardé hors ligne sans les entrées sensibles. */
+@Serializable
+data class MemoireSnapshot(
+    val memory: Memory? = null,
+    val fetchedAt: String? = null,
+    val issue: String? = null,
+)
+
+/** Reprise en cours dans le lecteur ; [key] opaque, rendue telle quelle au module. */
+@Serializable
+data class ResumeItem(val key: String, val title: String = "", @SerialName("left_min") val leftMin: Int? = null)
+
+/** Élément prêt à regarder ; [subs] : `vf`, `st_fr`, `absents` ou `recherche`. */
+@Serializable
+data class ReadyItem(val key: String, val title: String = "", val kind: String = "", val subs: String = "", val minutes: Int? = null)
+
+/** Téléchargement ; [progress] entre 0 et 1, [state] : `en_cours`, `bloque`, `attente`, `pause`, `erreur`. */
+@Serializable
+data class DownloadItem(
+    val title: String = "",
+    val progress: Double = 0.0,
+    @SerialName("eta_min") val etaMin: Int? = null,
+    val state: String = "",
+    val why: String? = null,
+)
+
+@Serializable
+data class Downloads(val items: List<DownloadItem> = emptyList(), val paused: Boolean = false)
+
+/** Sortie suivie ; [day] AAAA-MM-JJ et [time] HH:MM à l'heure locale du module. */
+@Serializable
+data class Release(val day: String, val time: String? = null, val title: String = "", val what: String = "", val have: Boolean = false)
+
+@Serializable
+data class MediaRequest(val title: String = "", val state: String = "")
+
+/** Section tombée et sa raison, sans nom de service. */
+@Serializable
+data class SectionError(val section: String = "", val message: String = "")
+
+/** Vue de l'espace Médias (`app_medias`) ; une section null est tombée, sa raison est dans [errors]. */
+@Serializable
+data class Medias(
+    @SerialName("continue") val resume: List<ResumeItem>? = null,
+    val ready: List<ReadyItem>? = null,
+    val downloads: Downloads? = null,
+    val upcoming: List<Release>? = null,
+    val requests: List<MediaRequest>? = null,
+    val errors: List<SectionError> = emptyList(),
+)
+
+/** Résultat de recherche (`app_media_search`) ; [mediaType] : `tv` ou `movie`. */
+@Serializable
+data class MediaResult(
+    val id: Long,
+    @SerialName("media_type") val mediaType: String = "",
+    val title: String = "",
+    val year: Int? = null,
+    val have: Boolean = false,
+    val requested: Boolean = false,
+)
+
+/** Dernier état de l'espace Médias, gardé hors ligne. */
+@Serializable
+data class MediasSnapshot(
+    val medias: Medias? = null,
+    val fetchedAt: String? = null,
+    val issue: String? = null,
+)
+
+/** Échéance d'un document ; [date] AAAA-MM-JJ, [org] absent pour une nature privée. */
+@Serializable
+data class DocDeadline(
+    val date: String = "",
+    val kind: String = "",
+    val what: String = "",
+    val org: String? = null,
+    val private: Boolean = false,
+    val overdue: Boolean = false,
+)
+
+/** Pièce attendue de la liste de contrôle ; [present] vrai aussi pour « pas encore requise ». */
+@Serializable
+data class DocPiece(val domain: String = "", val item: String = "", val present: Boolean = false)
+
+/** Nature (dossier) : nombre de documents et ceux sans texte lisible. */
+@Serializable
+data class DocNature(val name: String = "", val count: Int = 0, val unreadable: Int = 0, val private: Boolean = false)
+
+@Serializable
+data class DocExtraction(val done: Int = 0, val total: Int = 0)
+
+/** Vue de l'espace Documents (`app_documents`), lecture seule. */
+@Serializable
+data class Documents(
+    val deadlines: List<DocDeadline> = emptyList(),
+    val missing: List<DocPiece> = emptyList(),
+    val natures: List<DocNature> = emptyList(),
+    val extraction: DocExtraction = DocExtraction(),
+)
+
+/** Résultat de recherche (`app_documents_search`) ; [passage] : mots trouvés entre « ». */
+@Serializable
+data class DocHit(val name: String = "", val nature: String = "", val date: String? = null, val passage: String = "")
+
+/** Dernier état de l'espace Documents, gardé hors ligne. */
+@Serializable
+data class DocumentsSnapshot(
+    val documents: Documents? = null,
     val fetchedAt: String? = null,
     val issue: String? = null,
 )

@@ -215,10 +215,26 @@ pub struct Deadline {
     pub org: Option<String>,
     /// Renouvellement tacite passé, reporté d'année en année.
     pub rolled: bool,
+    /// Type de document.
+    pub what: String,
+    /// Motif (fin, résiliation, renouvellement, expiration, contrôle…).
+    pub kind: String,
+    /// Organisme tel qu'extrait.
+    pub organisme: Option<String>,
 }
+
+/// Retards gardés par défaut (jours).
+pub const PAST_DAYS: i64 = 30;
 
 /// Échéances d'un document. `today` borne les rappels déjà passés de plus de 30 jours.
 pub fn deadlines(path: &str, f: &Facts, today: NaiveDate) -> Vec<Deadline> {
+    deadlines_since(path, f, today, PAST_DAYS)
+}
+
+/// Échéances d'un document, en gardant les rappels passés depuis au plus `past` jours.
+pub fn deadlines_since(path: &str, f: &Facts, today: NaiveDate, past: i64) -> Vec<Deadline> {
+    let since = today - chrono::Duration::days(past);
+    let organisme = f.organisme.clone().filter(|o| !o.is_empty());
     let mut out = Vec::new();
     let who = f.organisme.as_deref().filter(|o| !o.is_empty()).map(|o| format!(" — {o}")).unwrap_or_default();
     let what = if f.type_document.is_empty() { "document".to_string() } else { f.type_document.clone() };
@@ -242,19 +258,22 @@ pub fn deadlines(path: &str, f: &Facts, today: NaiveDate) -> Vec<Deadline> {
         .flatten();
     if let Some(date) = first_reg {
         let when = date.checked_add_months(Months::new(48)).unwrap_or(date);
-        if when >= today - chrono::Duration::days(30) {
+        if when >= since {
             out.push(Deadline {
                 date: when,
                 label: "premier contrôle technique".to_string(),
                 path: path.to_string(),
                 org: None,
                 rolled: false,
+                what: what.clone(),
+                kind: "contrôle".to_string(),
+                organisme: None,
             });
         }
     }
     for d in &f.dates {
         let Some(date) = parse(&d.date) else { continue };
-        let (when, label) = match d.kind.as_str() {
+        let (when, label, kind) = match d.kind.as_str() {
             "fin" | "echeance" | "renouvellement" | "fin_engagement" | "expiration" | "preavis_limite" => {
                 let l = match d.kind.as_str() {
                     "fin" => "fin",
@@ -281,19 +300,34 @@ pub fn deadlines(path: &str, f: &Facts, today: NaiveDate) -> Vec<Deadline> {
                         path: path.to_string(),
                         org,
                         rolled: true,
+                        what: what.clone(),
+                        kind: "renouvellement".to_string(),
+                        organisme: organisme.clone(),
                     });
                     continue;
                 }
-                (date, format!("{what}{who} : {l}"))
+                let kind = if d.kind == "preavis_limite" { "résiliation" } else { l };
+                (date, format!("{what}{who} : {l}"), kind)
             }
-            "controle_technique" if Some(&date) == ct.iter().max() => {
-                (date.checked_add_months(Months::new(24)).unwrap_or(date), "contrôle technique à repasser".to_string())
-            }
+            "controle_technique" if Some(&date) == ct.iter().max() => (
+                date.checked_add_months(Months::new(24)).unwrap_or(date),
+                "contrôle technique à repasser".to_string(),
+                "contrôle",
+            ),
             _ => continue,
         };
-        if when >= today - chrono::Duration::days(30) {
+        if when >= since {
             let org = f.organisme.as_deref().map(fold).filter(|o| !o.is_empty());
-            out.push(Deadline { date: when, label, path: path.to_string(), org, rolled: false });
+            out.push(Deadline {
+                date: when,
+                label,
+                path: path.to_string(),
+                org,
+                rolled: false,
+                what: what.clone(),
+                kind: kind.to_string(),
+                organisme: organisme.clone(),
+            });
         }
     }
     out

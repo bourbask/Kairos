@@ -14,6 +14,9 @@ pub enum SvcError {
     NotConfigured,
     #[error("injoignable")]
     Unavailable,
+    /// Le service répond mais ne connaît pas l'élément demandé (404) ; seulement via [`Svc::send_or_missing`].
+    #[error("introuvable")]
+    NotFound,
     #[error("accès refusé")]
     Denied,
 }
@@ -77,6 +80,17 @@ impl Svc {
     }
 
     pub async fn send<T: DeserializeOwned>(&self, req: reqwest::RequestBuilder) -> Result<T, SvcError> {
+        self.send_or_missing(req).await.map_err(|e| match e {
+            SvcError::NotFound => {
+                eprintln!("medias/{} : réponse en échec (404)", self.name);
+                SvcError::Unavailable
+            }
+            e => e,
+        })
+    }
+
+    /// Comme [`Svc::send`], mais un 404 rend [`SvcError::NotFound`] : l'élément demandé n'existe pas.
+    pub async fn send_or_missing<T: DeserializeOwned>(&self, req: reqwest::RequestBuilder) -> Result<T, SvcError> {
         let resp = self.authed(req).send().await.map_err(|e| {
             eprintln!("medias/{} : appel impossible ({})", self.name, kind(&e));
             SvcError::Unavailable
@@ -85,6 +99,9 @@ impl Svc {
         if status.as_u16() == 401 || status.as_u16() == 403 {
             eprintln!("medias/{} : accès refusé ({})", self.name, status.as_u16());
             return Err(SvcError::Denied);
+        }
+        if status.as_u16() == 404 {
+            return Err(SvcError::NotFound);
         }
         if !status.is_success() {
             eprintln!("medias/{} : réponse en échec ({})", self.name, status.as_u16());

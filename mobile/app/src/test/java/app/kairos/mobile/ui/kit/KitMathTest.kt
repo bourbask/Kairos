@@ -194,4 +194,33 @@ class KitMathTest {
         assertEquals(emptyList<Float>(), columnHeights(emptyList()))
         assertEquals("Volume, aucune donnée", describeColumns("Volume", listOf(0.0), { it.toString() }))
     }
+
+    @Test
+    fun bar_note_reads_without_colour() {
+        val f: (Double) -> String = { formatEuro(it, cents = false) }
+        assertEquals(null, barNote(50.0, 100.0, f, masked = false))
+        assertEquals(null, barNote(80.0, 100.0, f, masked = false))
+        assertEquals("82$nbsp%", barNote(82.0, 100.0, f, masked = false))
+        assertEquals("100$nbsp%", barNote(100.0, 100.0, f, masked = false))
+        assertEquals("dépassé de 11$nbsp€", barNote(111.0, 100.0, f, masked = false))
+        assertEquals("dépassé de 5$nbsp€", barNote(5.0, 0.0, f, masked = false))
+        // Masqué : le mot, aucun chiffre.
+        assertEquals("proche de la limite", barNote(82.0, 100.0, f, masked = true))
+        assertEquals("dépassé", barNote(111.0, 100.0, f, masked = true))
+    }
+
+    @Test
+    fun useful_hours_frame_the_day() {
+        fun b(s: Int, e: Int, allDay: Boolean = false) = TimeBlock("x", s, e, allDay = allDay)
+        // Une heure de part et d'autre, à l'heure ronde.
+        assertEquals(9 to 13, usefulHours(listOf(b(10 * 60 + 30, 11 * 60), b(11 * 60, 12 * 60 - 15))))
+        // Bornée à 7 h – 23 h ; un bloc jusqu'à minuit s'arrête à 23 h.
+        assertEquals(7 to 23, usefulHours(listOf(b(7 * 60, 24 * 60))))
+        // Journée entière ignorée ; rien de placé : plage par défaut.
+        assertEquals(8 to 20, usefulHours(listOf(b(0, 24 * 60, allDay = true))))
+        // L'heure actuelle est incluse quand elle est donnée.
+        assertEquals(9 to 21, usefulHours(listOf(b(10 * 60, 11 * 60)), now = 19 * 60 + 10))
+        // Bloc tout en fin de plage : au moins une heure affichée.
+        assertEquals(22 to 23, usefulHours(listOf(b(23 * 60 + 10, 23 * 60 + 40))))
+    }
 }

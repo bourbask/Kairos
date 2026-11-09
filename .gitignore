@@ -10,15 +10,17 @@ config/profile*.toml
 config/modules*.toml
 config/llm*.toml
 OBJECTIVES.md
-data/kairos.db
-data/*.db
+/data/
+*.db-wal
+*.db-shm
 briefings/
 *.log
 logs/
 private/
 
 # Config et secrets locaux du déploiement (garder les *.example)
-deploy/docker/kairos.env
+deploy/docker/*.env
+!deploy/docker/*.env.example
 deploy/docker/.env
 deploy/docker/radicale/config/config
 deploy/docker/radicale/config/users
@@ -30,4 +32,11 @@ deploy/pc/alimentation-depot.env
 
 # Config et base locales de la tête
 config/tete.toml
-data/tete.db*
+
+# APK déposé par le déploiement
+/apk/
+
+# Réglages locaux du poste de développement
+/.claude/
+# Bases locales, où qu’lles soient
+*.db

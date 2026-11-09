@@ -140,7 +140,10 @@ class UnpackState(order: Order, zones: List<Pair<String, String>> = ZONES) {
             return pending.firstOrNull { it.id > current } ?: pending.firstOrNull()
         }
 
-        /** Refus de `app_order_line` qui signifie « déjà fait » (double envoi, autre appareil, commande close). */
+        /**
+         * Refus de `app_order_line` qui signifie « déjà fait » (double envoi, autre appareil, commande close).
+         * Un module à jour ne refuse plus : il répond `outcome: already`. Repli pour un module plus ancien.
+         */
         fun alreadyHandled(reason: String): Boolean =
             reason.trimEnd().endsWith("déjà traité.") || reason.trimEnd().endsWith("pas à ranger.")
     }

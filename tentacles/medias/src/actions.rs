@@ -7,7 +7,7 @@ use rmcp::{handler::server::wrapper::Parameters, schemars, tool, tool_router};
 use serde::Deserialize;
 
 use crate::render::{fold, kind_fr, se, seerr_status, title_matches};
-use crate::services::{self as sv, Movie, PlexItem, QueueItem, Series};
+use crate::services::{self as sv, Movie, PlexItem, QueueItem, SeerrDetails, Series};
 use crate::tools::{MediaServer, why};
 
 type Out = Result<String, String>;
@@ -214,6 +214,23 @@ impl MediaServer {
         Ok(format!("Fait : {desc}."))
     }
 
+    /// Envoie la demande puis l'ajoute au suivi ; `name` nomme le service dans l'erreur.
+    pub(crate) async fn send_request(
+        &self,
+        mt: &str,
+        id: i64,
+        d: SeerrDetails,
+        seasons: &[i64],
+        name: &str,
+    ) -> Result<(), String> {
+        let r = sv::seerr_request(&self.stack.seerr, mt, id, seasons).await.map_err(|e| why(name, &e))?;
+        let tvdb = d.external_ids.as_ref().and_then(|e| e.tvdb_id);
+        let label = d.label();
+        let title = d.name.or(d.title).unwrap_or(label);
+        self.store.add(mt, id, tvdb, &title, seasons, Some(r.id), Utc::now().timestamp()).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     async fn problem_items(&self, t: &Target) -> Vec<QueueItem> {
         let s = &self.stack;
         let q = match t {
@@ -383,10 +400,7 @@ impl MediaServer {
         if a.confirm != Some(true) {
             return preview(&format!("{what}."));
         }
-        let r = sv::seerr_request(&s.seerr, mt, id, &wanted).await.map_err(|e| why("Seerr", &e))?;
-        let tvdb = d.external_ids.and_then(|e| e.tvdb_id);
-        let title = d.name.or(d.title).unwrap_or_else(|| label.clone());
-        self.store.add(mt, id, tvdb, &title, &wanted, Some(r.id), Utc::now().timestamp()).map_err(|e| e.to_string())?;
+        self.send_request(mt, id, d, &wanted, "Seerr").await?;
         let note = if s.notifier.is_some() {
             "Je préviens dès que c'est regardable, en cas d'échec ou de retard."
         } else {

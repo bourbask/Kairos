@@ -1,4 +1,5 @@
 pub mod actions;
+pub mod app;
 pub mod caldav;
 pub mod config;
 pub mod http;

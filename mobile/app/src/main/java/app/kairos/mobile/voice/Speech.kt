@@ -106,7 +106,7 @@ class Speech(
     private fun first(bundle: Bundle): String? =
         bundle.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
 
-    private companion object {
+    companion object {
         const val LANGUAGE = "fr-FR"
     }
 }

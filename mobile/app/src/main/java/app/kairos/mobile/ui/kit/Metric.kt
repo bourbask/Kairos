@@ -2,12 +2,14 @@ package app.kairos.mobile.ui.kit
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.sp
 import app.kairos.mobile.ui.theme.Motion
 
 /**
@@ -25,6 +27,8 @@ fun Metric(value: String, label: String, modifier: Modifier = Modifier, tone: To
                 style = MaterialTheme.typography.headlineLarge,
                 color = tone?.color() ?: Color.Unspecified,
                 maxLines = 1,
+                // Trop long pour la largeur (grande police, gros montant) : le chiffre rétrécit, jamais coupé.
+                autoSize = TextAutoSize.StepBased(minFontSize = 16.sp, maxFontSize = MaterialTheme.typography.headlineLarge.fontSize),
             )
         }
         if (caption != null) {

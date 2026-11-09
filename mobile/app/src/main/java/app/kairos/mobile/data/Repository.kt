@@ -21,6 +21,13 @@ import kotlinx.serialization.json.put
 import app.kairos.mobile.ui.agenda.agendaAfter
 import app.kairos.mobile.ui.finances.financesAfter
 import app.kairos.mobile.ui.marches.marchesAfter
+import app.kairos.mobile.ui.documents.documentsAfter
+import app.kairos.mobile.ui.medias.mediasAfter
+import app.kairos.mobile.ui.medias.withoutWatched
+import app.kairos.mobile.ui.memoire.cacheable
+import app.kairos.mobile.ui.memoire.memoireAfter
+import app.kairos.mobile.ui.today.Pending
+import kotlinx.serialization.DeserializationStrategy
 import java.io.File
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -30,11 +37,13 @@ import java.time.LocalDateTime
  * stockage privé : sans serveur, l'application reste lisible.
  * Les marques « fait » / « plus tard » sont locales à l'appareil, par jour,
  * indexées par [Card.key].
+ * Fichiers chiffrés par [codec].
  * Accès disque hors du fil principal ; une erreur disque n'interrompt jamais l'affichage.
  */
 class Repository(
     private val api: KairosApi,
     private val dir: File,
+    private val codec: CacheCodec,
     private val today: () -> LocalDate = LocalDate::now,
 ) {
     private val snapshotFile = File(dir, "snapshot.json")
@@ -43,11 +52,20 @@ class Repository(
     private val financesFile = File(dir, "finances.json")
     private val agendaFile = File(dir, "agenda.json")
     private val marchesFile = File(dir, "marches.json")
+    private val memoireFile = File(dir, "memoire.json")
+    private val mediasFile = File(dir, "medias.json")
+    private val documentsFile = File(dir, "documents.json")
     private val loadLock = Mutex()
     private val maisonLock = Mutex()
     private val financesLock = Mutex()
     private val agendaLock = Mutex()
     private val marchesLock = Mutex()
+    private val memoireLock = Mutex()
+    private val mediasLock = Mutex()
+    private var mediasTried: Long? = null
+    private val documentsLock = Mutex()
+    private var documentsTried: Long? = null
+    private var memoireTried: Long? = null
     private var marchesTried: Long? = null
     private var agendaTried: Long? = null
     private var financesTried: Long? = null
@@ -71,6 +89,24 @@ class Repository(
     private val _marches = MutableStateFlow(MarchesSnapshot())
     val marches: StateFlow<MarchesSnapshot> = _marches.asStateFlow()
 
+    private val _memoire = MutableStateFlow(MemoireSnapshot())
+    val memoire: StateFlow<MemoireSnapshot> = _memoire.asStateFlow()
+
+    private val _medias = MutableStateFlow(MediasSnapshot())
+    val medias: StateFlow<MediasSnapshot> = _medias.asStateFlow()
+
+    private val _documents = MutableStateFlow(DocumentsSnapshot())
+    val documents: StateFlow<DocumentsSnapshot> = _documents.asStateFlow()
+
+    /** Intentions acceptées ou refusées, en attente de leur issue (survit à l'écran Mémoire). */
+    val intentionsPending = Pending<Long>()
+
+    /** Effacements Mémoire en attente de leur issue. */
+    val erasuresPending = Pending<String>()
+
+    /** Éléments marqués vus, en attente de leur issue (survit à l'écran Médias). */
+    val watchedPending = Pending<String>()
+
     /** Relit l'état enregistré (une seule fois) ; appelé d'office par [refresh] et [mark]. */
     suspend fun load() = loadLock.withLock {
         if (loaded) return@withLock
@@ -79,6 +115,9 @@ class Repository(
         read(financesFile, FinancesSnapshot.serializer())?.let { saved -> _finances.update { if (it.fetchedAt == null) saved else it } }
         read(agendaFile, AgendaSnapshot.serializer())?.let { saved -> _agenda.update { if (it.fetchedAt == null) saved else it } }
         read(marchesFile, MarchesSnapshot.serializer())?.let { saved -> _marches.update { if (it.fetchedAt == null) saved else it } }
+        read(memoireFile, MemoireSnapshot.serializer())?.let { saved -> _memoire.update { if (it.fetchedAt == null) saved else it } }
+        read(mediasFile, MediasSnapshot.serializer())?.let { saved -> _medias.update { if (it.fetchedAt == null) saved else it } }
+        read(documentsFile, DocumentsSnapshot.serializer())?.let { saved -> _documents.update { if (it.fetchedAt == null) saved else it } }
         val savedMarks = read(marksFile, MARKS).orEmpty()
         _marks.update { current -> (savedMarks + current).filterKeys { it >= today().toString() } }
         loaded = true
@@ -213,6 +252,68 @@ class Repository(
         write(marchesFile, MarchesSnapshot.serializer(), next)
     }
 
+    /**
+     * Intentions, journal, faits et conversations ; sans réponse, le dernier état reste.
+     * Écrit sur l'appareil sans les entrées sensibles. Sans [force], ignorée si la
+     * précédente date de moins de [FRESH_MS].
+     */
+    suspend fun refreshMemoire(force: Boolean = true) = memoireLock.withLock {
+        val last = memoireTried
+        if (!force && last != null && System.nanoTime() - last < FRESH_MS * 1_000_000) return@withLock
+        load()
+        val m = attempt { api.tool(MEMOIRE, "app_memory", Memory.serializer()) }
+        memoireTried = System.nanoTime()
+        val next = memoireAfter(_memoire.value, m, LocalDateTime.now().withNano(0).toString())
+        _memoire.value = next
+        if (m.isSuccess) write(memoireFile, MemoireSnapshot.serializer(), cacheable(next))
+    }
+
+    /** Retire un élément traité ou effacé sans attendre le module (relu à la prochaine actualisation). */
+    suspend fun dropFromMemoire(change: (MemoireSnapshot) -> MemoireSnapshot) = memoireLock.withLock {
+        val next = _memoire.updateAndGet(change)
+        write(memoireFile, MemoireSnapshot.serializer(), cacheable(next))
+    }
+
+    /**
+     * À regarder, téléchargements, sorties et demandes ; sans réponse, le dernier état reste.
+     * Sans [force], ignorée si la précédente date de moins de [FRESH_MS].
+     */
+    suspend fun refreshMedias(force: Boolean = true) = mediasLock.withLock {
+        val last = mediasTried
+        if (!force && last != null && System.nanoTime() - last < FRESH_MS * 1_000_000) return@withLock
+        load()
+        val m = attempt { api.tool(MEDIAS, "app_medias", Medias.serializer()) }
+        mediasTried = System.nanoTime()
+        val next = mediasAfter(_medias.value, m, LocalDateTime.now().withNano(0).toString())
+        _medias.value = next
+        if (m.isSuccess) write(mediasFile, MediasSnapshot.serializer(), next)
+    }
+
+    /** Retire un élément vu sans attendre le module (relu à la prochaine actualisation). */
+    suspend fun dropWatched(key: String) = mediasLock.withLock {
+        val next = _medias.updateAndGet { withoutWatched(it, key) }
+        write(mediasFile, MediasSnapshot.serializer(), next)
+    }
+
+    /**
+     * Échéances, pièces attendues et classement (lecture seule) ; sans réponse, le dernier état reste.
+     * Sans [force], ignorée si la précédente date de moins de [FRESH_MS].
+     */
+    suspend fun refreshDocuments(force: Boolean = true) = documentsLock.withLock {
+        val last = documentsTried
+        if (!force && last != null && System.nanoTime() - last < FRESH_MS * 1_000_000) return@withLock
+        load()
+        val d = attempt { api.tool(DOCUMENTS, "app_documents", Documents.serializer()) }
+        documentsTried = System.nanoTime()
+        val next = documentsAfter(_documents.value, d, LocalDateTime.now().withNano(0).toString())
+        _documents.value = next
+        if (d.isSuccess) write(documentsFile, DocumentsSnapshot.serializer(), next)
+    }
+
+    /** Lecture ponctuelle d'un outil `app_*` (recherche, historique) : rien n'est gardé. */
+    suspend fun <T> lookup(module: String, name: String, result: DeserializationStrategy<T>, args: JsonObject): T =
+        api.tool(module, name, result, args)
+
     /** Verdict « puis-je me permettre » pour [amount] euros, sur [poste] s'il est donné. */
     suspend fun afford(amount: Double, poste: String?): Affordability =
         api.tool(FINANCES, "app_afford", Affordability.serializer(), buildJsonObject {
@@ -232,8 +333,11 @@ class Repository(
     suspend fun maisonTool(name: String, args: JsonObject): String = tool(ALIMENTATION, name, args)
 
     /** Outil d'écriture `app_*` d'un module ; rend son message. */
-    suspend fun tool(module: String, name: String, args: JsonObject): String =
-        api.tool(module, name, ToolMessage.serializer(), args).message
+    suspend fun tool(module: String, name: String, args: JsonObject): String = reply(module, name, args).message
+
+    /** Outil d'écriture `app_*` d'un module ; rend sa réponse entière (message et issue). */
+    suspend fun reply(module: String, name: String, args: JsonObject): ToolMessage =
+        api.tool(module, name, ToolMessage.serializer(), args)
 
     /** Pose ou retire ([mark] = null) la marque de l'élément [key] du jour [day]. */
     suspend fun mark(day: String, key: String, mark: Mark?) {
@@ -262,6 +366,12 @@ class Repository(
         _finances.value = FinancesSnapshot()
         _agenda.value = AgendaSnapshot()
         _marches.value = MarchesSnapshot()
+        _memoire.value = MemoireSnapshot()
+        _medias.value = MediasSnapshot()
+        _documents.value = DocumentsSnapshot()
+        documentsTried = null
+        mediasTried = null
+        memoireTried = null
         marchesTried = null
         financesTried = null
         agendaTried = null
@@ -270,13 +380,28 @@ class Repository(
             financesFile.delete()
             agendaFile.delete()
             marchesFile.delete()
+            memoireFile.delete()
+            mediasFile.delete()
+            documentsFile.delete()
             snapshotFile.delete()
             marksFile.delete()
         }
     }
 
     private suspend fun <T> read(file: File, serializer: KSerializer<T>): T? = withContext(Dispatchers.IO) {
-        runCatching { KairosJson.decodeFromString(serializer, file.readText()) }.getOrNull()
+        runCatching {
+            val bytes = file.readBytes()
+            codec.open(bytes)?.let { return@runCatching KairosJson.decodeFromString(serializer, it) }
+            // Marques locales d'avant le chiffrement : le serveur ne peut pas les rendre, elles sont reprises
+            // puis réécrites chiffrées. Tout autre cache illisible est effacé et se recharge.
+            if (file == marksFile) {
+                runCatching { KairosJson.decodeFromString(serializer, String(bytes)) }.getOrNull()?.let { legacy ->
+                    write(file, serializer, legacy)
+                    return@runCatching legacy
+                }
+            }
+            null.also { file.delete() }
+        }.getOrNull()
     }
 
     private suspend fun <T> write(file: File, serializer: KSerializer<T>, value: T) {
@@ -284,7 +409,7 @@ class Repository(
             runCatching {
                 dir.mkdirs()
                 val tmp = File(dir, file.name + ".tmp")
-                tmp.writeText(KairosJson.encodeToString(serializer, value))
+                tmp.writeBytes(codec.seal(KairosJson.encodeToString(serializer, value)))
                 check(tmp.renameTo(file))
             }
         }
@@ -296,6 +421,9 @@ class Repository(
         const val FINANCES = "finances"
         const val AGENDA = "agenda"
         const val MARCHES = app.kairos.mobile.ui.marches.MARCHES
+        const val MEMOIRE = app.kairos.mobile.ui.memoire.MEMOIRE
+        const val MEDIAS = app.kairos.mobile.ui.medias.MEDIAS
+        const val DOCUMENTS = app.kairos.mobile.ui.documents.DOCUMENTS
         const val FRESH_MS = 30_000L
         val ORDERS = ListSerializer(Order.serializer())
         val PROPOSALS = ListSerializer(MarketProposal.serializer())

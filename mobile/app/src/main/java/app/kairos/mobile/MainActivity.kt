@@ -15,6 +15,7 @@ import app.kairos.mobile.update.runUpdate
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -30,8 +31,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -60,6 +59,7 @@ import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.lifecycle.viewModelScope
 import app.kairos.mobile.data.ApiError
+import app.kairos.mobile.data.CacheCodec
 import app.kairos.mobile.data.ChatEntry
 import app.kairos.mobile.data.Credentials
 import app.kairos.mobile.data.KairosApi
@@ -67,6 +67,7 @@ import app.kairos.mobile.data.Repository
 import app.kairos.mobile.data.SecureStore
 import app.kairos.mobile.ui.KairosButtonCorner
 import app.kairos.mobile.ui.Shell
+import app.kairos.mobile.ui.Tab
 import app.kairos.mobile.ui.overlay.Origin
 import app.kairos.mobile.ui.overlay.Overlay
 import app.kairos.mobile.ui.overlay.overlayAnchor
@@ -85,7 +86,15 @@ import app.kairos.mobile.ui.agenda.AgendaScreen
 import java.time.LocalDate
 import app.kairos.mobile.ui.finances.FinancesScreen
 import app.kairos.mobile.ui.marches.MarchesScreen
+import app.kairos.mobile.ui.memoire.laterIds
+import app.kairos.mobile.ui.memoire.MemoireScreen
+import app.kairos.mobile.ui.medias.MediasScreen
+import app.kairos.mobile.ui.documents.DocumentsScreen
 import app.kairos.mobile.ui.kit.LocalAmountsMasked
+import app.kairos.mobile.ui.kit.LocalNotifier
+import app.kairos.mobile.ui.kit.NotifierHost
+import app.kairos.mobile.ui.kit.rememberNotifier
+import app.kairos.mobile.ui.mascot.mascotDescription
 import app.kairos.mobile.ui.pairing.PairingScreen
 import app.kairos.mobile.ui.talk.ChatScreen
 import app.kairos.mobile.ui.talk.Conversation
@@ -130,9 +139,19 @@ class MainActivity : ComponentActivity() {
                 )
                 onDispose {}
             }
+            // Ni capture d'écran ni aperçu dans les applications récentes, sauf choix contraire.
+            val secure = model.hideFromCaptures
+            DisposableEffect(secure) {
+                if (secure) window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                else window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                onDispose {}
+            }
             KairosTheme(dark = dark) {
-                CompositionLocalProvider(LocalAmountsMasked provides model.amountsMasked) {
-                    KairosRoot(model)
+                CompositionLocalProvider(
+                    LocalAmountsMasked provides model.amountsMasked,
+                    LocalNotifier provides rememberNotifier(),
+                ) {
+                    KairosRoot(model, dark)
                 }
             }
         }
@@ -155,7 +174,7 @@ class Session(
 ) {
     val address = credentials.baseUrl
     val api = KairosApi(credentials.baseUrl, credentials.token, http)
-    val repository = Repository(api, stateDir)
+    val repository = Repository(api, stateDir, CacheCodec.Device)
     val conversation = Conversation(api, scope, onUnauthorized, onReply)
 }
 
@@ -198,6 +217,10 @@ class AppModel(app: Application) : AndroidViewModel(app) {
 
     /** Montants masqués dans tous les espaces. */
     var amountsMasked by mutableStateOf(false)
+        private set
+
+    /** Fenêtre exclue des captures et des applications récentes (activé par défaut). */
+    var hideFromCaptures by mutableStateOf(true)
         private set
 
     private val processStarted: Boolean
@@ -341,6 +364,7 @@ class AppModel(app: Application) : AndroidViewModel(app) {
             speakReplies = saved?.speakReplies ?: false
             theme = saved?.theme ?: ThemeMode.Clair
             amountsMasked = saved?.amountsMasked ?: false
+            hideFromCaptures = saved?.hideFromCaptures ?: true
             session = runCatching { store.load() }.getOrNull()?.let(::open)
             loaded = true
             checkUpdate()
@@ -392,6 +416,11 @@ class AppModel(app: Application) : AndroidViewModel(app) {
     fun changeTheme(mode: ThemeMode) {
         theme = mode
         viewModelScope.launch { settings.saveTheme(mode) }
+    }
+
+    fun changeHideFromCaptures(on: Boolean) {
+        hideFromCaptures = on
+        viewModelScope.launch { settings.saveHideFromCaptures(on) }
     }
 
     fun toggleAmountsMasked() {
@@ -468,7 +497,7 @@ class AppModel(app: Application) : AndroidViewModel(app) {
 }
 
 @Composable
-private fun KairosRoot(model: AppModel) {
+private fun KairosRoot(model: AppModel, dark: Boolean) {
     if (!model.loaded) {
         Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background))
         return
@@ -482,7 +511,8 @@ private fun KairosRoot(model: AppModel) {
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
-    val snackbar = remember { SnackbarHostState() }
+    val notifier = LocalNotifier.current
+    val snackbar = notifier.host
     val conversation = session.conversation
     val talk = model.talk
     var decisionsOpen by rememberSaveable { mutableStateOf(false) }
@@ -490,8 +520,14 @@ private fun KairosRoot(model: AppModel) {
     var settingsOpen by rememberSaveable { mutableStateOf(false) }
     var maisonOpen by rememberSaveable { mutableStateOf(false) }
     var financesOpen by rememberSaveable { mutableStateOf(false) }
+    var financesAfford by rememberSaveable { mutableStateOf(false) }
     var agendaOpen by rememberSaveable { mutableStateOf(false) }
+    var agendaDay by rememberSaveable { mutableStateOf<String?>(null) }
+    var tab by rememberSaveable { mutableStateOf(Tab.Aujourdhui) }
     var marchesOpen by rememberSaveable { mutableStateOf(false) }
+    var memoireOpen by rememberSaveable { mutableStateOf(false) }
+    var mediasOpen by rememberSaveable { mutableStateOf(false) }
+    var documentsOpen by rememberSaveable { mutableStateOf(false) }
     var unpackOrder by rememberSaveable { mutableStateOf<Long?>(null) }
     var adding by rememberSaveable { mutableStateOf(false) }
     var focusInput by remember { mutableStateOf(false) }
@@ -567,6 +603,9 @@ private fun KairosRoot(model: AppModel) {
             modifier = Modifier.underOverlays(rtl, deck, chat, settings, unpack, add),
             kairosModifier = Modifier.overlayAnchor(chat, KairosButtonCorner),
             mascotState = mascot,
+            kairosState = mascotDescription(mascot, conversation.decisions),
+            tab = tab,
+            onTab = { tab = it },
             onTap = {
                 focusInput = false
                 chatOpen = true
@@ -581,9 +620,14 @@ private fun KairosRoot(model: AppModel) {
                     padding = padding,
                     onOpenDecisions = { decisionsOpen = true },
                     onOpenSettings = { settingsOpen = true },
+                    // Un jour de la semaine ouvre l'Agenda sur ce jour, dans son espace.
+                    onOpenAgenda = { day ->
+                        agendaDay = day.toString()
+                        tab = Tab.Espaces
+                        agendaOpen = true
+                    },
                     onUnauthorized = model::unauthorized,
                     appScope = model.viewModelScope,
-                    onNotice = { scope.launch { snackbar.showSnackbar(it) } },
                     update = model.update,
                     updateProgress = model.updateProgress,
                     onUpdate = model::startUpdate,
@@ -595,16 +639,23 @@ private fun KairosRoot(model: AppModel) {
                 val finances by session.repository.finances.collectAsState()
                 val agenda by session.repository.agenda.collectAsState()
                 val marches by session.repository.marches.collectAsState()
-                // Une actualisation à l'arrivée sur l'onglet : les chiffres des cartes sont à jour.
-                LaunchedEffect(Unit) {
+                val memoire by session.repository.memoire.collectAsState()
+                val medias by session.repository.medias.collectAsState()
+                val documents by session.repository.documents.collectAsState()
+                val marks by session.repository.marks.collectAsState()
+                // Tous les espaces en parallèle ; sans [force], ceux lus il y a moins de 30 s sont gardés.
+                fun refreshSpaces(force: Boolean) {
                     val refreshes = listOf<suspend () -> Unit>(
                         { session.repository.refreshMaison() },
-                        { session.repository.refreshFinances(force = false) },
-                        { session.repository.refreshAgenda(LocalDate.now(), force = false) },
-                        { session.repository.refreshMarches(force = false) },
+                        { session.repository.refreshFinances(force) },
+                        { session.repository.refreshAgenda(LocalDate.now(), force = force) },
+                        { session.repository.refreshMarches(force) },
+                        { session.repository.refreshMemoire(force) },
+                        { session.repository.refreshMedias(force) },
+                        { session.repository.refreshDocuments(force) },
                     )
                     for (refresh in refreshes) {
-                        launch {
+                        scope.launch {
                             try {
                                 refresh()
                             } catch (_: ApiError.Unauthorized) {
@@ -613,15 +664,28 @@ private fun KairosRoot(model: AppModel) {
                         }
                     }
                 }
+                // Une actualisation à l'arrivée sur l'onglet : les états des rangées sont à jour.
+                LaunchedEffect(Unit) { refreshSpaces(force = false) }
                 SpacesScreen(
+                    memoireLater = laterIds(marks[LocalDate.now().toString()].orEmpty().keys),
                     padding = padding,
+                    onRetry = { refreshSpaces(force = true) },
+                    onOpenSettings = { settingsOpen = true },
                     maison = maison,
                     maisonOpen = maisonOpen,
                     onOpenMaison = { maisonOpen = true },
                     onCloseMaison = { maisonOpen = false },
                     finances = finances,
                     financesOpen = financesOpen,
-                    onOpenFinances = { financesOpen = true },
+                    onOpenFinances = {
+                        financesAfford = false
+                        financesOpen = true
+                    },
+                    // Raccourci de la rangée : Finances s'ouvre sur « Puis-je me permettre ? ».
+                    onAfford = {
+                        financesAfford = true
+                        financesOpen = true
+                    },
                     onCloseFinances = { financesOpen = false },
                     financesContent = {
                         FinancesScreen(
@@ -631,17 +695,22 @@ private fun KairosRoot(model: AppModel) {
                             onToggleMasked = model::toggleAmountsMasked,
                             onClose = { financesOpen = false },
                             onUnauthorized = model::unauthorized,
+                            openAfford = financesAfford,
                         )
                     },
                     agenda = agenda,
                     agendaOpen = agendaOpen,
-                    onOpenAgenda = { agendaOpen = true },
+                    onOpenAgenda = {
+                        agendaDay = null
+                        agendaOpen = true
+                    },
                     onCloseAgenda = { agendaOpen = false },
                     agendaContent = {
                         AgendaScreen(
                             repository = session.repository,
                             padding = padding,
                             appScope = model.viewModelScope,
+                            initialDay = agendaDay?.let(LocalDate::parse),
                             onClose = { agendaOpen = false },
                             onUnauthorized = model::unauthorized,
                         )
@@ -656,6 +725,45 @@ private fun KairosRoot(model: AppModel) {
                             padding = padding,
                             appScope = model.viewModelScope,
                             onClose = { marchesOpen = false },
+                            onUnauthorized = model::unauthorized,
+                        )
+                    },
+                    memoire = memoire,
+                    memoireOpen = memoireOpen,
+                    onOpenMemoire = { memoireOpen = true },
+                    onCloseMemoire = { memoireOpen = false },
+                    memoireContent = {
+                        MemoireScreen(
+                            repository = session.repository,
+                            padding = padding,
+                            appScope = model.viewModelScope,
+                            onToggleMasked = model::toggleAmountsMasked,
+                            onClose = { memoireOpen = false },
+                            onUnauthorized = model::unauthorized,
+                        )
+                    },
+                    medias = medias,
+                    mediasOpen = mediasOpen,
+                    onOpenMedias = { mediasOpen = true },
+                    onCloseMedias = { mediasOpen = false },
+                    mediasContent = {
+                        MediasScreen(
+                            repository = session.repository,
+                            padding = padding,
+                            appScope = model.viewModelScope,
+                            onClose = { mediasOpen = false },
+                            onUnauthorized = model::unauthorized,
+                        )
+                    },
+                    documents = documents,
+                    documentsOpen = documentsOpen,
+                    onOpenDocuments = { documentsOpen = true },
+                    onCloseDocuments = { documentsOpen = false },
+                    documentsContent = {
+                        DocumentsScreen(
+                            repository = session.repository,
+                            padding = padding,
+                            onClose = { documentsOpen = false },
                             onUnauthorized = model::unauthorized,
                         )
                     },
@@ -695,7 +803,7 @@ private fun KairosRoot(model: AppModel) {
                     }
                 },
                 onUnauthorized = model::unauthorized,
-                onNotice = { scope.launch { snackbar.showSnackbar(it) } },
+                onNotice = { scope.launch { notifier.show(it) } },
                 onClose = { decisionsOpen = false },
             )
         }
@@ -717,7 +825,7 @@ private fun KairosRoot(model: AppModel) {
                     repository = session.repository,
                     appScope = model.viewModelScope,
                     onUnauthorized = model::unauthorized,
-                    onNotice = { scope.launch { snackbar.showSnackbar(it) } },
+                    onNotice = { scope.launch { notifier.show(it) } },
                     onClose = { unpackOrder = null },
                     others = maison.orders.count { o -> o.id != shown.id && o.lines.any { !it.done } },
                     onOther = { UnpackState.nextOrder(maison.orders, shown.id)?.let { unpackOrder = it.id } },
@@ -748,9 +856,14 @@ private fun KairosRoot(model: AppModel) {
         Overlay(settings, settingsOpen, onClose = { settingsOpen = false }) {
             SettingsScreen(
                 theme = model.theme,
+                dark = dark,
                 onTheme = model::changeTheme,
                 speakReplies = model.speakReplies,
                 onSpeakReplies = model::changeSpeakReplies,
+                hideFromCaptures = model.hideFromCaptures,
+                onHideFromCaptures = model::changeHideFromCaptures,
+                amountsMasked = model.amountsMasked,
+                onToggleMasked = model::toggleAmountsMasked,
                 address = maskAddress(session.address),
                 version = model.version,
                 update = model.update,
@@ -773,8 +886,8 @@ private fun KairosRoot(model: AppModel) {
             onMic = { if (talk.listening) model.stopListening() else run(talk.resume()) },
             modifier = Modifier.align(Alignment.BottomCenter),
         )
-        SnackbarHost(
-            snackbar,
+        NotifierHost(
+            notifier,
             Modifier
                 .align(if (chatOpen) Alignment.TopCenter else Alignment.BottomCenter)
                 .then(if (chatOpen) Modifier.statusBarsPadding().padding(top = 64.dp) else Modifier.navigationBarsPadding().padding(bottom = 112.dp)),

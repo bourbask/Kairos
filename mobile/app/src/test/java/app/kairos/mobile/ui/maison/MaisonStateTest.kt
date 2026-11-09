@@ -217,6 +217,48 @@ class MaisonStateTest {
     }
 
     @Test
+    fun error_is_never_shown_as_empty() {
+        // Jamais lu, serveur en défaut : ni « 0 produit » ni « vide ».
+        val down = MaisonState(MaisonSnapshot(offline = true))
+        assertEquals("Indisponible", down.subtitle)
+        assertEquals("—", down.countText(0))
+        assertEquals("Chargement…", MaisonState().subtitle)
+        assertEquals("—", MaisonState().countText(0))
+        // Données connues, même hors ligne : les vrais comptes.
+        val known = MaisonState(snapshot(offline = true))
+        assertEquals("3 produits · 1 à finir vite", known.subtitle)
+        assertEquals("vide", known.countText(0))
+        assertEquals("1 produit", known.countText(1))
+        assertEquals("de 08:00", stateAge("2026-11-08T08:00", LocalDate.of(2026, 11, 8)))
+        assertEquals("du 08/11", stateAge("2026-11-08T08:00", LocalDate.of(2026, 11, 9)))
+        assertNull(stateAge(null, LocalDate.of(2026, 11, 9)))
+    }
+
+    @Test
+    fun to_finish_zone_and_search() {
+        val s = MaisonState(snapshot())
+        // « À finir » en tête du plan, sans changer la zone ouverte d'office ni les destinations.
+        assertEquals(TO_FINISH, s.planZones.first().id)
+        assertEquals("frigo", s.zone)
+        assertEquals(null, s.move(riz, TO_FINISH))
+        s.select(TO_FINISH)
+        assertEquals(TO_FINISH, s.zone)
+        assertEquals(listOf("Champignons"), s.lotsIn(TO_FINISH).map { it.name })
+        assertEquals("Frigo", s.labelOf("frigo"))
+        assertEquals("1 produit · 1 à finir", countLine(s.lotsIn(TO_FINISH)))
+        assertEquals("2 produits · 1 à finir", countLine(s.lotsIn("frigo")))
+        // Plus d'urgence : la tuile disparaît, la zone ouverte suit.
+        s.consume(champignons)
+        assertTrue(s.planZones.none { it.id == TO_FINISH })
+        assertEquals("frigo", s.zone)
+        // Recherche locale, toutes zones, sans casse ni accents.
+        assertEquals(listOf("Soupe carcasse"), s.find("SOUPE").map { it.name })
+        assertEquals(listOf("Riz"), s.find(" riz ").map { it.name })
+        assertTrue(s.find("").isEmpty())
+        assertEquals(listOf("Crème"), MaisonState(MaisonSnapshot(inventory = Inventory(lots = listOf(riz.copy(name = "Crème"))))).find("creme").map { it.name })
+    }
+
+    @Test
     fun readable_quantities_and_dates() {
         assertEquals("950 g", formatQty(950.0, "g"))
         assertEquals("1,25 kg", formatQty(1250.0, "g"))

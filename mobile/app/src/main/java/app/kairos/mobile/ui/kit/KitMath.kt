@@ -55,6 +55,16 @@ fun barTone(value: Double, limit: Double): Tone = when {
     else -> Tone.Neutral
 }
 
+/**
+ * Mention d'une barre lisible sans la couleur : « 82 % » au-delà de 80 %, « dépassé de 11 € »
+ * au-delà de la limite, rien en dessous. Masquée : des mots, aucun chiffre.
+ */
+fun barNote(value: Double, limit: Double, format: (Double) -> String, masked: Boolean): String? = when (barTone(value, limit)) {
+    Tone.Neutral -> null
+    Tone.Attention -> if (masked) "proche de la limite" else "${(value / limit * 100).roundToInt()}$NBSP%"
+    Tone.Urgent -> if (masked) "dépassé" else "dépassé de ${format(value - limit)}"
+}
+
 /** Part remplie d'une barre, bornée à [0, 1]. */
 fun fill(value: Double, limit: Double): Float =
     if (limit <= 0 || !value.isFinite()) (if (value > 0) 1f else 0f) else (value / limit).toFloat().coerceIn(0f, 1f)
@@ -189,6 +199,21 @@ fun timelineLayout(blocks: List<TimeBlock>, startHour: Int, endHour: Int, minMin
     }
     flush()
     return TimelineLayout(blocks.filter { it.allDay }, placed.sortedBy { it.index })
+}
+
+/**
+ * Plage horaire utile d'une frise sans défilement propre : une heure avant le premier bloc
+ * (ou [now], minutes depuis minuit) jusqu'à une heure après le dernier, bornée à 7 h – 23 h,
+ * une heure au moins. Rien de placé : 8 h – 20 h.
+ */
+fun usefulHours(blocks: List<TimeBlock>, now: Int? = null): Pair<Int, Int> {
+    val timed = blocks.filter { !it.allDay }
+    if (timed.isEmpty()) return 8 to 20
+    val first = listOfNotNull(timed.minOf { it.start }, now).min()
+    val last = listOfNotNull(timed.maxOf { it.end }, now).max()
+    val end = ((last + 59) / 60 + 1).coerceIn(8, 23)
+    val start = (first / 60 - 1).coerceIn(7, end - 1)
+    return start to end
 }
 
 /** Position du trait de l'heure, seulement si [day] est aujourd'hui et l'heure dans la plage. */

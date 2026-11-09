@@ -1,3 +1,4 @@
+pub mod app;
 pub mod calendar;
 pub mod extract;
 pub mod facts;

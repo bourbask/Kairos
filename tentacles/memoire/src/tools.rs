@@ -11,9 +11,13 @@ use rmcp::{
     schemars, tool, tool_handler, tool_router,
 };
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 use tentacle_common::BriefPeriod;
 
-use crate::store::{IntentionState, MemoryStore, NewConversation, NewJournalEntry, NewLesson, PERSONA_KEY, Sensitivity};
+use crate::store::{
+    ConversationCard, IntentionState, JournalEntry, MemoryStore, NewConversation, NewJournalEntry, NewLesson, PERSONA_KEY,
+    Sensitivity,
+};
 
 /// Handler MCP ; bon marché à construire (le stockage est partagé).
 #[derive(Clone)]
@@ -51,6 +55,78 @@ fn parse_dt(s: &str) -> Result<NaiveDateTime, String> {
 
 fn now_local() -> NaiveDateTime {
     Utc::now().with_timezone(&USER_TZ).naive_local()
+}
+
+/// Nombre maximal d'entrées renvoyées à l'application.
+const APP_LIMIT: u32 = 30;
+const APP_MAX_DAYS: i64 = 3650;
+const APP_PROVENANCE: &str = "application";
+/// La personnalité de l'assistant ne se lit ni ne se modifie depuis l'application.
+const PERSONA_REFUSED: &str = "La personnalité de l'assistant ne se modifie pas d'ici.";
+
+/// La personnalité ne s'écrit que depuis l'hôte (`kairos-memoire persona`), jamais par un outil.
+fn is_persona(key: &str) -> bool {
+    key.trim().eq_ignore_ascii_case(PERSONA_KEY)
+}
+
+/// Sensibilité des notes saisies depuis l'application.
+const APP_SENSITIVITY: Sensitivity = Sensitivity::Commune;
+
+#[derive(Deserialize, schemars::JsonSchema)]
+struct AppIntentionSetArgs {
+    id: i64,
+    /// `acceptee` ou `refusee`.
+    state: String,
+}
+#[derive(Deserialize, schemars::JsonSchema)]
+struct AppIntentionAddArgs {
+    what: String,
+    /// Jours avant l'échéance ; 0 = fin de journée.
+    days: i64,
+}
+#[derive(Deserialize, schemars::JsonSchema)]
+struct AppTextArgs {
+    text: String,
+}
+#[derive(Deserialize, schemars::JsonSchema)]
+struct AppQueryArgs {
+    query: String,
+}
+#[derive(Deserialize, schemars::JsonSchema)]
+struct AppFactSetArgs {
+    key: String,
+    value: String,
+}
+
+/// Texte d'une entrée de journal, quelle que soit la forme du contenu.
+fn entry_text(c: &Value) -> String {
+    ["texte", "text"]
+        .iter()
+        .find_map(|k| c.get(k).and_then(Value::as_str))
+        .or_else(|| c.as_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| c.to_string())
+}
+
+fn entry_json(e: &JournalEntry) -> Value {
+    json!({
+        "id": e.id,
+        "at": e.at,
+        "kind": e.kind,
+        "text": entry_text(&e.content),
+        "sensitive": e.sensitivity != Sensitivity::Commune,
+    })
+}
+
+fn conversation_json(c: &ConversationCard, with_decisions: bool) -> Value {
+    let mut v = json!({"id": c.id, "at": c.started_at, "topics": c.topics});
+    if let Some(s) = &c.summary {
+        v["summary"] = json!(s);
+    }
+    if with_decisions {
+        v["decisions"] = json!(c.decisions);
+    }
+    v
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
@@ -163,6 +239,9 @@ impl MemoryServer {
 
     #[tool(description = "Enregistrer ou mettre à jour un fait stable sur l'utilisateur (l'historique est conservé).")]
     fn fact_set(&self, Parameters(a): Parameters<FactSetArgs>) -> Out {
+        if is_persona(&a.key) {
+            return Err(PERSONA_REFUSED.into());
+        }
         self.db()?.fact_set(&a.key, &a.value, &a.provenance).map_err(err)?;
         json_out(serde_json::json!({ "ok": true }))
     }
@@ -243,6 +322,154 @@ impl MemoryServer {
         json_out(serde_json::json!({ "id": id }))
     }
 
+    #[tool(description = "Vue JSON de la mémoire pour l'application : intentions ouvertes, journal et conversations récents, faits.")]
+    fn app_memory(&self) -> Out {
+        let db = self.db()?;
+        let intentions: Vec<Value> = db
+            .intentions_open(now_local())
+            .map_err(err)?
+            .iter()
+            .map(|i| {
+                let mut v = json!({"id": i.id, "what": i.what, "expires": i.expires_at, "state": i.state});
+                if !i.constraints.is_empty() {
+                    v["constraints"] = json!(i.constraints);
+                }
+                v
+            })
+            .collect();
+        let journal: Vec<Value> = db.journal_recent(APP_LIMIT).map_err(err)?.iter().map(entry_json).collect();
+        let facts: Vec<Value> = db
+            .facts_list("")
+            .map_err(err)?
+            .iter()
+            .filter(|f| f.key != PERSONA_KEY)
+            .map(|f| json!({"key": f.key, "value": f.value, "updated": f.updated_at}))
+            .collect();
+        let conversations: Vec<Value> =
+            db.conversations_recent(APP_LIMIT).map_err(err)?.iter().map(|c| conversation_json(c, true)).collect();
+        json_out(json!({"intentions": intentions, "journal": journal, "facts": facts, "conversations": conversations}))
+    }
+
+    #[tool(
+        description = "Accepter ou refuser une intention depuis l'application (acceptee ou refusee). Rend `message` (à afficher) et `outcome` : `done`, ou `stale` (échue, déjà traitée ou inconnue : rien n'est changé)."
+    )]
+    fn app_intention_set(&self, Parameters(a): Parameters<AppIntentionSetArgs>) -> Out {
+        let state = match a.state.as_str() {
+            "acceptee" => IntentionState::Acceptee,
+            "refusee" => IntentionState::Refusee,
+            _ => return Err("état attendu : acceptee ou refusee".into()),
+        };
+        let db = self.db()?;
+        // Seules les intentions encore ouvertes peuvent changer d'état.
+        if !db.intentions_open(now_local()).map_err(err)?.iter().any(|i| i.id == a.id) {
+            return json_out(json!({"message": "Cette intention est échue ou déjà traitée.", "outcome": "stale"}));
+        }
+        db.intention_set_state(a.id, state).map_err(err)?;
+        let message = if state == IntentionState::Acceptee { "Intention acceptée." } else { "Intention refusée." };
+        json_out(json!({ "message": message, "outcome": "done" }))
+    }
+
+    #[tool(description = "Ajouter une intention depuis l'application, avec une échéance en jours.")]
+    fn app_intention_add(&self, Parameters(a): Parameters<AppIntentionAddArgs>) -> Out {
+        let what = a.what.trim();
+        if what.is_empty() {
+            return Err("texte vide".into());
+        }
+        if !(0..=APP_MAX_DAYS).contains(&a.days) {
+            return Err(format!("délai invalide : 0 à {APP_MAX_DAYS} jours"));
+        }
+        let now = now_local();
+        let at = if a.days == 0 {
+            now.date().and_hms_opt(23, 59, 0).unwrap_or(now)
+        } else {
+            now + Duration::days(a.days)
+        };
+        let id = self.db()?.intention_create(what, "", at).map_err(err)?;
+        json_out(json!({"message": "Intention ajoutée.", "id": id}))
+    }
+
+    #[tool(description = "Ajouter une note au journal depuis l'application.")]
+    fn app_journal_add(&self, Parameters(a): Parameters<AppTextArgs>) -> Out {
+        let text = a.text.trim();
+        if text.is_empty() {
+            return Err("texte vide".into());
+        }
+        let id = self
+            .db()?
+            .journal_write(&NewJournalEntry {
+                source: APP_PROVENANCE.into(),
+                kind: "note".into(),
+                content: json!({ "texte": text }),
+                sensitivity: APP_SENSITIVITY,
+                provenance: APP_PROVENANCE.into(),
+            })
+            .map_err(err)?;
+        json_out(json!({"message": "Note ajoutée.", "id": id}))
+    }
+
+    #[tool(description = "Rechercher dans le journal pour l'application (30 résultats au plus).")]
+    fn app_journal_search(&self, Parameters(a): Parameters<AppQueryArgs>) -> Out {
+        let found = self.db()?.journal_search(&a.query, APP_LIMIT).map_err(err)?;
+        json_out(found.iter().map(entry_json).collect::<Vec<_>>())
+    }
+
+    #[tool(description = "Historique des valeurs d'un fait pour l'application, de la plus ancienne à la plus récente.")]
+    fn app_fact_history(&self, Parameters(a): Parameters<KeyArgs>) -> Out {
+        if is_persona(&a.key) {
+            return Err(PERSONA_REFUSED.into());
+        }
+        let h = self.db()?.fact_history(&a.key).map_err(err)?;
+        json_out(h.iter().map(|f| json!({"value": f.value, "at": f.updated_at})).collect::<Vec<_>>())
+    }
+
+    #[tool(description = "Corriger la valeur d'un fait depuis l'application (l'historique est conservé).")]
+    fn app_fact_set(&self, Parameters(a): Parameters<AppFactSetArgs>) -> Out {
+        let (key, value) = (a.key.trim(), a.value.trim());
+        if key.is_empty() || value.is_empty() {
+            return Err("clé ou valeur vide".into());
+        }
+        if is_persona(key) {
+            return Err(PERSONA_REFUSED.into());
+        }
+        self.db()?.fact_set(key, value, APP_PROVENANCE).map_err(err)?;
+        json_out(json!({"message": "Fait enregistré."}))
+    }
+
+    #[tool(description = "Supprimer définitivement une entrée du journal depuis l'application.")]
+    fn app_journal_delete(&self, Parameters(a): Parameters<IdArgs>) -> Out {
+        if !self.db()?.journal_delete(a.id).map_err(err)? {
+            return Err("entrée inconnue".into());
+        }
+        json_out(json!({"message": "Entrée supprimée."}))
+    }
+
+    #[tool(description = "Oublier un fait depuis l'application : valeur courante et historique.")]
+    fn app_fact_forget(&self, Parameters(a): Parameters<KeyArgs>) -> Out {
+        if is_persona(&a.key) {
+            return Err(PERSONA_REFUSED.into());
+        }
+        // Clé telle qu'écrite (éventuellement avec espaces), sinon nettoyée.
+        let db = self.db()?;
+        if db.fact_forget(&a.key).map_err(err)? == 0 && db.fact_forget(a.key.trim()).map_err(err)? == 0 {
+            return Err("fait inconnu".into());
+        }
+        json_out(json!({"message": "Fait oublié."}))
+    }
+
+    #[tool(description = "Supprimer définitivement une conversation depuis l'application.")]
+    fn app_conversation_delete(&self, Parameters(a): Parameters<IdArgs>) -> Out {
+        if !self.db()?.conversation_delete(a.id).map_err(err)? {
+            return Err("conversation inconnue".into());
+        }
+        json_out(json!({"message": "Conversation supprimée."}))
+    }
+
+    #[tool(description = "Rechercher dans les conversations pour l'application (30 résultats au plus).")]
+    fn app_conversation_search(&self, Parameters(a): Parameters<AppQueryArgs>) -> Out {
+        let found = self.db()?.conversation_search(&a.query, APP_LIMIT).map_err(err)?;
+        json_out(found.iter().map(|c| conversation_json(c, false)).collect::<Vec<_>>())
+    }
+
     #[tool(description = "Obtenir le texte court de la section mémoire d'un briefing (intentions expirant sous 24 h), vide si rien.")]
     fn brief_section(&self, Parameters(_): Parameters<BriefArgs>) -> Out {
         // Même contenu matin et soir pour l'instant.
@@ -262,5 +489,267 @@ impl MemoryServer {
 impl ServerHandler for MemoryServer {
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn srv() -> MemoryServer {
+        MemoryServer::new(Arc::new(Mutex::new(MemoryStore::open(":memory:").unwrap())))
+    }
+
+    fn js(o: Out) -> Value {
+        serde_json::from_str(&o.unwrap()).unwrap()
+    }
+
+    fn far() -> NaiveDateTime {
+        now_local() + Duration::days(5)
+    }
+
+    fn q(s: &str) -> Parameters<AppQueryArgs> {
+        Parameters(AppQueryArgs { query: s.into() })
+    }
+
+    fn jw(s: &MemoryServer, text: &str, sens: Sensitivity) -> i64 {
+        s.db()
+            .unwrap()
+            .journal_write(&NewJournalEntry {
+                source: "s".into(),
+                kind: "note".into(),
+                content: json!({"texte": text}),
+                sensitivity: sens,
+                provenance: "p".into(),
+            })
+            .unwrap()
+    }
+
+    fn set_state(s: &MemoryServer, id: i64, st: &str) -> Out {
+        s.app_intention_set(Parameters(AppIntentionSetArgs { id, state: st.into() }))
+    }
+
+    #[test]
+    fn app_memory_json_shape() {
+        let s = srv();
+        s.db().unwrap().intention_create("appeler", "avant midi", far()).unwrap();
+        s.db().unwrap().intention_create("lire", "", far()).unwrap();
+        jw(&s, "bonne journée", Sensitivity::Commune);
+        s.db().unwrap().fact_set("sante.allergie", "pollen", "p").unwrap();
+        let c = NewConversation {
+            channel: "voix".into(),
+            device: "d".into(),
+            started_at: now_local(),
+            ended_at: now_local(),
+            transcript: "bonjour".into(),
+            session_id: None,
+        };
+        let cid = s.db().unwrap().conversation_ingest(&c).unwrap();
+        s.db().unwrap().conversation_set_summary(cid, "résumé", &["a".into()], &["d".into()]).unwrap();
+        let v = js(s.app_memory());
+        let i = &v["intentions"][0];
+        assert_eq!(i["what"], "appeler");
+        assert_eq!(i["state"], "ouverte");
+        assert_eq!(i["constraints"], "avant midi");
+        assert!(i["id"].is_i64() && i["expires"].is_string());
+        assert!(v["intentions"][1].get("constraints").is_none());
+        let j = &v["journal"][0];
+        assert_eq!((j["kind"].as_str(), j["text"].as_str()), (Some("note"), Some("bonne journée")));
+        assert!(j["id"].is_i64() && j["at"].is_string());
+        assert_eq!(v["facts"][0]["key"], "sante.allergie");
+        assert_eq!(v["facts"][0]["value"], "pollen");
+        assert!(v["facts"][0]["updated"].is_string());
+        let c = &v["conversations"][0];
+        assert_eq!(c["summary"], "résumé");
+        assert_eq!(c["topics"][0], "a");
+        assert_eq!(c["decisions"][0], "d");
+    }
+
+    #[test]
+    fn app_memory_keeps_30_latest() {
+        let s = srv();
+        for n in 0..35 {
+            jw(&s, &format!("n{n}"), Sensitivity::Commune);
+        }
+        let v = js(s.app_memory());
+        assert_eq!(v["journal"].as_array().unwrap().len(), 30);
+        assert_eq!(v["journal"][0]["text"], "n34");
+    }
+
+    #[test]
+    fn sensitive_flag_exposed() {
+        let s = srv();
+        jw(&s, "secret banal", Sensitivity::Strategique);
+        jw(&s, "public banal", Sensitivity::Commune);
+        let v = js(s.app_memory());
+        assert_eq!(v["journal"][0]["sensitive"], false);
+        assert_eq!(v["journal"][1]["sensitive"], true);
+        let f = js(s.app_journal_search(q("secret")));
+        assert_eq!(f[0]["sensitive"], true);
+    }
+
+    #[test]
+    fn intention_accept_and_refuse() {
+        let s = srv();
+        let a = s.db().unwrap().intention_create("a", "", far()).unwrap();
+        let b = s.db().unwrap().intention_create("b", "", far()).unwrap();
+        let v = js(set_state(&s, a, "acceptee"));
+        assert!(v["message"].is_string() && v["outcome"] == "done", "{v}");
+        assert!(js(set_state(&s, b, "refusee"))["message"].is_string());
+        assert!(js(s.app_memory())["intentions"].as_array().unwrap().is_empty());
+        let c = s.db().unwrap().intention_create("c", "", far()).unwrap();
+        assert!(set_state(&s, c, "expiree").is_err());
+    }
+
+    #[test]
+    fn set_state_on_expired_is_clear() {
+        let s = srv();
+        let past = now_local() - Duration::hours(1);
+        let id = s.db().unwrap().intention_create("x", "", past).unwrap();
+        let v = js(set_state(&s, id, "acceptee"));
+        assert!(v["message"].as_str().unwrap().contains("échue"));
+        assert_eq!(v["outcome"], "stale");
+        // Déjà traitée, ou inconnue : même issue.
+        let id = s.db().unwrap().intention_create("y", "", far()).unwrap();
+        set_state(&s, id, "refusee").unwrap();
+        assert_eq!(js(set_state(&s, id, "acceptee"))["outcome"], "stale");
+        assert_eq!(js(set_state(&s, 9999, "acceptee"))["outcome"], "stale");
+    }
+
+    #[test]
+    fn intention_add_with_days() {
+        let s = srv();
+        let v = js(s.app_intention_add(Parameters(AppIntentionAddArgs { what: " payer ".into(), days: 3 })));
+        assert!(v["id"].is_i64() && v["message"].is_string());
+        let open = s.db().unwrap().intentions_open(now_local()).unwrap();
+        assert_eq!(open[0].what, "payer");
+        let d = open[0].expires_at - now_local();
+        assert!(d > Duration::days(3) - Duration::minutes(1) && d <= Duration::days(3));
+        let today = js(s.app_intention_add(Parameters(AppIntentionAddArgs { what: "t".into(), days: 0 })));
+        assert!(today["id"].is_i64());
+        for (what, days) in [("", 1), ("  ", 1), ("x", -1), ("x", 99999)] {
+            assert!(s.app_intention_add(Parameters(AppIntentionAddArgs { what: what.into(), days })).is_err());
+        }
+    }
+
+    #[test]
+    fn journal_add_from_app() {
+        let s = srv();
+        let v = js(s.app_journal_add(Parameters(AppTextArgs { text: "ma note".into() })));
+        let id = v["id"].as_i64().unwrap();
+        let e = &s.db().unwrap().journal_recent(1).unwrap()[0];
+        assert_eq!((e.id, e.provenance.as_str()), (id, "application"));
+        assert_eq!(e.sensitivity, APP_SENSITIVITY);
+        assert_eq!(entry_text(&e.content), "ma note");
+        assert!(s.app_journal_add(Parameters(AppTextArgs { text: "  ".into() })).is_err());
+    }
+
+    #[test]
+    fn search_escapes_fts_syntax() {
+        let s = srv();
+        jw(&s, "a AND b", Sensitivity::Commune);
+        for bad in ["\"AND* -x", "NEAR(", "a OR", "col:x", "\"", "(("] {
+            assert!(s.app_journal_search(q(bad)).is_ok(), "{bad}");
+            assert!(s.app_conversation_search(q(bad)).is_ok(), "{bad}");
+        }
+        assert_eq!(js(s.app_journal_search(q("a AND"))).as_array().unwrap().len(), 1);
+        assert!(js(s.app_journal_search(q("   "))).as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn fact_history_ordered() {
+        let s = srv();
+        for v in ["un", "deux", "trois"] {
+            s.app_fact_set(Parameters(AppFactSetArgs { key: "k".into(), value: v.into() })).unwrap();
+        }
+        let h = js(s.app_fact_history(Parameters(KeyArgs { key: "k".into() })));
+        let vals: Vec<_> = h.as_array().unwrap().iter().map(|x| x["value"].as_str().unwrap()).collect();
+        assert_eq!(vals, ["un", "deux", "trois"]);
+        assert!(h[0]["at"].is_string());
+        assert_eq!(js(s.app_memory())["facts"][0]["value"], "trois");
+    }
+
+    #[test]
+    fn fact_set_rejects_empty() {
+        let s = srv();
+        for (k, v) in [("k", ""), ("k", "   "), ("", "v")] {
+            assert!(s.app_fact_set(Parameters(AppFactSetArgs { key: k.into(), value: v.into() })).is_err());
+        }
+        assert!(js(s.app_memory())["facts"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn persona_hidden_from_app() {
+        let s = srv();
+        s.db().unwrap().fact_set(PERSONA_KEY, "calme", "test").unwrap();
+        assert!(js(s.app_memory())["facts"].as_array().unwrap().is_empty());
+        assert!(s.app_fact_set(Parameters(AppFactSetArgs { key: " persona ".into(), value: "ok".into() })).is_err());
+        assert!(s.app_fact_history(Parameters(KeyArgs { key: PERSONA_KEY.into() })).is_err());
+        assert_eq!(s.db().unwrap().fact_get(PERSONA_KEY).unwrap().unwrap().value, "calme");
+    }
+
+    #[test]
+    fn llm_fact_set_refuses_persona() {
+        let s = srv();
+        s.db().unwrap().fact_set(PERSONA_KEY, "calme", "hote").unwrap();
+        for k in ["persona", " persona ", "PERSONA"] {
+            let a = FactSetArgs { key: k.into(), value: "autre".into(), provenance: "x".into() };
+            assert!(s.fact_set(Parameters(a)).is_err(), "{k}");
+        }
+        assert_eq!(s.db().unwrap().fact_get(PERSONA_KEY).unwrap().unwrap().value, "calme");
+        let a = FactSetArgs { key: "gout".into(), value: "thé".into(), provenance: "x".into() };
+        assert!(s.fact_set(Parameters(a)).is_ok());
+    }
+
+    #[test]
+    fn app_erasure_tools() {
+        let s = srv();
+        let j = jw(&s, "à oublier", Sensitivity::Strategique);
+        assert!(js(s.app_journal_delete(Parameters(IdArgs { id: j })))["message"].is_string());
+        assert!(s.app_journal_delete(Parameters(IdArgs { id: j })).is_err());
+        assert!(js(s.app_memory())["journal"].as_array().unwrap().is_empty());
+
+        s.app_fact_set(Parameters(AppFactSetArgs { key: "k".into(), value: "a".into() })).unwrap();
+        s.app_fact_set(Parameters(AppFactSetArgs { key: "k".into(), value: "b".into() })).unwrap();
+        assert!(js(s.app_fact_forget(Parameters(KeyArgs { key: " k ".into() })))["message"].is_string());
+        assert!(js(s.app_fact_history(Parameters(KeyArgs { key: "k".into() }))).as_array().unwrap().is_empty());
+        assert!(s.app_fact_forget(Parameters(KeyArgs { key: "k".into() })).is_err());
+
+        s.db().unwrap().fact_set(PERSONA_KEY, "calme", "hote").unwrap();
+        assert!(s.app_fact_forget(Parameters(KeyArgs { key: "persona".into() })).is_err());
+        assert!(s.db().unwrap().fact_get(PERSONA_KEY).unwrap().is_some());
+
+        let c = NewConversation {
+            channel: "voix".into(),
+            device: "d".into(),
+            started_at: now_local(),
+            ended_at: now_local(),
+            transcript: "parlons du jardin".into(),
+            session_id: None,
+        };
+        let id = s.db().unwrap().conversation_ingest(&c).unwrap();
+        assert!(js(s.app_conversation_delete(Parameters(IdArgs { id })))["message"].is_string());
+        assert!(js(s.app_conversation_search(q("jardin"))).as_array().unwrap().is_empty());
+        assert!(s.app_conversation_delete(Parameters(IdArgs { id })).is_err());
+    }
+
+    #[test]
+    fn conversation_search_shape() {
+        let s = srv();
+        let c = NewConversation {
+            channel: "voix".into(),
+            device: "d".into(),
+            started_at: now_local(),
+            ended_at: now_local(),
+            transcript: "parlons du jardin".into(),
+            session_id: None,
+        };
+        let id = s.db().unwrap().conversation_ingest(&c).unwrap();
+        let v = js(s.app_conversation_search(q("jardin")));
+        assert_eq!(v[0]["id"], id);
+        assert!(v[0]["at"].is_string() && v[0]["topics"].is_array());
+        assert!(v[0].get("summary").is_none());
+        s.db().unwrap().conversation_set_summary(id, "bilan", &[], &[]).unwrap();
+        assert_eq!(js(s.app_conversation_search(q("jardin")))[0]["summary"], "bilan");
     }
 }

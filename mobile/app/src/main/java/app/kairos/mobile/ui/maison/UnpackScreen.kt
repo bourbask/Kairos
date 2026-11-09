@@ -3,7 +3,6 @@ package app.kairos.mobile.ui.maison
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.VectorConverter
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.Orientation
@@ -31,7 +30,6 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SelectableDates
 import androidx.compose.material3.Surface
@@ -66,6 +64,15 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
+import app.kairos.mobile.ui.kit.ActionBar
+import app.kairos.mobile.ui.kit.PanelHeader
+import app.kairos.mobile.ui.kit.StatusBanner
 import app.kairos.mobile.data.ApiError
 import app.kairos.mobile.data.Order
 import app.kairos.mobile.data.OrderLine
@@ -214,6 +221,7 @@ fun UnpackScreen(
 
     fun place(zone: String) = exclusive { throwCard(Offset(0f, area.height * 1.1f)) { state.place(zone) } }
     fun missing() = exclusive { throwCard(Offset(-width * 1.4f, 0f)) { state.missing() } }
+    fun stow() = exclusive { onSwipe(Swipe.Right) }
 
     Column(
         Modifier
@@ -221,21 +229,22 @@ fun UnpackScreen(
             .background(MaterialTheme.colorScheme.background)
             .systemBarsPadding(),
     ) {
-        TopBar("Ranger la commande", listOfNotNull(order.store.trim().takeIf { it.isNotEmpty() }, pickupLabel(order.pickup)).joinToString(" · "), state.done, state.total, onClose)
+        PanelHeader(
+            title = "Ranger la commande",
+            onClose = onClose,
+            subtitle = listOfNotNull(order.store.trim().takeIf { it.isNotEmpty() }, pickupLabel(order.pickup)).joinToString(" · ").ifEmpty { null },
+            done = state.done,
+            total = state.total,
+            onUndo = { if (!busy) state.undo() },
+            canUndo = state.canUndo,
+        )
         // Les autres commandes à ranger restent à portée, une à la fois.
         if (others > 0) {
             TextButton(onClick = onOther, modifier = Modifier.padding(horizontal = 8.dp)) {
                 Text("Commande suivante (${others} autre${if (others > 1) "s" else ""}) ›")
             }
         }
-        if (offline) {
-            Text(
-                "Hors ligne : rien ne part pour l'instant.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
-            )
-        }
+        if (offline) StatusBanner("Hors ligne : rien ne part pour l'instant.", Modifier.padding(horizontal = 16.dp))
         val screen = if (state.finished) null else state.step
         AnimatedContent(screen, Modifier.weight(1f), transitionSpec = { Motion.fadeThrough() }, label = "étape") { step ->
             val line = state.current
@@ -262,13 +271,14 @@ fun UnpackScreen(
                         contentAlignment = Alignment.Center,
                     ) {
                         val o = offset.value
+                        val minCard = with(LocalDensity.current) { (area.height * 0.5f).toDp() }
                         val lift = (maxOf(abs(o.x), abs(o.y)) / threshold).coerceIn(0f, 1f)
                         state.next?.let { next ->
                             LineCard(
                                 next,
                                 proposed = zoneLabel(next.location, zones),
                                 message = null,
-                                Modifier.graphicsLayer {
+                                Modifier.heightIn(min = minCard).clearAndSetSemantics {}.graphicsLayer {
                                     val s = 0.92f + 0.08f * lift
                                     scaleX = s
                                     scaleY = s
@@ -280,11 +290,18 @@ fun UnpackScreen(
                         // Déplacement cumulé ici : ne dépend pas de l'avance de l'animation.
                         var acc by remember { mutableStateOf(0f) }
                         var armed by remember { mutableStateOf<Swipe?>(null) }
+                        val proposedLabel = zoneLabel(state.proposed, zones)
+                        val actions = if (offline) emptyList() else listOfNotNull(
+                            proposedLabel?.let { CustomAccessibilityAction("Ranger dans $it") { stow(); true } },
+                            CustomAccessibilityAction("Rupture") { missing(); true },
+                        )
                         LineCard(
                             line,
-                            proposed = zoneLabel(state.proposed, zones),
+                            proposed = proposedLabel,
                             message = state.message,
                             Modifier
+                                .heightIn(min = minCard)
+                                .semantics(mergeDescendants = true) { customActions = actions }
                                 .graphicsLayer {
                                     translationX = o.x
                                     translationY = o.y
@@ -319,14 +336,15 @@ fun UnpackScreen(
                             },
                         )
                     }
-                    ZoneGrid(zones, proposed = state.proposed, enabled = !offline, onZone = ::place) { m ->
+                    // La zone proposée en gros bouton sous le pouce, les autres en tuiles dessous.
+                    zoneLabel(state.proposed, zones)?.let {
+                        ActionBar("Ranger dans $it", onPrimary = ::stow, primaryEnabled = !offline)
+                    }
+                    ZoneGrid(zones.filter { it.first != state.proposed }, proposed = null, enabled = !offline, onZone = ::place) { m ->
                         BigTile("Rupture", m, enabled = !offline, color = MaterialTheme.colorScheme.error, onClick = ::missing)
                     }
                 }
             }
-        }
-        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), horizontalArrangement = Arrangement.End) {
-            TextButton(onClick = { if (!busy) state.undo() }, enabled = state.canUndo) { Text("⟲ annuler") }
         }
     }
 
@@ -337,31 +355,6 @@ fun UnpackScreen(
             delay(UNDO_MS)
             onClose()
         }
-    }
-}
-
-/** En-tête des panneaux Maison : titre, sous-titre, progression, fermeture. */
-@Composable
-internal fun TopBar(title: String, subtitle: String, done: Int, total: Int, onClose: () -> Unit) {
-    Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            subtitle.trim().takeIf { it.isNotEmpty() }?.let {
-                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
-            }
-        }
-        if (total > 0) {
-            Text("$done / $total", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        TextButton(onClick = onClose) { Text("Fermer") }
-    }
-    if (total > 0) {
-        val progress by animateFloatAsState(done.toFloat() / total, Motion.enter(), label = "progression")
-        LinearProgressIndicator(
-            progress = { progress },
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-            drawStopIndicator = {},
-        )
     }
 }
 
@@ -382,11 +375,10 @@ private fun LineCard(
         border = BorderStroke(1.dp, colors.outlineVariant),
         modifier = modifier
             .fillMaxWidth()
-            .fillMaxHeight(0.92f)
             .shadow(10.dp, shape, ambientColor = Color.Black.copy(alpha = 0.1f), spotColor = Color.Black.copy(alpha = 0.12f)),
     ) {
-        Box(Modifier.fillMaxSize().padding(20.dp)) {
-            Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Box(Modifier.padding(20.dp)) {
+            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(
                     if (line.fresh) "À RANGER · FRAIS" else "À RANGER",
                     style = MaterialTheme.typography.labelMedium,
@@ -397,8 +389,10 @@ private fun LineCard(
                 line.label.ifBlank { formatQty(line.qty, line.unit) }.let {
                     Text(it, style = MaterialTheme.typography.titleMedium, color = colors.onSurfaceVariant)
                 }
-                Spacer(Modifier.weight(1f))
-                message?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = colors.error) }
+                Spacer(Modifier.height(10.dp))
+                message?.let {
+                    Text(it, style = MaterialTheme.typography.bodyMedium, color = colors.error, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+                }
                 Column(
                     Modifier
                         .fillMaxWidth()
@@ -421,7 +415,7 @@ private fun LineCard(
 
 /**
  * Les zones en grosses tuiles sous le pouce, rangées de trois au plus ;
- * [proposed] en surbrillance ; [extra] occupe la dernière case.
+ * [proposed] en surbrillance ; [extra], s'il est donné, occupe la dernière case.
  */
 @Composable
 internal fun ZoneGrid(
@@ -429,11 +423,11 @@ internal fun ZoneGrid(
     proposed: String?,
     enabled: Boolean,
     onZone: (String) -> Unit,
-    extra: @Composable (Modifier) -> Unit,
+    extra: (@Composable (Modifier) -> Unit)? = null,
 ) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         var start = 0
-        for (n in planRows(zones.size + 1)) {
+        for (n in planRows(zones.size + if (extra != null) 1 else 0)) {
             val row = (start until start + n).toList()
             start += n
             // Tuiles d'une rangée à la même hauteur : celle du libellé le plus long.
@@ -442,7 +436,7 @@ internal fun ZoneGrid(
                     val m = Modifier.weight(1f).fillMaxHeight()
                     zones.getOrNull(i)?.let { (id, label) ->
                         BigTile(label, m, enabled, highlighted = id == proposed) { onZone(id) }
-                    } ?: extra(m)
+                    } ?: extra?.invoke(m)
                 }
             }
         }
@@ -488,7 +482,8 @@ internal fun DateStep(
     today: LocalDate,
     enabled: Boolean,
     onDate: (LocalDate?) -> Unit,
-    onBack: () -> Unit,
+    /** Absent : le retour d'étape est porté par l'en-tête de l'appelant. */
+    onBack: (() -> Unit)?,
     onMissing: (() -> Unit)?,
 ) {
     // Dernière image où une date a été lue : les puces ne clignotent pas quand l'étiquette sort du champ.
@@ -497,7 +492,7 @@ internal fun DateStep(
     val haptic = LocalHapticFeedback.current
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = onBack) { Text("← ${zone ?: "?"}") }
+            if (onBack != null) TextButton(onClick = onBack) { Text("← ${zone ?: "?"}") }
             Text(name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         LabelCamera(

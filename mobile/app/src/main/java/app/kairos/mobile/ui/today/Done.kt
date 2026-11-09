@@ -4,8 +4,10 @@ import app.kairos.mobile.data.ApiError
 import app.kairos.mobile.data.Card
 import app.kairos.mobile.data.CardDone
 import app.kairos.mobile.data.Mark
+import app.kairos.mobile.data.ToolMessage
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -17,7 +19,8 @@ sealed interface DoneOutcome {
 
     /** Déjà en cours pour cette carte (double tap) : rien fait. */
     data object Ignored : DoneOutcome
-    data class Done(val message: String) : DoneOutcome
+    /** [outcome] : issue rendue par le module (voir [ToolMessage.outcome]), null s'il n'en donne pas. */
+    data class Done(val message: String, val outcome: String? = null) : DoneOutcome
     data class Refused(val message: String) : DoneOutcome
 }
 
@@ -38,6 +41,19 @@ class InFlight {
     @Synchronized fun release(key: String) {
         _keys.value -= key
     }
+}
+
+/**
+ * Gestes en cours d'un espace et éléments cachés en attendant leur issue, gardés hors de
+ * l'écran (dans [app.kairos.mobile.data.Repository]) : un écran rouvert pendant la fenêtre
+ * d'annulation garde l'élément caché et ignore un second geste.
+ */
+class Pending<K> {
+    val busy = InFlight()
+    private val _hidden = MutableStateFlow(emptySet<K>())
+    val hidden: StateFlow<Set<K>> = _hidden
+
+    fun hide(key: K, on: Boolean) = _hidden.update { if (on) it + key else it - key }
 }
 
 /** « Remettre dans le fil » : pas pour une carte dont le module a déjà agi, l'effet ne se défait pas d'ici. */
@@ -65,7 +81,7 @@ suspend fun completeCard(
     choice: JsonElement?,
     mark: suspend (Mark?) -> Unit,
     undoWindow: suspend () -> Boolean,
-    call: suspend (module: String, tool: String, args: JsonObject) -> String,
+    call: suspend (module: String, tool: String, args: JsonObject) -> ToolMessage,
     busy: InFlight = InFlight(),
 ): DoneOutcome {
     if (!busy.claim(card.key)) return DoneOutcome.Ignored
@@ -81,7 +97,7 @@ private suspend fun run(
     choice: JsonElement?,
     mark: suspend (Mark?) -> Unit,
     undoWindow: suspend () -> Boolean,
-    call: suspend (String, String, JsonObject) -> String,
+    call: suspend (String, String, JsonObject) -> ToolMessage,
 ): DoneOutcome {
     mark(Mark.Fait)
     if (undoWindow()) {
@@ -90,11 +106,21 @@ private suspend fun run(
     }
     val done = card.done ?: return DoneOutcome.Local
     return try {
-        DoneOutcome.Done(call(card.module, done.tool, doneArgs(done, choice)))
+        call(card.module, done.tool, doneArgs(done, choice)).let { DoneOutcome.Done(it.message, it.outcome) }
     } catch (e: ApiError) {
         mark(null)
         DoneOutcome.Refused(refusal(e))
     }
+}
+
+/**
+ * Message à annoncer après un geste abouti : seul l'imprévu (issue autre que `done`).
+ * Module sans issue (plus ancien que l'application) : [quiet] juge sur le libellé.
+ */
+fun DoneOutcome.Done.surprise(quiet: (String) -> Boolean): String? = when (outcome) {
+    null -> message.takeUnless(quiet)
+    "done" -> null
+    else -> message
 }
 
 /** Raison lisible d'une écriture qui n'a pas abouti ; [ApiError.Unauthorized] remonte. */

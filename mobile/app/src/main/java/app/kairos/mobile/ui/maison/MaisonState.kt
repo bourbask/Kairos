@@ -11,7 +11,9 @@ import app.kairos.mobile.data.Tone
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import java.text.Normalizer
 import java.time.LocalDate
+import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
 import kotlin.math.abs
@@ -33,6 +35,28 @@ fun planRows(n: Int, columns: Int = 3): List<Int> {
 /** « retrait 10/11 » pour une date AAAA-MM-JJ ; rien si absente ou illisible. */
 fun pickupLabel(pickup: String?): String? =
     runCatching { LocalDate.parse(pickup) }.getOrNull()?.let { "retrait ${it.format(DAY_MONTH)}" }
+
+/** Zone virtuelle « À finir » : les produits urgents de toutes les zones. Jamais une destination. */
+const val TO_FINISH = "@a-finir"
+
+/** « 4 produits · 2 à finir » pour une liste de lots. */
+fun countLine(lots: List<Lot>): String {
+    val n = lots.size
+    val urgent = lots.count { it.tone == Tone.Urgent }
+    return "$n produit${if (n > 1) "s" else ""}" + if (urgent > 0) " · $urgent à finir" else ""
+}
+
+/** Âge du dernier état lu : « de 14:05 » le jour même, « du 08/11 » sinon ; rien si inconnu. */
+fun stateAge(fetchedAt: String?, today: LocalDate): String? =
+    fetchedAt?.let { runCatching { LocalDateTime.parse(it) }.getOrNull() }?.let {
+        if (it.toLocalDate() == today) "de ${it.format(TIME)}" else "du ${it.format(DAY_MONTH)}"
+    }
+
+private val TIME = DateTimeFormatter.ofPattern("HH:mm")
+
+/** Sans casse ni accents : « creme » trouve « Crème ». */
+private fun fold(s: String): String =
+    Normalizer.normalize(s.trim().lowercase(), Normalizer.Form.NFD).replace(Regex("\\p{Mn}+"), "")
 
 data class ZoneView(val id: String, val label: String, val count: Int, val urgent: Int)
 
@@ -100,16 +124,47 @@ class MaisonState(snapshot: MaisonSnapshot = MaisonSnapshot()) {
             }
         }
 
+    /** Tuiles du plan : « À finir » en tête quand il y a des urgences, puis les zones. */
+    val planZones: List<ZoneView>
+        get() {
+            val z = zones
+            val urgent = z.sumOf { it.urgent }
+            return if (urgent > 0) listOf(ZoneView(TO_FINISH, "À finir", urgent, urgent)) + z else z
+        }
+
     /** Zone ouverte : choisie, sinon la première qui a des urgences, sinon la première non vide. */
     val zone: String
-        get() = zones.let { z ->
-            // Une zone choisie que le serveur ne donne plus ne reste pas ouverte.
-            (z.firstOrNull { it.id == selected } ?: z.firstOrNull { it.urgent > 0 } ?: z.firstOrNull { it.count > 0 } ?: z.first()).id
+        get() {
+            val z = zones
+            // Une zone choisie que le serveur ne donne plus (ou « À finir » vidée) ne reste pas ouverte.
+            return (planZones.firstOrNull { it.id == selected } ?: z.firstOrNull { it.urgent > 0 } ?: z.firstOrNull { it.count > 0 } ?: z.first()).id
         }
+
+    /** En-tête : jamais « 0 produit » tant que rien n'a été lu. */
+    val subtitle: String
+        get() = when {
+            !known -> if (offline) "Indisponible" else "Chargement…"
+            else -> "$total produit${if (total > 1) "s" else ""}" + zones.sumOf { it.urgent }.let { if (it > 0) " · $it à finir vite" else "" }
+        }
+
+    /** Compte d'une tuile : « — » tant que rien n'a été lu (ni « vide » ni « 0 »). */
+    fun countText(n: Int): String = when {
+        !known -> "—"
+        n == 0 -> "vide"
+        else -> "$n produit${if (n > 1) "s" else ""}"
+    }
+
+    fun labelOf(zone: String): String = planZones.firstOrNull { it.id == zone }?.label ?: zonesOf(base.inventory).firstOrNull { it.first == zone }?.second ?: zone
+
+    /** Produits dont le nom contient [query], toutes zones ; rien pour une recherche vide. */
+    fun find(query: String): List<Lot> {
+        val q = fold(query)
+        return if (q.isEmpty()) emptyList() else lots.filter { fold(it.name).contains(q) }
+    }
 
     val canUndo: Boolean get() = undoable?.let { it in pending && it !in sent } == true
 
-    fun lotsIn(zone: String): List<Lot> = lots.filter { it.location == zone }
+    fun lotsIn(zone: String): List<Lot> = if (zone == TO_FINISH) lots.filter { it.tone == Tone.Urgent } else lots.filter { it.location == zone }
 
     fun select(zone: String) {
         selected = zone
