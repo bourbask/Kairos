@@ -236,7 +236,7 @@ struct NuitHabitudesArgs {
     /// `AAAA-MM-JJ`.
     jour: String,
     /// Observations de la journée, par source.
-    sources: BTreeMap<String, Vec<Observation>>,
+    sources: BTreeMap<String, Value>,
 }
 #[derive(Deserialize, schemars::JsonSchema)]
 struct MaxArgs {
@@ -578,7 +578,21 @@ impl MemoryServer {
 
     #[tool(description = "Usage interne de la tête : compter les observations d'habitudes d'une journée.")]
     fn nuit_habitudes(&self, Parameters(a): Parameters<NuitHabitudesArgs>) -> Out {
-        json_out(self.db()?.appliquer_observations(parse_jour(&a.jour)?, &a.sources, now_local()).map_err(err)?)
+        let jour = parse_jour(&a.jour)?;
+        // Un élément mal formé est ignoré sans bloquer la source ; une source qui
+        // n'est pas un tableau est absente, et la journée attend.
+        let mut mal_formees = 0;
+        let mut sources = BTreeMap::new();
+        for (source, v) in a.sources {
+            let Value::Array(items) = v else { continue };
+            let total = items.len();
+            let obs: Vec<Observation> = items.into_iter().filter_map(|o| serde_json::from_value(o).ok()).collect();
+            mal_formees += (total - obs.len()) as u32;
+            sources.insert(source, obs);
+        }
+        let mut bilan = self.db()?.appliquer_observations(jour, &sources, now_local()).map_err(err)?;
+        bilan.ignorees += mal_formees;
+        json_out(bilan)
     }
 
     #[tool(description = "Usage interne de la tête : lots de souvenirs à condenser.")]
@@ -1096,7 +1110,7 @@ mod tests {
     #[test]
     fn night_habits_tool_shape() {
         let s = srv();
-        let sources = BTreeMap::from([("test".to_string(), vec![obs_soir("maison")])]);
+        let sources = BTreeMap::from([("test".to_string(), json!([obs_soir("maison")]))]);
         let v = js(s.nuit_habitudes(Parameters(NuitHabitudesArgs { jour: "2026-11-09".into(), sources })));
         for k in ["complet", "appliquees", "nees", "changements", "retours", "ignorees"] {
             assert!(v.get(k).is_some(), "{k} : {v}");
@@ -1105,6 +1119,25 @@ mod tests {
         assert!(s.nuit_habitudes(Parameters(NuitHabitudesArgs { jour: "hier".into(), sources: BTreeMap::new() })).is_err());
         let e = s.app_habitude_forget(Parameters(IdArgs { id: 999 })).unwrap_err();
         assert_eq!(e, "habitude inconnue");
+    }
+
+    #[test]
+    fn malformed_observation_is_ignored_not_blocking() {
+        let s = srv();
+        let jour = |j: &str, sources: Value| {
+            let sources = serde_json::from_value(sources).unwrap();
+            js(s.nuit_habitudes(Parameters(NuitHabitudesArgs { jour: j.into(), sources })))
+        };
+        let v = jour("2026-11-08", json!({"a": [obs_soir("maison")], "b": [obs_soir("maison")]}));
+        assert_eq!(v["complet"], true);
+        // Un élément mal formé parmi des valides : le reste s'applique.
+        let mut midi = obs_soir("bureau");
+        midi.contexte = "midi.ouvre".into();
+        let v = jour("2026-11-09", json!({"a": [obs_soir("maison"), {"quoi": 3}, "x", midi], "b": [obs_soir("maison")]}));
+        assert_eq!((v["appliquees"].as_u64(), v["ignorees"].as_u64(), v["complet"].as_bool()), (Some(3), Some(2), Some(true)));
+        // Une source qui n'est pas un tableau est absente : la journée attend.
+        let v = jour("2026-11-10", json!({"a": {"quoi": "repas.lieu"}, "b": [obs_soir("maison")]}));
+        assert_eq!((v["appliquees"].as_u64(), v["complet"].as_bool()), (Some(1), Some(false)));
     }
 
     #[test]
