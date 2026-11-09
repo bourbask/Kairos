@@ -1,0 +1,18 @@
+# Config serveur — copier en `config` (hôte uniquement, gitignoré).
+#   cp config.example config
+#   htpasswd -B -c users <utilisateur>     # crée le fichier d'auth (bcrypt)
+# Brancher ensuite un client sur le serveur pour alimenter l'agenda.
+
+[server]
+hosts = 0.0.0.0:5232
+
+[auth]
+type = htpasswd
+htpasswd_filename = /config/users
+htpasswd_encryption = bcrypt
+
+[rights]
+type = owner_only
+
+[storage]
+filesystem_folder = /data/collections

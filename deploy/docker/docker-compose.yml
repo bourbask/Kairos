@@ -1,0 +1,243 @@
+name: kairos
+
+# Journaux des conteneurs bornés (taille et nombre de fichiers).
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "3"
+
+# Config commune aux conteneurs Kairos (scheduler + runs manuels).
+x-kairos-common: &kairos-common
+  image: kairos:local
+  user: "1001:1001"             # conteneurs non-root : fichiers créés = propriété de l'utilisateur hôte
+  environment: &kairos-env
+    OLLAMA_URL: http://ollama:11434
+    OLLAMA_MODEL: phi3:mini
+    DATABASE_PATH: /app/data/kairos.db
+    BRIEFINGS_DIR: /app/briefings
+    TZ: Europe/Paris          # fuseau de planification
+  env_file:
+    - path: kairos.env          # secrets optionnels (gitignoré) — cf. ../kairos.env.example
+      required: false
+  volumes:
+    - ../../config:/app/config:ro      # profile.toml (gitignoré, présent sur l'hôte)
+    - ../../data:/app/data             # SQLite (bind-mount)
+    - ../../briefings:/app/briefings   # briefings lisibles/gérables sur l'hôte
+  depends_on:
+    ollama:
+      condition: service_healthy
+
+services:
+  ollama:
+    logging: *logging
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    volumes:
+      - ollama-models:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    # Pas de `ports:` → Ollama joignable uniquement sur le réseau interne du compose.
+
+  radicale:
+    logging: *logging
+    image: tomsquest/docker-radicale:latest
+    restart: unless-stopped
+    volumes:
+      - ./radicale/config:/config:ro   # config + auth — hôte uniquement (gitignoré ; cf. config.example)
+      - radicale-data:/data
+    ports:
+      # Adresse de bind configurable ; défaut = boucle locale.
+      - "${RADICALE_BIND_ADDR:-127.0.0.1}:5232:5232"
+
+  # Planificateur interne (supercronic) : scrape 04:30, calendar sync 04:45, briefing 05:00. Toujours actif.
+  scheduler:
+    logging: *logging
+    <<: *kairos-common
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    restart: unless-stopped
+    init: true                    # tini en PID 1 → supercronic n'est pas PID 1 (évite son reaper qui plante)
+    entrypoint: ["supercronic"]
+    command: ["/app/supercronic.crontab"]
+
+  # Tentacules MCP (HTTP /mcp) : publiés sur le réseau privé uniquement, jeton obligatoire (kairos.env).
+  memoire:
+    logging: *logging
+    image: kairos:local
+    restart: unless-stopped
+    user: "1001:1001"
+    mem_limit: 64m
+    entrypoint: ["/app/kairos-memoire"]
+    environment:
+      MEMOIRE_BIND: 0.0.0.0:8091
+      MEMOIRE_DB_PATH: /app/memoire/memoire.db
+    env_file:
+      - path: kairos.env
+        required: false
+    volumes:
+      - memoire-data:/app/memoire
+    ports:
+      - "${TENTACLES_BIND_ADDR:-127.0.0.1}:${MEMOIRE_BIND_PORT:-8091}:8091"
+
+  agenda:
+    logging: *logging
+    image: kairos:local
+    restart: unless-stopped
+    user: "1001:1001"
+    mem_limit: 64m
+    entrypoint: ["/app/kairos-agenda"]
+    environment:
+      AGENDA_BIND: 0.0.0.0:8092
+      DATABASE_PATH: /app/data/kairos.db
+    env_file:   # CALENDAR_URL, CALENDAR_WORK_URL, CALENDAR_USERNAME, CALENDAR_PASSWORD (facultatives)
+      - path: kairos.env
+        required: false
+    volumes:
+      - ../../data:/app/data   # lecture-écriture : synchronisation à la demande, ajout d'événement, tâche faite
+    ports:
+      - "${TENTACLES_BIND_ADDR:-127.0.0.1}:${AGENDA_BIND_PORT:-8092}:8092"
+
+  finances:
+    logging: *logging
+    image: kairos:local
+    restart: unless-stopped
+    user: "1001:1001"
+    mem_limit: 64m
+    entrypoint: ["/app/kairos-finances"]
+    environment:
+      FINANCES_BIND: 0.0.0.0:8094
+    env_file:
+      - path: kairos.env
+        required: false
+    ports:
+      - "${TENTACLES_BIND_ADDR:-127.0.0.1}:${FINANCES_BIND_PORT:-8094}:8094"
+
+  alimentation:
+    logging: *logging
+    image: kairos:local
+    restart: unless-stopped
+    user: "1001:1001"
+    mem_limit: 64m
+    entrypoint: ["/app/kairos-alimentation"]
+    environment:
+      ALIMENTATION_BIND: 0.0.0.0:8098
+      ALIMENTATION_DB: /app/alimentation/alimentation.db
+    env_file:
+      - path: kairos.env
+        required: false
+    volumes:
+      - alimentation-data:/app/alimentation
+    ports:
+      - "${TENTACLES_BIND_ADDR:-127.0.0.1}:${ALIMENTATION_BIND_PORT:-8098}:8098"
+
+  marches:
+    logging: *logging
+    image: kairos:local
+    restart: unless-stopped
+    user: "1001:1001"
+    mem_limit: 64m
+    entrypoint: ["/app/kairos-marches"]
+    environment:
+      MARCHES_BIND: 0.0.0.0:8099
+      MARCHES_DB: /app/marches/marches.db
+    env_file:
+      - path: kairos.env
+        required: false
+    volumes:
+      - marches-data:/app/marches
+    ports:
+      - "${TENTACLES_BIND_ADDR:-127.0.0.1}:${MARCHES_BIND_PORT:-8099}:8099"
+
+  # Tête : boucle principale (conversation, briefs, suggestions) ; joint les tentacules par nom de service.
+  tete:
+    logging: *logging
+    <<: *kairos-common
+    restart: unless-stopped
+    mem_limit: 64m
+    entrypoint: ["/app/tete"]
+    command: []
+    depends_on: {}              # la tête se dégrade sans moteur : pas d'attente d'Ollama
+    # Environnement commun, plus l'APK servi à l'application.
+    environment:
+      <<: *kairos-env
+      TETE_APP_APK_DIR: /app/apk
+    volumes:
+      - ../../config:/app/config:ro
+      - ../../data:/app/data
+      - ../../briefings:/app/briefings
+      - ../../apk:/app/apk:ro            # déposé par deploy.sh (kairos-vX.Y.Z.apk)
+    ports:
+      # Publié pour la passerelle seulement.
+      - "${TENTACLES_BIND_ADDR:-127.0.0.1}:${TETE_BIND_PORT:-8093}:8090"
+      # API de l'application (active si TETE_APP_BIND=0.0.0.0:8091) : réseau privé uniquement.
+      - "${TETE_APP_BIND_ADDR:-127.0.0.1}:${TETE_APP_PORT:-8100}:8091"
+
+  # Exécutions manuelles : `docker compose run --rm kairos <scrape|briefing|status|prompt ...>`
+  kairos:
+    logging: *logging
+    <<: *kairos-common
+    profiles: ["tools"]
+
+  # Profil supplémentaire isolé : même image, sa propre config/DB/notif via kairos-secondary.env.
+  # Répète l'environment de x-kairos-common (le `<<:` ne fusionne pas les sous-clés d'un
+  # bloc `environment:` redéfini localement — cf. note ci-dessus) avec 3 valeurs overridées.
+  # Exécutions manuelles :
+  kairos-secondary:
+    logging: *logging
+    <<: *kairos-common
+    profiles: ["tools"]
+    environment:
+      OLLAMA_URL: http://ollama:11434
+      OLLAMA_MODEL: phi3:mini
+      TZ: Europe/Paris
+      PROFILE_PATH: /app/config/profile-secondary.toml
+      DATABASE_PATH: /app/data/secondary.db
+      BRIEFINGS_DIR: /app/briefings-secondary
+    env_file:
+      - path: kairos-secondary.env   # secrets/config du profil supplémentaire (gitignoré)
+        required: false
+    volumes:
+      - ../../config:/app/config:ro
+      - ../../data:/app/data
+      - ../../briefings:/app/briefings
+      - ../../briefings-secondary:/app/briefings-secondary
+
+  # Planificateur du profil supplémentaire — même image/crontab que `scheduler`, environnement propre.
+  scheduler-secondary:
+    logging: *logging
+    <<: *kairos-common
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    restart: unless-stopped
+    init: true
+    entrypoint: ["supercronic"]
+    command: ["/app/supercronic.crontab"]
+    environment:
+      OLLAMA_URL: http://ollama:11434
+      OLLAMA_MODEL: phi3:mini
+      TZ: Europe/Paris
+      PROFILE_PATH: /app/config/profile-secondary.toml
+      DATABASE_PATH: /app/data/secondary.db
+      BRIEFINGS_DIR: /app/briefings-secondary
+    env_file:
+      - path: kairos-secondary.env
+        required: false
+    volumes:
+      - ../../config:/app/config:ro
+      - ../../data:/app/data
+      - ../../briefings:/app/briefings
+      - ../../briefings-secondary:/app/briefings-secondary
+
+volumes:
+  ollama-models:
+  radicale-data:
+  memoire-data:
+  alimentation-data:
+  marches-data:

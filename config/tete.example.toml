@@ -1,0 +1,52 @@
+# Tête — configuration
+# Copier ce fichier en tete.toml et remplir les valeurs
+# Ne jamais commiter tete.toml (gitignored)
+#
+# Les secrets ne sont jamais ici : chaque jeton est lu dans une variable
+# d'environnement. La passerelle se règle par TETE_BIND (optionnel),
+# TETE_INBOUND_TOKEN, TETE_OUTBOUND_URL et TETE_OUTBOUND_TOKEN ; l'API de
+# l'application par TETE_APP_BIND et TETE_APP_PUBLIC_URL (optionnelles).
+
+# Tentacule portant les commandes de sélection (défaut : "marches")
+# commands_tentacle = "marches"
+
+# Cadence des sorties spontanées
+interruptions_per_day = 2        # plafond d'interruptions hors briefs
+suggestion_every_minutes = 120   # délai minimal entre deux suggestions
+session_idle_minutes = 30        # inactivité qui clôt une conversation
+# chat_retention_days = 90       # conservation du journal de conversation (défaut 0 = sans limite)
+
+[schedule]              # horaires d'exemple, à adapter
+morning = "07:30"      # brief du matin
+evening = "21:00"      # brief du soir
+summaries = "03:00"    # résumés des conversations
+quiet_start = "22:30"  # début de la nuit : aucune sortie spontanée, mise en file
+quiet_end = "07:00"    # fin de la nuit
+
+[work]
+start = "09:00"
+end = "18:00"
+# Mode par jour : "on_site", "remote" ou "off". Jour absent = "off".
+[work.days]
+# monday = "remote"
+
+# Une section par tentacule ; `name` préfixe ses outils.
+# [[tentacles]]
+# name = ""
+# url = ""         # point d'accès MCP
+# token_env = ""   # nom de la variable d'environnement portant le jeton
+# keywords = []    # mots du message qui désignent ce tentacule (moteur à max_tools)
+#
+# Exemple (tentacule finances ; port 8094 par défaut) :
+# [[tentacles]]
+# name = "finances"
+# url = "http://finances:8094/mcp"
+# token_env = "FINANCES_TOKEN"
+#
+# Tentacule privé : `private = true` masque ses outils au moteur de conversation
+# et joint sa section de brief telle quelle, sans reformulation.
+# [[tentacles]]
+# name = "marches"
+# url = "http://marches:8099/mcp"
+# token_env = "MARCHES_TOKEN"
+# private = true

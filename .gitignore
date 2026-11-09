@@ -1,0 +1,30 @@
+/target
+/.worktrees
+/.superpowers
+
+# Secrets
+.env
+
+# Config et fichiers locaux (voir les *.example)
+config/profile*.toml
+config/modules*.toml
+config/llm*.toml
+OBJECTIVES.md
+data/kairos.db
+data/*.db
+briefings/
+*.log
+logs/
+private/
+
+# Config et secrets locaux du déploiement (garder les *.example)
+deploy/docker/kairos.env
+deploy/docker/.env
+deploy/docker/radicale/config/config
+deploy/docker/radicale/config/users
+CLAUDE.local.md
+deploy/docker/docker-compose.override.yml
+
+# Config et base locales de la tête
+config/tete.toml
+data/tete.db*

@@ -1,0 +1,36 @@
+name: Auto-tag releases
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+jobs:
+  tag:
+    if: github.event.pull_request.merged == true && startsWith(github.event.pull_request.title, 'Release ')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Extract version from PR title
+        id: extract
+        run: |
+          TITLE="${{ github.event.pull_request.title }}"
+          VERSION=$(echo "$TITLE" | sed -n 's/^Release \([0-9]*\.[0-9]*\.[0-9]*\).*/\1/p')
+          if [ -z "$VERSION" ]; then
+            echo "::error::Could not extract version from PR title: $TITLE"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      - name: Create and push tag
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git tag -a "v${{ steps.extract.outputs.version }}" -m "Release ${{ steps.extract.outputs.version }}"
+          git push origin "v${{ steps.extract.outputs.version }}"
+      - name: Summary
+        run: |
+          echo "Tag v${{ steps.extract.outputs.version }} created and pushed."
