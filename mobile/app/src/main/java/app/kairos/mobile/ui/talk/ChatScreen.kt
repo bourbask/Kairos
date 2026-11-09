@@ -46,6 +46,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.IconButton as M3IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -75,7 +76,11 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.material3.Icon
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.liveRegion
+import app.kairos.mobile.ui.kit.KairosIcons
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
@@ -90,7 +95,7 @@ import kotlin.math.max
 
 /**
  * Conversation écrite : même fil que le salon. Glisser l'en-tête vers le bas
- * ou le bouton « Fermer » referme ; le micro de la saisie lance la dictée
+ * ou le bouton « Fermer » (à gauche) referme ; un envoi en échec reste dans le fil ; le micro de la saisie lance la dictée
  * mains libres (équivalent visible de l'appui long sur Kairos).
  */
 @Composable
@@ -145,9 +150,14 @@ private fun Header(
                     pull = 0f
                 },
             )
-            .padding(start = 16.dp, end = 8.dp, top = 10.dp, bottom = 10.dp),
+            .padding(start = 4.dp, end = 16.dp, top = 10.dp, bottom = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        // Fermeture à gauche, comme tout panneau ; le geste ↓ reste un raccourci.
+        M3IconButton(onClick = onClose) {
+            Icon(KairosIcons.ChevronDown, contentDescription = "Fermer la conversation", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Spacer(Modifier.width(4.dp))
         Badge(mascot, 40.dp)
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
@@ -157,9 +167,13 @@ private fun Header(
                 conversation.busy || conversation.awaiting -> "réfléchit…"
                 else -> "à l'écoute"
             }
-            Text(status, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                status,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+            )
         }
-        IconButton(label = "Fermer", onClick = onClose) { ChevronDownIcon(MaterialTheme.colorScheme.onSurfaceVariant) }
     }
 }
 
@@ -185,6 +199,10 @@ private sealed interface ThreadRow {
         override val key: Any get() = "attente-$index-$text"
     }
 
+    data class Failed(val failed: app.kairos.mobile.ui.talk.Failed, val index: Int) : ThreadRow {
+        override val key: Any get() = "echec-$index-${failed.text}"
+    }
+
     data object Typing : ThreadRow {
         override val key: Any get() = "kairos-ecrit"
     }
@@ -196,6 +214,7 @@ private fun Thread(conversation: Conversation, modifier: Modifier) {
     val rows = buildList {
         if (conversation.awaiting) add(ThreadRow.Typing)
         conversation.pending.withIndex().reversed().forEach { add(ThreadRow.Pending(it.value, it.index)) }
+        conversation.failed.withIndex().reversed().forEach { add(ThreadRow.Failed(it.value, it.index)) }
         conversation.entries.asReversed().forEach { add(ThreadRow.Entry(it)) }
     }
     if (rows.isEmpty()) {
@@ -223,6 +242,7 @@ private fun Thread(conversation: Conversation, modifier: Modifier) {
                         caption = caption(row.entry),
                     )
                     is ThreadRow.Pending -> Bubble(row.text, mine = true, caption = "envoi…", Modifier.alpha(0.6f))
+                    is ThreadRow.Failed -> FailedBubble(row.failed, { conversation.retry(row.failed) }, { conversation.edit(row.failed) })
                     ThreadRow.Typing -> TypingBubble()
                 }
             }
@@ -262,6 +282,33 @@ private fun Bubble(text: String, mine: Boolean, caption: String, modifier: Modif
                 color = colors.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
             )
+        }
+    }
+}
+
+/** Message non parti : liseré brique, raison, « Réessayer » et « Modifier » (48 dp). */
+@Composable
+private fun FailedBubble(f: Failed, onRetry: () -> Unit, onEdit: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.End) {
+        Surface(
+            shape = RoundedCornerShape(18.dp, 18.dp, 4.dp, 18.dp),
+            color = colors.surface,
+            contentColor = colors.onSurface,
+            border = BorderStroke(1.5.dp, colors.error),
+            modifier = Modifier.widthIn(max = 300.dp),
+        ) {
+            Text(f.text, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(horizontal = 13.dp, vertical = 9.dp))
+        }
+        Text(
+            f.note,
+            style = MaterialTheme.typography.labelMedium,
+            color = colors.error,
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp).semantics { liveRegion = LiveRegionMode.Polite },
+        )
+        Row {
+            TextButton(onClick = onEdit, modifier = Modifier.semantics { contentDescription = "Modifier le message non envoyé" }) { Text("Modifier") }
+            TextButton(onClick = onRetry, modifier = Modifier.semantics { contentDescription = "Réessayer l'envoi" }) { Text("Réessayer") }
         }
     }
 }
@@ -467,7 +514,9 @@ private fun HoldContent(talk: TalkController, level: Float) {
         style = MaterialTheme.typography.bodyLarge,
         color = if (text.isEmpty() || cancelled) colors.onSurfaceVariant else colors.onSurface,
         textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-        modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Transcription : $text" },
+        // Jamais lue pendant l'écoute (la voix du lecteur d'écran partirait dans le micro) ;
+        // seule l'annulation, micro coupé, est annoncée.
+        modifier = Modifier.fillMaxWidth().semantics { if (cancelled) liveRegion = LiveRegionMode.Polite },
     )
     Spacer(Modifier.height(4.dp))
     Text(
@@ -604,13 +653,6 @@ private fun SendIcon(color: Color) = Canvas(Modifier.size(22.dp)) {
         close()
     }
     drawPath(p, color)
-}
-
-@Composable
-private fun ChevronDownIcon(color: Color) = Canvas(Modifier.size(22.dp)) {
-    val s = 2.2.dp.toPx()
-    drawLine(color, Offset(size.width * 0.2f, size.height * 0.38f), Offset(size.width * 0.5f, size.height * 0.66f), s, StrokeCap.Round)
-    drawLine(color, Offset(size.width * 0.5f, size.height * 0.66f), Offset(size.width * 0.8f, size.height * 0.38f), s, StrokeCap.Round)
 }
 
 @Composable

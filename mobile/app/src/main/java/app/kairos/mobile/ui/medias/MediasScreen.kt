@@ -1,9 +1,7 @@
 package app.kairos.mobile.ui.medias
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -21,13 +19,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Snackbar
-import androidx.compose.material3.SnackbarDuration
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -51,44 +45,43 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
-import app.kairos.mobile.ui.kit.UndoWindows
 import app.kairos.mobile.data.ApiError
 import app.kairos.mobile.data.DownloadItem
-import app.kairos.mobile.data.Downloads
 import app.kairos.mobile.data.MediaRequest
 import app.kairos.mobile.data.MediaResult
 import app.kairos.mobile.data.Medias
 import app.kairos.mobile.data.Release
 import app.kairos.mobile.data.Repository
+import app.kairos.mobile.ui.finances.issueBanner
 import app.kairos.mobile.ui.finances.syncLabel
+import app.kairos.mobile.ui.kit.KairosIcons
+import app.kairos.mobile.ui.kit.LocalNotifier
+import app.kairos.mobile.ui.kit.PrimaryAction
 import app.kairos.mobile.ui.kit.SectionHeader
+import app.kairos.mobile.ui.kit.SpaceScaffold
+import app.kairos.mobile.ui.kit.StatePill
 import app.kairos.mobile.ui.kit.StatusBanner
+import app.kairos.mobile.ui.kit.SwipeRow
 import app.kairos.mobile.ui.kit.Tone
-import app.kairos.mobile.ui.maison.ChevronBackIcon
-import app.kairos.mobile.ui.talk.IconButton
 import app.kairos.mobile.ui.today.DoneOutcome
 import app.kairos.mobile.ui.today.InFlight
-import app.kairos.mobile.ui.today.Pill
-import app.kairos.mobile.ui.today.SwipeRow
 import app.kairos.mobile.ui.today.completeCard
 import app.kairos.mobile.ui.today.refusal
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import java.time.LocalDate
 
-private const val UNDO_MS = 4_000L
 private val RowCorner = 16.dp
 private val RESULTS = ListSerializer(MediaResult.serializer())
 
 /**
- * Espace Médias : à regarder (glisser → « vu », bouton « Vu », annulation 4 s ; sans
- * sous-titres FR à part), téléchargements (barres, bouton pause / reprise), sorties des
- * 7 prochains jours, demandes (recherche puis « Demander »), bandeau des problèmes.
+ * Espace Médias : à regarder (glisser → « vu », bouton « Vu », fenêtre d'annulation ; sans
+ * sous-titres FR à part), téléchargements (barres, pause / reprise), sorties des 7 prochains
+ * jours, demandes suivies. « Demander » (action principale) ouvre la recherche en panneau.
  * Une section tombée donne sa raison sans masquer les autres ; dernier état gardé hors ligne.
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -103,11 +96,12 @@ fun MediasScreen(
     val snapshot by repository.medias.collectAsState()
     val scope = rememberCoroutineScope()
     val unauthorized by rememberUpdatedState(onUnauthorized)
-    val snackbar = remember { SnackbarHostState() }
-    val undo = remember { UndoWindows(snackbar) }
+    val notifier = LocalNotifier.current
     var refreshing by remember { mutableStateOf(false) }
     var hidden by remember { mutableStateOf(emptySet<String>()) }
+    var asking by rememberSaveable { mutableStateOf(false) }
     val busy = remember { InFlight() }
+    val scroll = rememberScrollState()
 
     fun refresh(force: Boolean = true) {
         if (refreshing) return
@@ -128,20 +122,19 @@ fun MediasScreen(
     }
 
     fun notice(text: String) {
-        scope.launch { snackbar.showSnackbar(text) }
+        scope.launch { notifier.show(text) }
     }
 
-    /** Geste ponctuel (pause, demande) ; rend vrai si le module l'a pris. */
-    suspend fun write(tool: String, args: JsonObject): Boolean = try {
-        notice(repository.tool(MEDIAS, tool, args))
-        repository.refreshMedias()
-        true
-    } catch (_: ApiError.Unauthorized) {
-        unauthorized()
-        false
-    } catch (e: ApiError) {
-        notice(refusal(e))
-        false
+    /** Geste ponctuel (pause, reprise) ; le message du module s'affiche. */
+    suspend fun write(tool: String, args: JsonObject) {
+        try {
+            notice(repository.tool(MEDIAS, tool, args))
+            repository.refreshMedias()
+        } catch (_: ApiError.Unauthorized) {
+            unauthorized()
+        } catch (e: ApiError) {
+            notice(refusal(e))
+        }
     }
 
     // Depuis appScope : quitter l'espace pendant la fenêtre n'abandonne pas le geste.
@@ -152,7 +145,7 @@ fun MediasScreen(
                     watchedCard(w),
                     null,
                     mark = { m -> hidden = if (m == null) hidden - w.key else hidden + w.key },
-                    undoWindow = { undo.open("Vu · ${w.title}") },
+                    undoWindow = { notifier.undo("Vu · ${w.title}") },
                     call = repository::tool,
                     busy = busy,
                 )
@@ -169,77 +162,67 @@ fun MediasScreen(
                         return@launch unauthorized()
                     }
                     if (repository.medias.value.issue == null) hidden = hidden - w.key
-                    watchedNotice(out.message)?.let { snackbar.showSnackbar(it) }
+                    watchedNotice(out.message)?.let { notifier.show(it) }
                 }
-                is DoneOutcome.Refused -> snackbar.showSnackbar(out.message)
+                is DoneOutcome.Refused -> notifier.show(out.message)
                 else -> Unit
             }
         }
     }
 
-    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-        Column(Modifier.fillMaxSize().padding(top = padding.calculateTopPadding())) {
-            Row(
-                Modifier.fillMaxWidth().padding(start = 4.dp, end = 12.dp, top = 8.dp, bottom = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                IconButton(label = "Retour aux espaces", onClick = onClose) { ChevronBackIcon(MaterialTheme.colorScheme.onSurfaceVariant) }
-                Spacer(Modifier.width(4.dp))
-                Text(
-                    "Médias",
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onBackground,
-                    modifier = Modifier.weight(1f),
-                )
+    val m = snapshot.medias
+    SpaceScaffold(
+        "Médias",
+        onClose,
+        padding,
+        scrolled = scroll.canScrollBackward,
+        banner = snapshot.issue?.let { issue ->
+            {
+                val (title, detail) = issueBanner("Médias", issue, snapshot.fetchedAt?.let { "Dernier état : ${syncLabel(it)}" })
+                StatusBanner(title, detail = detail, actionLabel = "Réessayer", onAction = { refresh() })
             }
-            PullToRefreshBox(isRefreshing = refreshing, onRefresh = { refresh() }, modifier = Modifier.fillMaxWidth().weight(1f)) {
-                Column(
-                    Modifier
-                        .fillMaxSize()
-                        .verticalScroll(rememberScrollState())
-                        .padding(horizontal = 20.dp)
-                        .padding(top = 8.dp, bottom = padding.calculateBottomPadding() + 24.dp),
-                ) {
-                    snapshot.issue?.let { issue ->
-                        StatusBanner(issue, detail = snapshot.fetchedAt?.let { "Dernier état : ${syncLabel(it)}" })
-                        Spacer(Modifier.height(8.dp))
-                    }
-                    val m = snapshot.medias
-                    if (m == null) {
-                        Caption(
-                            if (snapshot.issue != null) "${snapshot.issue}, et rien en mémoire pour l'instant." else "Chargement…",
-                            Modifier.padding(vertical = 24.dp),
-                        )
-                    } else {
-                        problems(m).takeIf { it.isNotEmpty() }?.let { StatusBanner(it.joinToString(" · "), tone = Tone.Urgent) }
-                        ToWatch(m, toWatch(m, hidden), ::watched)
-                        DownloadsSection(m) { d -> write("app_downloads_control", pauseArgs(d)) }
-                        Upcoming(m, LocalDate.now())
-                        Requests(
-                            m,
-                            search = { q -> repository.lookup(MEDIAS, "app_media_search", RESULTS, buildJsonObject { put("query", q) }) },
-                            onRequest = { r -> write("app_media_request", requestArgs(r)) },
-                            onNote = ::notice,
-                            onUnauthorized = unauthorized,
-                        )
-                    }
+        },
+        primaryAction = { PrimaryAction("Demander", { asking = true }, icon = KairosIcons.Search) },
+    ) { inner ->
+        PullToRefreshBox(isRefreshing = refreshing, onRefresh = { refresh() }, modifier = Modifier.fillMaxSize()) {
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    .verticalScroll(scroll)
+                    .padding(horizontal = 20.dp)
+                    .padding(inner)
+                    .padding(top = 8.dp),
+            ) {
+                if (m == null) {
+                    // L'indisponibilité est dite par le bandeau : ici, seulement l'absence de données connues.
+                    Caption(if (snapshot.issue != null) "Rien en mémoire pour l'instant." else "Chargement…", Modifier.padding(vertical = 24.dp))
+                } else {
+                    problems(m).takeIf { it.isNotEmpty() }?.let { StatusBanner(it.joinToString(" · "), tone = Tone.Urgent) }
+                    ToWatch(m, toWatch(m, hidden), ::watched)
+                    DownloadsSection(m) { action -> write("app_downloads_control", pauseArgs(action)) }
+                    Upcoming(m, LocalDate.now())
+                    Requests(m)
                 }
             }
         }
-        SnackbarHost(
-            snackbar,
-            Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = padding.calculateBottomPadding())
-                .padding(horizontal = 16.dp),
-        ) { data ->
-            Snackbar(
-                data,
-                shape = MaterialTheme.shapes.medium,
-                containerColor = MaterialTheme.colorScheme.onBackground,
-                contentColor = MaterialTheme.colorScheme.background,
-                actionColor = MaterialTheme.colorScheme.primaryContainer,
+    }
+    if (asking) {
+        ModalBottomSheet(onDismissRequest = { asking = false }) {
+            AskPanel(
+                search = { q -> repository.lookup(MEDIAS, "app_media_search", RESULTS, buildJsonObject { put("query", q) }) },
+                request = { r -> repository.tool(MEDIAS, "app_media_request", requestArgs(r)) },
+                onRequested = {
+                    scope.launch {
+                        // Relecture de confort : un échec se voit au prochain rafraîchissement, une session expirée tout de suite.
+                        try {
+                            repository.refreshMedias()
+                        } catch (_: ApiError.Unauthorized) {
+                            unauthorized()
+                        } catch (_: ApiError) {
+                        }
+                    }
+                },
+                onUnauthorized = unauthorized,
             )
         }
     }
@@ -285,7 +268,7 @@ private fun WatchRow(w: Watch, onWatched: (Watch) -> Unit) {
             modifier = Modifier.fillMaxWidth(),
         ) {
             Row(Modifier.padding(start = 14.dp, end = 4.dp, top = 10.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f).semantics(mergeDescendants = true) {}) {
+                Column(Modifier.weight(1f)) {
                     Text(w.title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     Text(w.note, style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
                 }
@@ -296,20 +279,27 @@ private fun WatchRow(w: Watch, onWatched: (Watch) -> Unit) {
 }
 
 @Composable
-private fun DownloadsSection(m: Medias, onToggle: suspend (Downloads) -> Boolean) {
+private fun DownloadsSection(m: Medias, onControl: suspend (String) -> Unit) {
     val scope = rememberCoroutineScope()
-    var sending by remember { mutableStateOf(false) }
+    var sending by remember { mutableStateOf<String?>(null) }
     val d = m.downloads
+    // Section tombée : l'état de la file est inconnu, mais pause et reprise restent possibles.
     SectionHeader("Téléchargements") {
-        if (d != null) {
-            Pill(if (sending) "Envoi…" else pauseButton(d)) {
-                if (!sending) {
-                    sending = true
-                    scope.launch {
-                        onToggle(d)
-                        sending = false
-                    }
-                }
+        Row {
+            pauseChoices(d).forEach { (label, action) ->
+                TextButton(
+                    onClick = {
+                        sending = action
+                        scope.launch {
+                            try {
+                                onControl(action)
+                            } finally {
+                                sending = null
+                            }
+                        }
+                    },
+                    enabled = sending == null,
+                ) { Text(if (sending == action) "Envoi…" else label) }
             }
         }
     }
@@ -369,80 +359,114 @@ private fun ReleaseRow(r: Release) {
 }
 
 @Composable
-private fun Requests(
-    m: Medias,
-    search: suspend (String) -> List<MediaResult>,
-    onRequest: suspend (MediaResult) -> Boolean,
-    onNote: (String) -> Unit,
-    onUnauthorized: () -> Unit,
-) {
-    val scope = rememberCoroutineScope()
-    var query by rememberSaveable { mutableStateOf("") }
-    var results by remember { mutableStateOf<List<MediaResult>?>(null) }
-    var searching by remember { mutableStateOf(false) }
-    var asked by remember { mutableStateOf(emptySet<String>()) }
-    var sending by remember { mutableStateOf(emptySet<String>()) }
-    fun run() {
-        if (!canSearch(query) || searching) return
-        searching = true
-        scope.launch {
-            try {
-                results = search(query.trim())
-            } catch (_: ApiError.Unauthorized) {
-                onUnauthorized()
-            } catch (e: ApiError) {
-                onNote(refusal(e))
-            } finally {
-                searching = false
-            }
-        }
-    }
-
+private fun Requests(m: Medias) {
     SectionHeader("Demandes")
     sectionIssue(m, REQUESTS)?.let { SectionDown(it) }
     m.requests?.let { list ->
         if (list.isEmpty()) Caption("Aucune demande suivie.")
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) { list.forEach { RequestRow(it) } }
     }
-    Group("Ajouter")
-    Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        OutlinedTextField(
-            value = query,
-            onValueChange = {
-                query = it
-                if (it.isBlank()) results = null
-            },
-            label = { Text("Série ou film") },
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-            keyboardActions = KeyboardActions(onSearch = { run() }),
-            modifier = Modifier.weight(1f),
-        )
-        Spacer(Modifier.width(4.dp))
-        TextButton(onClick = ::run, enabled = canSearch(query) && !searching) { Text(if (searching) "…" else "Chercher") }
+}
+
+/**
+ * Recherche d'un titre à demander. L'état d'un résultat est une pastille (« déjà là »,
+ * « déjà demandé ») ; seul « Demander » est un bouton. L'état après une demande est celui
+ * que le module rend. Messages dans le panneau (la file commune est sous lui).
+ */
+@Composable
+private fun AskPanel(
+    search: suspend (String) -> List<MediaResult>,
+    request: suspend (MediaResult) -> String,
+    onRequested: () -> Unit,
+    onUnauthorized: () -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    var query by rememberSaveable { mutableStateOf("") }
+    var results by remember { mutableStateOf<List<MediaResult>?>(null) }
+    var searching by remember { mutableStateOf(false) }
+    var note by remember { mutableStateOf<String?>(null) }
+    var asked by remember { mutableStateOf(emptyMap<String, Ask>()) }
+    var sending by remember { mutableStateOf(emptySet<String>()) }
+    fun run() {
+        if (!canSearch(query) || searching) return
+        searching = true
+        note = null
+        scope.launch {
+            try {
+                results = search(query.trim())
+            } catch (_: ApiError.Unauthorized) {
+                onUnauthorized()
+            } catch (e: ApiError) {
+                note = refusal(e)
+            } finally {
+                searching = false
+            }
+        }
     }
-    val shown = results ?: return
-    if (shown.isEmpty()) Caption("Aucun résultat.")
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        shown.forEach { r ->
-            val k = askKey(r)
-            val state = askState(r, asked)
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f).semantics(mergeDescendants = true) {}) {
-                    Text(r.title, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    Caption(resultNote(r))
+
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 20.dp)
+            .padding(bottom = 24.dp),
+    ) {
+        Text("Demander un titre", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(8.dp))
+        Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(
+                value = query,
+                onValueChange = {
+                    query = it
+                    if (it.isBlank()) results = null
+                },
+                label = { Text("Série ou film") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                keyboardActions = KeyboardActions(onSearch = { run() }),
+                modifier = Modifier.weight(1f),
+            )
+            Spacer(Modifier.width(4.dp))
+            TextButton(onClick = ::run, enabled = canSearch(query) && !searching) { Text(if (searching) "…" else "Chercher") }
+        }
+        note?.let { Caption(it, Modifier.padding(bottom = 6.dp)) }
+        val shown = results ?: return@Column
+        if (shown.isEmpty()) Caption("Aucun résultat.")
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            shown.forEach { r ->
+                val k = askKey(r)
+                val state = askState(r, asked)
+                Row(Modifier.fillMaxWidth().semantics(mergeDescendants = true) {}, verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(r.title, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        Caption(resultNote(r))
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    if (state.enabled) {
+                        OutlinedButton(
+                            onClick = {
+                                sending = sending + k
+                                note = null
+                                scope.launch {
+                                    try {
+                                        asked = asked + (k to askAfter(request(r)))
+                                        onRequested()
+                                    } catch (_: ApiError.Unauthorized) {
+                                        onUnauthorized()
+                                    } catch (e: ApiError) {
+                                        note = refusal(e)
+                                    } finally {
+                                        sending = sending - k
+                                    }
+                                }
+                            },
+                            enabled = k !in sending,
+                            modifier = Modifier.semantics { contentDescription = "Demander : ${r.title}" },
+                        ) { Text(if (k in sending) "Envoi…" else state.label) }
+                    } else {
+                        StatePill(state.label.lowercase())
+                    }
                 }
-                OutlinedButton(
-                    onClick = {
-                        sending = sending + k
-                        scope.launch {
-                            if (onRequest(r)) asked = asked + k
-                            sending = sending - k
-                        }
-                    },
-                    enabled = state.enabled && k !in sending,
-                    modifier = Modifier.semantics { contentDescription = "${state.label} : ${r.title}" },
-                ) { Text(if (k in sending) "Envoi…" else state.label) }
             }
         }
     }

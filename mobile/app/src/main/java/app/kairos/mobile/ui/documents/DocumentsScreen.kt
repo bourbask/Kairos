@@ -1,16 +1,13 @@
 package app.kairos.mobile.ui.documents
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -36,6 +33,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -55,8 +55,12 @@ import app.kairos.mobile.ui.kit.SectionHeader
 import app.kairos.mobile.ui.kit.StatusBanner
 import app.kairos.mobile.ui.kit.Tone
 import app.kairos.mobile.ui.kit.color
-import app.kairos.mobile.ui.maison.ChevronBackIcon
-import app.kairos.mobile.ui.talk.IconButton
+import app.kairos.mobile.ui.finances.issueBanner
+import app.kairos.mobile.ui.kit.KairosIcons
+import app.kairos.mobile.ui.kit.PrimaryAction
+import app.kairos.mobile.ui.kit.SpaceScaffold
+import app.kairos.mobile.ui.kit.StatePill
+import app.kairos.mobile.ui.theme.KairosColors
 import app.kairos.mobile.ui.today.refusal
 import kotlinx.coroutines.launch
 import kotlinx.serialization.builtins.ListSerializer
@@ -104,53 +108,52 @@ fun DocumentsScreen(
         onPauseOrDispose {}
     }
 
-    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-        Column(Modifier.fillMaxSize().padding(top = padding.calculateTopPadding())) {
-            Row(
-                Modifier.fillMaxWidth().padding(start = 4.dp, end = 12.dp, top = 8.dp, bottom = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                IconButton(label = "Retour aux espaces", onClick = onClose) { ChevronBackIcon(MaterialTheme.colorScheme.onSurfaceVariant) }
-                Spacer(Modifier.width(4.dp))
-                Text(
-                    "Documents",
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onBackground,
-                    modifier = Modifier.weight(1f),
-                )
+    val scroll = rememberScrollState()
+    val searchFocus = remember { FocusRequester() }
+    val d = snapshot.documents
+    SpaceScaffold(
+        "Documents",
+        onClose,
+        padding,
+        scrolled = scroll.canScrollBackward,
+        banner = snapshot.issue?.let { issue ->
+            {
+                val (title, detail) = issueBanner("Documents", issue, snapshot.fetchedAt?.let { "Dernier état : ${syncLabel(it)}" })
+                StatusBanner(title, detail = detail, actionLabel = "Réessayer", onAction = { refresh() })
             }
-            PullToRefreshBox(isRefreshing = refreshing, onRefresh = { refresh() }, modifier = Modifier.fillMaxWidth().weight(1f)) {
-                Column(
-                    Modifier
-                        .fillMaxSize()
-                        .verticalScroll(rememberScrollState())
-                        .padding(horizontal = 20.dp)
-                        .padding(top = 8.dp, bottom = padding.calculateBottomPadding() + 24.dp),
-                ) {
-                    snapshot.issue?.let { issue ->
-                        StatusBanner(issue, detail = snapshot.fetchedAt?.let { "Dernier état : ${syncLabel(it)}" })
-                        Spacer(Modifier.height(8.dp))
+        },
+        // Lecture seule : l'action principale est la recherche (le champ prend le focus et vient à l'écran).
+        primaryAction = if (d != null && !isEmptyIndex(d)) {
+            { PrimaryAction("Chercher", { searchFocus.requestFocus() }, icon = KairosIcons.Search) }
+        } else {
+            null
+        },
+    ) { inner ->
+        PullToRefreshBox(isRefreshing = refreshing, onRefresh = { refresh() }, modifier = Modifier.fillMaxSize()) {
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    .verticalScroll(scroll)
+                    .padding(horizontal = 20.dp)
+                    .padding(inner)
+                    .padding(top = 8.dp),
+            ) {
+                when {
+                    // L'indisponibilité est dite par le bandeau : ici, seulement l'absence de données connues.
+                    d == null -> Caption(if (snapshot.issue != null) "Rien en mémoire pour l'instant." else "Chargement…", Modifier.padding(vertical = 24.dp))
+                    isEmptyIndex(d) -> {
+                        Caption(EMPTY_INDEX, Modifier.padding(vertical = 24.dp))
+                        Classement(d)
                     }
-                    val d = snapshot.documents
-                    when {
-                        d == null -> Caption(
-                            if (snapshot.issue != null) "${snapshot.issue}, et rien en mémoire pour l'instant." else "Chargement…",
-                            Modifier.padding(vertical = 24.dp),
+                    else -> {
+                        Deadlines(d, LocalDate.now())
+                        Search(
+                            search = { q -> repository.lookup(DOCUMENTS, "app_documents_search", HITS, buildJsonObject { put("query", q) }) },
+                            onUnauthorized = unauthorized,
+                            focus = searchFocus,
                         )
-                        isEmptyIndex(d) -> {
-                            Caption(EMPTY_INDEX, Modifier.padding(vertical = 24.dp))
-                            Classement(d)
-                        }
-                        else -> {
-                            Deadlines(d, LocalDate.now())
-                            Search(
-                                search = { q -> repository.lookup(DOCUMENTS, "app_documents_search", HITS, buildJsonObject { put("query", q) }) },
-                                onUnauthorized = unauthorized,
-                            )
-                            Expected(d)
-                            Classement(d)
-                        }
+                        Expected(d)
+                        Classement(d)
                     }
                 }
             }
@@ -179,7 +182,7 @@ private fun Deadlines(d: Documents, today: LocalDate) {
 @Composable
 private fun DeadlineCard(r: DeadlineRow) {
     val colors = MaterialTheme.colorScheme
-    val accent = if (r.tone == Tone.Neutral) colors.onSurfaceVariant else r.tone.color()
+    val accent = r.tone.color()
     Surface(
         shape = RoundedCornerShape(RowCorner),
         color = colors.surface,
@@ -194,14 +197,14 @@ private fun DeadlineCard(r: DeadlineRow) {
             }
             r.left?.let {
                 Spacer(Modifier.width(8.dp))
-                Text(it, style = MaterialTheme.typography.labelLarge, color = accent, fontWeight = if (r.tone == Tone.Neutral) null else FontWeight.SemiBold)
+                StatePill(it, tone = r.tone)
             }
         }
     }
 }
 
 @Composable
-private fun Search(search: suspend (String) -> List<DocHit>, onUnauthorized: () -> Unit) {
+private fun Search(search: suspend (String) -> List<DocHit>, onUnauthorized: () -> Unit, focus: FocusRequester) {
     val scope = rememberCoroutineScope()
     var query by rememberSaveable { mutableStateOf("") }
     var results by remember { mutableStateOf<List<DocHit>?>(null) }
@@ -238,7 +241,7 @@ private fun Search(search: suspend (String) -> List<DocHit>, onUnauthorized: () 
             singleLine = true,
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
             keyboardActions = KeyboardActions(onSearch = { run() }),
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.weight(1f).focusRequester(focus),
         )
         Spacer(Modifier.width(4.dp))
         TextButton(onClick = ::run, enabled = canSearch(query) && !searching) { Text(if (searching) "…" else "Chercher") }
@@ -291,11 +294,12 @@ private fun Expected(d: Documents) {
 private fun PieceRow(p: DocPiece) {
     val colors = MaterialTheme.colorScheme
     Row(Modifier.fillMaxWidth().padding(vertical = 3.dp).semantics(mergeDescendants = true) {}, verticalAlignment = Alignment.CenterVertically) {
+        // Signe doublé d'un mot pour le lecteur d'écran (la couleur ne porte pas l'état seule).
         Text(
             if (p.present) "✓" else "•",
-            color = if (p.present) colors.primary else colors.tertiary,
+            color = if (p.present) colors.primary else KairosColors.current.attentionText,
             fontWeight = FontWeight.Bold,
-            modifier = Modifier.width(20.dp),
+            modifier = Modifier.width(20.dp).semantics { contentDescription = if (p.present) "présente" else "à fournir" },
         )
         Text(p.item, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis)
         Spacer(Modifier.width(8.dp))

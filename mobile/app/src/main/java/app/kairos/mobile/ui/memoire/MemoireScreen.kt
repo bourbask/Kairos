@@ -15,10 +15,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -32,11 +32,6 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Snackbar
-import androidx.compose.material3.SnackbarDuration
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -66,7 +61,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
-import app.kairos.mobile.ui.kit.UndoWindows
 import app.kairos.mobile.data.ApiError
 import app.kairos.mobile.data.Card
 import app.kairos.mobile.data.ConversationSummary
@@ -80,29 +74,40 @@ import app.kairos.mobile.ui.finances.syncLabel
 import app.kairos.mobile.ui.kit.LocalAmountsMasked
 import app.kairos.mobile.ui.kit.SectionHeader
 import app.kairos.mobile.ui.kit.StatusBanner
-import app.kairos.mobile.ui.maison.ChevronBackIcon
 import app.kairos.mobile.ui.overlay.Origin
 import app.kairos.mobile.ui.overlay.Overlay
 import app.kairos.mobile.ui.overlay.anchorTo
 import app.kairos.mobile.ui.overlay.rememberOverlayState
 import app.kairos.mobile.ui.overlay.underOverlays
-import app.kairos.mobile.ui.talk.IconButton
 import app.kairos.mobile.ui.today.DoneOutcome
 import app.kairos.mobile.ui.today.InFlight
-import app.kairos.mobile.ui.today.Pill
-import app.kairos.mobile.ui.today.SwipeRow
+import app.kairos.mobile.ui.kit.SwipeRow
 import app.kairos.mobile.ui.today.completeCard
 import app.kairos.mobile.ui.today.refusal
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.stateDescription
+import app.kairos.mobile.ui.finances.issueBanner
+import app.kairos.mobile.ui.kit.KairosIcons
+import app.kairos.mobile.ui.kit.LocalNotifier
+import app.kairos.mobile.ui.kit.MaskToggle
+import app.kairos.mobile.ui.kit.PrimaryAction
+import app.kairos.mobile.ui.kit.SpaceHeader
+import app.kairos.mobile.ui.kit.SpaceScaffold
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import java.time.LocalDate
 import java.time.LocalDateTime
 
-private const val UNDO_MS = 4_000L
 private val RowCorner = 16.dp
 private val JOURNAL = ListSerializer(JournalEntry.serializer())
 private val CONVERSATIONS = ListSerializer(ConversationSummary.serializer())
@@ -121,6 +126,7 @@ fun MemoireScreen(
     repository: Repository,
     padding: PaddingValues,
     appScope: CoroutineScope,
+    onToggleMasked: () -> Unit,
     onClose: () -> Unit,
     onUnauthorized: () -> Unit,
 ) {
@@ -129,8 +135,11 @@ fun MemoireScreen(
     val masked = LocalAmountsMasked.current
     val scope = rememberCoroutineScope()
     val unauthorized by rememberUpdatedState(onUnauthorized)
-    val snackbar = remember { SnackbarHostState() }
-    val undo = remember { UndoWindows(snackbar) }
+    val notifier = LocalNotifier.current
+    val scroll = rememberScrollState()
+    var noting by rememberSaveable { mutableStateOf(false) }
+    // ponytail: résultats en mémoire vive seulement, jamais écrits sur l'appareil.
+    var found by remember { mutableStateOf<Found?>(null) }
     var refreshing by remember { mutableStateOf(false) }
     var hidden by remember { mutableStateOf(emptySet<Long>()) }
     var revealed by remember { mutableStateOf(emptySet<Long>()) }
@@ -161,10 +170,10 @@ fun MemoireScreen(
         onPauseOrDispose {}
     }
 
-    suspend fun undoWindow(text: String): Boolean = undo.open(text)
+    suspend fun undoWindow(text: String): Boolean = notifier.undo(text)
 
     fun notice(text: String) {
-        scope.launch { snackbar.showSnackbar(text) }
+        scope.launch { notifier.show(text) }
     }
 
     /** Écriture ponctuelle (ajout, correction) ; rend vrai si le module l'a prise. */
@@ -206,9 +215,9 @@ fun MemoireScreen(
                     }
                     if (repository.memoire.value.issue == null) hidden = hidden - i.id
                     // Seul l'imprévu s'annonce : un message de confirmation retarderait l'annulation du geste suivant.
-                    if (out.message == STALE) snackbar.showSnackbar(out.message)
+                    if (out.message == STALE) notifier.show(out.message)
                 }
-                is DoneOutcome.Refused -> snackbar.showSnackbar(out.message)
+                is DoneOutcome.Refused -> notifier.show(out.message)
                 else -> Unit
             }
         }
@@ -238,7 +247,7 @@ fun MemoireScreen(
                         unauthorized()
                     }
                 }
-                is DoneOutcome.Refused -> snackbar.showSnackbar(out.message)
+                is DoneOutcome.Refused -> notifier.show(out.message)
                 else -> Unit
             }
         }
@@ -259,46 +268,70 @@ fun MemoireScreen(
     }
 
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.outlineVariant)) {
-        Column(
-            Modifier
-                .fillMaxSize()
-                .underOverlays(rtl, detail)
-                .background(MaterialTheme.colorScheme.background)
-                .padding(top = padding.calculateTopPadding()),
-        ) {
-            Row(
-                Modifier.fillMaxWidth().padding(start = 4.dp, end = 12.dp, top = 8.dp, bottom = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                IconButton(label = "Retour aux espaces", onClick = onClose) { ChevronBackIcon(MaterialTheme.colorScheme.onSurfaceVariant) }
-                Spacer(Modifier.width(4.dp))
-                Text(
-                    "Mémoire",
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onBackground,
-                    modifier = Modifier.weight(1f),
-                )
-            }
-            PullToRefreshBox(isRefreshing = refreshing, onRefresh = { refresh() }, modifier = Modifier.fillMaxWidth().weight(1f)) {
+        SpaceScaffold(
+            "Mémoire",
+            onClose,
+            padding,
+            modifier = Modifier.underOverlays(rtl, detail),
+            scrolled = scroll.canScrollBackward,
+            actions = { MaskToggle(masked, onToggleMasked) },
+            banner = snapshot.issue?.let { issue ->
+                {
+                    val (title, detail) = issueBanner("Mémoire", issue, snapshot.fetchedAt?.let { "Dernier état : ${syncLabel(it)}" })
+                    StatusBanner(title, detail = detail, actionLabel = "Réessayer", onAction = { refresh() })
+                }
+            },
+            primaryAction = if (snapshot.memory != null && !noting) {
+                {
+                    PrimaryAction("Noter", {
+                        noting = true
+                        // La note s'écrit en haut de page.
+                        scope.launch { scroll.animateScrollTo(0) }
+                    })
+                }
+            } else {
+                null
+            },
+        ) { inner ->
+            PullToRefreshBox(isRefreshing = refreshing, onRefresh = { refresh() }, modifier = Modifier.fillMaxSize()) {
                 Column(
                     Modifier
                         .fillMaxSize()
-                        .verticalScroll(rememberScrollState())
+                        .verticalScroll(scroll)
                         .padding(horizontal = 20.dp)
-                        .padding(top = 8.dp, bottom = padding.calculateBottomPadding() + 24.dp),
+                        .padding(inner)
+                        .padding(top = 8.dp),
                 ) {
-                    snapshot.issue?.let { issue ->
-                        StatusBanner(issue, detail = snapshot.fetchedAt?.let { "Dernier état : ${syncLabel(it)}" })
-                        Spacer(Modifier.height(8.dp))
-                    }
                     val memory = snapshot.memory
                     if (memory == null) {
-                        Caption(
-                            if (snapshot.issue != null) "${snapshot.issue}, et rien en mémoire pour l'instant." else "Chargement…",
-                            Modifier.padding(vertical = 24.dp),
-                        )
+                        // L'indisponibilité est dite par le bandeau : ici, seulement l'absence de données connues.
+                        Caption(if (snapshot.issue != null) "Rien en mémoire pour l'instant." else "Chargement…", Modifier.padding(vertical = 24.dp))
                     } else {
+                        if (noting) {
+                            SectionHeader("Nouvelle note") { TextButton(onClick = { noting = false }) { Text("Fermer") } }
+                            Composer("Note", "Enregistrer", ::notice) { text ->
+                                write("app_journal_add", buildJsonObject { put("text", text.trim()) }).also { if (it) noting = false }
+                            }
+                        }
+                        SearchField(
+                            "Chercher dans le journal et les conversations",
+                            search = { q ->
+                                coroutineScope {
+                                    val j = async { repository.lookup(MEMOIRE, "app_journal_search", JOURNAL, buildJsonObject { put("query", q) }) }
+                                    val c = async { repository.lookup(MEMOIRE, "app_conversation_search", CONVERSATIONS, buildJsonObject { put("query", q) }) }
+                                    Found(j.await(), c.await())
+                                }
+                            },
+                            onNote = ::notice,
+                            onUnauthorized = unauthorized,
+                        ) { found = it }
+                        val onReveal = { id: Long -> revealed = if (id in revealed) revealed - id else revealed + id }
+                        val onDeleteEntry = { id: Long -> erase(journalErasure(id), "Entrée supprimée") }
+                        val onDeleteConversation = { id: Long -> erase(conversationErasure(id), "Conversation supprimée") }
+                        val hits = found
+                        if (hits != null) {
+                            Results(hits, erased, revealed, masked, onReveal, onDeleteEntry, onDeleteConversation)
+                        }
                         val now = LocalDateTime.now()
                         Intentions(
                             openIntentions(memory.intentions, now, later).filter { it.id !in hidden },
@@ -314,30 +347,12 @@ fun MemoireScreen(
                             },
                             onNote = ::notice,
                         )
-                        Journal(
-                            memory.journal,
-                            erased,
-                            revealed,
-                            masked,
-                            onReveal = { id -> revealed = if (id in revealed) revealed - id else revealed + id },
-                            onDelete = { id -> erase(journalErasure(id), "Entrée supprimée") },
-                            search = { q -> repository.lookup(MEMOIRE, "app_journal_search", JOURNAL, buildJsonObject { put("query", q) }) },
-                            onAdd = { text -> write("app_journal_add", buildJsonObject { put("text", text.trim()) }) },
-                            onNote = ::notice,
-                            onUnauthorized = unauthorized,
-                        )
+                        Journal(memory.journal, erased, revealed, masked, onReveal, onDeleteEntry)
                         Facts(memory.facts.filterNot { factErasure(it.key).id in erased }) { fact, at ->
                             at?.let { detail.anchorTo(it, RowCorner) }
                             factKey = fact.key
                         }
-                        Conversations(
-                            memory.conversations,
-                            erased,
-                            onDelete = { id -> erase(conversationErasure(id), "Conversation supprimée") },
-                            search = { q -> repository.lookup(MEMOIRE, "app_conversation_search", CONVERSATIONS, buildJsonObject { put("query", q) }) },
-                            onNote = ::notice,
-                            onUnauthorized = unauthorized,
-                        )
+                        Conversations(memory.conversations, erased, onDeleteConversation)
                     }
                 }
             }
@@ -361,21 +376,6 @@ fun MemoireScreen(
                     onClose = { factKey = null },
                 )
             }
-        }
-        SnackbarHost(
-            snackbar,
-            Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = padding.calculateBottomPadding())
-                .padding(horizontal = 16.dp),
-        ) { data ->
-            Snackbar(
-                data,
-                shape = MaterialTheme.shapes.medium,
-                containerColor = MaterialTheme.colorScheme.onBackground,
-                contentColor = MaterialTheme.colorScheme.background,
-                actionColor = MaterialTheme.colorScheme.primaryContainer,
-            )
         }
     }
 }
@@ -458,7 +458,7 @@ private fun Intentions(
 ) {
     var adding by rememberSaveable { mutableStateOf(false) }
     var days by rememberSaveable { mutableStateOf(DEADLINES[1].second) }
-    SectionHeader("Intentions") { Pill(if (adding) "Fermer" else "Ajouter") { adding = !adding } }
+    SectionHeader("Intentions") { TextButton(onClick = { adding = !adding }) { Text(if (adding) "Fermer" else "Ajouter") } }
     if (adding) {
         Composer(
             "Intention",
@@ -496,7 +496,7 @@ private fun IntentionRow(i: Intention, now: LocalDateTime, onAccept: (Intention)
             modifier = Modifier.fillMaxWidth(),
         ) {
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Column(Modifier.semantics(mergeDescendants = true) {}) {
+                Column {
                     Text(i.what, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
                     i.constraints?.let { Caption(it) }
                     Text(
@@ -506,9 +506,9 @@ private fun IntentionRow(i: Intention, now: LocalDateTime, onAccept: (Intention)
                     )
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    TextButton(onClick = { onAccept(i) }) { Text("Accepter") }
-                    TextButton(onClick = { onRefuse(i) }) { Text("Refuser", color = colors.error) }
-                    TextButton(onClick = { onLater(i) }) { Text("Plus tard") }
+                    TextButton(onClick = { onAccept(i) }, Modifier.semantics { contentDescription = "Accepter : ${i.what}" }) { Text("Accepter") }
+                    TextButton(onClick = { onRefuse(i) }, Modifier.semantics { contentDescription = "Refuser : ${i.what}" }) { Text("Refuser", color = colors.error) }
+                    TextButton(onClick = { onLater(i) }, Modifier.semantics { contentDescription = "Plus tard : ${i.what}" }) { Text("Plus tard") }
                 }
             }
         }
@@ -516,13 +516,17 @@ private fun IntentionRow(i: Intention, now: LocalDateTime, onAccept: (Intention)
 }
 
 /** Recherche à la demande ; null = pas de recherche en cours, la liste récente s'affiche. */
+/** Résultats de la recherche unique, par type ; null = pas de recherche en cours. */
+private data class Found(val journal: List<JournalEntry>, val conversations: List<ConversationSummary>)
+
+/** Recherche à la demande ; null = pas de recherche en cours. */
 @Composable
 private fun <T> SearchField(
     label: String,
-    search: suspend (String) -> List<T>,
+    search: suspend (String) -> T,
     onNote: (String) -> Unit,
     onUnauthorized: () -> Unit,
-    onResults: (List<T>?) -> Unit,
+    onResults: (T?) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
     var query by rememberSaveable { mutableStateOf("") }
@@ -564,6 +568,28 @@ private fun <T> SearchField(
 }
 
 @Composable
+private fun Results(
+    found: Found,
+    erased: Set<String>,
+    revealed: Set<Long>,
+    masked: Boolean,
+    onReveal: (Long) -> Unit,
+    onDeleteEntry: (Long) -> Unit,
+    onDeleteConversation: (Long) -> Unit,
+) {
+    val entries = found.journal.filterNot { journalErasure(it.id).id in erased }
+    val talks = found.conversations.filterNot { conversationErasure(it.id).id in erased }
+    SectionHeader("Journal · ${entries.size} trouvée${if (entries.size > 1) "s" else ""}")
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        entries.forEach { e -> EntryRow(e, revealed, masked, onReveal, onDeleteEntry) }
+    }
+    SectionHeader("Conversations · ${talks.size} trouvée${if (talks.size > 1) "s" else ""}")
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        talks.forEach { c -> ConversationRow(c, onDeleteConversation) }
+    }
+}
+
+@Composable
 private fun Journal(
     recent: List<JournalEntry>,
     erased: Set<String>,
@@ -571,52 +597,87 @@ private fun Journal(
     masked: Boolean,
     onReveal: (Long) -> Unit,
     onDelete: (Long) -> Unit,
-    search: suspend (String) -> List<JournalEntry>,
-    onAdd: suspend (String) -> Boolean,
-    onNote: (String) -> Unit,
-    onUnauthorized: () -> Unit,
 ) {
-    var adding by rememberSaveable { mutableStateOf(false) }
-    // ponytail: résultats en mémoire vive seulement, jamais écrits sur l'appareil.
-    var results by remember { mutableStateOf<List<JournalEntry>?>(null) }
-    SectionHeader("Journal") { Pill(if (adding) "Fermer" else "Noter") { adding = !adding } }
-    if (adding) Composer("Note", "Enregistrer", onNote) { text -> onAdd(text).also { if (it) adding = false } }
-    SearchField("Chercher dans le journal", search, onNote, onUnauthorized) { results = it }
-    val shown = (results ?: recent).filterNot { journalErasure(it.id).id in erased }
-    if (shown.isEmpty()) Caption(if (results != null) "Aucune entrée trouvée." else "Journal vide pour l'instant.")
+    SectionHeader("Journal")
+    val shown = recent.filterNot { journalErasure(it.id).id in erased }
+    if (shown.isEmpty()) Caption("Journal vide pour l'instant.")
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        shown.forEach { e ->
-            val text = shownText(e, revealed, masked)
-            // Sensible : un tap l'affiche ou la remasque ; jamais quand les montants sont masqués.
-            val tap = if (e.sensitive && !masked) {
-                Modifier.clickable(onClickLabel = if (text == null) "Afficher l'entrée" else "Masquer l'entrée") { onReveal(e.id) }
+        shown.forEach { e -> EntryRow(e, revealed, masked, onReveal, onDelete) }
+    }
+}
+
+@Composable
+private fun EntryRow(e: JournalEntry, revealed: Set<Long>, masked: Boolean, onReveal: (Long) -> Unit, onDelete: (Long) -> Unit) {
+    val text = shownText(e, revealed, masked)
+    val at = syncLabel(e.at)
+    // Sensible : un tap l'affiche ou la remasque ; jamais quand les montants sont masqués.
+    val tap = if (e.sensitive && !masked) {
+        Modifier.clickable(onClickLabel = if (text == null) "Afficher l'entrée" else "Masquer l'entrée") { onReveal(e.id) }
+    } else {
+        Modifier
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f).then(tap).semantics(mergeDescendants = true) {}) {
+            Caption(listOfNotNull(at, e.kind.takeIf { it.isNotBlank() && it != "note" }).joinToString(" · "))
+            if (text == null) {
+                Text(
+                    if (masked) "Entrée sensible · masquée" else "Entrée sensible · touche pour afficher",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontStyle = FontStyle.Italic,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             } else {
-                Modifier
-            }
-            Column(Modifier.fillMaxWidth().then(tap).semantics(mergeDescendants = true) {}) {
-                Caption(listOfNotNull(syncLabel(e.at), e.kind.takeIf { it.isNotBlank() && it != "note" }).joinToString(" · "))
-                if (text == null) {
-                    Text(
-                        if (masked) "Entrée sensible · masquée" else "Entrée sensible · touche pour afficher",
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontStyle = FontStyle.Italic,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                } else {
-                    Text(text, style = MaterialTheme.typography.bodyMedium, maxLines = 6, overflow = TextOverflow.Ellipsis)
-                }
-            }
-            // Visible seulement quand le texte l'est : une entrée sensible se révèle d'abord.
-            if (text != null) {
-                TextButton(onClick = { onDelete(e.id) }) { Text("Supprimer", color = MaterialTheme.colorScheme.error) }
+                Text(text, style = MaterialTheme.typography.bodyMedium, maxLines = 6, overflow = TextOverflow.Ellipsis)
             }
         }
+        // Visible seulement quand le texte l'est : une entrée sensible se révèle d'abord.
+        if (text != null) EraseButton("Supprimer l'entrée du $at") { onDelete(e.id) }
+    }
+}
+
+/** Effacement discret : icône neutre ; le rouge n'apparaît qu'au message d'annulation. */
+@Composable
+private fun EraseButton(description: String, onClick: () -> Unit) {
+    IconButton(onClick = onClick) {
+        Icon(KairosIcons.Trash, contentDescription = description, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
+    }
+}
+
+/** En-tête de section repliable, avec son compte ; annoncé comme titre, état dit. */
+@Composable
+private fun FoldHeader(title: String, count: Int, open: Boolean, onToggle: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(top = 12.dp)
+            .heightIn(min = 48.dp)
+            .clickable(onClickLabel = if (open) "Replier" else "Déplier", onClick = onToggle)
+            .semantics(mergeDescendants = true) {
+                heading()
+                stateDescription = if (open) "déplié" else "replié"
+            },
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            "${title.uppercase()} · $count",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f),
+        )
+        Icon(
+            KairosIcons.ChevronDown,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.rotate(if (open) 180f else 0f),
+        )
     }
 }
 
 @Composable
 private fun Facts(facts: List<Fact>, onOpen: (Fact, LayoutCoordinates?) -> Unit) {
-    SectionHeader("Ce que Kairos sait de toi")
+    var open by rememberSaveable { mutableStateOf(false) }
+    FoldHeader("Ce que Kairos sait de toi", facts.size, open) { open = !open }
+    if (!open) return
     if (facts.isEmpty()) Caption("Aucun fait connu pour l'instant.")
     factGroups(facts).forEach { g ->
         Text(g.theme, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 8.dp, bottom = 4.dp))
@@ -630,10 +691,10 @@ private fun Facts(facts: List<Fact>, onOpen: (Fact, LayoutCoordinates?) -> Unit)
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                     modifier = Modifier.fillMaxWidth().onGloballyPositioned { at = it },
                 ) {
-                    Row(Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Row(Modifier.padding(start = 14.dp, end = 8.dp, top = 10.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text(factLabel(f.key), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(0.4f))
                         Text(f.value, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(0.6f), maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        Text("›", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Icon(KairosIcons.ChevronForward, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
@@ -642,29 +703,28 @@ private fun Facts(facts: List<Fact>, onOpen: (Fact, LayoutCoordinates?) -> Unit)
 }
 
 @Composable
-private fun Conversations(
-    recent: List<ConversationSummary>,
-    erased: Set<String>,
-    onDelete: (Long) -> Unit,
-    search: suspend (String) -> List<ConversationSummary>,
-    onNote: (String) -> Unit,
-    onUnauthorized: () -> Unit,
-) {
-    var results by remember { mutableStateOf<List<ConversationSummary>?>(null) }
-    SectionHeader("Conversations")
-    SearchField("Chercher dans les conversations", search, onNote, onUnauthorized) { results = it }
-    val shown = (results ?: recent).filterNot { conversationErasure(it.id).id in erased }
-    if (shown.isEmpty()) Caption(if (results != null) "Aucune conversation trouvée." else "Aucune conversation pour l'instant.")
+private fun Conversations(recent: List<ConversationSummary>, erased: Set<String>, onDelete: (Long) -> Unit) {
+    var open by rememberSaveable { mutableStateOf(false) }
+    val shown = recent.filterNot { conversationErasure(it.id).id in erased }
+    FoldHeader("Conversations", shown.size, open) { open = !open }
+    if (!open) return
+    if (shown.isEmpty()) Caption("Aucune conversation pour l'instant.")
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        shown.forEach { c ->
-            Column(Modifier.fillMaxWidth().semantics(mergeDescendants = true) {}, verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Caption(syncLabel(c.at))
-                Text(c.summary ?: "Pas encore résumée.", style = MaterialTheme.typography.bodyMedium, fontStyle = if (c.summary == null) FontStyle.Italic else null)
-                if (c.topics.isNotEmpty()) Caption("Sujets : ${c.topics.joinToString(", ")}")
-                c.decisions.forEach { d -> Text("→ $d", style = MaterialTheme.typography.bodySmall) }
-            }
-            TextButton(onClick = { onDelete(c.id) }) { Text("Supprimer", color = MaterialTheme.colorScheme.error) }
+        shown.forEach { c -> ConversationRow(c, onDelete) }
+    }
+}
+
+@Composable
+private fun ConversationRow(c: ConversationSummary, onDelete: (Long) -> Unit) {
+    val at = syncLabel(c.at)
+    Row(verticalAlignment = Alignment.Top) {
+        Column(Modifier.weight(1f).semantics(mergeDescendants = true) {}, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Caption(at)
+            Text(c.summary ?: "Pas encore résumée.", style = MaterialTheme.typography.bodyMedium, fontStyle = if (c.summary == null) FontStyle.Italic else null)
+            if (c.topics.isNotEmpty()) Caption("Sujets : ${c.topics.joinToString(", ")}")
+            c.decisions.forEach { d -> Text("→ $d", style = MaterialTheme.typography.bodySmall) }
         }
+        EraseButton("Supprimer la conversation du $at") { onDelete(c.id) }
     }
 }
 
@@ -704,17 +764,7 @@ private fun FactPanel(
             .background(MaterialTheme.colorScheme.background)
             .padding(top = padding.calculateTopPadding()),
     ) {
-        Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 12.dp, top = 8.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(label = "Retour à la mémoire", onClick = onClose) { ChevronBackIcon(MaterialTheme.colorScheme.onSurfaceVariant) }
-            Spacer(Modifier.width(4.dp))
-            Text(
-                factLabel(key).replaceFirstChar { it.titlecase() },
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onBackground,
-                modifier = Modifier.weight(1f),
-            )
-        }
+        SpaceHeader(factLabel(key).replaceFirstChar { it.titlecase() }, onClose, backLabel = "Retour à la mémoire")
         Column(
             Modifier
                 .fillMaxSize()

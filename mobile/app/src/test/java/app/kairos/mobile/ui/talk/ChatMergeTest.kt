@@ -18,4 +18,13 @@ class ChatMergeTest {
         assertEquals(listOf(0L, 1, 2, 3, 4, 5), mergeChat(merged, listOf(e(0), e(1))).map { it.id })
         assertEquals(merged, mergeChat(merged, emptyList()))
     }
+
+    @Test
+    fun failed_send_says_why_on_the_bubble() {
+        assertEquals("Non envoyé : serveur injoignable", failedNote(app.kairos.mobile.data.ApiError.Offline))
+        // Sans réponse, le message a pu partir : renvoyer est un choix éclairé.
+        assertEquals("Envoi incertain : vérifie avant de renvoyer", failedNote(app.kairos.mobile.data.ApiError.NoReply))
+        assertEquals("Non envoyé : Kairos a trop à faire", failedNote(app.kairos.mobile.data.ApiError.Server(503, "x")))
+        assertEquals("Non envoyé : refusé", failedNote(app.kairos.mobile.data.ApiError.Server(400, "refusé")))
+    }
 }

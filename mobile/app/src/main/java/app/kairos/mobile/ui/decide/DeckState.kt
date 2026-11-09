@@ -146,3 +146,10 @@ class DeckState(cards: List<Decision>) {
 
 /** Texte à afficher, ou rien s'il est vide ou blanc. */
 fun shown(text: String?): String? = text?.trim()?.takeIf { it.isNotEmpty() }
+
+/** Bouton principal de la carte : la proposition nommée, ou l'ouverture des choix. */
+fun acceptLabel(card: Decision): String = card.proposal?.let { "Oui · ${it.label}" } ?: "Choisir…"
+
+/** Bouton ← : avec [directLeft], la première alternative retenue d'emblée ; sinon les choix. */
+fun otherLabel(card: Decision, directLeft: Boolean): String =
+    card.alternatives.firstOrNull()?.takeIf { directLeft }?.label ?: "Autre choix"

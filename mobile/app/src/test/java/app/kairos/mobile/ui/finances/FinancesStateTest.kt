@@ -61,12 +61,18 @@ class FinancesStateTest {
         assertEquals("Module indisponible", partial.cycleIssue)
         assertEquals("2026-11-08T08:00", partial.cycleAt)
 
-        assertNull(sourceBanner(partial.wealthIssue, partial.wealthAt))
+        assertNull(sourceBanner("Finances", partial.wealthIssue, partial.wealthAt))
+        // L'espace parle à l'utilisateur, pas le motif technique.
         assertEquals(
-            "Module indisponible" to "Dernière mise à jour complète : 08/11 à 08:00",
-            sourceBanner(partial.cycleIssue, partial.cycleAt),
+            "Finances indisponible" to "Dernière mise à jour complète : 08/11 à 08:00",
+            sourceBanner("Finances", partial.cycleIssue, partial.cycleAt),
         )
-        assertEquals("Hors ligne" to null, sourceBanner("Hors ligne", null))
+        assertEquals("Finances indisponible" to null, sourceBanner("Finances", "Hors ligne", null))
+        assertEquals(PARTIAL to null, sourceBanner("Finances", PARTIAL, null))
+        assertEquals(
+            "Agenda indisponible" to "Dernier état : hier · ${ApiError.Server.OUTDATED}",
+            issueBanner("Agenda", ApiError.Server.OUTDATED, "Dernier état : hier"),
+        )
     }
 
     @Test

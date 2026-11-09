@@ -156,4 +156,13 @@ class DeckStateTest {
         assertNull(shown("   "))
         assertEquals("⚠ La règle ne les a pas reconnues", shown(" ⚠ La règle ne les a pas reconnues "))
     }
+
+    @Test
+    fun action_labels_name_what_happens() {
+        assertEquals("Oui · Alimentation", acceptLabel(card("a")))
+        assertEquals("Choisir…", acceptLabel(card("a", proposal = null)))
+        assertEquals("Autre choix", otherLabel(card("a"), directLeft = false))
+        assertEquals("Loisirs", otherLabel(card("a"), directLeft = true))
+        assertEquals("Autre choix", otherLabel(card("a").copy(alternatives = emptyList()), directLeft = true))
+    }
 }

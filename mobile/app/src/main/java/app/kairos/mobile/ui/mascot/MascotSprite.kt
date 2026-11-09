@@ -71,3 +71,12 @@ object MascotSprite {
         return if (state == MascotState.Agit && odd) out.map { it.copy(y = it.y - 1) } else out
     }
 }
+
+/** État du personnage en mots, pour le lecteur d'écran (le dessin seul ne se lit pas). */
+fun mascotDescription(state: MascotState, decisions: Int): String = when (state) {
+    MascotState.Repos -> "au repos"
+    MascotState.Ecoute -> "à l'écoute"
+    MascotState.Reflechit -> "réfléchit"
+    MascotState.Agit -> "réponse arrivée"
+    MascotState.Attend -> if (decisions == 1) "1 décision en attente" else "$decisions décisions en attente"
+}

@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -33,7 +34,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -56,9 +56,11 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import app.kairos.mobile.ui.mascot.Mascot
 import app.kairos.mobile.ui.mascot.MascotState
+import app.kairos.mobile.ui.mascot.mascotDescription
 import app.kairos.mobile.ui.theme.Motion
 import app.kairos.mobile.ui.theme.Palette
 import java.time.LocalDate
@@ -83,6 +85,7 @@ internal val DockHeight = 104.dp
 @Composable
 fun Shell(
     mascotState: MascotState = MascotState.Repos,
+    kairosState: String = mascotDescription(mascotState, 0),
     onTap: () -> Unit = {},
     onPressStart: () -> Unit = {},
     onPressEnd: () -> Unit = {},
@@ -92,8 +95,9 @@ fun Shell(
     spaces: @Composable (PaddingValues) -> Unit = {},
     kairosModifier: Modifier = Modifier,
     modifier: Modifier = Modifier,
+    tab: Tab = Tab.Aujourdhui,
+    onTab: (Tab) -> Unit = {},
 ) {
-    var tab by rememberSaveable { mutableStateOf(Tab.Aujourdhui) }
     val top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val nav = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     val padding = PaddingValues(top = top, bottom = DockHeight + nav)
@@ -107,8 +111,9 @@ fun Shell(
         }
         Dock(
             tab = tab,
-            onTab = { tab = it },
+            onTab = onTab,
             mascotState = mascotState,
+            kairosState = kairosState,
             onTap = onTap,
             onPressStart = onPressStart,
             onPressEnd = onPressEnd,
@@ -125,6 +130,7 @@ private fun Dock(
     tab: Tab,
     onTab: (Tab) -> Unit,
     mascotState: MascotState,
+    kairosState: String,
     onTap: () -> Unit,
     onPressStart: () -> Unit,
     onPressEnd: () -> Unit,
@@ -144,7 +150,7 @@ private fun Dock(
         verticalAlignment = Alignment.Bottom,
     ) {
         TabItem("Aujourd'hui", tab == Tab.Aujourdhui, { onTab(Tab.Aujourdhui) }) { TodayIcon(it) }
-        KairosButton(mascotState, onTap, onPressStart, onPressEnd, onDrag, onSpeak, kairosModifier)
+        KairosButton(mascotState, onTap, onPressStart, onPressEnd, onDrag, onSpeak, kairosModifier, kairosState)
         TabItem("Espaces", tab == Tab.Espaces, { onTab(Tab.Espaces) }) { SpacesIcon(it) }
     }
 }
@@ -154,7 +160,8 @@ private fun TabItem(label: String, selected: Boolean, onClick: () -> Unit, icon:
     val color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
     Column(
         Modifier
-            .width(80.dp)
+            // Largeur minimale seulement : un libellé agrandi (police 1,3×) ne se coupe pas.
+            .widthIn(min = 80.dp)
             .selectable(selected = selected, onClick = onClick, role = Role.Tab)
             .padding(vertical = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -165,6 +172,8 @@ private fun TabItem(label: String, selected: Boolean, onClick: () -> Unit, icon:
             label,
             color = color,
             style = MaterialTheme.typography.labelMedium,
+            maxLines = 1,
+            softWrap = false,
         )
     }
 }
@@ -196,6 +205,8 @@ fun KairosButton(
     onDrag: (Offset) -> Unit,
     onSpeak: () -> Unit,
     modifier: Modifier = Modifier,
+    /** État du personnage en mots, annoncé avec le bouton. */
+    stateText: String = mascotDescription(state, 0),
 ) {
     val speak by rememberUpdatedState(onSpeak)
     val tap by rememberUpdatedState(onTap)
@@ -217,6 +228,7 @@ fun KairosButton(
             .semantics {
                 role = Role.Button
                 contentDescription = "Kairos"
+                stateDescription = stateText
                 onClick("Ouvrir la conversation") { tap(); true }
                 customActions = listOf(CustomAccessibilityAction("Parler") { speak(); true })
             }
