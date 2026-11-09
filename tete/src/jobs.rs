@@ -626,6 +626,12 @@ async fn extract(name: &str, last: Option<NaiveDate>, now: NaiveDateTime, ctx: &
     let mut client = None;
     for day in first.iter_days().take_while(|d| *d <= yesterday).take(NIGHT_DAYS) {
         let jour = day.format("%Y-%m-%d").to_string();
+        // Une conversation pas encore résumée n'est pas un épisode : la journée attend son résumé.
+        match night_tool(name, "nuit_en_attente", json!({"jour": jour}), ctx).await.map(|v| v["conversations"].as_u64()) {
+            Ok(Some(0)) => {}
+            Ok(Some(_)) => return NO_MODEL,
+            _ => return FAILED,
+        }
         let Ok(episodes) = night_tool(name, "nuit_episodes", json!({"jour": jour}), ctx).await.and_then(|v| Ok(serde_json::from_value::<Vec<Element>>(v)?)) else {
             return FAILED;
         };

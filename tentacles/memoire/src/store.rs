@@ -1281,12 +1281,21 @@ impl MemoryStore {
     /// Conversations sans résumé, sujets ni décisions commencées avant `jour` :
     /// elles ne peuvent pas être condensées.
     pub fn conversations_non_resumees_avant(&self, jour: NaiveDate) -> Result<u32> {
-        Ok(self.conn.query_row(
+        self.non_resumees("started_at < ?", jour)
+    }
+
+    /// Conversations non résumées commencées le `jour` : la journée ne peut pas
+    /// encore être extraite.
+    pub fn conversations_non_resumees_le(&self, jour: NaiveDate) -> Result<u32> {
+        self.non_resumees("substr(started_at, 1, 10) = ?", jour)
+    }
+
+    fn non_resumees(&self, filtre_date: &str, jour: NaiveDate) -> Result<u32> {
+        let sql = format!(
             "SELECT COUNT(*) FROM conversations WHERE trim(coalesce(summary, '')) = ''
-             AND trim(topics) IN ('', '[]') AND trim(decisions) IN ('', '[]') AND started_at < ?",
-            [jour.format("%Y-%m-%d").to_string()],
-            |r| r.get(0),
-        )?)
+             AND trim(topics) IN ('', '[]') AND trim(decisions) IN ('', '[]') AND {filtre_date}"
+        );
+        Ok(self.conn.query_row(&sql, [jour.format("%Y-%m-%d").to_string()], |r| r.get(0))?)
     }
 
     /// Tous les lots condensables, recalculés depuis la base.
@@ -2293,6 +2302,18 @@ mod tests {
         assert!(s.force("conversation", &c.to_string()).unwrap().is_none());
         assert!(s.conversation_get(c).unwrap().is_none());
         assert_eq!(compte(&s, "SELECT COUNT(*) FROM journal"), 0);
+    }
+
+    #[test]
+    fn unsummarized_count_per_day() {
+        let s = store();
+        s.conversation_ingest(&NewConversation { session_id: Some("x".into()), ..conv("pas résumée") }).unwrap();
+        let c = s.conversation_ingest(&NewConversation { session_id: Some("y".into()), ..conv("résumée") }).unwrap();
+        s.conversation_set_summary(c, "bilan", &[], &[]).unwrap();
+        s.conn.execute("UPDATE conversations SET started_at = '2026-10-01 10:00:00'", []).unwrap();
+        let jour = NaiveDate::from_ymd_opt(2026, 10, 1).unwrap();
+        assert_eq!(s.conversations_non_resumees_le(jour).unwrap(), 1);
+        assert_eq!(s.conversations_non_resumees_le(jour.succ_opt().unwrap()).unwrap(), 0);
     }
 
     #[test]

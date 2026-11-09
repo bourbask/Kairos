@@ -548,6 +548,11 @@ impl MemoryServer {
         json_out(self.db()?.episodes_du_jour(parse_jour(&a.jour)?).map_err(err)?)
     }
 
+    #[tool(description = "Usage interne de la tête : conversations d'une journée encore à résumer.")]
+    fn nuit_en_attente(&self, Parameters(a): Parameters<JourArgs>) -> Out {
+        json_out(json!({"conversations": self.db()?.conversations_non_resumees_le(parse_jour(&a.jour)?).map_err(err)?}))
+    }
+
     #[tool(description = "Usage interne de la tête : clés connues, déclarées et déduites.")]
     fn nuit_cles(&self) -> Out {
         json_out(self.db()?.cles().map_err(err)?)
@@ -1028,6 +1033,7 @@ mod tests {
         assert_eq!(v[0]["nature"], "journal");
         assert!(v[0]["texte"].as_str().unwrap().contains("promenade"));
         assert!(s.nuit_episodes(Parameters(JourArgs { jour: "hier".into() })).is_err());
+        assert_eq!(js(s.nuit_en_attente(Parameters(JourArgs { jour: j.clone() }))), json!({"conversations": 0}));
 
         s.db().unwrap().fact_set("ville", "Lorient", "x").unwrap();
         let indices = vec![Indice { key: "sport".into(), value: "voile".into() }, Indice { key: "ville".into(), value: "Brest".into() }];

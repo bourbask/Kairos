@@ -49,6 +49,8 @@ struct Rec {
     condensed: Mutex<Vec<Value>>,
     /// Outils de nuit appelés, dans l'ordre.
     night_calls: Mutex<Vec<String>>,
+    /// Conversations encore à résumer, par jour.
+    unsummarized_days: Mutex<HashMap<String, u32>>,
 }
 
 #[derive(Clone)]
@@ -158,6 +160,13 @@ impl Fake {
         let v: Vec<Value> =
             texts.iter().map(|t| json!({"nature": "conversation", "ref": "1", "date": a.jour, "texte": t})).collect();
         Ok(Value::Array(v).to_string())
+    }
+
+    #[tool(description = "Conversations à résumer d'un jour.")]
+    fn nuit_en_attente(&self, Parameters(a): Parameters<Jour>) -> Result<String, String> {
+        self.night("en_attente");
+        let n = self.rec.unsummarized_days.lock().unwrap().get(&a.jour).copied().unwrap_or(0);
+        Ok(json!({"conversations": n}).to_string())
     }
 
     #[tool(description = "Clés connues.")]
@@ -1213,4 +1222,23 @@ async fn night_twice_is_harmless() {
     for e in ["extraction", "condensation", "oubli"] {
         assert_eq!(etat(&fx.rec, e).1, "ok", "{e}");
     }
+}
+
+#[tokio::test]
+async fn unsummarized_day_stays_pending() {
+    let mut fx = fixture("JB_N7", NIGHT_USAGES, vec![]).await;
+    set_etat(&fx.rec, "extraction", "2026-11-07");
+    episode(&fx.rec, "2026-11-08", "Je cours le samedi.");
+    fx.rec.unsummarized_days.lock().unwrap().insert("2026-11-08".into(), 1);
+    run(Job::Summaries, at(9, 3, 0), &mut fx.ctx).await.unwrap();
+    assert!(fx.rec.applied.lock().unwrap().is_empty());
+    assert!(fx.llm.lock().unwrap().requests.is_empty());
+    assert_eq!(etat(&fx.rec, "extraction"), (Some("2026-11-07".into()), "modele_indisponible".into()));
+
+    // Conversation résumée entre-temps : la journée est extraite la nuit suivante.
+    fx.rec.unsummarized_days.lock().unwrap().clear();
+    fx.llm.lock().unwrap().replies.push_back(text(r#"[{"key": "sport", "value": "course"}]"#));
+    run(Job::Summaries, at(9, 3, 0), &mut fx.ctx).await.unwrap();
+    assert_eq!(applied_days(&fx.rec), vec!["2026-11-08"]);
+    assert_eq!(etat(&fx.rec, "extraction"), (Some("2026-11-08".into()), "ok".into()));
 }
