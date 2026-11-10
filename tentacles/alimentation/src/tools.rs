@@ -1000,10 +1000,7 @@ impl FoodServer {
             > 5;
         let (jour_code, jour_lib) = if weekend { ("weekend", "le week-end") } else { ("ouvre", "en semaine") };
         let mut out = Vec::new();
-        for (d, slot, _plat, lieu) in self.store.meals_since(&jour).map_err(|e| e.to_string())? {
-            if d != jour {
-                continue;
-            }
+        for (slot, lieu) in self.store.meals_on(&jour).map_err(|e| e.to_string())? {
             let (code, repas) = match slot.as_str() {
                 "midi" => ("midi", "déjeuner"),
                 "soir" => ("soir", "dîner"),
