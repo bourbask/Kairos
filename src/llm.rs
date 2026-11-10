@@ -48,9 +48,11 @@ pub struct LlmRouter {
     db_path: Option<std::path::PathBuf>,
 }
 
-/// Usages qui traitent la mémoire personnelle ou le contenu des conversations :
-/// toujours stratégiques, quoi que déclare la configuration. Liste unique.
-const ALWAYS_STRATEGIC: [&str; 2] = ["conversation", "resume_conversation"];
+/// Usages dont l'entrée porte des données personnelles (mémoire, conversations,
+/// sections du brief) : toujours stratégiques, quoi que déclare la
+/// configuration, pour qu'aucune ligne de réglage ne suffise à les faire
+/// sortir. Liste unique ; tout nouvel usage de cette nature s'y ajoute.
+const ALWAYS_STRATEGIC: [&str; 4] = ["conversation", "resume_conversation", "brief", "suggestion"];
 
 fn always_strategic(usage: &str) -> bool {
     ALWAYS_STRATEGIC.contains(&usage) || usage.starts_with("memoire_")
@@ -1332,7 +1334,7 @@ mod tests {
                 "fort".to_string(),
                 moteur("http://fort.invalid", Placement::External),
             )]),
-            usages: ["brief", "conversation", "resume_conversation", "memoire_extraction"]
+            usages: ["veille_publique", "brief", "suggestion", "conversation", "resume_conversation", "memoire_extraction"]
                 .into_iter()
                 .map(|u| (u.to_string(), "fort".to_string()))
                 .collect(),
@@ -1343,19 +1345,28 @@ mod tests {
     #[test]
     fn undeclared_usage_is_strategic() {
         let r = common_router(vec![]);
-        assert_eq!(r.sensitivity("brief"), Sensitivity::Strategic);
+        assert_eq!(r.sensitivity("veille_publique"), Sensitivity::Strategic);
         assert_eq!(r.sensitivity("inconnu"), Sensitivity::Strategic);
-        let choice = r.route("brief", r.sensitivity("brief")).unwrap();
+        let choice = r.route("veille_publique", r.sensitivity("veille_publique")).unwrap();
         assert_eq!(choice.engine, Engine::SelfHosted);
     }
 
     #[test]
     fn declared_common_usage_goes_external() {
-        let r = common_router(vec!["brief".into()]);
-        assert_eq!(r.sensitivity("brief"), Sensitivity::Common);
-        let choice = r.route("brief", r.sensitivity("brief")).unwrap();
+        let r = common_router(vec!["veille_publique".into()]);
+        assert_eq!(r.sensitivity("veille_publique"), Sensitivity::Common);
+        let choice = r.route("veille_publique", r.sensitivity("veille_publique")).unwrap();
         assert_eq!(choice.engine, Engine::External);
         assert_eq!(choice.engine_name, "fort");
+    }
+
+    #[test]
+    fn brief_and_suggestion_stay_strategic() {
+        let r = common_router(vec!["brief".into(), "suggestion".into()]);
+        for usage in ["brief", "suggestion"] {
+            assert_eq!(r.sensitivity(usage), Sensitivity::Strategic, "{usage}");
+            assert_eq!(r.route(usage, r.sensitivity(usage)).unwrap().engine, Engine::SelfHosted);
+        }
     }
 
     #[test]

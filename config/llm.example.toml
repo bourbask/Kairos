@@ -16,9 +16,10 @@
 strategic_concessions = []
 
 # Usages déclarés communs, par nom d'usage : ils peuvent suivre un moteur
-# externe. Tout usage absent reste stratégique (défaut). Les usages de mémoire
-# et de conversation (conversation, resume_conversation, memoire_*) restent
-# stratégiques : les lister ici est refusé au démarrage.
+# externe. Tout usage absent reste stratégique (défaut). Les usages qui
+# traitent des données personnelles (conversation, resume_conversation, brief,
+# suggestion, memoire_*) restent stratégiques : les lister ici est refusé au
+# démarrage.
 common_usages = []
 
 # Termes à masquer avant tout envoi vers un moteur externe (littéraux, sans
