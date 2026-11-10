@@ -11,6 +11,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.LifecycleStartEffect
@@ -20,29 +21,33 @@ import kotlinx.coroutines.delay
 /**
  * Bascule clair/sombre selon la luminosité, sans clignoter : deux seuils
  * (hystérésis) et un délai pendant lequel les mesures doivent rester du même
- * côté. Commence en clair.
+ * côté. Sans état connu ([initialDark] nul), la première mesure tranche
+ * aussitôt, au milieu des deux seuils : pas de passage transitoire par le clair.
  */
 class LuxHysteresis(
+    initialDark: Boolean? = null,
     private val darkBelow: Float = 15f,
     private val lightAbove: Float = 40f,
+    // Assez long pour ignorer une ombre ou un passage devant une lampe, assez court pour suivre un vrai changement de pièce.
     private val holdMillis: Long = 8000,
 ) {
-    private var dark = false
+    private var dark: Boolean? = initialDark
     private var since: Long? = null
 
     /** Rend vrai si le thème doit être sombre. */
     fun update(lux: Float, nowMillis: Long): Boolean {
+        val dark = this.dark ?: (lux < (darkBelow + lightAbove) / 2).also { this.dark = it }
         val wantsSwitch = if (dark) lux > lightAbove else lux < darkBelow
         if (!wantsSwitch) {
             since = null
         } else {
             val start = since ?: nowMillis.also { since = it }
             if (nowMillis - start >= holdMillis) {
-                dark = !dark
+                this.dark = !dark
                 since = null
             }
         }
-        return dark
+        return this.dark!!
     }
 }
 
@@ -58,8 +63,11 @@ fun rememberDark(mode: ThemeMode): Boolean {
     val sensors = remember { context.getSystemService(Context.SENSOR_SERVICE) as SensorManager }
     val light = remember { sensors.getDefaultSensor(Sensor.TYPE_LIGHT) } ?: return system
 
-    val filter = remember { LuxHysteresis() }
-    var dark by remember { mutableStateOf(false) }
+    // Conservé à la recréation de l'écran (rotation…) : le thème ne repart pas de zéro.
+    var saved by rememberSaveable { mutableStateOf<Boolean?>(null) }
+    val filter = remember { LuxHysteresis(initialDark = saved) }
+    // Avant la première mesure : l'état conservé, sinon le thème du système.
+    var dark by remember { mutableStateOf(saved ?: system) }
     var lux by remember { mutableStateOf<Float?>(null) }
 
     LifecycleStartEffect(sensors) {
@@ -67,6 +75,7 @@ fun rememberDark(mode: ThemeMode): Boolean {
             override fun onSensorChanged(event: SensorEvent) {
                 lux = event.values[0]
                 dark = filter.update(event.values[0], SystemClock.elapsedRealtime())
+                saved = dark
             }
 
             override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
@@ -80,6 +89,7 @@ fun rememberDark(mode: ThemeMode): Boolean {
         while (true) {
             delay(2_000)
             dark = filter.update(l, SystemClock.elapsedRealtime())
+            saved = dark
         }
     }
     return dark
