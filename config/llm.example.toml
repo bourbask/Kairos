@@ -13,7 +13,16 @@
 # Usages stratégiques concédés à la voie externe, par nom d'usage.
 # Liste vide = refus (défaut). Chaque nom listé est une exception assumée :
 # la donnée de cet usage quittera la machine. Le routeur la journalise.
+# Les usages qui traitent des données personnelles (voir common_usages) ne
+# peuvent pas être concédés : les lister ici est refusé au démarrage.
 strategic_concessions = []
+
+# Usages déclarés communs, par nom d'usage : ils peuvent suivre un moteur
+# externe. Tout usage absent reste stratégique (défaut). Les usages qui
+# traitent des données personnelles (conversation, resume_conversation, brief,
+# suggestion, memoire_*) restent stratégiques : les lister ici est refusé au
+# démarrage.
+common_usages = []
 
 # Termes à masquer avant tout envoi vers un moteur externe (littéraux, sans
 # distinction de casse). Les IBAN, numéros de carte, de sécurité sociale, de

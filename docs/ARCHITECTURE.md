@@ -124,7 +124,7 @@ kairos/
 ├── config/
 │   ├── profile.toml         # CV : skills, salary target, countries, contact (gitignored)
 │   ├── profile.example.toml # Template
-│   ├── modules.toml         # Config par module, une section chacun (gitignored, optionnel)
+│   ├── modules.toml         # Config par module, une section chacun (gitignored, optionnel ; MODULES_PATH) — [jobs] remplace en bloc les anciens champs du profil
 │   └── modules.example.toml # Template
 ├── data/
 │   └── kairos.db            # SQLite (gitignored)
