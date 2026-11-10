@@ -31,7 +31,7 @@ pub const A_QUOTIDIEN: f64 = 0.1;
 pub const A_HEBDO: f64 = 0.25;
 /// Observations retenues par source et par jour.
 pub const OBSERVATIONS_MAX: usize = 50;
-/// Au-delà de ce silence, en jours, une source n'est plus attendue.
+/// Au-delà de ce silence, en nuits, une source n'est plus attendue.
 pub const SOURCE_ABSENTE_JOURS: u64 = 14;
 /// Longueur maximale d'un code ou d'un nom de source.
 const CODE_MAX: usize = 64;
@@ -249,6 +249,19 @@ impl MemoryStore {
         Ok(n > 0)
     }
 
+    /// Inscrit des sources attendues encore inconnues, sans rien leur compter :
+    /// leur silence tient alors la journée en attente dès la première nuit.
+    pub fn attendre_sources(&self, jour: NaiveDate, attendues: &[String], maintenant: NaiveDateTime) -> Result<()> {
+        let veille = (jour - Days::new(1)).format("%Y-%m-%d").to_string();
+        for source in attendues.iter().filter(|s| (1..=CODE_MAX).contains(&s.chars().count())) {
+            self.conn.execute(
+                "INSERT OR IGNORE INTO habitudes_sources (source, dernier_jour, vu_le) VALUES (?, ?, ?)",
+                params![source, veille, ts(maintenant)],
+            )?;
+        }
+        Ok(())
+    }
+
     /// Compte les observations de `jour`, source par source, puis élit l'active
     /// de chaque contexte touché, en une transaction.
     /// Un jour déjà appliqué pour une source ne compte plus. `complet` dit si
@@ -270,6 +283,7 @@ impl MemoryStore {
             let dernier: Option<String> = tx
                 .query_row("SELECT dernier_jour FROM habitudes_sources WHERE source = ?", [source], |r| r.get(0))
                 .optional()?;
+            tx.execute("UPDATE habitudes_sources SET vu_le = ? WHERE source = ?", params![ts(maintenant), source])?;
             if dernier.is_some_and(|d| d >= j) {
                 continue;
             }
@@ -285,17 +299,19 @@ impl MemoryStore {
                 }
             }
             tx.execute(
-                "INSERT INTO habitudes_sources (source, dernier_jour) VALUES (?1, ?2)
-                 ON CONFLICT(source) DO UPDATE SET dernier_jour = ?2",
-                [source, &j],
+                "INSERT INTO habitudes_sources (source, dernier_jour, vu_le) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(source) DO UPDATE SET dernier_jour = ?2, vu_le = ?3",
+                params![source, j, ts(maintenant)],
             )?;
         }
-        // Une source muette depuis trop longtemps n'est plus attendue ; ses habitudes restent.
-        let limite = (jour - Days::new(SOURCE_ABSENTE_JOURS)).format("%Y-%m-%d").to_string();
-        tx.execute("DELETE FROM habitudes_sources WHERE dernier_jour < ?", [limite])?;
+        // Une source muette depuis trop longtemps n'est plus attendue ; ses habitudes
+        // restent. Compté en nuits réelles : une journée bloquée finit par se libérer.
+        // La ligne est gardée : redemandée chaque nuit, la source ne rebloque pas,
+        // et une vraie réponse la rend de nouveau attendue.
+        let limite = ts(maintenant - Days::new(SOURCE_ABSENTE_JOURS));
         let connues = tx
-            .prepare("SELECT source FROM habitudes_sources")?
-            .query_map([], |r| r.get::<_, String>(0))?
+            .prepare("SELECT source FROM habitudes_sources WHERE vu_le >= ?")?
+            .query_map([limite], |r| r.get::<_, String>(0))?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         b.complet = connues.iter().all(|s| sources.contains_key(s));
         tx.commit()?;
@@ -399,13 +415,46 @@ mod tests {
         assert!(deux(0, true).complet);
         assert!(!deux(1, false).complet);
         assert!(deux(1, true).complet);
-        // Absente plus de 14 jours après son dernier jour : retirée des sources connues.
+        // Absente plus de 14 jours après son dernier jour : plus attendue (ligne gardée).
         assert!(!deux(15, false).complet);
         assert!(deux(16, false).complet);
-        let connue: bool = s.conn.prepare("SELECT 1 FROM habitudes_sources WHERE source = 'a'").unwrap().exists([]).unwrap();
-        assert!(!connue);
         let lignes: i64 = s.conn.query_row("SELECT COUNT(*) FROM habitudes WHERE source = 'a'", [], |r| r.get(0)).unwrap();
         assert_eq!(lignes, 1);
+    }
+
+    #[test]
+    fn stuck_day_released_after_fourteen_nights() {
+        let s = store();
+        let a = || {
+            let mut m = lot("b", vec![]);
+            m.insert("a".into(), vec![obs("soir.ouvre", "maison")]);
+            m
+        };
+        s.appliquer_observations(jour(0), &a(), quand(0)).unwrap();
+        // La même journée rejouée nuit après nuit, `a` muette : retirée après 14 jours de silence.
+        let nuit = |k: u64| s.appliquer_observations(jour(1), &lot("b", vec![]), quand(1) + Days::new(k)).unwrap();
+        for k in 0..14 {
+            assert!(!nuit(k).complet, "nuit {k}");
+        }
+        assert!(nuit(14).complet);
+        assert_eq!(compte(&s, "SELECT COUNT(*) FROM habitudes WHERE source = 'a'"), 1);
+        // Toujours configurée mais muette : redemandée chaque nuit, elle ne rebloque pas.
+        for k in 15..20 {
+            s.attendre_sources(jour(2), &["a".into()], quand(1) + Days::new(k)).unwrap();
+            assert!(s.appliquer_observations(jour(2), &lot("b", vec![]), quand(1) + Days::new(k)).unwrap().complet, "nuit {k}");
+        }
+        // Une vraie réponse la rend de nouveau attendue.
+        s.appliquer_observations(jour(3), &a(), quand(1) + Days::new(21)).unwrap();
+        assert!(!s.appliquer_observations(jour(4), &lot("b", vec![]), quand(1) + Days::new(22)).unwrap().complet);
+    }
+
+    #[test]
+    fn present_source_is_seen_even_when_day_already_applied() {
+        let s = store();
+        s.appliquer_observations(jour(0), &lot("a", vec![obs("soir.ouvre", "maison")]), quand(0)).unwrap();
+        s.appliquer_observations(jour(0), &lot("a", vec![]), quand(20)).unwrap();
+        let vu: String = s.conn.query_row("SELECT vu_le FROM habitudes_sources WHERE source = 'a'", [], |r| r.get(0)).unwrap();
+        assert_eq!(vu, ts(quand(20)));
     }
 
     #[test]
@@ -574,6 +623,19 @@ mod tests {
         s.intention_set_state(q, IntentionState::Refusee).unwrap();
         assert_eq!(colonne(&s, "confirmee || rejetee", "maison").as_deref(), Some("01"));
         assert!(rappel_habitudes(&s, 6).is_empty());
+    }
+
+    #[test]
+    fn late_acceptance_keeps_one_active() {
+        let s = store();
+        serie(&s, 0, 7, "maison");
+        let q = question(&s, "maison");
+        s.intention_set_state(q, IntentionState::Refusee).unwrap();
+        // Une autre valeur prend le contexte, puis l'habitude refusée est finalement acceptée.
+        serie(&s, 7, 30, "restaurant");
+        assert_eq!(etat(&s, "restaurant").0, "active");
+        s.intention_set_state(q, IntentionState::Acceptee).unwrap();
+        assert_eq!(compte(&s, "SELECT COUNT(*) FROM habitudes WHERE etat = 'active' AND rejetee = 0"), 1);
     }
 
     #[test]

@@ -236,7 +236,10 @@ struct NuitHabitudesArgs {
     /// `AAAA-MM-JJ`.
     jour: String,
     /// Observations de la journée, par source.
-    sources: BTreeMap<String, Vec<Observation>>,
+    sources: BTreeMap<String, Value>,
+    /// Sources qui devraient répondre, même si elles n'ont rien rendu.
+    #[serde(default)]
+    attendues: Vec<String>,
 }
 #[derive(Deserialize, schemars::JsonSchema)]
 struct MaxArgs {
@@ -253,6 +256,8 @@ struct CondenserArgs {
 struct NoterArgs {
     etape: String,
     statut: String,
+    /// Code du motif d'une sortie invalide.
+    motif: Option<String>,
     /// `AAAA-MM-JJ` ; absent, le précédent est gardé.
     dernier_jour: Option<String>,
 }
@@ -578,7 +583,23 @@ impl MemoryServer {
 
     #[tool(description = "Usage interne de la tête : compter les observations d'habitudes d'une journée.")]
     fn nuit_habitudes(&self, Parameters(a): Parameters<NuitHabitudesArgs>) -> Out {
-        json_out(self.db()?.appliquer_observations(parse_jour(&a.jour)?, &a.sources, now_local()).map_err(err)?)
+        let jour = parse_jour(&a.jour)?;
+        // Un élément mal formé est ignoré sans bloquer la source ; une source qui
+        // n'est pas un tableau est absente, et la journée attend.
+        let mut mal_formees = 0;
+        let mut sources = BTreeMap::new();
+        for (source, v) in a.sources {
+            let Value::Array(items) = v else { continue };
+            let total = items.len();
+            let obs: Vec<Observation> = items.into_iter().filter_map(|o| serde_json::from_value(o).ok()).collect();
+            mal_formees += (total - obs.len()) as u32;
+            sources.insert(source, obs);
+        }
+        let db = self.db()?;
+        db.attendre_sources(jour, &a.attendues, now_local()).map_err(err)?;
+        let mut bilan = db.appliquer_observations(jour, &sources, now_local()).map_err(err)?;
+        bilan.ignorees += mal_formees;
+        json_out(bilan)
     }
 
     #[tool(description = "Usage interne de la tête : lots de souvenirs à condenser.")]
@@ -605,7 +626,7 @@ impl MemoryServer {
     #[tool(description = "Usage interne de la tête : noter l'exécution d'une étape de nuit.")]
     fn nuit_noter(&self, Parameters(a): Parameters<NoterArgs>) -> Out {
         let jour = a.dernier_jour.as_deref().map(parse_jour).transpose()?;
-        self.db()?.nuit_noter(&a.etape, &a.statut, jour, now_local()).map_err(err)?;
+        self.db()?.nuit_noter(&a.etape, &a.statut, a.motif.as_deref(), jour, now_local()).map_err(err)?;
         json_out(json!({"message": "État noté."}))
     }
 }
@@ -620,6 +641,17 @@ fn raison(statut: &str) -> &'static str {
         "sortie_invalide" => "réponse du modèle inutilisable",
         "source_indisponible" => "source indisponible",
         _ => "échec",
+    }
+}
+
+/// Précision courte d'un motif de sortie invalide, pour le briefing.
+fn precision(motif: &str) -> &'static str {
+    match motif {
+        "lot_trop_long" => " (souvenirs trop longs à résumer)",
+        "reponse_coupee" => " (réponse coupée)",
+        "reponse_vide" => " (réponse vide)",
+        "synthese_trop_longue" => " (résumé trop long)",
+        _ => "",
     }
 }
 
@@ -646,7 +678,8 @@ impl MemoryServer {
             };
             if e.statut != "ok" {
                 let depuis = e.dernier_jour.and_then(|j| j.succ_opt()).unwrap_or(derniere.date());
-                lignes.push(format!("- Mémoire : {} en attente depuis le {} — {}", e.etape, jj(depuis), raison(&e.statut)));
+                let motif = e.motif.as_deref().map_or("", precision);
+                lignes.push(format!("- Mémoire : {} en attente depuis le {} — {}{motif}", e.etape, jj(depuis), raison(&e.statut)));
             }
             if now - derniere > Duration::hours(NUIT_MUETTE_HEURES) {
                 lignes.push(format!("- Mémoire : {} n'a pas tourné depuis le {}", e.etape, jj(derniere.date())));
@@ -977,7 +1010,7 @@ mod tests {
         let s = srv();
         // Instant figé : le test ne dépend pas de l'heure du lancement.
         let now = NaiveDate::from_ymd_opt(2026, 11, 9).unwrap().and_hms_opt(7, 0, 0).unwrap();
-        let noter = |etape: &str, statut: &str, jour: Option<NaiveDate>| s.db().unwrap().nuit_noter(etape, statut, jour, now).unwrap();
+        let noter = |etape: &str, statut: &str, jour: Option<NaiveDate>| s.db().unwrap().nuit_noter(etape, statut, None, jour, now).unwrap();
         for etape in crate::store::ETAPES_NUIT {
             noter(etape, "ok", None);
         }
@@ -990,6 +1023,10 @@ mod tests {
         assert!(s.brief_at(now, BriefPeriod::Matin).unwrap().contains("Mémoire : oubli en attente depuis le 09/11/2026 — échec"));
         noter("condensation", "sortie_invalide", None);
         assert!(s.brief_at(now, BriefPeriod::Matin).unwrap().contains("condensation en attente depuis le 09/11/2026 — réponse du modèle inutilisable"));
+        // Motif du refus : dit, sans rien du contenu.
+        s.db().unwrap().nuit_noter("condensation", "sortie_invalide", Some("lot_trop_long"), None, now).unwrap();
+        let b = s.brief_at(now, BriefPeriod::Matin).unwrap();
+        assert!(b.contains("condensation en attente depuis le 09/11/2026 — réponse du modèle inutilisable (souvenirs trop longs à résumer)"), "{b}");
         // Rattrapée : la ligne disparaît.
         noter("extraction", "ok", NaiveDate::from_ymd_opt(2026, 11, 8));
         assert!(!s.brief_at(now, BriefPeriod::Matin).unwrap().contains("extraction"));
@@ -1020,14 +1057,14 @@ mod tests {
         let s = srv();
         let now = NaiveDate::from_ymd_opt(2026, 11, 9).unwrap().and_hms_opt(7, 0, 0).unwrap();
         for etape in crate::store::ETAPES_NUIT {
-            s.db().unwrap().nuit_noter(etape, "ok", None, now - Duration::hours(35)).unwrap();
+            s.db().unwrap().nuit_noter(etape, "ok", None, None, now - Duration::hours(35)).unwrap();
         }
         assert_eq!(s.brief_at(now, BriefPeriod::Matin).unwrap(), "");
-        s.db().unwrap().nuit_noter("oubli", "ok", None, now - Duration::hours(37)).unwrap();
+        s.db().unwrap().nuit_noter("oubli", "ok", None, None, now - Duration::hours(37)).unwrap();
         let b = s.brief_at(now, BriefPeriod::Matin).unwrap();
         assert_eq!(b, "- Mémoire : oubli n'a pas tourné depuis le 07/11/2026");
         // En échec et arrêtée : les deux se voient.
-        s.db().unwrap().nuit_noter("oubli", "echec", None, now - Duration::hours(37)).unwrap();
+        s.db().unwrap().nuit_noter("oubli", "echec", None, None, now - Duration::hours(37)).unwrap();
         let b = s.brief_at(now, BriefPeriod::Matin).unwrap();
         assert!(b.contains("oubli en attente") && b.contains("oubli n'a pas tourné"), "{b}");
     }
@@ -1074,12 +1111,17 @@ mod tests {
         assert_eq!(js(s.nuit_oublier()), json!({"supprimes": 0}));
 
         assert_eq!(js(s.nuit_etat()).as_array().unwrap().len(), 4);
-        let a = NoterArgs { etape: "extraction".into(), statut: "ok".into(), dernier_jour: Some("2026-11-08".into()) };
+        let a = NoterArgs { etape: "extraction".into(), statut: "ok".into(), motif: None, dernier_jour: Some("2026-11-08".into()) };
         assert!(js(s.nuit_noter(Parameters(a)))["message"].is_string());
         let e = &js(s.nuit_etat())[1];
         assert_eq!((e["etape"].as_str(), e["dernier_jour"].as_str(), e["statut"].as_str()), (Some("extraction"), Some("2026-11-08"), Some("ok")));
         assert!(e["derniere_execution"].is_string());
-        let a = NoterArgs { etape: "rêve".into(), statut: "ok".into(), dernier_jour: None };
+        let a = NoterArgs { etape: "rêve".into(), statut: "ok".into(), motif: None, dernier_jour: None };
+        assert!(s.nuit_noter(Parameters(a)).is_err());
+        let a = NoterArgs { etape: "condensation".into(), statut: "sortie_invalide".into(), motif: Some("reponse_coupee".into()), dernier_jour: None };
+        assert!(js(s.nuit_noter(Parameters(a)))["message"].is_string());
+        assert_eq!(js(s.nuit_etat())[0]["motif"], "reponse_coupee");
+        let a = NoterArgs { etape: "condensation".into(), statut: "sortie_invalide".into(), motif: Some("inventé".into()), dernier_jour: None };
         assert!(s.nuit_noter(Parameters(a)).is_err());
     }
 
@@ -1096,15 +1138,49 @@ mod tests {
     #[test]
     fn night_habits_tool_shape() {
         let s = srv();
-        let sources = BTreeMap::from([("test".to_string(), vec![obs_soir("maison")])]);
-        let v = js(s.nuit_habitudes(Parameters(NuitHabitudesArgs { jour: "2026-11-09".into(), sources })));
+        let sources = BTreeMap::from([("test".to_string(), json!([obs_soir("maison")]))]);
+        let v = js(s.nuit_habitudes(Parameters(NuitHabitudesArgs { jour: "2026-11-09".into(), sources, attendues: vec![] })));
         for k in ["complet", "appliquees", "nees", "changements", "retours", "ignorees"] {
             assert!(v.get(k).is_some(), "{k} : {v}");
         }
         assert_eq!(v["appliquees"], 1);
-        assert!(s.nuit_habitudes(Parameters(NuitHabitudesArgs { jour: "hier".into(), sources: BTreeMap::new() })).is_err());
+        assert!(s.nuit_habitudes(Parameters(NuitHabitudesArgs { jour: "hier".into(), sources: BTreeMap::new(), attendues: vec![] })).is_err());
         let e = s.app_habitude_forget(Parameters(IdArgs { id: 999 })).unwrap_err();
         assert_eq!(e, "habitude inconnue");
+    }
+
+    #[test]
+    fn malformed_observation_is_ignored_not_blocking() {
+        let s = srv();
+        let jour = |j: &str, sources: Value| {
+            let sources = serde_json::from_value(sources).unwrap();
+            js(s.nuit_habitudes(Parameters(NuitHabitudesArgs { jour: j.into(), sources, attendues: vec![] })))
+        };
+        let v = jour("2026-11-08", json!({"a": [obs_soir("maison")], "b": [obs_soir("maison")]}));
+        assert_eq!(v["complet"], true);
+        // Un élément mal formé parmi des valides : le reste s'applique.
+        let mut midi = obs_soir("bureau");
+        midi.contexte = "midi.ouvre".into();
+        let v = jour("2026-11-09", json!({"a": [obs_soir("maison"), {"quoi": 3}, "x", midi], "b": [obs_soir("maison")]}));
+        assert_eq!((v["appliquees"].as_u64(), v["ignorees"].as_u64(), v["complet"].as_bool()), (Some(3), Some(2), Some(true)));
+        // Une source qui n'est pas un tableau est absente : la journée attend.
+        let v = jour("2026-11-10", json!({"a": {"quoi": "repas.lieu"}, "b": [obs_soir("maison")]}));
+        assert_eq!((v["appliquees"].as_u64(), v["complet"].as_bool()), (Some(1), Some(false)));
+    }
+
+    #[test]
+    fn expected_source_absent_holds_first_day() {
+        let s = srv();
+        let nuit = |args: Value| js(s.nuit_habitudes(Parameters(serde_json::from_value(args).unwrap())));
+        // Première nuit : `a` attendue mais muette, la journée attend.
+        let v = nuit(json!({"jour": "2026-11-09", "sources": {"b": [obs_soir("maison")]}, "attendues": ["a", "b"]}));
+        assert_eq!((v["appliquees"].as_u64(), v["complet"].as_bool()), (Some(1), Some(false)));
+        let v = nuit(json!({"jour": "2026-11-09", "sources": {"a": [obs_soir("maison")], "b": []}, "attendues": ["a", "b"]}));
+        assert_eq!((v["appliquees"].as_u64(), v["complet"].as_bool()), (Some(1), Some(true)));
+        // Sans `attendues` : seules les sources connues sont attendues.
+        let s2 = srv();
+        let v = js(s2.nuit_habitudes(Parameters(serde_json::from_value(json!({"jour": "2026-11-09", "sources": {}})).unwrap())));
+        assert_eq!(v["complet"], true);
     }
 
     #[test]
@@ -1112,9 +1188,9 @@ mod tests {
         let s = srv();
         let now = NaiveDate::from_ymd_opt(2026, 11, 9).unwrap().and_hms_opt(7, 0, 0).unwrap();
         for etape in crate::store::ETAPES_NUIT {
-            s.db().unwrap().nuit_noter(etape, "ok", None, now).unwrap();
+            s.db().unwrap().nuit_noter(etape, "ok", None, None, now).unwrap();
         }
-        s.db().unwrap().nuit_noter("habitudes", "source_indisponible", NaiveDate::from_ymd_opt(2026, 11, 6), now).unwrap();
+        s.db().unwrap().nuit_noter("habitudes", "source_indisponible", None, NaiveDate::from_ymd_opt(2026, 11, 6), now).unwrap();
         let b = s.brief_at(now, BriefPeriod::Matin).unwrap();
         assert!(b.contains("habitudes en attente depuis le") && b.contains("source indisponible"), "{b}");
     }
