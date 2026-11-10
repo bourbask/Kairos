@@ -57,6 +57,8 @@ Your CV profile goes in `config/profile.toml` (gitignored — copy from `.exampl
 
 Optional per-module settings go in `config/modules.toml` (gitignored — copy from
 `.example`). A missing file or section leaves that module inactive.
+Job-search settings live in its `[jobs]` section; once present, it replaces the legacy
+profile fields as a whole (not field by field). `MODULES_PATH` overrides the file path.
 
 Generation routing goes in `config/llm.toml` (gitignored — copy from `.example`).
 It declares two paths, self-hosted and external, and is the single source of the
