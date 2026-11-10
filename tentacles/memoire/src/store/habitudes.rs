@@ -306,11 +306,12 @@ impl MemoryStore {
         }
         // Une source muette depuis trop longtemps n'est plus attendue ; ses habitudes
         // restent. Compté en nuits réelles : une journée bloquée finit par se libérer.
+        // La ligne est gardée : redemandée chaque nuit, la source ne rebloque pas,
+        // et une vraie réponse la rend de nouveau attendue.
         let limite = ts(maintenant - Days::new(SOURCE_ABSENTE_JOURS));
-        tx.execute("DELETE FROM habitudes_sources WHERE vu_le < ?", [limite])?;
         let connues = tx
-            .prepare("SELECT source FROM habitudes_sources")?
-            .query_map([], |r| r.get::<_, String>(0))?
+            .prepare("SELECT source FROM habitudes_sources WHERE vu_le >= ?")?
+            .query_map([limite], |r| r.get::<_, String>(0))?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         b.complet = connues.iter().all(|s| sources.contains_key(s));
         tx.commit()?;
@@ -414,11 +415,9 @@ mod tests {
         assert!(deux(0, true).complet);
         assert!(!deux(1, false).complet);
         assert!(deux(1, true).complet);
-        // Absente plus de 14 jours après son dernier jour : retirée des sources connues.
+        // Absente plus de 14 jours après son dernier jour : plus attendue (ligne gardée).
         assert!(!deux(15, false).complet);
         assert!(deux(16, false).complet);
-        let connue: bool = s.conn.prepare("SELECT 1 FROM habitudes_sources WHERE source = 'a'").unwrap().exists([]).unwrap();
-        assert!(!connue);
         let lignes: i64 = s.conn.query_row("SELECT COUNT(*) FROM habitudes WHERE source = 'a'", [], |r| r.get(0)).unwrap();
         assert_eq!(lignes, 1);
     }
@@ -438,8 +437,15 @@ mod tests {
             assert!(!nuit(k).complet, "nuit {k}");
         }
         assert!(nuit(14).complet);
-        assert_eq!(compte(&s, "SELECT COUNT(*) FROM habitudes_sources WHERE source = 'a'"), 0);
         assert_eq!(compte(&s, "SELECT COUNT(*) FROM habitudes WHERE source = 'a'"), 1);
+        // Toujours configurée mais muette : redemandée chaque nuit, elle ne rebloque pas.
+        for k in 15..20 {
+            s.attendre_sources(jour(2), &["a".into()], quand(1) + Days::new(k)).unwrap();
+            assert!(s.appliquer_observations(jour(2), &lot("b", vec![]), quand(1) + Days::new(k)).unwrap().complet, "nuit {k}");
+        }
+        // Une vraie réponse la rend de nouveau attendue.
+        s.appliquer_observations(jour(3), &a(), quand(1) + Days::new(21)).unwrap();
+        assert!(!s.appliquer_observations(jour(4), &lot("b", vec![]), quand(1) + Days::new(22)).unwrap().complet);
     }
 
     #[test]
