@@ -249,6 +249,19 @@ impl MemoryStore {
         Ok(n > 0)
     }
 
+    /// Inscrit des sources attendues encore inconnues, sans rien leur compter :
+    /// leur silence tient alors la journée en attente dès la première nuit.
+    pub fn attendre_sources(&self, jour: NaiveDate, attendues: &[String], maintenant: NaiveDateTime) -> Result<()> {
+        let veille = (jour - Days::new(1)).format("%Y-%m-%d").to_string();
+        for source in attendues.iter().filter(|s| (1..=CODE_MAX).contains(&s.chars().count())) {
+            self.conn.execute(
+                "INSERT OR IGNORE INTO habitudes_sources (source, dernier_jour, vu_le) VALUES (?, ?, ?)",
+                params![source, veille, ts(maintenant)],
+            )?;
+        }
+        Ok(())
+    }
+
     /// Compte les observations de `jour`, source par source, puis élit l'active
     /// de chaque contexte touché, en une transaction.
     /// Un jour déjà appliqué pour une source ne compte plus. `complet` dit si

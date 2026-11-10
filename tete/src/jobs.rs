@@ -684,18 +684,19 @@ async fn habits(name: &str, last: Option<NaiveDate>, now: NaiveDateTime, ctx: &C
     let first = last.map_or(until, |d| d + TimeDelta::days(1));
     for day in first.iter_days().take_while(|d| *d <= until).take(NIGHT_DAYS) {
         let jour = day.format("%Y-%m-%d").to_string();
+        let replies = ctx.tentacles.call_conventional_limited("nuit_observations", json!({"jour": jour}), NIGHT_MAX_CHARS).await;
+        // Tout tentacule qui observe est attendu, même en échec : son silence tient la journée.
+        let expected: Vec<&str> = replies.iter().map(|(source, _)| source.as_str()).collect();
         // Une réponse en erreur ou illisible rend la source absente, jamais vide.
-        let sources: serde_json::Map<String, Value> = ctx
-            .tentacles
-            .call_conventional_limited("nuit_observations", json!({"jour": jour}), NIGHT_MAX_CHARS)
-            .await
-            .into_iter()
+        let sources: serde_json::Map<String, Value> = replies
+            .iter()
             .filter_map(|(source, res)| {
-                let obs = serde_json::from_str::<Vec<Value>>(&res.ok()?).ok()?;
-                Some((source, Value::Array(obs)))
+                let obs = serde_json::from_str::<Vec<Value>>(res.as_ref().ok()?).ok()?;
+                Some((source.clone(), Value::Array(obs)))
             })
             .collect();
-        let Ok(bilan) = night_tool(name, "nuit_habitudes", json!({"jour": jour, "sources": sources}), ctx).await else {
+        let args = json!({"jour": jour, "sources": sources, "attendues": expected});
+        let Ok(bilan) = night_tool(name, "nuit_habitudes", args, ctx).await else {
             return FAILED;
         };
         tracing::info!(

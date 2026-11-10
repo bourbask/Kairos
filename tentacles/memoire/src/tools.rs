@@ -237,6 +237,9 @@ struct NuitHabitudesArgs {
     jour: String,
     /// Observations de la journée, par source.
     sources: BTreeMap<String, Value>,
+    /// Sources qui devraient répondre, même si elles n'ont rien rendu.
+    #[serde(default)]
+    attendues: Vec<String>,
 }
 #[derive(Deserialize, schemars::JsonSchema)]
 struct MaxArgs {
@@ -590,7 +593,9 @@ impl MemoryServer {
             mal_formees += (total - obs.len()) as u32;
             sources.insert(source, obs);
         }
-        let mut bilan = self.db()?.appliquer_observations(jour, &sources, now_local()).map_err(err)?;
+        let db = self.db()?;
+        db.attendre_sources(jour, &a.attendues, now_local()).map_err(err)?;
+        let mut bilan = db.appliquer_observations(jour, &sources, now_local()).map_err(err)?;
         bilan.ignorees += mal_formees;
         json_out(bilan)
     }
@@ -1111,12 +1116,12 @@ mod tests {
     fn night_habits_tool_shape() {
         let s = srv();
         let sources = BTreeMap::from([("test".to_string(), json!([obs_soir("maison")]))]);
-        let v = js(s.nuit_habitudes(Parameters(NuitHabitudesArgs { jour: "2026-11-09".into(), sources })));
+        let v = js(s.nuit_habitudes(Parameters(NuitHabitudesArgs { jour: "2026-11-09".into(), sources, attendues: vec![] })));
         for k in ["complet", "appliquees", "nees", "changements", "retours", "ignorees"] {
             assert!(v.get(k).is_some(), "{k} : {v}");
         }
         assert_eq!(v["appliquees"], 1);
-        assert!(s.nuit_habitudes(Parameters(NuitHabitudesArgs { jour: "hier".into(), sources: BTreeMap::new() })).is_err());
+        assert!(s.nuit_habitudes(Parameters(NuitHabitudesArgs { jour: "hier".into(), sources: BTreeMap::new(), attendues: vec![] })).is_err());
         let e = s.app_habitude_forget(Parameters(IdArgs { id: 999 })).unwrap_err();
         assert_eq!(e, "habitude inconnue");
     }
@@ -1126,7 +1131,7 @@ mod tests {
         let s = srv();
         let jour = |j: &str, sources: Value| {
             let sources = serde_json::from_value(sources).unwrap();
-            js(s.nuit_habitudes(Parameters(NuitHabitudesArgs { jour: j.into(), sources })))
+            js(s.nuit_habitudes(Parameters(NuitHabitudesArgs { jour: j.into(), sources, attendues: vec![] })))
         };
         let v = jour("2026-11-08", json!({"a": [obs_soir("maison")], "b": [obs_soir("maison")]}));
         assert_eq!(v["complet"], true);
@@ -1138,6 +1143,21 @@ mod tests {
         // Une source qui n'est pas un tableau est absente : la journée attend.
         let v = jour("2026-11-10", json!({"a": {"quoi": "repas.lieu"}, "b": [obs_soir("maison")]}));
         assert_eq!((v["appliquees"].as_u64(), v["complet"].as_bool()), (Some(1), Some(false)));
+    }
+
+    #[test]
+    fn expected_source_absent_holds_first_day() {
+        let s = srv();
+        let nuit = |args: Value| js(s.nuit_habitudes(Parameters(serde_json::from_value(args).unwrap())));
+        // Première nuit : `a` attendue mais muette, la journée attend.
+        let v = nuit(json!({"jour": "2026-11-09", "sources": {"b": [obs_soir("maison")]}, "attendues": ["a", "b"]}));
+        assert_eq!((v["appliquees"].as_u64(), v["complet"].as_bool()), (Some(1), Some(false)));
+        let v = nuit(json!({"jour": "2026-11-09", "sources": {"a": [obs_soir("maison")], "b": []}, "attendues": ["a", "b"]}));
+        assert_eq!((v["appliquees"].as_u64(), v["complet"].as_bool()), (Some(1), Some(true)));
+        // Sans `attendues` : seules les sources connues sont attendues.
+        let s2 = srv();
+        let v = js(s2.nuit_habitudes(Parameters(serde_json::from_value(json!({"jour": "2026-11-09", "sources": {}})).unwrap())));
+        assert_eq!(v["complet"], true);
     }
 
     #[test]
