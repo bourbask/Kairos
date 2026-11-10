@@ -46,7 +46,11 @@ async fn tools_list_requires_token() {
     let url = start().await;
     assert_eq!(post(&url, None, list()).await.status(), 401);
     let v: Value = post(&url, Some("t"), list()).await.json().await.unwrap();
-    assert_eq!(v["result"]["tools"].as_array().unwrap().len(), 40);
+    let tools = v["result"]["tools"].as_array().unwrap();
+    assert_eq!(tools.len(), 44);
+    // Le contrat de l'application désigne un souvenir par `ref`.
+    let ancre = tools.iter().find(|t| t["name"] == "app_souvenir_anchor").unwrap();
+    assert!(ancre["inputSchema"]["properties"].get("ref").is_some(), "{ancre}");
 }
 
 #[tokio::test]

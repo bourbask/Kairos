@@ -16,7 +16,7 @@ use serde_json::{Value, json};
 use tentacle_common::BriefPeriod;
 
 use crate::store::{
-    ConversationCard, Indice, IntentionState, JournalEntry, MemoryStore, NewConversation, NewJournalEntry, NewLesson,
+    Ancrage, ConversationCard, Indice, IntentionState, JournalEntry, MemoryStore, NewConversation, NewJournalEntry, NewLesson,
     Observation, PERSONA_KEY, Sensitivity,
 };
 
@@ -75,6 +75,10 @@ fn is_persona(key: &str) -> bool {
     key.trim().eq_ignore_ascii_case(PERSONA_KEY)
 }
 
+/// Refus d'une ancre au-delà du plafond.
+const ANCRES_PLEINES: &str = "20 souvenirs au plus sont toujours retenus : retire d'abord une ancre.";
+const SOUVENIR_INCONNU: &str = "souvenir inconnu ou déjà effacé";
+
 /// Sensibilité des notes saisies depuis l'application.
 const APP_SENSITIVITY: Sensitivity = Sensitivity::Commune;
 
@@ -93,6 +97,26 @@ struct AppIntentionAddArgs {
 #[derive(Deserialize, schemars::JsonSchema)]
 struct AppTextArgs {
     text: String,
+}
+#[derive(Deserialize, schemars::JsonSchema)]
+struct AppSouvenirArgs {
+    nature: String,
+    #[serde(rename = "ref")]
+    r#ref: String,
+}
+#[derive(Deserialize, schemars::JsonSchema)]
+struct AppSouvenirAnchorArgs {
+    nature: String,
+    #[serde(rename = "ref")]
+    r#ref: String,
+    /// `true` pour toujours retenir, `false` pour retirer l'ancre.
+    ancre: bool,
+}
+#[derive(Deserialize, schemars::JsonSchema)]
+struct AppHabitudeSetArgs {
+    id: i64,
+    /// `true` pour confirmer, `false` pour rejeter.
+    confirmee: bool,
 }
 #[derive(Deserialize, schemars::JsonSchema)]
 struct AppQueryArgs {
@@ -320,10 +344,17 @@ impl MemoryServer {
         }
         // Clé telle qu'écrite (éventuellement avec espaces), sinon nettoyée.
         let db = self.db()?;
-        if !db.ancrer("fait", &a.key, a.ancre).map_err(err)? && !db.ancrer("fait", a.key.trim(), a.ancre).map_err(err)? {
-            return json_out(json!({"message": "Fait inconnu : rien n'a été modifié."}));
+        let now = now_local();
+        let mut issue = db.marquer_ancre("fait", &a.key, a.ancre, now).map_err(err)?;
+        if issue == Ancrage::Inconnu {
+            issue = db.marquer_ancre("fait", a.key.trim(), a.ancre, now).map_err(err)?;
         }
-        let m = if a.ancre { "Fait ancré : il sera toujours rappelé." } else { "Fait désancré : il n'est plus forcé." };
+        let m = match issue {
+            Ancrage::Inconnu => "Fait inconnu : rien n'a été modifié.",
+            Ancrage::Plein => ANCRES_PLEINES,
+            _ if a.ancre => "Fait ancré : il sera toujours rappelé.",
+            _ => "Fait désancré : il n'est plus forcé.",
+        };
         json_out(json!({"message": m}))
     }
 
@@ -413,13 +444,24 @@ impl MemoryServer {
                 v
             })
             .collect();
-        let journal: Vec<Value> = db.journal_recent(APP_LIMIT).map_err(err)?.iter().map(entry_json).collect();
+        let ancres = db.ancres_app().map_err(err)?;
+        let ancre = |nature: &str, r#ref: String| ancres.contains(&(nature.to_string(), r#ref));
+        let journal: Vec<Value> = db
+            .journal_recent(APP_LIMIT)
+            .map_err(err)?
+            .iter()
+            .map(|e| {
+                let mut v = entry_json(e);
+                v["anchored"] = json!(ancre("journal", e.id.to_string()));
+                v
+            })
+            .collect();
         let facts: Vec<Value> = db
             .facts_list("")
             .map_err(err)?
             .iter()
             .filter(|f| f.key != PERSONA_KEY)
-            .map(|f| json!({"key": f.key, "value": f.value, "updated": f.updated_at}))
+            .map(|f| json!({"key": f.key, "value": f.value, "updated": f.updated_at, "anchored": ancre("fait", f.key.clone())}))
             .collect();
         let conversations: Vec<Value> =
             db.conversations_recent(APP_LIMIT).map_err(err)?.iter().map(|c| conversation_json(c, true)).collect();
@@ -540,6 +582,46 @@ impl MemoryServer {
         json_out(json!({"message": "Habitude oubliée."}))
     }
 
+    #[tool(description = "Contrôle de la mémoire pour l'application : souvenirs toujours retenus, souvenirs qui s'estompent, habitudes apprises.")]
+    fn app_souvenirs(&self) -> Out {
+        self.souvenirs_at(now_local())
+    }
+
+    #[tool(description = "Toujours retenir un souvenir, ou retirer son ancre, depuis l'application.")]
+    fn app_souvenir_anchor(&self, Parameters(a): Parameters<AppSouvenirAnchorArgs>) -> Out {
+        if a.nature == "fait" && is_persona(&a.r#ref) {
+            return Err(PERSONA_REFUSED.into());
+        }
+        match self.db()?.marquer_ancre(&a.nature, &a.r#ref, a.ancre, now_local()).map_err(err)? {
+            Ancrage::Fait => {
+                json_out(json!({"message": if a.ancre { "Souvenir toujours retenu." } else { "Ancre retirée." }}))
+            }
+            Ancrage::Inconnu => Err(SOUVENIR_INCONNU.into()),
+            Ancrage::Plein => Err(ANCRES_PLEINES.into()),
+            Ancrage::NonAncrable => Err("ce souvenir ne peut pas être ancré".into()),
+            Ancrage::Protege => Err("Ce souvenir est toujours retenu.".into()),
+        }
+    }
+
+    #[tool(description = "Raviver un souvenir qui s'estompe, depuis l'application.")]
+    fn app_souvenir_revive(&self, Parameters(a): Parameters<AppSouvenirArgs>) -> Out {
+        if a.nature == "habitude" {
+            return Err("une habitude se confirme, elle ne se ravive pas".into());
+        }
+        if !self.db()?.raviver(&a.nature, &a.r#ref, now_local()).map_err(err)? {
+            return Err(SOUVENIR_INCONNU.into());
+        }
+        json_out(json!({"message": "Souvenir ravivé."}))
+    }
+
+    #[tool(description = "Confirmer ou rejeter une habitude apprise, depuis l'application.")]
+    fn app_habitude_set(&self, Parameters(a): Parameters<AppHabitudeSetArgs>) -> Out {
+        if !self.db()?.habitude_repondre(a.id, a.confirmee, now_local()).map_err(err)? {
+            return Err("habitude inconnue".into());
+        }
+        json_out(json!({"message": if a.confirmee { "Habitude confirmée." } else { "Habitude rejetée." }}))
+    }
+
     #[tool(description = "Supprimer définitivement une conversation depuis l'application.")]
     fn app_conversation_delete(&self, Parameters(a): Parameters<IdArgs>) -> Out {
         if !self.db()?.conversation_delete(a.id).map_err(err)? {
@@ -657,6 +739,10 @@ fn precision(motif: &str) -> &'static str {
 
 impl MemoryServer {
     /// Section mémoire du briefing à l'instant `now`.
+    fn souvenirs_at(&self, now: NaiveDateTime) -> Out {
+        json_out(self.db()?.controle(now).map_err(err)?)
+    }
+
     fn brief_at(&self, now: NaiveDateTime, period: BriefPeriod) -> Out {
         let limit = now + Duration::hours(24);
         let db = self.db()?;
@@ -1198,6 +1284,17 @@ mod tests {
     #[test]
     fn new_habit_announced_in_morning_brief_only() {
         let s = srv();
+        let matin = naitre(&s) + Duration::hours(4);
+        let b = s.brief_at(matin, BriefPeriod::Matin).unwrap();
+        assert!(b.contains("- Habitude remarquée : repas du soir : maison — à confirmer"), "{b}");
+        assert!(!s.brief_at(matin, BriefPeriod::Soir).unwrap().contains("Habitude remarquée : "));
+        let q = s.db().unwrap().intentions_open(matin).unwrap()[0].id;
+        s.db().unwrap().intention_set_state(q, IntentionState::Refusee).unwrap();
+        assert!(!s.brief_at(matin, BriefPeriod::Matin).unwrap().contains("Habitude remarquée"));
+    }
+
+    /// Sept soirs ouvrés de la même valeur : une habitude naît ; renvoie la dernière nuit.
+    fn naitre(s: &MemoryServer) -> NaiveDateTime {
         let lundi = NaiveDate::from_ymd_opt(2026, 11, 2).unwrap();
         let mut nuit = lundi.and_hms_opt(3, 0, 0).unwrap();
         for n in 0..9u64 {
@@ -1209,12 +1306,97 @@ mod tests {
             let sources = BTreeMap::from([("test".to_string(), vec![obs_soir("maison")])]);
             s.db().unwrap().appliquer_observations(jour, &sources, nuit).unwrap();
         }
-        let matin = nuit + Duration::hours(4);
-        let b = s.brief_at(matin, BriefPeriod::Matin).unwrap();
-        assert!(b.contains("- Habitude remarquée : repas du soir : maison — à confirmer"), "{b}");
-        assert!(!s.brief_at(matin, BriefPeriod::Soir).unwrap().contains("Habitude remarquée : "));
-        let q = s.db().unwrap().intentions_open(matin).unwrap()[0].id;
-        s.db().unwrap().intention_set_state(q, IntentionState::Refusee).unwrap();
-        assert!(!s.brief_at(matin, BriefPeriod::Matin).unwrap().contains("Habitude remarquée"));
+        nuit
+    }
+
+    fn ancre_app(s: &MemoryServer, nature: &str, r#ref: &str, ancre: bool) -> Out {
+        s.app_souvenir_anchor(Parameters(AppSouvenirAnchorArgs { nature: nature.into(), r#ref: r#ref.into(), ancre }))
+    }
+
+    fn revive(s: &MemoryServer, nature: &str, r#ref: &str) -> Out {
+        s.app_souvenir_revive(Parameters(AppSouvenirArgs { nature: nature.into(), r#ref: r#ref.into() }))
+    }
+
+    #[test]
+    fn app_souvenirs_json_shape() {
+        let s = srv();
+        naitre(&s);
+        s.db().unwrap().fact_set("cafe.prefere", "noir", "p").unwrap();
+        ancre_app(&s, "fait", "cafe.prefere", true).unwrap();
+        jw(&s, "Exemple de note", Sensitivity::Commune);
+        // Un mois plus tard, la note s'est estompée.
+        let v = js(s.souvenirs_at(now_local() + Duration::days(30)));
+        for k in ["ancres_max", "ancres", "estompes", "estompes_total", "habitudes"] {
+            assert!(v.get(k).is_some(), "{k}");
+        }
+        assert_eq!(v["ancres_max"], 20);
+        for l in ["ancres", "estompes"] {
+            let e = &v[l][0];
+            for k in ["nature", "ref", "texte", "sensitive", "depuis", "devenir", "protege"] {
+                assert!(e.get(k).is_some(), "{l}.{k}");
+            }
+            assert!(e.get("r#ref").is_none());
+        }
+        assert_eq!(v["ancres"][0]["ref"], "cafe.prefere");
+        assert_eq!(v["estompes"][0]["nature"], "journal");
+        let h = &v["habitudes"][0];
+        for k in ["id", "libelle", "etat", "force", "confirmee", "rejetee", "estompee", "ancienne_depuis"] {
+            assert!(h.get(k).is_some(), "habitudes.{k}");
+        }
+        assert_eq!(js(s.app_souvenirs())["ancres_max"], 20);
+    }
+
+    #[test]
+    fn app_control_tools_refuse_clearly() {
+        let s = srv();
+        assert!(ancre_app(&s, "fait", PERSONA_KEY, true).is_err());
+        for i in 0..21 {
+            s.db().unwrap().fact_set(&format!("f{i}"), "Exemple", "p").unwrap();
+        }
+        for i in 0..20 {
+            assert_eq!(js(ancre_app(&s, "fait", &format!("f{i}"), true))["message"], "Souvenir toujours retenu.");
+        }
+        assert!(ancre_app(&s, "fait", "f20", true).unwrap_err().contains("20"));
+        assert_eq!(js(ancre_app(&s, "fait", "f0", false))["message"], "Ancre retirée.");
+        assert!(ancre_app(&s, "deduction", "x", true).is_err());
+        assert!(revive(&s, "fait", "inconnu").unwrap_err().contains("inconnu"));
+        assert_eq!(js(revive(&s, "fait", "f20"))["message"], "Souvenir ravivé.");
+        assert!(revive(&s, "habitude", "1").is_err());
+        let set = |id, confirmee| s.app_habitude_set(Parameters(AppHabitudeSetArgs { id, confirmee }));
+        assert_eq!(set(9_999, true).unwrap_err(), "habitude inconnue");
+        naitre(&s);
+        let id = s.db().unwrap().controle(now_local()).unwrap().habitudes[0].id;
+        assert_eq!(js(set(id, true))["message"], "Habitude confirmée.");
+        assert_eq!(js(set(id, false))["message"], "Habitude rejetée.");
+    }
+
+    #[test]
+    fn app_memory_marks_anchored() {
+        let s = srv();
+        s.db().unwrap().fact_set("cafe.prefere", "noir", "p").unwrap();
+        s.db().unwrap().fact_set("ville.exemple", "Exemple", "p").unwrap();
+        let j = jw(&s, "Exemple ancré", Sensitivity::Commune);
+        jw(&s, "Exemple libre", Sensitivity::Commune);
+        ancre_app(&s, "fait", "cafe.prefere", true).unwrap();
+        ancre_app(&s, "journal", &j.to_string(), true).unwrap();
+        let v = js(s.app_memory());
+        let fait = |k: &str| v["facts"].as_array().unwrap().iter().find(|f| f["key"] == k).unwrap()["anchored"].clone();
+        assert_eq!((fait("cafe.prefere"), fait("ville.exemple")), (json!(true), json!(false)));
+        let entree = |id: i64| v["journal"].as_array().unwrap().iter().find(|e| e["id"] == id).unwrap()["anchored"].clone();
+        assert_eq!((entree(j), entree(j + 1)), (json!(true), json!(false)));
+    }
+
+    #[test]
+    fn fact_anchor_respects_cap() {
+        let s = srv();
+        let a = |key: &str| s.fact_anchor(Parameters(FactAnchorArgs { key: key.into(), ancre: true }));
+        for i in 0..21 {
+            s.db().unwrap().fact_set(&format!("f{i}"), "Exemple", "p").unwrap();
+        }
+        for i in 0..20 {
+            a(&format!("f{i}")).unwrap();
+        }
+        assert!(js(a("f20"))["message"].as_str().unwrap().contains("20"));
+        assert!(!s.db().unwrap().force("fait", "f20").unwrap().unwrap().ancre);
     }
 }
