@@ -14,7 +14,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
-import androidx.lifecycle.compose.LifecycleStartEffect
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.compose.runtime.LaunchedEffect
 import kotlinx.coroutines.delay
 
@@ -49,48 +51,57 @@ class LuxHysteresis(
         }
         return this.dark!!
     }
+
+    /** Oublie l'attente en cours ; le thème courant reste. */
+    fun reset() {
+        since = null
+    }
 }
 
 /**
  * Le thème effectif. En Auto, le capteur de lumière n'est écouté qu'au premier
- * plan ; sans capteur, on suit le thème du système.
+ * plan ; sans capteur, on suit le thème du système. [mode] nul (réglages pas
+ * encore lus) : thème du système, comme l'écran de démarrage.
  */
 @Composable
-fun rememberDark(mode: ThemeMode): Boolean {
+fun rememberDark(mode: ThemeMode?): Boolean {
     val system = isSystemInDarkTheme()
+    if (mode == null) return system
     if (mode != ThemeMode.Auto) return mode == ThemeMode.Sombre
     val context = LocalContext.current
     val sensors = remember { context.getSystemService(Context.SENSOR_SERVICE) as SensorManager }
     val light = remember { sensors.getDefaultSensor(Sensor.TYPE_LIGHT) } ?: return system
 
     // Conservé à la recréation de l'écran (rotation…) : le thème ne repart pas de zéro.
-    var saved by rememberSaveable { mutableStateOf<Boolean?>(null) }
-    val filter = remember { LuxHysteresis(initialDark = saved) }
-    // Avant la première mesure : l'état conservé, sinon le thème du système.
-    var dark by remember { mutableStateOf(saved ?: system) }
-    var lux by remember { mutableStateOf<Float?>(null) }
+    var dark by rememberSaveable { mutableStateOf<Boolean?>(null) }
+    val filter = remember { LuxHysteresis(initialDark = dark) }
+    val owner = LocalLifecycleOwner.current
 
-    LifecycleStartEffect(sensors) {
-        val listener = object : SensorEventListener {
-            override fun onSensorChanged(event: SensorEvent) {
-                lux = event.values[0]
-                dark = filter.update(event.values[0], SystemClock.elapsedRealtime())
-                saved = dark
+    // Seul un changement de thème écrit un état lu par l'appelant : une mesure ne recompose rien.
+    LaunchedEffect(owner) {
+        owner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            // Au retour au premier plan, l'attente commencée avant n'a plus de sens.
+            filter.reset()
+            var lux: Float? = null
+            val listener = object : SensorEventListener {
+                override fun onSensorChanged(event: SensorEvent) {
+                    lux = event.values[0]
+                    dark = filter.update(event.values[0], SystemClock.elapsedRealtime())
+                }
+
+                override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
             }
-
-            override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
-        }
-        sensors.registerListener(listener, light, SensorManager.SENSOR_DELAY_NORMAL)
-        onStopOrDispose { sensors.unregisterListener(listener) }
-    }
-    // Le capteur n'émet qu'au changement : sans cela, une mesure stable ne franchirait jamais le délai.
-    LaunchedEffect(lux) {
-        val l = lux ?: return@LaunchedEffect
-        while (true) {
-            delay(2_000)
-            dark = filter.update(l, SystemClock.elapsedRealtime())
-            saved = dark
+            sensors.registerListener(listener, light, SensorManager.SENSOR_DELAY_NORMAL)
+            try {
+                // Le capteur n'émet qu'au changement : sans cela, une mesure stable ne franchirait jamais le délai.
+                while (true) {
+                    delay(2_000)
+                    lux?.let { dark = filter.update(it, SystemClock.elapsedRealtime()) }
+                }
+            } finally {
+                sensors.unregisterListener(listener)
+            }
         }
     }
-    return dark
+    return dark ?: system
 }

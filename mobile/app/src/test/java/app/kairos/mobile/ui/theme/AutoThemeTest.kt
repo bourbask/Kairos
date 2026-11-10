@@ -69,4 +69,17 @@ class AutoThemeTest {
         assertTrue(h.update(80f, 68_999))
         assertFalse(h.update(80f, 69_000))
     }
+
+    @Test
+    fun reset_keeps_theme_and_restarts_hold() {
+        val h = LuxHysteresis()
+        assertTrue(h.update(5f, 0))
+        // Mesure périmée avant la mise en arrière-plan : le délai avait commencé.
+        assertTrue(h.update(100f, 1_000))
+        h.reset()
+        // Au retour, le thème courant est gardé et le délai repart de la mesure fraîche.
+        assertTrue(h.update(100f, 9_500))
+        assertTrue(h.update(100f, 17_499))
+        assertFalse(h.update(100f, 17_500))
+    }
 }
