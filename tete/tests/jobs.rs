@@ -53,8 +53,8 @@ struct Rec {
     unsummarized_days: Mutex<HashMap<String, u32>>,
     /// Comptages d'habitudes reçus : `{jour, sources}`.
     habits: Mutex<Vec<Value>>,
-    /// `nuit_habitudes` signale une source connue absente.
-    habits_incomplete: AtomicBool,
+    /// Nombre de réponses de `nuit_habitudes` signalant une source connue absente.
+    habits_incomplete: AtomicU32,
 }
 
 #[derive(Clone)]
@@ -189,7 +189,7 @@ impl Fake {
     fn nuit_habitudes(&self, Parameters(a): Parameters<Habitudes>) -> Result<String, String> {
         self.night("habitudes");
         self.rec.habits.lock().unwrap().push(json!({"jour": a.jour, "sources": a.sources}));
-        let complet = !self.rec.habits_incomplete.load(Ordering::SeqCst);
+        let complet = self.rec.habits_incomplete.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1)).is_err();
         Ok(json!({"complet": complet, "appliquees": 1, "nees": 0, "changements": 0, "retours": 0, "ignorees": 0}).to_string())
     }
 
@@ -1324,13 +1324,12 @@ async fn habits_run_without_model() {
 async fn missing_source_holds_the_day() {
     let mut fx = fixture("JB_H3", NIGHT_USAGES, vec![]).await;
     set_etat(&fx.rec, "habitudes", "2026-11-06");
-    fx.rec.habits_incomplete.store(true, Ordering::SeqCst);
+    fx.rec.habits_incomplete.store(1, Ordering::SeqCst);
     run(Job::Summaries, at(9, 3, 0), &mut fx.ctx).await.unwrap();
     assert_eq!(habit_days(&fx.rec), vec!["2026-11-07"]);
     assert_eq!(etat(&fx.rec, "habitudes"), (Some("2026-11-06".into()), "source_indisponible".into()));
 
     // Source revenue : la journée en attente et la suivante sont rattrapées.
-    fx.rec.habits_incomplete.store(false, Ordering::SeqCst);
     run(Job::Summaries, at(9, 3, 0), &mut fx.ctx).await.unwrap();
     assert_eq!(habit_days(&fx.rec), vec!["2026-11-07", "2026-11-07", "2026-11-08"]);
     assert_eq!(etat(&fx.rec, "habitudes"), (Some("2026-11-08".into()), "ok".into()));
@@ -1343,4 +1342,21 @@ async fn habits_night_twice_is_harmless() {
     run(Job::Summaries, at(9, 3, 0), &mut fx.ctx).await.unwrap();
     assert_eq!(habit_days(&fx.rec), vec!["2026-11-08"]);
     assert_eq!(etat(&fx.rec, "habitudes"), (Some("2026-11-08".into()), "ok".into()));
+}
+
+#[tokio::test]
+async fn stuck_day_retried_until_source_dropped() {
+    let mut fx = fixture("JB_H5", &[], vec![]).await;
+    set_etat(&fx.rec, "habitudes", "2026-10-25");
+    // La mémoire retire la source muette au bout de 14 nuits : la quinzième rend `complet`.
+    fx.rec.habits_incomplete.store(14, Ordering::SeqCst);
+    for k in 0..15 {
+        let now = at(1, 3, 0) + chrono::TimeDelta::days(k);
+        run(Job::Summaries, now, &mut fx.ctx).await.unwrap();
+        let attendu = if k < 14 { "source_indisponible" } else { "ok" };
+        assert_eq!(etat(&fx.rec, "habitudes").1, attendu, "nuit {k}");
+    }
+    let jours = habit_days(&fx.rec);
+    assert!(jours[..14].iter().all(|j| j == "2026-10-26"), "{jours:?}");
+    assert_eq!(etat(&fx.rec, "habitudes").0.as_deref(), Some("2026-11-01"));
 }

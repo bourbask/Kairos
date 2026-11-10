@@ -490,7 +490,7 @@ CREATE TABLE IF NOT EXISTS habitudes (
     nee_le TEXT, ancienne_depuis TEXT, question INTEGER, annoncee_le TEXT,
     confirmee INTEGER NOT NULL DEFAULT 0, rejetee INTEGER NOT NULL DEFAULT 0,
     UNIQUE(source, quoi, contexte, valeur));
-CREATE TABLE IF NOT EXISTS habitudes_sources (source TEXT PRIMARY KEY, dernier_jour TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS habitudes_sources (source TEXT PRIMARY KEY, dernier_jour TEXT NOT NULL, vu_le TEXT NOT NULL);
 ";
 
 fn now_local() -> NaiveDateTime {

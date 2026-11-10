@@ -31,7 +31,7 @@ pub const A_QUOTIDIEN: f64 = 0.1;
 pub const A_HEBDO: f64 = 0.25;
 /// Observations retenues par source et par jour.
 pub const OBSERVATIONS_MAX: usize = 50;
-/// Au-delà de ce silence, en jours, une source n'est plus attendue.
+/// Au-delà de ce silence, en nuits, une source n'est plus attendue.
 pub const SOURCE_ABSENTE_JOURS: u64 = 14;
 /// Longueur maximale d'un code ou d'un nom de source.
 const CODE_MAX: usize = 64;
@@ -270,6 +270,7 @@ impl MemoryStore {
             let dernier: Option<String> = tx
                 .query_row("SELECT dernier_jour FROM habitudes_sources WHERE source = ?", [source], |r| r.get(0))
                 .optional()?;
+            tx.execute("UPDATE habitudes_sources SET vu_le = ? WHERE source = ?", params![ts(maintenant), source])?;
             if dernier.is_some_and(|d| d >= j) {
                 continue;
             }
@@ -285,14 +286,15 @@ impl MemoryStore {
                 }
             }
             tx.execute(
-                "INSERT INTO habitudes_sources (source, dernier_jour) VALUES (?1, ?2)
-                 ON CONFLICT(source) DO UPDATE SET dernier_jour = ?2",
-                [source, &j],
+                "INSERT INTO habitudes_sources (source, dernier_jour, vu_le) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(source) DO UPDATE SET dernier_jour = ?2, vu_le = ?3",
+                params![source, j, ts(maintenant)],
             )?;
         }
-        // Une source muette depuis trop longtemps n'est plus attendue ; ses habitudes restent.
-        let limite = (jour - Days::new(SOURCE_ABSENTE_JOURS)).format("%Y-%m-%d").to_string();
-        tx.execute("DELETE FROM habitudes_sources WHERE dernier_jour < ?", [limite])?;
+        // Une source muette depuis trop longtemps n'est plus attendue ; ses habitudes
+        // restent. Compté en nuits réelles : une journée bloquée finit par se libérer.
+        let limite = ts(maintenant - Days::new(SOURCE_ABSENTE_JOURS));
+        tx.execute("DELETE FROM habitudes_sources WHERE vu_le < ?", [limite])?;
         let connues = tx
             .prepare("SELECT source FROM habitudes_sources")?
             .query_map([], |r| r.get::<_, String>(0))?
@@ -406,6 +408,34 @@ mod tests {
         assert!(!connue);
         let lignes: i64 = s.conn.query_row("SELECT COUNT(*) FROM habitudes WHERE source = 'a'", [], |r| r.get(0)).unwrap();
         assert_eq!(lignes, 1);
+    }
+
+    #[test]
+    fn stuck_day_released_after_fourteen_nights() {
+        let s = store();
+        let a = || {
+            let mut m = lot("b", vec![]);
+            m.insert("a".into(), vec![obs("soir.ouvre", "maison")]);
+            m
+        };
+        s.appliquer_observations(jour(0), &a(), quand(0)).unwrap();
+        // La même journée rejouée nuit après nuit, `a` muette : retirée après 14 jours de silence.
+        let nuit = |k: u64| s.appliquer_observations(jour(1), &lot("b", vec![]), quand(1) + Days::new(k)).unwrap();
+        for k in 0..14 {
+            assert!(!nuit(k).complet, "nuit {k}");
+        }
+        assert!(nuit(14).complet);
+        assert_eq!(compte(&s, "SELECT COUNT(*) FROM habitudes_sources WHERE source = 'a'"), 0);
+        assert_eq!(compte(&s, "SELECT COUNT(*) FROM habitudes WHERE source = 'a'"), 1);
+    }
+
+    #[test]
+    fn present_source_is_seen_even_when_day_already_applied() {
+        let s = store();
+        s.appliquer_observations(jour(0), &lot("a", vec![obs("soir.ouvre", "maison")]), quand(0)).unwrap();
+        s.appliquer_observations(jour(0), &lot("a", vec![]), quand(20)).unwrap();
+        let vu: String = s.conn.query_row("SELECT vu_le FROM habitudes_sources WHERE source = 'a'", [], |r| r.get(0)).unwrap();
+        assert_eq!(vu, ts(quand(20)));
     }
 
     #[test]
