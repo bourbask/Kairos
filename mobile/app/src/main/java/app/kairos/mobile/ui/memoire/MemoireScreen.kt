@@ -28,6 +28,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
@@ -58,6 +59,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import app.kairos.mobile.data.ApiError
 import app.kairos.mobile.data.Card
+import app.kairos.mobile.data.Controle
 import app.kairos.mobile.data.ConversationSummary
 import app.kairos.mobile.data.Fact
 import app.kairos.mobile.data.FactValue
@@ -67,6 +69,7 @@ import app.kairos.mobile.data.JournalEntry
 import app.kairos.mobile.data.Mark
 import app.kairos.mobile.data.ToolMessage
 import app.kairos.mobile.data.Repository
+import app.kairos.mobile.data.Souvenir
 import app.kairos.mobile.ui.finances.syncLabel
 import app.kairos.mobile.ui.kit.LocalAmountsMasked
 import app.kairos.mobile.ui.kit.SectionHeader
@@ -99,6 +102,7 @@ import app.kairos.mobile.ui.kit.SpaceScaffold
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import java.time.LocalDate
@@ -114,7 +118,8 @@ private val HISTORY = ListSerializer(FactValue.serializer())
  * ajout rapide), journal (entrées sensibles masquées, recherche, note), faits par thème
  * (tap = historique, correction, oubli), conversations résumées (recherche). Journal, faits
  * et conversations s'effacent définitivement, après une fenêtre d'annulation. Dernier état
- * gardé hors ligne, sans les entrées sensibles.
+ * gardé hors ligne, sans les entrées sensibles. « Ce que je retiens » (ancres, habitudes,
+ * souvenirs qui s'estompent) n'est gardé qu'en mémoire vive.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -149,6 +154,22 @@ fun MemoireScreen(
     val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     val today = LocalDate.now().toString()
     val later = laterIds(marks[today].orEmpty().keys)
+    // ponytail: mémoire vive seulement, jamais écrit sur l'appareil ; relu à chaque ouverture.
+    var control by remember { mutableStateOf(ControleView()) }
+    var revealedControl by remember { mutableStateOf(emptySet<String>()) }
+    val controls = repository.controlPending
+    val controlHidden by controls.hidden.collectAsState()
+
+    suspend fun loadControl() {
+        val r = try {
+            Result.success(repository.lookup(MEMOIRE, "app_souvenirs", Controle.serializer(), JsonObject(emptyMap())))
+        } catch (_: ApiError.Unauthorized) {
+            return unauthorized()
+        } catch (e: ApiError) {
+            Result.failure(e)
+        }
+        control = controleAfter(control, r)
+    }
 
     fun refresh(force: Boolean = true) {
         if (refreshing) return
@@ -156,6 +177,7 @@ fun MemoireScreen(
         scope.launch {
             try {
                 repository.refreshMemoire(force)
+                loadControl()
             } catch (_: ApiError.Unauthorized) {
                 unauthorized()
             } finally {
@@ -251,6 +273,46 @@ fun MemoireScreen(
         }
     }
 
+    /** Geste de contrôle (ancre, raviver, habitude) ; refus du module : l'élément revient, liste relue. */
+    fun control(card: Card, label: String) {
+        appScope.launch {
+            val out = try {
+                completeCard(
+                    card,
+                    null,
+                    mark = { m -> controls.hide(card.id, m != null) },
+                    undoWindow = { undoWindow(label) },
+                    call = repository::reply,
+                    busy = controls.busy,
+                )
+            } catch (_: ApiError.Unauthorized) {
+                return@launch unauthorized()
+            }
+            when (out) {
+                is DoneOutcome.Done -> {
+                    control = control.copy(data = control.data?.let { withoutControl(it, card) })
+                    loadControl()
+                    try {
+                        repository.refreshMemoire()
+                    } catch (_: ApiError.Unauthorized) {
+                        unauthorized()
+                    }
+                    // L'état gardé reflète déjà le geste : la clé se libère pour un geste suivant.
+                    controls.hide(card.id, false)
+                }
+                is DoneOutcome.Refused -> {
+                    notifier.show(out.message)
+                    loadControl()
+                }
+                else -> Unit
+            }
+        }
+    }
+
+    /** Ancre en cours d'envoi : l'état affiché anticipe le geste. */
+    fun anchored(nature: String, ref: String, known: Boolean) = known != (anchorCard(nature, ref, true).id in controlHidden)
+    fun souvenirName(s: Souvenir) = (controlText(s, revealedControl, masked) ?: natureLabel(s.nature)).take(40)
+
     /** « Plus tard » : cachée jusqu'à demain sur cet appareil, rien n'est envoyé. */
     fun postpone(i: Intention) {
         appScope.launch {
@@ -328,6 +390,7 @@ fun MemoireScreen(
                         val onDeleteConversation = { id: Long -> erase(conversationErasure(id), "Conversation supprimée") }
                         val hits = found
                         if (hits != null) {
+                            // Pas d'épingle sur un résultat de recherche : son état d'ancre n'est pas connu.
                             Results(hits, erased, revealed, masked, onReveal, onDeleteEntry, onDeleteConversation)
                         }
                         val now = LocalDateTime.now()
@@ -345,11 +408,26 @@ fun MemoireScreen(
                             },
                             onNote = ::notice,
                         )
-                        Journal(memory.journal, erased, revealed, masked, onReveal, onDeleteEntry)
+                        Journal(memory.journal, erased, revealed, masked, onReveal, onDeleteEntry, pinned = { anchored("journal", it.id.toString(), it.anchored) }) { e ->
+                            val on = !anchored("journal", e.id.toString(), e.anchored)
+                            control(anchorCard("journal", e.id.toString(), on), "${if (on) "Toujours retenu" else "Ancre retirée"} · entrée du ${syncLabel(e.at)}")
+                        }
                         Facts(memory.facts.filterNot { factErasure(it.key).id in erased }) { fact, at ->
                             at?.let { detail.anchorTo(it, RowCorner) }
                             factKey = fact.key
                         }
+                        ControleSection(
+                            control,
+                            controlHidden,
+                            revealedControl,
+                            masked,
+                            onReveal = { k -> revealedControl = if (k in revealedControl) revealedControl - k else revealedControl + k },
+                            onAnchor = { s, on -> control(anchorCard(s.nature, s.ref, on), "${if (on) "Toujours retenu" else "Ancre retirée"} · ${souvenirName(s)}") },
+                            onRevive = { s -> control(reviveCard(s), "Ravivé · ${souvenirName(s)}") },
+                            onHabit = { h, ok -> control(habitCard(h, ok), "Habitude ${if (ok) "confirmée" else "rejetée"} · ${h.libelle.take(40)}") },
+                            onForgetHabit = { h -> control(habitErasure(h.id), "Habitude oubliée · ${h.libelle.take(40)}") },
+                            onRetry = { scope.launch { loadControl() } },
+                        )
                         Conversations(memory.conversations, erased, onDeleteConversation)
                     }
                 }
@@ -360,9 +438,13 @@ fun MemoireScreen(
             val last = remember { arrayOfNulls<String>(1) }
             factKey?.let { last[0] = it }
             last[0]?.let { key ->
+                val fact = snapshot.memory?.facts?.firstOrNull { it.key == key }
+                val pinned = anchored("fait", key, fact?.anchored == true)
                 FactPanel(
                     key,
-                    current = snapshot.memory?.facts?.firstOrNull { it.key == key }?.value.orEmpty(),
+                    current = fact?.value.orEmpty(),
+                    anchored = pinned,
+                    onAnchor = { control(anchorCard("fait", key, !pinned), "${if (pinned) "Ancre retirée" else "Toujours retenu"} · ${factLabel(key)}") },
                     padding = padding,
                     history = { repository.lookup(MEMOIRE, "app_fact_history", HISTORY, buildJsonObject { put("key", key) }) },
                     onSave = { value -> write("app_fact_set", factSetArgs(key, value)) },
@@ -379,7 +461,7 @@ fun MemoireScreen(
 }
 
 @Composable
-private fun Caption(text: String, modifier: Modifier = Modifier) =
+internal fun Caption(text: String, modifier: Modifier = Modifier) =
     Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = modifier)
 
 /** Champ de saisie avec dictée et bouton d'envoi ; vidé quand l'envoi a abouti. */
@@ -572,17 +654,27 @@ private fun Journal(
     masked: Boolean,
     onReveal: (Long) -> Unit,
     onDelete: (Long) -> Unit,
+    pinned: (JournalEntry) -> Boolean,
+    onPin: (JournalEntry) -> Unit,
 ) {
     SectionHeader("Journal")
     val shown = recent.filterNot { journalErasure(it.id).id in erased }
     if (shown.isEmpty()) Caption("Journal vide pour l'instant.")
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        shown.forEach { e -> EntryRow(e, revealed, masked, onReveal, onDelete) }
+        shown.forEach { e -> EntryRow(e, revealed, masked, onReveal, onDelete, pinned(e)) { onPin(e) } }
     }
 }
 
 @Composable
-private fun EntryRow(e: JournalEntry, revealed: Set<Long>, masked: Boolean, onReveal: (Long) -> Unit, onDelete: (Long) -> Unit) {
+private fun EntryRow(
+    e: JournalEntry,
+    revealed: Set<Long>,
+    masked: Boolean,
+    onReveal: (Long) -> Unit,
+    onDelete: (Long) -> Unit,
+    pinned: Boolean = false,
+    onPin: (() -> Unit)? = null,
+) {
     val text = shownText(e, revealed, masked)
     val at = syncLabel(e.at)
     // Sensible : un tap l'affiche ou la remasque ; jamais quand les montants sont masqués.
@@ -605,6 +697,16 @@ private fun EntryRow(e: JournalEntry, revealed: Set<Long>, masked: Boolean, onRe
                 Text(text, style = MaterialTheme.typography.bodyMedium, maxLines = 6, overflow = TextOverflow.Ellipsis)
             }
         }
+        onPin?.let { pin ->
+            IconButton(onClick = pin) {
+                Icon(
+                    KairosIcons.Pin,
+                    contentDescription = if (pinned) "Ne plus retenir" else "Retenir toujours",
+                    tint = if (pinned) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+        }
         // Visible seulement quand le texte l'est : une entrée sensible se révèle d'abord.
         if (text != null) EraseButton("Supprimer l'entrée du $at") { onDelete(e.id) }
     }
@@ -618,9 +720,9 @@ private fun EraseButton(description: String, onClick: () -> Unit) {
     }
 }
 
-/** En-tête de section repliable, avec son compte ; annoncé comme titre, état dit. */
+/** En-tête de section repliable, avec son compte s'il y en a un ; annoncé comme titre, état dit. */
 @Composable
-private fun FoldHeader(title: String, count: Int, open: Boolean, onToggle: () -> Unit) {
+internal fun FoldHeader(title: String, count: Int?, open: Boolean, onToggle: () -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
@@ -634,7 +736,7 @@ private fun FoldHeader(title: String, count: Int, open: Boolean, onToggle: () ->
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            "${title.uppercase()} · $count",
+            listOfNotNull(title.uppercase(), count).joinToString(" · "),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.weight(1f),
@@ -708,6 +810,8 @@ private fun ConversationRow(c: ConversationSummary, onDelete: (Long) -> Unit) {
 private fun FactPanel(
     key: String,
     current: String,
+    anchored: Boolean,
+    onAnchor: () -> Unit,
     padding: PaddingValues,
     history: suspend () -> List<FactValue>,
     onSave: suspend (String) -> Boolean,
@@ -776,6 +880,13 @@ private fun FactPanel(
                 enabled = !saving,
                 modifier = Modifier.fillMaxWidth(),
             ) { Text(if (saving) "Envoi…" else "Corriger") }
+            Row(
+                Modifier.fillMaxWidth().heightIn(min = 48.dp).semantics(mergeDescendants = true) {},
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("Retenir toujours", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                Switch(checked = anchored, onCheckedChange = { onAnchor() })
+            }
             OutlinedButton(onClick = onForget, modifier = Modifier.fillMaxWidth()) {
                 Text("Oublier ce fait", color = MaterialTheme.colorScheme.error)
             }

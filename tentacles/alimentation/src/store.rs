@@ -1044,6 +1044,16 @@ impl Store {
         self.stock_lot(&p, portions, loc, None, reason, None, None)
     }
 
+    /// Repas d'un jour : (moment, lieu), dans l'ordre de la journée.
+    pub fn meals_on(&self, day: &str) -> rusqlite::Result<Vec<(String, String)>> {
+        let db = self.db.lock().unwrap();
+        let mut st = db.prepare(
+            "SELECT slot, place FROM meals WHERE day = ?1
+             ORDER BY CASE slot WHEN 'petit-dejeuner' THEN 0 WHEN 'midi' THEN 1 WHEN 'gouter' THEN 2 ELSE 3 END, at",
+        )?;
+        st.query_map([day], |r| Ok((r.get(0)?, r.get(1)?)))?.collect()
+    }
+
     /// Repas depuis une date : (jour, moment, plat, lieu).
     pub fn meals_since(&self, day: &str) -> rusqlite::Result<Vec<(String, String, String, String)>> {
         let db = self.db.lock().unwrap();
@@ -1311,6 +1321,16 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn meals_on_one_day_only() {
+        let s = Store::memory();
+        s.add_meal("2026-11-04", "soir", "Exemple", "maison", None).unwrap();
+        s.add_meal("2026-11-04", "midi", "Exemple", "bureau", None).unwrap();
+        s.add_meal("2026-11-05", "midi", "Exemple", "maison", None).unwrap();
+        let slots: Vec<String> = s.meals_on("2026-11-04").unwrap().into_iter().map(|m| m.0).collect();
+        assert_eq!(slots, ["midi", "soir"]);
+    }
 
     fn line(name: &str, qty: f64, unit: &str, loc: &str) -> Line {
         Line { name: name.into(), qty, unit: Some(unit.into()), location: Some(loc.into()), ..Default::default() }

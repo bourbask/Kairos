@@ -13,6 +13,11 @@ use sha2::{Digest, Sha256};
 
 use crate::force::{Famille, est_actif, recuperabilite, renforcer, stabilite_initiale};
 
+mod controle;
+mod habitudes;
+pub use controle::{Ancrage, CONTROLE_MAX, Controle, HabitudeVue, SouvenirVu};
+pub use habitudes::{BilanHabitudes, Observation};
+
 /// Clé réservée du fait portant la personnalité.
 pub const PERSONA_KEY: &str = "persona";
 /// Taille maximale d'une transcription acceptée.
@@ -232,9 +237,13 @@ pub struct Bilan {
 }
 
 /// Étapes de la nuit dont l'état est conservé.
-pub const ETAPES_NUIT: [&str; 3] = ["extraction", "condensation", "oubli"];
+pub const ETAPES_NUIT: [&str; 4] = ["extraction", "habitudes", "condensation", "oubli"];
 /// Statuts possibles d'une étape de nuit : des codes, jamais de texte libre.
-pub const STATUTS_NUIT: [&str; 4] = ["ok", "modele_indisponible", "sortie_invalide", "echec"];
+pub const STATUTS_NUIT: [&str; 5] = ["ok", "modele_indisponible", "sortie_invalide", "echec", "source_indisponible"];
+/// En dessous de cette force, une habitude est estompée.
+const SEUIL_ESTOMPE_HABITUDE: f64 = 0.3;
+/// Motifs possibles d'une sortie invalide : des codes, jamais de texte libre.
+pub const MOTIFS_NUIT: [&str; 4] = ["lot_trop_long", "reponse_coupee", "reponse_vide", "synthese_trop_longue"];
 /// En dessous de cette récupérabilité, un souvenir oubliable est effacé.
 const SEUIL_OUBLI: f64 = 0.05;
 
@@ -245,6 +254,8 @@ pub struct EtatNuit {
     pub dernier_jour: Option<NaiveDate>,
     pub derniere_execution: Option<NaiveDateTime>,
     pub statut: String,
+    /// Motif d'une sortie invalide.
+    pub motif: Option<String>,
     /// Ligne altérée : étape, dates ou statut inexploitables.
     pub illisible: bool,
 }
@@ -261,14 +272,26 @@ fn norme(v: &str) -> String {
     v.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
 }
 
+/// Début du texte de toute question de confirmation.
+const QUESTION_DEBUT: &str = "Confirmer : ";
+
 /// Début du texte d'une question de confirmation sur `key`.
 fn question_prefixe(key: &str) -> String {
-    format!("Confirmer : {key} = ")
+    format!("{QUESTION_DEBUT}{key} = ")
 }
 
 /// Référence du souvenir d'une déduction.
 fn ref_deduction(key: &str, value: &str) -> String {
     format!("{key}\u{1f}{value}")
+}
+
+/// Pose une question de confirmation, valable `QUESTION_JOURS` ; renvoie son identifiant.
+fn proposer_question(c: &Connection, what: &str, maintenant: NaiveDateTime) -> Result<i64> {
+    c.execute(
+        "INSERT INTO intentions (what, constraints, expires_at, state) VALUES (?, '', ?, ?)",
+        params![what, ts(maintenant + chrono::Duration::days(QUESTION_JOURS)), IntentionState::Proposee.as_str()],
+    )?;
+    Ok(c.last_insert_rowid())
 }
 
 /// Renforce un souvenir existant au moment `now` (rappel).
@@ -288,6 +311,9 @@ fn renforcer_souvenir(c: &Connection, nature: &str, r#ref: &str, now: NaiveDateT
     )?;
     Ok(true)
 }
+
+/// Longueur maximale d'une synthèse : au-delà, le texte n'est plus un résumé.
+const SYNTHESE_MAX: usize = 4_000;
 
 /// Un épisode n'est condensé qu'estompé depuis plus de ce délai, en jours.
 const D_COND: f64 = 14.0;
@@ -466,7 +492,17 @@ CREATE TABLE IF NOT EXISTS deductions (
 CREATE TABLE IF NOT EXISTS renforcements_jour (
     key TEXT NOT NULL, jour TEXT NOT NULL, PRIMARY KEY (key, jour));
 CREATE TABLE IF NOT EXISTS nuit_etat (
-    etape TEXT PRIMARY KEY, dernier_jour TEXT, derniere_execution TEXT, statut TEXT);
+    etape TEXT PRIMARY KEY, dernier_jour TEXT, derniere_execution TEXT, statut TEXT, motif TEXT);
+CREATE TABLE IF NOT EXISTS habitudes (
+    id INTEGER PRIMARY KEY, source TEXT NOT NULL, quoi TEXT NOT NULL, contexte TEXT NOT NULL,
+    valeur TEXT NOT NULL, libelle TEXT NOT NULL,
+    cadence TEXT NOT NULL CHECK(cadence IN ('quotidien','hebdomadaire')),
+    m REAL NOT NULL, positifs INTEGER NOT NULL,
+    etat TEXT NOT NULL DEFAULT 'candidate' CHECK(etat IN ('candidate','active','ancienne')),
+    nee_le TEXT, ancienne_depuis TEXT, question INTEGER, annoncee_le TEXT,
+    confirmee INTEGER NOT NULL DEFAULT 0, rejetee INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(source, quoi, contexte, valeur));
+CREATE TABLE IF NOT EXISTS habitudes_sources (source TEXT PRIMARY KEY, dernier_jour TEXT NOT NULL, vu_le TEXT NOT NULL);
 ";
 
 fn now_local() -> NaiveDateTime {
@@ -511,6 +547,23 @@ pub struct Rappel {
     pub score: f64,
     pub estompe: bool,
     pub ancre: bool,
+}
+
+/// Souvenir lu, avant toute décision de rappel ou de contrôle.
+struct Lu {
+    nature: String,
+    r#ref: String,
+    texte: String,
+    stabilite: f64,
+    dernier: NaiveDateTime,
+    importance: f64,
+    ancre: bool,
+    /// Force propre d'une habitude (sa moyenne glissante).
+    force: Option<f64>,
+    /// Entrée de journal non commune, ou synthèse (qui peut en condenser).
+    sensible: bool,
+    /// Ce que la nuit en fera : `condensation` ou `oubli`.
+    devenir: Option<String>,
 }
 
 /// Budget de texte des ancres, toujours fournies.
@@ -592,6 +645,10 @@ impl MemoryStore {
     /// Donne un état à chaque étape de nuit qui n'en a pas : son horloge part
     /// de maintenant, pour qu'une nuit qui ne tourne jamais finisse signalée.
     fn migrer_nuit(conn: &Connection) -> Result<()> {
+        // Bases créées avant le motif.
+        if !conn.prepare("SELECT 1 FROM pragma_table_info('nuit_etat') WHERE name = 'motif'")?.exists([])? {
+            conn.execute_batch("ALTER TABLE nuit_etat ADD COLUMN motif TEXT;")?;
+        }
         let maintenant = ts(now_local());
         for etape in ETAPES_NUIT {
             conn.execute(
@@ -665,6 +722,7 @@ impl MemoryStore {
              SELECT 'deduction', key || char(31) || value, ?1, ?2, 0.0, confiance FROM deductions",
             params![stabilite_initiale(Famille::Connaissance, 0.0), maintenant],
         )?;
+        habitudes::migrer(&tx, now_local())?;
         tx.execute("DELETE FROM facts_fts", [])?;
         tx.execute(
             "INSERT INTO facts_fts (key, value) SELECT key, value FROM fact_log
@@ -858,6 +916,7 @@ impl MemoryStore {
             "DELETE FROM intentions WHERE substr(what, 1, length(?1)) = ?1",
             [question_prefixe(key)],
         )?;
+        habitudes::delier_questions(&tx)?;
         tx.execute("DELETE FROM facts_fts WHERE key = ?", [key])?;
         tx.execute("INSERT INTO facts_fts (facts_fts) VALUES ('optimize')", [])?;
         tx.commit()?;
@@ -927,10 +986,7 @@ impl MemoryStore {
                         .iter()
                         .any(|w| norme(w) == norme(&what));
                     if !deja {
-                        tx.execute(
-                            "INSERT INTO intentions (what, constraints, expires_at, state) VALUES (?, '', ?, ?)",
-                            params![what, ts(maintenant + chrono::Duration::days(QUESTION_JOURS)), IntentionState::Proposee.as_str()],
-                        )?;
+                        proposer_question(&tx, &what, maintenant)?;
                         b.questions += 1;
                     }
                 }
@@ -986,10 +1042,15 @@ impl MemoryStore {
         Ok(self.conn.last_insert_rowid())
     }
 
+    /// Change l'état d'une intention ; une réponse à une question d'habitude
+    /// la confirme ou la rejette dans la même transaction.
     pub fn intention_set_state(&self, id: i64, state: IntentionState) -> Result<bool> {
-        let n = self
-            .conn
-            .execute("UPDATE intentions SET state = ? WHERE id = ?", params![state.as_str(), id])?;
+        let tx = self.conn.unchecked_transaction()?;
+        let n = tx.execute("UPDATE intentions SET state = ? WHERE id = ?", params![state.as_str(), id])?;
+        if n > 0 {
+            habitudes::repondre(&tx, id, state, now_local())?;
+        }
+        tx.commit()?;
         Ok(n > 0)
     }
 
@@ -1180,11 +1241,11 @@ impl MemoryStore {
     /// Condense la période : recalcule son lot et, s'il est inchangé (même
     /// empreinte), crée la synthèse (ou réécrit l'existante pour un complément)
     /// et retire ses sources dans une seule transaction. `None` si le lot n'est
-    /// pas (ou plus) condensable, a changé, ou si le texte est vide ; rien n'est
-    /// alors modifié.
+    /// pas (ou plus) condensable, a changé, ou si le texte est vide ou démesuré ;
+    /// rien n'est alors modifié.
     pub fn condenser(&self, niveau: &str, periode: &str, texte: &str, empreinte: &str, maintenant: NaiveDateTime) -> Result<Option<i64>> {
         let texte = texte.trim();
-        if texte.is_empty() {
+        if texte.is_empty() || texte.chars().count() > SYNTHESE_MAX {
             return Ok(None);
         }
         let Some(lot) = self.lots(maintenant)?.into_iter().find(|l| l.niveau == niveau && l.periode == periode) else {
@@ -1221,10 +1282,19 @@ impl MemoryStore {
     }
 
     /// Efface pour de bon les synthèses fondues non annuelles et les déductions
-    /// dont la récupérabilité est passée sous `SEUIL_OUBLI`, index compris.
-    /// Renvoie le nombre de souvenirs effacés.
+    /// dont la récupérabilité est passée sous `SEUIL_OUBLI`, index compris,
+    /// puis les questions de confirmation closes échues depuis plus d'une durée
+    /// de vie. Renvoie le nombre de souvenirs effacés.
     pub fn oublier(&self, maintenant: NaiveDateTime) -> Result<u32> {
         let tx = self.conn.unchecked_transaction()?;
+        // Un refus ne bloque la question que jusqu'à son échéance : passé une
+        // durée de vie de plus, il n'a plus d'effet.
+        tx.execute(
+            "DELETE FROM intentions WHERE state IN ('refusee','acceptee','expiree')
+             AND expires_at <= ?2 AND substr(what, 1, length(?1)) = ?1
+             AND what LIKE '% = % ?' AND constraints = ''",
+            params![QUESTION_DEBUT, ts(maintenant - chrono::Duration::days(QUESTION_JOURS))],
+        )?;
         let candidats = {
             let mut st = tx.prepare(
                 "SELECT s.nature, s.ref, s.stabilite, s.dernier_rappel, s.ancre FROM souvenirs s
@@ -1257,6 +1327,7 @@ impl MemoryStore {
         if n > 0 {
             tx.execute("INSERT INTO syntheses_fts (syntheses_fts) VALUES ('optimize')", [])?;
         }
+        n += habitudes::oublier(&tx)?;
         tx.commit()?;
         Ok(n)
     }
@@ -1265,18 +1336,20 @@ impl MemoryStore {
 
     /// États connus des étapes de nuit, par étape.
     pub fn nuit_etat(&self) -> Result<Vec<EtatNuit>> {
-        let mut st = self.conn.prepare("SELECT etape, dernier_jour, derniere_execution, statut FROM nuit_etat ORDER BY etape")?;
+        let mut st = self.conn.prepare("SELECT etape, dernier_jour, derniere_execution, statut, motif FROM nuit_etat ORDER BY etape")?;
         st.query_map([], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?, r.get::<_, Option<String>>(2)?, r.get::<_, Option<String>>(3)?))
+            Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?, r.get::<_, Option<String>>(2)?, r.get::<_, Option<String>>(3)?,
+                r.get::<_, Option<String>>(4)?))
         })?
         .map(|row| {
-            let (etape, dj, de, statut) = row?;
+            let (etape, dj, de, statut, motif) = row?;
             let dernier_jour = dj.map(|j| NaiveDate::parse_from_str(&j, "%Y-%m-%d").ok());
             let derniere_execution = de.map(|t| parse_ts(&t).ok());
             let statut = statut.unwrap_or_default();
             // Ligne altérée : signalée sans faire échouer la lecture des autres.
             let illisible = !ETAPES_NUIT.contains(&etape.as_str())
                 || !STATUTS_NUIT.contains(&statut.as_str())
+                || motif.as_deref().is_some_and(|m| !MOTIFS_NUIT.contains(&m))
                 || dernier_jour == Some(None)
                 || matches!(derniere_execution, None | Some(None));
             Ok(EtatNuit {
@@ -1284,6 +1357,7 @@ impl MemoryStore {
                 dernier_jour: dernier_jour.flatten(),
                 derniere_execution: derniere_execution.flatten(),
                 statut,
+                motif,
                 illisible,
             })
         })
@@ -1291,18 +1365,31 @@ impl MemoryStore {
     }
 
     /// Note l'exécution d'une étape ; sans `dernier_jour`, garde le précédent.
-    pub fn nuit_noter(&self, etape: &str, statut: &str, dernier_jour: Option<NaiveDate>, maintenant: NaiveDateTime) -> Result<()> {
+    /// Un `motif` n'accompagne qu'une sortie invalide.
+    pub fn nuit_noter(
+        &self,
+        etape: &str,
+        statut: &str,
+        motif: Option<&str>,
+        dernier_jour: Option<NaiveDate>,
+        maintenant: NaiveDateTime,
+    ) -> Result<()> {
         if !ETAPES_NUIT.contains(&etape) {
             bail!("étape inconnue : {etape}");
         }
         if !STATUTS_NUIT.contains(&statut) {
             bail!("statut inconnu : {statut} (attendu : {})", STATUTS_NUIT.join(", "));
         }
+        if let Some(m) = motif
+            && (statut != "sortie_invalide" || !MOTIFS_NUIT.contains(&m))
+        {
+            bail!("motif refusé : {m} (attendu avec sortie_invalide : {})", MOTIFS_NUIT.join(", "));
+        }
         self.conn.execute(
-            "INSERT INTO nuit_etat (etape, dernier_jour, derniere_execution, statut) VALUES (?1, ?2, ?3, ?4)
+            "INSERT INTO nuit_etat (etape, dernier_jour, derniere_execution, statut, motif) VALUES (?1, ?2, ?3, ?4, ?5)
              ON CONFLICT(etape) DO UPDATE SET dernier_jour = coalesce(?2, dernier_jour),
-                 derniere_execution = ?3, statut = ?4",
-            params![etape, dernier_jour.map(|j| j.format("%Y-%m-%d").to_string()), ts(maintenant), statut],
+                 derniere_execution = ?3, statut = ?4, motif = ?5",
+            params![etape, dernier_jour.map(|j| j.format("%Y-%m-%d").to_string()), ts(maintenant), statut, motif],
         )?;
         Ok(())
     }
@@ -1460,6 +1547,68 @@ impl MemoryStore {
 
     // --- Rappel (lecture seule : ne renforce rien) ---
 
+    /// Souvenirs lisibles, textes mis en forme et tronqués ; `episodes` choisit
+    /// les entrées de journal et conversations lues (clause sur `s`).
+    /// Ligne à la date illisible : ignorée sans bloquer ni exposer son contenu.
+    fn lire_souvenirs(&self, episodes: &str) -> Result<Vec<Lu>> {
+        // ponytail: tous les faits sont lus à chaque appel ; filtrer en SQL si leur nombre explose.
+        let sql = format!(
+            "SELECT 'fait', s.ref, s.ref || ' : ' || f.value, s.stabilite, s.dernier_rappel, s.importance, s.ancre, NULL, 0, NULL
+             FROM souvenirs s JOIN facts_fts f ON f.key = s.ref WHERE s.nature = 'fait'
+             UNION ALL
+             SELECT 'journal', s.ref, substr(j.at, 1, 10) || char(1) || j.content, s.stabilite, s.dernier_rappel, s.importance, s.ancre, NULL,
+                    j.sensitivity <> 'commune', 'condensation'
+             FROM souvenirs s JOIN journal j ON j.id = CAST(s.ref AS INTEGER) WHERE s.nature = 'journal' AND {episodes}
+             UNION ALL
+             SELECT 'conversation', s.ref, substr(c.started_at, 1, 10) || char(1) || coalesce(c.summary, '') || char(1) || c.topics,
+                    s.stabilite, s.dernier_rappel, s.importance, s.ancre, NULL, 0, 'condensation'
+             FROM souvenirs s JOIN conversations c ON c.id = CAST(s.ref AS INTEGER) WHERE s.nature = 'conversation' AND {episodes}
+             UNION ALL
+             SELECT 'synthese', s.ref, y.periode || ' : ' || y.texte, s.stabilite, s.dernier_rappel, s.importance, s.ancre, NULL, 1,
+                    CASE WHEN y.niveau = 'annee' THEN NULL WHEN y.fondue = 0 THEN 'condensation' ELSE 'oubli' END
+             FROM souvenirs s JOIN syntheses y ON y.id = CAST(s.ref AS INTEGER) WHERE s.nature = 'synthese'
+             UNION ALL
+             SELECT 'deduction', s.ref, 'je crois que ' || d.key || ' : ' || d.value, s.stabilite, s.dernier_rappel, s.importance, s.ancre, NULL,
+                    0, 'oubli'
+             FROM souvenirs s JOIN deductions d ON s.ref = d.key || char(31) || d.value WHERE s.nature = 'deduction'
+               AND d.key NOT IN (SELECT key FROM fact_log)
+               AND NOT EXISTS (SELECT 1 FROM deductions e WHERE e.key = d.key
+                   AND (e.confiance > d.confiance OR (e.confiance = d.confiance AND e.value < d.value)))
+             UNION ALL
+             SELECT 'habitude', s.ref,
+                    CASE h.confirmee WHEN 1 THEN '' ELSE 'je crois que ' END || 'habitude : ' || h.libelle
+                    || coalesce(' (ancienne habitude depuis le ' || substr(h.ancienne_depuis, 9, 2) || '/'
+                       || substr(h.ancienne_depuis, 6, 2) || '/' || substr(h.ancienne_depuis, 1, 4) || ')', ''),
+                    s.stabilite, s.dernier_rappel, s.importance, s.ancre, h.m, 0, NULL
+             FROM souvenirs s JOIN habitudes h ON CAST(h.id AS TEXT) = s.ref WHERE s.nature = 'habitude'
+               AND h.nee_le IS NOT NULL AND h.rejetee = 0"
+        );
+        let mut st = self.conn.prepare(&sql)?;
+        let rows = st.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, f64>(3)?,
+                r.get::<_, String>(4)?, r.get::<_, f64>(5)?, r.get::<_, bool>(6)?, r.get::<_, Option<f64>>(7)?,
+                r.get::<_, bool>(8)?, r.get::<_, Option<String>>(9)?))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (nature, r#ref, brut, stabilite, dr, importance, ancre, force, sensible, devenir) = row?;
+            let texte = match brut.split_once('\u{1}') {
+                Some((date, content)) if nature == "journal" => format!("{date} : {}", texte_journal(content)),
+                Some((date, reste)) if nature == "conversation" => {
+                    let (resume, sujets) = reste.split_once('\u{1}').unwrap_or((reste, "[]"));
+                    let sujets: Vec<String> = serde_json::from_str(sujets).unwrap_or_default();
+                    let corps = if resume.is_empty() { sujets.join(", ") } else { resume.to_string() };
+                    // Conversation sans résumé ni sujets : texte vide, le lecteur décide.
+                    if corps.is_empty() { String::new() } else { format!("{date} : {corps}") }
+                }
+                _ => brut,
+            };
+            let Ok(dernier) = parse_ts(&dr) else { continue };
+            out.push(Lu { nature, r#ref, texte: tronquer(&texte), stabilite, dernier, importance, ancre, force, sensible, devenir });
+        }
+        Ok(out)
+    }
+
     /// Souvenirs à proposer au modèle : ancres d'abord (au plus `ANCRES_MAX`,
     /// dans leur budget), puis jusqu'à `limite` autres par `R + importance + pertinence`.
     pub fn rappel(&self, requete: Option<&str>, maintenant: NaiveDateTime, limite: usize) -> Result<Vec<Rappel>> {
@@ -1495,68 +1644,32 @@ impl MemoryStore {
         let (journal_hits, conv_hits) = (ids("journal"), ids("conversation"));
 
         // Candidats : tous les faits ; épisodes récents, ancrés ou trouvés.
-        // ponytail: tous les faits sont lus à chaque rappel ; filtrer en SQL si leur nombre explose.
-        let sql = format!(
-            "SELECT 'fait', s.ref, s.ref || ' : ' || f.value, s.stabilite, s.dernier_rappel, s.importance, s.ancre
-             FROM souvenirs s JOIN facts_fts f ON f.key = s.ref WHERE s.nature = 'fait'
-             UNION ALL
-             SELECT 'journal', s.ref, substr(j.at, 1, 10) || char(1) || j.content, s.stabilite, s.dernier_rappel, s.importance, s.ancre
-             FROM souvenirs s JOIN journal j ON j.id = CAST(s.ref AS INTEGER) WHERE s.nature = 'journal'
-               AND (s.ancre OR j.id IN (SELECT id FROM journal ORDER BY id DESC LIMIT {RAPPEL_JOURNAL_RECENT})
-                    OR j.id IN ({journal_hits}))
-             UNION ALL
-             SELECT 'conversation', s.ref, substr(c.started_at, 1, 10) || char(1) || coalesce(c.summary, '') || char(1) || c.topics,
-                    s.stabilite, s.dernier_rappel, s.importance, s.ancre
-             FROM souvenirs s JOIN conversations c ON c.id = CAST(s.ref AS INTEGER) WHERE s.nature = 'conversation'
-               AND (s.ancre OR c.id IN (SELECT id FROM conversations ORDER BY id DESC LIMIT {RAPPEL_JOURNAL_RECENT})
-                    OR c.id IN ({conv_hits}))
-             UNION ALL
-             SELECT 'synthese', s.ref, y.periode || ' : ' || y.texte, s.stabilite, s.dernier_rappel, s.importance, s.ancre
-             FROM souvenirs s JOIN syntheses y ON y.id = CAST(s.ref AS INTEGER) WHERE s.nature = 'synthese'
-             UNION ALL
-             SELECT 'deduction', s.ref, 'je crois que ' || d.key || ' : ' || d.value, s.stabilite, s.dernier_rappel, s.importance, s.ancre
-             FROM souvenirs s JOIN deductions d ON s.ref = d.key || char(31) || d.value WHERE s.nature = 'deduction'
-               AND d.key NOT IN (SELECT key FROM fact_log)
-               AND NOT EXISTS (SELECT 1 FROM deductions e WHERE e.key = d.key
-                   AND (e.confiance > d.confiance OR (e.confiance = d.confiance AND e.value < d.value)))"
+        let episodes = format!(
+            "(s.ancre
+              OR (s.nature = 'journal' AND (CAST(s.ref AS INTEGER) IN (SELECT id FROM journal ORDER BY id DESC LIMIT {RAPPEL_JOURNAL_RECENT})
+                  OR CAST(s.ref AS INTEGER) IN ({journal_hits})))
+              OR (s.nature = 'conversation' AND (CAST(s.ref AS INTEGER) IN (SELECT id FROM conversations ORDER BY id DESC LIMIT {RAPPEL_JOURNAL_RECENT})
+                  OR CAST(s.ref AS INTEGER) IN ({conv_hits}))))"
         );
         struct Cand { r: Rappel, importance: f64, dernier: NaiveDateTime, rang: Option<usize> }
-        let mut st = self.conn.prepare(&sql)?;
-        let rows = st.query_map([], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, f64>(3)?,
-                r.get::<_, String>(4)?, r.get::<_, f64>(5)?, r.get::<_, bool>(6)?))
-        })?;
         let mut ancres = Vec::new();
         let mut autres = Vec::new();
-        for row in rows {
-            let (nature, r#ref, brut, stabilite, dr, importance, ancre) = row?;
-            let texte = match brut.split_once('\u{1}') {
-                Some((date, content)) if nature == "journal" => format!("{date} : {}", texte_journal(content)),
-                Some((date, reste)) if nature == "conversation" => {
-                    let (resume, sujets) = reste.split_once('\u{1}').unwrap_or((reste, "[]"));
-                    let sujets: Vec<String> = serde_json::from_str(sujets).unwrap_or_default();
-                    let corps = if resume.is_empty() { sujets.join(", ") } else { resume.to_string() };
-                    // Conversation sans résumé ni sujets : rien à rappeler.
-                    if corps.is_empty() { continue }
-                    format!("{date} : {corps}")
-                }
-                _ => brut,
-            };
-            // Ligne illisible : ignorée sans bloquer le rappel ni exposer son contenu.
-            let Ok(dernier) = parse_ts(&dr) else { continue };
-            let rec = recuperabilite(dernier, stabilite, maintenant, ancre);
-            let rang = rang.get(&(nature.as_str(), r#ref.as_str())).copied();
+        // Conversation sans résumé ni sujets : rien à rappeler.
+        for lu in self.lire_souvenirs(&episodes)?.into_iter().filter(|l| !l.texte.is_empty()) {
+            // Une habitude a pour force sa moyenne glissante, pas la courbe d'oubli.
+            let rec = lu.force.unwrap_or_else(|| recuperabilite(lu.dernier, lu.stabilite, maintenant, lu.ancre));
+            let rang = rang.get(&(lu.nature.as_str(), lu.r#ref.as_str())).copied();
             let pertinence = rang.map_or(0.0, |i| 1.0 / (1.0 + i as f64));
             let r = Rappel {
-                texte: tronquer(&texte),
-                score: rec + importance + pertinence,
-                estompe: !est_actif(rec),
-                ancre,
-                nature,
-                r#ref,
+                texte: lu.texte,
+                score: rec + lu.importance + pertinence,
+                estompe: if lu.force.is_some() { rec < SEUIL_ESTOMPE_HABITUDE } else { !est_actif(rec) },
+                ancre: lu.ancre,
+                nature: lu.nature,
+                r#ref: lu.r#ref,
             };
-            let c = Cand { r, importance, dernier, rang };
-            if ancre { ancres.push(c) } else { autres.push(c) }
+            let c = Cand { r, importance: lu.importance, dernier: lu.dernier, rang };
+            if lu.ancre { ancres.push(c) } else { autres.push(c) }
         }
 
         ancres.sort_by(|a, b| b.importance.total_cmp(&a.importance).then(b.dernier.cmp(&a.dernier)));
@@ -1581,18 +1694,18 @@ mod tests {
     use super::*;
     use chrono::{Duration, NaiveDate};
 
-    fn store() -> MemoryStore {
+    pub(super) fn store() -> MemoryStore {
         MemoryStore::open(":memory:").unwrap()
     }
 
     /// Mémoire dont l'extraction est à jour : seule la condensation décide.
-    fn store_extrait() -> MemoryStore {
+    pub(super) fn store_extrait() -> MemoryStore {
         let s = store();
-        s.nuit_noter("extraction", "ok", NaiveDate::from_ymd_opt(2099, 12, 31), t()).unwrap();
+        s.nuit_noter("extraction", "ok", None, NaiveDate::from_ymd_opt(2099, 12, 31), t()).unwrap();
         s
     }
 
-    fn t() -> NaiveDateTime {
+    pub(super) fn t() -> NaiveDateTime {
         NaiveDate::from_ymd_opt(2026, 10, 29).unwrap().and_hms_opt(12, 0, 0).unwrap()
     }
 
@@ -1600,7 +1713,7 @@ mod tests {
         NewConversation { channel: "voix".into(), device: "d".into(), started_at: t(), ended_at: t(), transcript: text.into(), session_id: None }
     }
 
-    fn note(s: &MemoryStore, text: &str) -> i64 {
+    pub(super) fn note(s: &MemoryStore, text: &str) -> i64 {
         s.journal_write(&NewJournalEntry {
             source: "s".into(),
             kind: "note".into(),
@@ -2069,7 +2182,7 @@ mod tests {
 
     // --- Rappel ---
 
-    fn vieillir(s: &MemoryStore, nature: &str, r#ref: &str, quand: NaiveDateTime) {
+    pub(super) fn vieillir(s: &MemoryStore, nature: &str, r#ref: &str, quand: NaiveDateTime) {
         s.conn
             .execute("UPDATE souvenirs SET dernier_rappel = ? WHERE nature = ? AND ref = ?", params![ts(quand), nature, r#ref])
             .unwrap();
@@ -2227,7 +2340,7 @@ mod tests {
     // --- Condensation ---
 
     /// Entrée de journal datée de `quand`, rappelée pour la dernière fois à ce moment.
-    fn episode_le(s: &MemoryStore, texte: &str, quand: NaiveDateTime) -> i64 {
+    pub(super) fn episode_le(s: &MemoryStore, texte: &str, quand: NaiveDateTime) -> i64 {
         let id = note(s, texte);
         s.conn.execute("UPDATE journal SET at = ? WHERE id = ?", params![ts(quand), id]).unwrap();
         vieillir(s, "journal", &id.to_string(), quand);
@@ -2235,17 +2348,17 @@ mod tests {
     }
 
     /// Condense avec l'empreinte du lot courant (vide si la période n'a pas de lot).
-    fn condense(s: &MemoryStore, niveau: &str, periode: &str, texte: &str, m: NaiveDateTime) -> Result<Option<i64>> {
+    pub(super) fn condense(s: &MemoryStore, niveau: &str, periode: &str, texte: &str, m: NaiveDateTime) -> Result<Option<i64>> {
         let lots = s.condensables(m, usize::MAX)?;
         let e = lots.iter().find(|l| l.niveau == niveau && l.periode == periode).map(|l| l.empreinte.clone()).unwrap_or_default();
         s.condenser(niveau, periode, texte, &e, m)
     }
 
-    fn jour(a: i32, m: u32, j: u32) -> NaiveDateTime {
+    pub(super) fn jour(a: i32, m: u32, j: u32) -> NaiveDateTime {
         NaiveDate::from_ymd_opt(a, m, j).unwrap().and_hms_opt(8, 0, 0).unwrap()
     }
 
-    fn compte(s: &MemoryStore, sql: &str) -> i64 {
+    pub(super) fn compte(s: &MemoryStore, sql: &str) -> i64 {
         s.conn.query_row(sql, [], |r| r.get(0)).unwrap()
     }
 
@@ -2257,9 +2370,9 @@ mod tests {
         // Extraction jamais passée, puis en retard sur la semaine : rien à condenser.
         s.conn.execute("UPDATE nuit_etat SET dernier_jour = NULL WHERE etape = 'extraction'", []).unwrap();
         assert!(s.condensables(m, 10).unwrap().is_empty());
-        s.nuit_noter("extraction", "ok", Some(jour(2026, 10, 31).date()), m).unwrap();
+        s.nuit_noter("extraction", "ok", None, Some(jour(2026, 10, 31).date()), m).unwrap();
         assert!(s.condensables(m, 10).unwrap().is_empty());
-        s.nuit_noter("extraction", "ok", Some(jour(2026, 11, 1).date()), m).unwrap();
+        s.nuit_noter("extraction", "ok", None, Some(jour(2026, 11, 1).date()), m).unwrap();
         assert_eq!(s.condensables(m, 10).unwrap().len(), 1);
     }
 
@@ -2328,6 +2441,9 @@ mod tests {
         assert_eq!(s.condensables(m, 10).unwrap()[0].elements.len(), 2);
         // Texte vide : rien.
         assert_eq!(condense(&s, "semaine", "2026-W44", "  \n", m).unwrap(), None);
+        // Texte démesuré : rien, les sources restent.
+        assert_eq!(condense(&s, "semaine", "2026-W44", &"x".repeat(4_001), m).unwrap(), None);
+        assert_eq!(compte(&s, "SELECT COUNT(*) FROM syntheses"), 0);
         // Erreur au milieu : tout est annulé.
         s.conn.execute_batch("CREATE TEMP TRIGGER bloque BEFORE DELETE ON conversations BEGIN SELECT RAISE(ABORT, 'refus'); END;").unwrap();
         assert!(condense(&s, "semaine", "2026-W44", "rosiers taillés", m).is_err());
@@ -2721,7 +2837,7 @@ mod tests {
     // --- Oubli et état de nuit ---
 
     /// Synthèse fondue ou non, rappelée pour la dernière fois à `quand`.
-    fn synthese_le(s: &MemoryStore, niveau: &str, periode: &str, texte: &str, fondue: bool, quand: NaiveDateTime) -> i64 {
+    pub(super) fn synthese_le(s: &MemoryStore, niveau: &str, periode: &str, texte: &str, fondue: bool, quand: NaiveDateTime) -> i64 {
         let id = s.synthese_creer(niveau, periode, texte, quand).unwrap();
         s.conn.execute("UPDATE syntheses SET fondue = ? WHERE id = ?", params![fondue, id]).unwrap();
         id
@@ -2802,27 +2918,104 @@ mod tests {
     }
 
     #[test]
+    fn forget_purges_old_closed_questions() {
+        let s = store();
+        let m = jour(2026, 11, 1);
+        s.fact_set_at("animal", "chat", "utilisateur", t()).unwrap();
+        // Questions closes échues depuis plus d'une durée de vie : purgées.
+        for etat in [IntentionState::Refusee, IntentionState::Expiree, IntentionState::Acceptee] {
+            let id = s.intention_create("Confirmer : animaux = deux ?", "", m - Duration::days(15)).unwrap();
+            s.intention_set_state(id, etat).unwrap();
+        }
+        // Intention ordinaire ancienne : hors périmètre.
+        s.intention_create("Appeler Exemple", "", m - Duration::days(30)).unwrap();
+        // Rappel de l'utilisateur qui commence comme une question : gardé.
+        let rappel = s.intention_create("Confirmer : rendez-vous", "", m - Duration::days(30)).unwrap();
+        s.intention_set_state(rappel, IntentionState::Acceptee).unwrap();
+        // Refus récent : gardé, il bloque toujours la même question.
+        s.appliquer_extraction(d(1), &[indice("animal", "chien")], m).unwrap();
+        let id = s.intentions_open(m).unwrap()[0].id;
+        s.intention_set_state(id, IntentionState::Refusee).unwrap();
+        let plus_tard = m + Duration::days(2);
+        s.oublier(plus_tard).unwrap();
+        assert_eq!(compte(&s, "SELECT COUNT(*) FROM intentions WHERE what LIKE 'Confirmer : animaux%'"), 0);
+        assert_eq!(compte(&s, "SELECT COUNT(*) FROM intentions WHERE what = 'Appeler Exemple'"), 1);
+        assert_eq!(compte(&s, "SELECT COUNT(*) FROM intentions WHERE what = 'Confirmer : rendez-vous'"), 1);
+        assert_eq!(compte(&s, "SELECT COUNT(*) FROM intentions WHERE state = 'refusee'"), 1);
+        assert_eq!(s.appliquer_extraction(d(3), &[indice("animal", "chien")], plus_tard).unwrap().questions, 0);
+        // Une durée de vie après son échéance, le refus est purgé à son tour.
+        s.oublier(m + Duration::days(15)).unwrap();
+        assert_eq!(compte(&s, "SELECT COUNT(*) FROM intentions WHERE state = 'refusee'"), 0);
+    }
+
+    #[test]
     fn night_state_keeps_last_day() {
         let s = store();
         // Chaque étape existe dès l'ouverture : son horloge part de là.
         let e = s.nuit_etat().unwrap();
-        assert_eq!(e.iter().map(|e| e.etape.as_str()).collect::<Vec<_>>(), ["condensation", "extraction", "oubli"]);
+        assert_eq!(e.iter().map(|e| e.etape.as_str()).collect::<Vec<_>>(), ["condensation", "extraction", "habitudes", "oubli"]);
         assert!(e.iter().all(|e| e.statut == "ok" && e.derniere_execution.is_some() && e.dernier_jour.is_none() && !e.illisible));
-        s.nuit_noter("extraction", "ok", Some(d(3)), jour(2026, 11, 4)).unwrap();
-        s.nuit_noter("extraction", "modele_indisponible", None, jour(2026, 11, 5)).unwrap();
+        s.nuit_noter("extraction", "ok", None, Some(d(3)), jour(2026, 11, 4)).unwrap();
+        s.nuit_noter("extraction", "modele_indisponible", None, None, jour(2026, 11, 5)).unwrap();
         // Rouverte : l'état existant n'est pas écrasé.
         MemoryStore::migrer_nuit(&s.conn).unwrap();
         let e: Vec<_> = s.nuit_etat().unwrap().into_iter().filter(|e| e.etape == "extraction").collect();
         assert_eq!(e[0].dernier_jour, Some(d(3)));
         assert_eq!(e[0].derniere_execution, Some(jour(2026, 11, 5)));
         assert_eq!(e[0].statut, "modele_indisponible");
-        assert!(s.nuit_noter("inconnue", "ok", None, jour(2026, 11, 5)).is_err());
+        assert!(s.nuit_noter("inconnue", "ok", None, None, jour(2026, 11, 5)).is_err());
         for statut in [" ", "erreur", "modèle indisponible", "texte libre quelconque"] {
-            assert!(s.nuit_noter("oubli", statut, None, jour(2026, 11, 5)).is_err(), "{statut}");
+            assert!(s.nuit_noter("oubli", statut, None, None, jour(2026, 11, 5)).is_err(), "{statut}");
         }
         for statut in STATUTS_NUIT {
-            s.nuit_noter("oubli", statut, None, jour(2026, 11, 5)).unwrap();
+            s.nuit_noter("oubli", statut, None, None, jour(2026, 11, 5)).unwrap();
         }
+    }
+
+    #[test]
+    fn night_motif_is_a_closed_code() {
+        let s = store();
+        let m = jour(2026, 11, 5);
+        let motif = |s: &MemoryStore| s.nuit_etat().unwrap().into_iter().find(|e| e.etape == "condensation").unwrap();
+        for code in MOTIFS_NUIT {
+            s.nuit_noter("condensation", "sortie_invalide", Some(code), None, m).unwrap();
+            assert_eq!(motif(&s).motif.as_deref(), Some(code));
+            assert!(!motif(&s).illisible);
+        }
+        for code in ["", "autre", "lot trop long", "texte libre quelconque"] {
+            assert!(s.nuit_noter("condensation", "sortie_invalide", Some(code), None, m).is_err(), "{code}");
+        }
+        // Un motif n'accompagne qu'une sortie invalide.
+        assert!(s.nuit_noter("condensation", "ok", Some("lot_trop_long"), None, m).is_err());
+        // Noté sans motif : le précédent disparaît.
+        s.nuit_noter("condensation", "sortie_invalide", None, None, m).unwrap();
+        assert_eq!(motif(&s).motif, None);
+        // Motif altéré : ligne signalée.
+        s.conn.execute("UPDATE nuit_etat SET motif = 'secret' WHERE etape = 'condensation'", []).unwrap();
+        assert!(motif(&s).illisible);
+    }
+
+    #[test]
+    fn open_adds_motif_column_to_old_night_state() {
+        let path = std::env::temp_dir().join(format!("kairos-mem-nuit-{}.db", std::process::id()));
+        let p = path.to_str().unwrap();
+        let _ = std::fs::remove_file(p);
+        {
+            let c = Connection::open(p).unwrap();
+            c.execute_batch(
+                "CREATE TABLE nuit_etat (etape TEXT PRIMARY KEY, dernier_jour TEXT, derniere_execution TEXT, statut TEXT);
+                 INSERT INTO nuit_etat VALUES ('extraction', '2026-11-03', '2026-11-04 03:00:00', 'ok');",
+            )
+            .unwrap();
+        }
+        let s = MemoryStore::open(p).unwrap();
+        let e: Vec<_> = s.nuit_etat().unwrap().into_iter().filter(|e| e.etape == "extraction").collect();
+        assert_eq!((e[0].dernier_jour, e[0].motif.as_deref(), e[0].illisible), (Some(d(3)), None, false));
+        s.nuit_noter("condensation", "sortie_invalide", Some("lot_trop_long"), None, jour(2026, 11, 5)).unwrap();
+        drop(s);
+        let s = MemoryStore::open(p).unwrap(); // idempotent
+        assert_eq!(s.nuit_etat().unwrap()[0].motif.as_deref(), Some("lot_trop_long"));
+        let _ = std::fs::remove_file(p);
     }
 
     #[test]
@@ -2830,7 +3023,7 @@ mod tests {
         let s = store();
         s.conn.execute("UPDATE nuit_etat SET derniere_execution = 'hier soir' WHERE etape = 'oubli'", []).unwrap();
         s.conn.execute("UPDATE nuit_etat SET statut = 'n''importe quoi' WHERE etape = 'extraction'", []).unwrap();
-        s.conn.execute("INSERT INTO nuit_etat VALUES ('autre', NULL, NULL, 'ok')", []).unwrap();
+        s.conn.execute("INSERT INTO nuit_etat (etape, statut) VALUES ('autre', 'ok')", []).unwrap();
         let e = s.nuit_etat().unwrap();
         let illisibles: Vec<_> = e.iter().filter(|e| e.illisible).map(|e| e.etape.as_str()).collect();
         assert_eq!(illisibles, ["autre", "extraction", "oubli"]);

@@ -46,7 +46,11 @@ async fn tools_list_requires_token() {
     let url = start().await;
     assert_eq!(post(&url, None, list()).await.status(), 401);
     let v: Value = post(&url, Some("t"), list()).await.json().await.unwrap();
-    assert_eq!(v["result"]["tools"].as_array().unwrap().len(), 38);
+    let tools = v["result"]["tools"].as_array().unwrap();
+    assert_eq!(tools.len(), 44);
+    // Le contrat de l'application désigne un souvenir par `ref`.
+    let ancre = tools.iter().find(|t| t["name"] == "app_souvenir_anchor").unwrap();
+    assert!(ancre["inputSchema"]["properties"].get("ref").is_some(), "{ancre}");
 }
 
 #[tokio::test]
@@ -92,4 +96,16 @@ async fn bad_datetime_is_tool_error_and_brief_is_empty_without_intentions() {
     assert_eq!(v["result"]["isError"], json!(true), "{v}");
     let v: Value = post(&url, Some("t"), call("brief_section", json!({"period":"matin"}))).await.json().await.unwrap();
     assert_eq!(v["result"]["content"][0]["text"], json!(""));
+}
+
+#[tokio::test]
+async fn night_habits_over_raw_http() {
+    let url = start().await;
+    let obs = json!({"quoi":"repas.lieu","contexte":"soir.ouvre","valeur":"maison","libelle":"repas du soir : maison","cadence":"quotidien"});
+    let args = json!({"jour":"2026-11-09","sources":{"test":[obs]}});
+    assert_eq!(post(&url, None, call("nuit_habitudes", args.clone())).await.status(), 401);
+    let v: Value = post(&url, Some("t"), call("nuit_habitudes", args)).await.json().await.unwrap();
+    assert_ne!(v["result"]["isError"], json!(true), "{v}");
+    let bilan: Value = serde_json::from_str(v["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(bilan["appliquees"], 1);
 }

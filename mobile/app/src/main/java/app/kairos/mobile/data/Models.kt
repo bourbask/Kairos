@@ -432,13 +432,20 @@ data class MarchesSnapshot(
 @Serializable
 data class Intention(val id: Long, val what: String = "", val expires: String? = null, val state: String = "", val constraints: String? = null)
 
-/** Entrée du journal ; [sensitive] : masquée par défaut, jamais gardée hors ligne. */
+/** Entrée du journal ; [sensitive] : masquée par défaut, jamais gardée hors ligne ; [anchored] : toujours retenue. */
 @Serializable
-data class JournalEntry(val id: Long, val at: String = "", val kind: String = "", val text: String = "", val sensitive: Boolean = false)
+data class JournalEntry(
+    val id: Long,
+    val at: String = "",
+    val kind: String = "",
+    val text: String = "",
+    val sensitive: Boolean = false,
+    val anchored: Boolean = false,
+)
 
-/** Fait connu sur l'utilisateur ; le préfixe de [key] en donne le thème. */
+/** Fait connu sur l'utilisateur ; le préfixe de [key] en donne le thème ; [anchored] : toujours retenu. */
 @Serializable
-data class Fact(val key: String, val value: String = "", val updated: String? = null)
+data class Fact(val key: String, val value: String = "", val updated: String? = null, val anchored: Boolean = false)
 
 @Serializable
 data class FactValue(val value: String = "", val at: String = "")
@@ -459,6 +466,45 @@ data class Memory(
     val journal: List<JournalEntry> = emptyList(),
     val facts: List<Fact> = emptyList(),
     val conversations: List<ConversationSummary> = emptyList(),
+)
+
+/**
+ * Souvenir de la section « Ce que je retiens » : [nature] et [ref] le désignent auprès du
+ * module ; [depuis] : instant où il s'estompe ; [devenir] : `condensation` ou `oubli` ;
+ * [protege] : ancre que l'utilisateur ne peut pas retirer.
+ */
+@Serializable
+data class Souvenir(
+    val nature: String,
+    val ref: String,
+    val texte: String = "",
+    val sensitive: Boolean = false,
+    val depuis: String? = null,
+    val devenir: String? = null,
+    val protege: Boolean = false,
+)
+
+/** Habitude apprise, telle que l'application peut la confirmer, la rejeter ou l'oublier. */
+@Serializable
+data class Habitude(
+    val id: Long,
+    val libelle: String = "",
+    val etat: String = "",
+    val force: Double = 0.0,
+    val confirmee: Boolean = false,
+    val rejetee: Boolean = false,
+    val estompee: Boolean = false,
+    @SerialName("ancienne_depuis") val ancienneDepuis: String? = null,
+)
+
+/** Contrôle de la mémoire (`app_souvenirs`) : jamais écrit sur l'appareil. */
+@Serializable
+data class Controle(
+    @SerialName("ancres_max") val ancresMax: Int = 20,
+    val ancres: List<Souvenir> = emptyList(),
+    val estompes: List<Souvenir> = emptyList(),
+    @SerialName("estompes_total") val estompesTotal: Int = 0,
+    val habitudes: List<Habitude> = emptyList(),
 )
 
 /** Dernier état de l'espace Mémoire, gardé hors ligne sans les entrées sensibles. */
