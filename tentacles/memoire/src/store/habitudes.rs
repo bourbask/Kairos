@@ -620,6 +620,19 @@ mod tests {
     }
 
     #[test]
+    fn late_acceptance_keeps_one_active() {
+        let s = store();
+        serie(&s, 0, 7, "maison");
+        let q = question(&s, "maison");
+        s.intention_set_state(q, IntentionState::Refusee).unwrap();
+        // Une autre valeur prend le contexte, puis l'habitude refusée est finalement acceptée.
+        serie(&s, 7, 30, "restaurant");
+        assert_eq!(etat(&s, "restaurant").0, "active");
+        s.intention_set_state(q, IntentionState::Acceptee).unwrap();
+        assert_eq!(compte(&s, "SELECT COUNT(*) FROM habitudes WHERE etat = 'active' AND rejetee = 0"), 1);
+    }
+
+    #[test]
     fn day_part_must_match_the_day() {
         let s = store();
         let samedi = jour(5);
