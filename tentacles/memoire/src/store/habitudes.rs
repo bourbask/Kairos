@@ -163,21 +163,31 @@ fn elire(c: &Connection, source: &str, o: &Observation, j: &str, maintenant: Nai
 /// Réponse à une question : une habitude acceptée est confirmée, une refusée
 /// n'est plus rappelée ni candidate au rôle d'active.
 pub(super) fn repondre(c: &Connection, question: i64, state: IntentionState, maintenant: NaiveDateTime) -> Result<()> {
-    let souvenir = "nature = 'habitude' AND ref IN (SELECT CAST(id AS TEXT) FROM habitudes WHERE question = ?)";
+    repondre_ou(c, "question = ?", [question], state, maintenant)
+}
+
+/// Applique une réponse aux habitudes choisies par `filtre` (clause sur `habitudes`).
+fn repondre_ou(c: &Connection, filtre: &str, p: impl rusqlite::Params + Copy, state: IntentionState, maintenant: NaiveDateTime) -> Result<()> {
+    let souvenir = format!("nature = 'habitude' AND ref IN (SELECT CAST(id AS TEXT) FROM habitudes WHERE {filtre})");
     match state {
         IntentionState::Acceptee => {
-            c.execute("UPDATE habitudes SET confirmee = 1, rejetee = 0 WHERE question = ?", [question])?;
-            // Refusée puis acceptée : le souvenir est recréé.
+            c.execute(&format!("UPDATE habitudes SET confirmee = 1, rejetee = 0 WHERE {filtre}"), p)?;
+            // Refusée puis acceptée : le souvenir est recréé (stabilité et date
+            // calculées ici, jamais issues d'une saisie).
             c.execute(
-                "INSERT OR IGNORE INTO souvenirs (nature, ref, stabilite, dernier_rappel, importance, confiance)
-                 SELECT 'habitude', CAST(id AS TEXT), ?, ?, 0.0, 1.0 FROM habitudes WHERE question = ?",
-                params![stabilite_initiale(Famille::Habitude, 0.0), ts(maintenant), question],
+                &format!(
+                    "INSERT OR IGNORE INTO souvenirs (nature, ref, stabilite, dernier_rappel, importance, confiance)
+                     SELECT 'habitude', CAST(id AS TEXT), {}, '{}', 0.0, 1.0 FROM habitudes WHERE {filtre}",
+                    stabilite_initiale(Famille::Habitude, 0.0),
+                    ts(maintenant)
+                ),
+                p,
             )?;
-            c.execute(&format!("UPDATE souvenirs SET confiance = 1.0 WHERE {souvenir}"), [question])?;
+            c.execute(&format!("UPDATE souvenirs SET confiance = 1.0 WHERE {souvenir}"), p)?;
         }
         IntentionState::Refusee => {
-            c.execute("UPDATE habitudes SET rejetee = 1, confirmee = 0 WHERE question = ?", [question])?;
-            c.execute(&format!("DELETE FROM souvenirs WHERE {souvenir}"), [question])?;
+            c.execute(&format!("UPDATE habitudes SET rejetee = 1, confirmee = 0 WHERE {filtre}"), p)?;
+            c.execute(&format!("DELETE FROM souvenirs WHERE {souvenir}"), p)?;
         }
         _ => {}
     }
@@ -247,6 +257,30 @@ impl MemoryStore {
         let n = effacer(&tx, "id = ?", [id])?;
         tx.commit()?;
         Ok(n > 0)
+    }
+
+    /// Confirme ou rejette une habitude née depuis l'application, avec le même
+    /// effet qu'une réponse à sa question ; une question encore posée est close
+    /// au passage, une question déjà close n'est jamais rouverte. `false` si
+    /// l'habitude est inconnue ou pas née.
+    pub fn habitude_repondre(&self, id: i64, confirmer: bool, maintenant: NaiveDateTime) -> Result<bool> {
+        let tx = self.conn.unchecked_transaction()?;
+        let Some(question) = tx
+            .query_row("SELECT question FROM habitudes WHERE id = ? AND nee_le IS NOT NULL", [id], |r| r.get::<_, Option<i64>>(0))
+            .optional()?
+        else {
+            return Ok(false);
+        };
+        let state = if confirmer { IntentionState::Acceptee } else { IntentionState::Refusee };
+        if let Some(q) = question {
+            tx.execute(
+                "UPDATE intentions SET state = ? WHERE id = ? AND state = 'proposee' AND expires_at > ?",
+                params![state.as_str(), q, ts(maintenant)],
+            )?;
+        }
+        repondre_ou(&tx, "id = ?", [id], state, maintenant)?;
+        tx.commit()?;
+        Ok(true)
     }
 
     /// Inscrit des sources attendues encore inconnues, sans rien leur compter :
@@ -759,5 +793,66 @@ mod tests {
         let _ = std::fs::remove_file(&chemin);
         assert!(s.force("habitude", &id.to_string()).unwrap().is_some());
         assert!(s.force("habitude", "999").unwrap().is_none());
+    }
+
+    /// Lendemain de la naissance de l'habitude du jeu de test.
+    fn apres_naissance() -> NaiveDateTime {
+        ouvre(6).succ_opt().unwrap().and_hms_opt(9, 0, 0).unwrap()
+    }
+
+    fn etat_question(s: &MemoryStore, q: i64) -> String {
+        s.conn.query_row("SELECT state FROM intentions WHERE id = ?", [q], |r| r.get(0)).unwrap()
+    }
+
+    #[test]
+    fn habit_set_closes_open_question() {
+        let s = store();
+        serie(&s, 0, 7, "maison");
+        let (id, q) = (etat(&s, "maison").1, question(&s, "maison"));
+        assert!(s.habitude_repondre(id, true, apres_naissance()).unwrap());
+        assert_eq!(colonne(&s, "CAST(confirmee AS TEXT)", "maison").as_deref(), Some("1"));
+        assert_eq!(s.force("habitude", &id.to_string()).unwrap().unwrap().confiance, 1.0);
+        assert!(!s.intentions_open(apres_naissance()).unwrap().iter().any(|i| i.id == q));
+        assert_eq!(etat_question(&s, q), "acceptee");
+    }
+
+    #[test]
+    fn habit_answer_last_gesture_wins() {
+        let s = store();
+        serie(&s, 0, 7, "maison");
+        let (id, q) = (etat(&s, "maison").1, question(&s, "maison"));
+        s.intention_set_state(q, IntentionState::Refusee).unwrap();
+        assert!(s.force("habitude", &id.to_string()).unwrap().is_none());
+        assert!(s.habitude_repondre(id, true, apres_naissance()).unwrap());
+        assert_eq!(colonne(&s, "confirmee || rejetee", "maison").as_deref(), Some("10"));
+        assert!(s.force("habitude", &id.to_string()).unwrap().is_some());
+        assert_eq!(etat_question(&s, q), "refusee");
+        assert!(s.habitude_repondre(id, false, apres_naissance()).unwrap());
+        assert_eq!(colonne(&s, "confirmee || rejetee", "maison").as_deref(), Some("01"));
+        assert!(s.force("habitude", &id.to_string()).unwrap().is_none());
+        assert_eq!(etat_question(&s, q), "refusee");
+        assert_eq!(compte(&s, "SELECT COUNT(*) FROM intentions"), 1);
+    }
+
+    #[test]
+    fn habit_reject_after_question_expired() {
+        let s = store();
+        serie(&s, 0, 7, "maison");
+        let (id, q) = (etat(&s, "maison").1, question(&s, "maison"));
+        let tard = apres_naissance() + chrono::Duration::days(30);
+        assert!(s.intentions_open(tard).unwrap().is_empty());
+        assert!(s.habitude_repondre(id, false, tard).unwrap());
+        assert_eq!(colonne(&s, "CAST(rejetee AS TEXT)", "maison").as_deref(), Some("1"));
+        assert_eq!(etat_question(&s, q), "expiree");
+    }
+
+    #[test]
+    fn habit_set_unknown_or_unborn() {
+        let s = store();
+        serie(&s, 0, 3, "maison");
+        let id = etat(&s, "maison").1;
+        assert!(!s.habitude_repondre(id, true, apres_naissance()).unwrap());
+        assert_eq!(colonne(&s, "CAST(confirmee AS TEXT)", "maison").as_deref(), Some("0"));
+        assert!(!s.habitude_repondre(9_999, true, apres_naissance()).unwrap());
     }
 }

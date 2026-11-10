@@ -13,7 +13,9 @@ use sha2::{Digest, Sha256};
 
 use crate::force::{Famille, est_actif, recuperabilite, renforcer, stabilite_initiale};
 
+mod controle;
 mod habitudes;
+pub use controle::{Ancrage, CONTROLE_MAX, Controle, HabitudeVue, SouvenirVu};
 pub use habitudes::{BilanHabitudes, Observation};
 
 /// Clé réservée du fait portant la personnalité.
@@ -545,6 +547,23 @@ pub struct Rappel {
     pub score: f64,
     pub estompe: bool,
     pub ancre: bool,
+}
+
+/// Souvenir lu, avant toute décision de rappel ou de contrôle.
+struct Lu {
+    nature: String,
+    r#ref: String,
+    texte: String,
+    stabilite: f64,
+    dernier: NaiveDateTime,
+    importance: f64,
+    ancre: bool,
+    /// Force propre d'une habitude (sa moyenne glissante).
+    force: Option<f64>,
+    /// Entrée de journal non commune, ou synthèse (qui peut en condenser).
+    sensible: bool,
+    /// Ce que la nuit en fera : `condensation` ou `oubli`.
+    devenir: Option<String>,
 }
 
 /// Budget de texte des ancres, toujours fournies.
@@ -1528,6 +1547,68 @@ impl MemoryStore {
 
     // --- Rappel (lecture seule : ne renforce rien) ---
 
+    /// Souvenirs lisibles, textes mis en forme et tronqués ; `episodes` choisit
+    /// les entrées de journal et conversations lues (clause sur `s`).
+    /// Ligne à la date illisible : ignorée sans bloquer ni exposer son contenu.
+    fn lire_souvenirs(&self, episodes: &str) -> Result<Vec<Lu>> {
+        // ponytail: tous les faits sont lus à chaque appel ; filtrer en SQL si leur nombre explose.
+        let sql = format!(
+            "SELECT 'fait', s.ref, s.ref || ' : ' || f.value, s.stabilite, s.dernier_rappel, s.importance, s.ancre, NULL, 0, NULL
+             FROM souvenirs s JOIN facts_fts f ON f.key = s.ref WHERE s.nature = 'fait'
+             UNION ALL
+             SELECT 'journal', s.ref, substr(j.at, 1, 10) || char(1) || j.content, s.stabilite, s.dernier_rappel, s.importance, s.ancre, NULL,
+                    j.sensitivity <> 'commune', 'condensation'
+             FROM souvenirs s JOIN journal j ON j.id = CAST(s.ref AS INTEGER) WHERE s.nature = 'journal' AND {episodes}
+             UNION ALL
+             SELECT 'conversation', s.ref, substr(c.started_at, 1, 10) || char(1) || coalesce(c.summary, '') || char(1) || c.topics,
+                    s.stabilite, s.dernier_rappel, s.importance, s.ancre, NULL, 0, 'condensation'
+             FROM souvenirs s JOIN conversations c ON c.id = CAST(s.ref AS INTEGER) WHERE s.nature = 'conversation' AND {episodes}
+             UNION ALL
+             SELECT 'synthese', s.ref, y.periode || ' : ' || y.texte, s.stabilite, s.dernier_rappel, s.importance, s.ancre, NULL, 1,
+                    CASE WHEN y.niveau = 'annee' THEN NULL WHEN y.fondue = 0 THEN 'condensation' ELSE 'oubli' END
+             FROM souvenirs s JOIN syntheses y ON y.id = CAST(s.ref AS INTEGER) WHERE s.nature = 'synthese'
+             UNION ALL
+             SELECT 'deduction', s.ref, 'je crois que ' || d.key || ' : ' || d.value, s.stabilite, s.dernier_rappel, s.importance, s.ancre, NULL,
+                    0, 'oubli'
+             FROM souvenirs s JOIN deductions d ON s.ref = d.key || char(31) || d.value WHERE s.nature = 'deduction'
+               AND d.key NOT IN (SELECT key FROM fact_log)
+               AND NOT EXISTS (SELECT 1 FROM deductions e WHERE e.key = d.key
+                   AND (e.confiance > d.confiance OR (e.confiance = d.confiance AND e.value < d.value)))
+             UNION ALL
+             SELECT 'habitude', s.ref,
+                    CASE h.confirmee WHEN 1 THEN '' ELSE 'je crois que ' END || 'habitude : ' || h.libelle
+                    || coalesce(' (ancienne habitude depuis le ' || substr(h.ancienne_depuis, 9, 2) || '/'
+                       || substr(h.ancienne_depuis, 6, 2) || '/' || substr(h.ancienne_depuis, 1, 4) || ')', ''),
+                    s.stabilite, s.dernier_rappel, s.importance, s.ancre, h.m, 0, NULL
+             FROM souvenirs s JOIN habitudes h ON CAST(h.id AS TEXT) = s.ref WHERE s.nature = 'habitude'
+               AND h.nee_le IS NOT NULL AND h.rejetee = 0"
+        );
+        let mut st = self.conn.prepare(&sql)?;
+        let rows = st.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, f64>(3)?,
+                r.get::<_, String>(4)?, r.get::<_, f64>(5)?, r.get::<_, bool>(6)?, r.get::<_, Option<f64>>(7)?,
+                r.get::<_, bool>(8)?, r.get::<_, Option<String>>(9)?))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (nature, r#ref, brut, stabilite, dr, importance, ancre, force, sensible, devenir) = row?;
+            let texte = match brut.split_once('\u{1}') {
+                Some((date, content)) if nature == "journal" => format!("{date} : {}", texte_journal(content)),
+                Some((date, reste)) if nature == "conversation" => {
+                    let (resume, sujets) = reste.split_once('\u{1}').unwrap_or((reste, "[]"));
+                    let sujets: Vec<String> = serde_json::from_str(sujets).unwrap_or_default();
+                    let corps = if resume.is_empty() { sujets.join(", ") } else { resume.to_string() };
+                    // Conversation sans résumé ni sujets : texte vide, le lecteur décide.
+                    if corps.is_empty() { String::new() } else { format!("{date} : {corps}") }
+                }
+                _ => brut,
+            };
+            let Ok(dernier) = parse_ts(&dr) else { continue };
+            out.push(Lu { nature, r#ref, texte: tronquer(&texte), stabilite, dernier, importance, ancre, force, sensible, devenir });
+        }
+        Ok(out)
+    }
+
     /// Souvenirs à proposer au modèle : ancres d'abord (au plus `ANCRES_MAX`,
     /// dans leur budget), puis jusqu'à `limite` autres par `R + importance + pertinence`.
     pub fn rappel(&self, requete: Option<&str>, maintenant: NaiveDateTime, limite: usize) -> Result<Vec<Rappel>> {
@@ -1563,77 +1644,32 @@ impl MemoryStore {
         let (journal_hits, conv_hits) = (ids("journal"), ids("conversation"));
 
         // Candidats : tous les faits ; épisodes récents, ancrés ou trouvés.
-        // ponytail: tous les faits sont lus à chaque rappel ; filtrer en SQL si leur nombre explose.
-        let sql = format!(
-            "SELECT 'fait', s.ref, s.ref || ' : ' || f.value, s.stabilite, s.dernier_rappel, s.importance, s.ancre, NULL
-             FROM souvenirs s JOIN facts_fts f ON f.key = s.ref WHERE s.nature = 'fait'
-             UNION ALL
-             SELECT 'journal', s.ref, substr(j.at, 1, 10) || char(1) || j.content, s.stabilite, s.dernier_rappel, s.importance, s.ancre, NULL
-             FROM souvenirs s JOIN journal j ON j.id = CAST(s.ref AS INTEGER) WHERE s.nature = 'journal'
-               AND (s.ancre OR j.id IN (SELECT id FROM journal ORDER BY id DESC LIMIT {RAPPEL_JOURNAL_RECENT})
-                    OR j.id IN ({journal_hits}))
-             UNION ALL
-             SELECT 'conversation', s.ref, substr(c.started_at, 1, 10) || char(1) || coalesce(c.summary, '') || char(1) || c.topics,
-                    s.stabilite, s.dernier_rappel, s.importance, s.ancre, NULL
-             FROM souvenirs s JOIN conversations c ON c.id = CAST(s.ref AS INTEGER) WHERE s.nature = 'conversation'
-               AND (s.ancre OR c.id IN (SELECT id FROM conversations ORDER BY id DESC LIMIT {RAPPEL_JOURNAL_RECENT})
-                    OR c.id IN ({conv_hits}))
-             UNION ALL
-             SELECT 'synthese', s.ref, y.periode || ' : ' || y.texte, s.stabilite, s.dernier_rappel, s.importance, s.ancre, NULL
-             FROM souvenirs s JOIN syntheses y ON y.id = CAST(s.ref AS INTEGER) WHERE s.nature = 'synthese'
-             UNION ALL
-             SELECT 'deduction', s.ref, 'je crois que ' || d.key || ' : ' || d.value, s.stabilite, s.dernier_rappel, s.importance, s.ancre, NULL
-             FROM souvenirs s JOIN deductions d ON s.ref = d.key || char(31) || d.value WHERE s.nature = 'deduction'
-               AND d.key NOT IN (SELECT key FROM fact_log)
-               AND NOT EXISTS (SELECT 1 FROM deductions e WHERE e.key = d.key
-                   AND (e.confiance > d.confiance OR (e.confiance = d.confiance AND e.value < d.value)))
-             UNION ALL
-             SELECT 'habitude', s.ref,
-                    CASE h.confirmee WHEN 1 THEN '' ELSE 'je crois que ' END || 'habitude : ' || h.libelle
-                    || coalesce(' (ancienne habitude depuis le ' || substr(h.ancienne_depuis, 9, 2) || '/'
-                       || substr(h.ancienne_depuis, 6, 2) || '/' || substr(h.ancienne_depuis, 1, 4) || ')', ''),
-                    s.stabilite, s.dernier_rappel, s.importance, s.ancre, h.m
-             FROM souvenirs s JOIN habitudes h ON CAST(h.id AS TEXT) = s.ref WHERE s.nature = 'habitude'
-               AND h.nee_le IS NOT NULL AND h.rejetee = 0"
+        let episodes = format!(
+            "(s.ancre
+              OR (s.nature = 'journal' AND (CAST(s.ref AS INTEGER) IN (SELECT id FROM journal ORDER BY id DESC LIMIT {RAPPEL_JOURNAL_RECENT})
+                  OR CAST(s.ref AS INTEGER) IN ({journal_hits})))
+              OR (s.nature = 'conversation' AND (CAST(s.ref AS INTEGER) IN (SELECT id FROM conversations ORDER BY id DESC LIMIT {RAPPEL_JOURNAL_RECENT})
+                  OR CAST(s.ref AS INTEGER) IN ({conv_hits}))))"
         );
         struct Cand { r: Rappel, importance: f64, dernier: NaiveDateTime, rang: Option<usize> }
-        let mut st = self.conn.prepare(&sql)?;
-        let rows = st.query_map([], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, f64>(3)?,
-                r.get::<_, String>(4)?, r.get::<_, f64>(5)?, r.get::<_, bool>(6)?, r.get::<_, Option<f64>>(7)?))
-        })?;
         let mut ancres = Vec::new();
         let mut autres = Vec::new();
-        for row in rows {
-            let (nature, r#ref, brut, stabilite, dr, importance, ancre, force) = row?;
-            let texte = match brut.split_once('\u{1}') {
-                Some((date, content)) if nature == "journal" => format!("{date} : {}", texte_journal(content)),
-                Some((date, reste)) if nature == "conversation" => {
-                    let (resume, sujets) = reste.split_once('\u{1}').unwrap_or((reste, "[]"));
-                    let sujets: Vec<String> = serde_json::from_str(sujets).unwrap_or_default();
-                    let corps = if resume.is_empty() { sujets.join(", ") } else { resume.to_string() };
-                    // Conversation sans résumé ni sujets : rien à rappeler.
-                    if corps.is_empty() { continue }
-                    format!("{date} : {corps}")
-                }
-                _ => brut,
-            };
-            // Ligne illisible : ignorée sans bloquer le rappel ni exposer son contenu.
-            let Ok(dernier) = parse_ts(&dr) else { continue };
+        // Conversation sans résumé ni sujets : rien à rappeler.
+        for lu in self.lire_souvenirs(&episodes)?.into_iter().filter(|l| !l.texte.is_empty()) {
             // Une habitude a pour force sa moyenne glissante, pas la courbe d'oubli.
-            let rec = force.unwrap_or_else(|| recuperabilite(dernier, stabilite, maintenant, ancre));
-            let rang = rang.get(&(nature.as_str(), r#ref.as_str())).copied();
+            let rec = lu.force.unwrap_or_else(|| recuperabilite(lu.dernier, lu.stabilite, maintenant, lu.ancre));
+            let rang = rang.get(&(lu.nature.as_str(), lu.r#ref.as_str())).copied();
             let pertinence = rang.map_or(0.0, |i| 1.0 / (1.0 + i as f64));
             let r = Rappel {
-                texte: tronquer(&texte),
-                score: rec + importance + pertinence,
-                estompe: if force.is_some() { rec < SEUIL_ESTOMPE_HABITUDE } else { !est_actif(rec) },
-                ancre,
-                nature,
-                r#ref,
+                texte: lu.texte,
+                score: rec + lu.importance + pertinence,
+                estompe: if lu.force.is_some() { rec < SEUIL_ESTOMPE_HABITUDE } else { !est_actif(rec) },
+                ancre: lu.ancre,
+                nature: lu.nature,
+                r#ref: lu.r#ref,
             };
-            let c = Cand { r, importance, dernier, rang };
-            if ancre { ancres.push(c) } else { autres.push(c) }
+            let c = Cand { r, importance: lu.importance, dernier: lu.dernier, rang };
+            if lu.ancre { ancres.push(c) } else { autres.push(c) }
         }
 
         ancres.sort_by(|a, b| b.importance.total_cmp(&a.importance).then(b.dernier.cmp(&a.dernier)));
@@ -1658,18 +1694,18 @@ mod tests {
     use super::*;
     use chrono::{Duration, NaiveDate};
 
-    fn store() -> MemoryStore {
+    pub(super) fn store() -> MemoryStore {
         MemoryStore::open(":memory:").unwrap()
     }
 
     /// Mémoire dont l'extraction est à jour : seule la condensation décide.
-    fn store_extrait() -> MemoryStore {
+    pub(super) fn store_extrait() -> MemoryStore {
         let s = store();
         s.nuit_noter("extraction", "ok", None, NaiveDate::from_ymd_opt(2099, 12, 31), t()).unwrap();
         s
     }
 
-    fn t() -> NaiveDateTime {
+    pub(super) fn t() -> NaiveDateTime {
         NaiveDate::from_ymd_opt(2026, 10, 29).unwrap().and_hms_opt(12, 0, 0).unwrap()
     }
 
@@ -1677,7 +1713,7 @@ mod tests {
         NewConversation { channel: "voix".into(), device: "d".into(), started_at: t(), ended_at: t(), transcript: text.into(), session_id: None }
     }
 
-    fn note(s: &MemoryStore, text: &str) -> i64 {
+    pub(super) fn note(s: &MemoryStore, text: &str) -> i64 {
         s.journal_write(&NewJournalEntry {
             source: "s".into(),
             kind: "note".into(),
@@ -2146,7 +2182,7 @@ mod tests {
 
     // --- Rappel ---
 
-    fn vieillir(s: &MemoryStore, nature: &str, r#ref: &str, quand: NaiveDateTime) {
+    pub(super) fn vieillir(s: &MemoryStore, nature: &str, r#ref: &str, quand: NaiveDateTime) {
         s.conn
             .execute("UPDATE souvenirs SET dernier_rappel = ? WHERE nature = ? AND ref = ?", params![ts(quand), nature, r#ref])
             .unwrap();
@@ -2304,7 +2340,7 @@ mod tests {
     // --- Condensation ---
 
     /// Entrée de journal datée de `quand`, rappelée pour la dernière fois à ce moment.
-    fn episode_le(s: &MemoryStore, texte: &str, quand: NaiveDateTime) -> i64 {
+    pub(super) fn episode_le(s: &MemoryStore, texte: &str, quand: NaiveDateTime) -> i64 {
         let id = note(s, texte);
         s.conn.execute("UPDATE journal SET at = ? WHERE id = ?", params![ts(quand), id]).unwrap();
         vieillir(s, "journal", &id.to_string(), quand);
@@ -2312,17 +2348,17 @@ mod tests {
     }
 
     /// Condense avec l'empreinte du lot courant (vide si la période n'a pas de lot).
-    fn condense(s: &MemoryStore, niveau: &str, periode: &str, texte: &str, m: NaiveDateTime) -> Result<Option<i64>> {
+    pub(super) fn condense(s: &MemoryStore, niveau: &str, periode: &str, texte: &str, m: NaiveDateTime) -> Result<Option<i64>> {
         let lots = s.condensables(m, usize::MAX)?;
         let e = lots.iter().find(|l| l.niveau == niveau && l.periode == periode).map(|l| l.empreinte.clone()).unwrap_or_default();
         s.condenser(niveau, periode, texte, &e, m)
     }
 
-    fn jour(a: i32, m: u32, j: u32) -> NaiveDateTime {
+    pub(super) fn jour(a: i32, m: u32, j: u32) -> NaiveDateTime {
         NaiveDate::from_ymd_opt(a, m, j).unwrap().and_hms_opt(8, 0, 0).unwrap()
     }
 
-    fn compte(s: &MemoryStore, sql: &str) -> i64 {
+    pub(super) fn compte(s: &MemoryStore, sql: &str) -> i64 {
         s.conn.query_row(sql, [], |r| r.get(0)).unwrap()
     }
 
@@ -2801,7 +2837,7 @@ mod tests {
     // --- Oubli et état de nuit ---
 
     /// Synthèse fondue ou non, rappelée pour la dernière fois à `quand`.
-    fn synthese_le(s: &MemoryStore, niveau: &str, periode: &str, texte: &str, fondue: bool, quand: NaiveDateTime) -> i64 {
+    pub(super) fn synthese_le(s: &MemoryStore, niveau: &str, periode: &str, texte: &str, fondue: bool, quand: NaiveDateTime) -> i64 {
         let id = s.synthese_creer(niveau, periode, texte, quand).unwrap();
         s.conn.execute("UPDATE syntheses SET fondue = ? WHERE id = ?", params![fondue, id]).unwrap();
         id

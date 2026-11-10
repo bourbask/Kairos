@@ -104,6 +104,9 @@ class Repository(
     /** Effacements Mémoire en attente de leur issue. */
     val erasuresPending = Pending<String>()
 
+    /** Gestes de contrôle de la mémoire (ancres, souvenirs ravivés, habitudes) en attente de leur issue. */
+    val controlPending = Pending<String>()
+
     /** Éléments marqués vus, en attente de leur issue (survit à l'écran Médias). */
     val watchedPending = Pending<String>()
 
