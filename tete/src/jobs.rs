@@ -676,11 +676,13 @@ async fn extract(name: &str, last: Option<NaiveDate>, now: NaiveDateTime, ctx: &
 
 /// Observations de chaque tentacule, jour par jour, comptées par la mémoire
 /// sans moteur. Une source muette laisse la journée en attente : elle n'est
-/// pas comptée comme « rien observé ». Seuls des nombres sont journalisés.
+/// pas comptée comme « rien observé ». Un jour de grâce : la veille n'est
+/// comptée que la nuit suivante, pour qu'un repas noté le lendemain matin
+/// compte encore. Seuls des nombres sont journalisés.
 async fn habits(name: &str, last: Option<NaiveDate>, now: NaiveDateTime, ctx: &Ctx) -> &'static str {
-    let yesterday = now.date() - TimeDelta::days(1);
-    let first = last.map_or(yesterday, |d| d + TimeDelta::days(1));
-    for day in first.iter_days().take_while(|d| *d <= yesterday).take(NIGHT_DAYS) {
+    let until = now.date() - TimeDelta::days(2);
+    let first = last.map_or(until, |d| d + TimeDelta::days(1));
+    for day in first.iter_days().take_while(|d| *d <= until).take(NIGHT_DAYS) {
         let jour = day.format("%Y-%m-%d").to_string();
         // Une réponse en erreur ou illisible rend la source absente, jamais vide.
         let sources: serde_json::Map<String, Value> = ctx
