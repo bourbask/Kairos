@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
@@ -71,7 +72,6 @@ import app.kairos.mobile.ui.kit.Metric
 import app.kairos.mobile.ui.kit.SectionHeader
 import app.kairos.mobile.ui.kit.Sparkline
 import app.kairos.mobile.ui.kit.StatusBanner
-import app.kairos.mobile.ui.maison.ChevronBackIcon
 import app.kairos.mobile.ui.overlay.Origin
 import app.kairos.mobile.ui.overlay.Overlay
 import app.kairos.mobile.ui.overlay.anchorTo
@@ -445,7 +445,7 @@ private fun DetailPanel(
             .padding(top = padding.calculateTopPadding()),
     ) {
         Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 12.dp, top = 8.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(label = "Retour aux marchés", onClick = onClose) { ChevronBackIcon(MaterialTheme.colorScheme.onSurfaceVariant) }
+            IconButton(label = "Fermer", onClick = onClose) { Icon(KairosIcons.ChevronDown, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) }
             Spacer(Modifier.width(4.dp))
             Text(
                 d?.question?.ifBlank { null } ?: market?.question.orEmpty(),
