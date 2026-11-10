@@ -2,6 +2,7 @@
 # Copier ce fichier en modules.toml et remplir les valeurs
 # Ne jamais commiter modules.toml (gitignored)
 #
+# Chemin modifiable par MODULES_PATH (défaut config/modules.toml).
 # Une section par module. Fichier ou section absents : le module est inactif,
 # le reste fonctionne normalement.
 
@@ -17,3 +18,13 @@ interests = []           # sujets suivis, ex. ["géopolitique", "énergie", "mar
                          # sans cette liste la synthèse ne lit les signaux que sous l'angle emploi
 # Le moteur de synthèse n'est pas déclaré ici : ce module produit une génération
 # stratégique et différée, le routage vit dans llm.toml (cf. llm.example.toml).
+
+[jobs]
+# Recherche d'emploi. Section absente : repli sur les anciens réglages du profil,
+# puis valeurs par défaut. Section présente : elle remplace ces anciens réglages en
+# bloc, pas champ par champ.
+min_score = 0.60         # seuil 0-1 : offres sous ce score exclues du briefing
+location_keywords = []   # ex. ["Ville", "Région"] ; vide = aucune contrainte géographique
+# Filtrage négatif : sous-chaînes insensibles à la casse.
+blacklist_companies = [] # exclut par nom d'entreprise
+blacklist_keywords = []  # exclut par terme dans le titre ou la description

@@ -99,15 +99,15 @@ mod tests {
     #[test]
     #[allow(clippy::arc_with_non_send_sync)]
     fn top_unpresented_filtre_la_blacklist() {
-        let mut profile = Profile::from_file("config/profile.example.toml").unwrap();
-        profile.filters.blacklist_companies = vec!["EvilCorp".into()];
+        let profile = Profile::from_file("config/profile.example.toml").unwrap();
+        let jobs = crate::matching::JobsConfig { blacklist_companies: vec!["EvilCorp".into()], ..Default::default() };
 
         let storage = Arc::new(Storage::open(":memory:").unwrap());
         storage.insert_offers(&[offer("good", "GoodCo"), offer("bad", "EvilCorp GmbH")]).unwrap();
         storage.update_score("good", 0.60).unwrap();
         storage.update_score("bad", 0.60).unwrap();
 
-        let ranker = Ranker::new(Matcher::new(profile), Arc::clone(&storage));
+        let ranker = Ranker::new(Matcher::new(profile, jobs), Arc::clone(&storage));
         let top = ranker.top_unpresented(10);
 
         assert_eq!(top.len(), 1);

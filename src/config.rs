@@ -9,8 +9,9 @@ pub struct Profile {
     pub preferences: Preferences,
     pub skills: Skills,
     pub experience: Experience,
+    /// Ancien emplacement des réglages de la recherche d'emploi, lu en repli.
     #[serde(default)]
-    pub filters: Filters,
+    pub filters: Option<Filters>,
 }
 
 /// Configuration des modules branchables, une section par module. Le profil
@@ -20,6 +21,9 @@ pub struct ModulesConfig {
     /// Absente : la section de synthèse est simplement omise du briefing.
     #[serde(default)]
     pub signals: Option<crate::signals::SignalsConfig>,
+    /// Absente : repli sur l'ancien emplacement dans le profil, puis valeurs par défaut.
+    #[serde(default)]
+    pub jobs: Option<crate::matching::JobsConfig>,
 }
 
 impl ModulesConfig {
@@ -29,14 +33,39 @@ impl ModulesConfig {
         let Ok(content) = std::fs::read_to_string(path.as_ref()) else {
             return Self::default();
         };
-        toml::from_str(&content).unwrap_or_else(|e| {
+        parse(&content).unwrap_or_else(|e| {
             tracing::warn!("configuration des modules ignorée : {e}");
             Self::default()
         })
     }
+
+    /// Réglages de la recherche d'emploi. La section du fichier des modules
+    /// prévaut ; à défaut, l'ancien emplacement dans le profil reste lu pour
+    /// qu'une configuration existante fonctionne sans migration manuelle.
+    pub fn jobs(&self, profile: &Profile) -> crate::matching::JobsConfig {
+        let p = &profile.preferences;
+        let legacy = p.min_score.is_some() || p.location_keywords.is_some() || profile.filters.is_some();
+        if let Some(jobs) = &self.jobs {
+            if legacy {
+                tracing::warn!("profil : réglages de recherche d'emploi ignorés, la section [jobs] des modules prévaut");
+            }
+            return jobs.clone();
+        }
+        if legacy {
+            tracing::warn!("profil : réglages de recherche d'emploi obsolètes, à déplacer dans la section [jobs] des modules");
+        }
+        let filters = profile.filters.clone().unwrap_or_default();
+        let defaults = crate::matching::JobsConfig::default();
+        crate::matching::JobsConfig {
+            min_score: p.min_score.unwrap_or(defaults.min_score),
+            location_keywords: p.location_keywords.clone().unwrap_or_default(),
+            blacklist_companies: filters.blacklist_companies,
+            blacklist_keywords: filters.blacklist_keywords,
+        }
+    }
 }
 
-/// Filtrage négatif (optionnel) : sous-chaînes insensibles à la casse.
+/// Ancien emplacement du filtrage négatif, lu en repli.
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct Filters {
     #[serde(default)]
@@ -70,13 +99,13 @@ pub struct Preferences {
     /// Vide = full-remote strict, comportement historique.
     #[serde(default)]
     pub onsite_cities: Vec<String>,
-    #[serde(default = "default_min_score")]
-    pub min_score: f64,
+    /// Ancien emplacement, lu en repli de la section [jobs] des modules.
     #[serde(default)]
-    pub location_keywords: Vec<String>,
+    pub min_score: Option<f64>,
+    /// Ancien emplacement, lu en repli de la section [jobs] des modules.
+    #[serde(default)]
+    pub location_keywords: Option<Vec<String>>,
 }
-
-fn default_min_score() -> f64 { 0.60 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Skills {
@@ -99,8 +128,7 @@ pub struct Experience {
 impl Profile {
     pub fn from_file(path: impl AsRef<Path>) -> anyhow::Result<Self> {
         let content = std::fs::read_to_string(path.as_ref())?;
-        let profile: Profile = toml::from_str(&content)?;
-        Ok(profile)
+        Ok(parse(&content)?)
     }
 }
 
@@ -213,8 +241,22 @@ pub struct EngineConfig {
 impl LlmRoutingConfig {
     pub fn from_file(path: impl AsRef<Path>) -> anyhow::Result<Self> {
         let content = std::fs::read_to_string(path.as_ref())?;
-        Ok(toml::from_str(&content)?)
+        Ok(parse(&content)?)
     }
+}
+
+/// Erreur de lecture réduite à sa position : le message natif cite la ligne
+/// fautive, donc potentiellement une valeur de configuration.
+fn parse<T: serde::de::DeserializeOwned>(content: &str) -> anyhow::Result<T> {
+    toml::from_str(content).map_err(|e| {
+        let Some(start) = e.span().map(|s| s.start) else {
+            return anyhow::anyhow!("fichier TOML invalide");
+        };
+        let before = &content[..start.min(content.len())];
+        let line = before.matches('\n').count() + 1;
+        let column = before.rsplit('\n').next().unwrap_or("").chars().count() + 1;
+        anyhow::anyhow!("fichier TOML invalide (ligne {line}, colonne {column})")
+    })
 }
 
 #[cfg(test)]
@@ -242,5 +284,57 @@ mod tests {
         let modules = ModulesConfig::load("config/modules.example.toml");
         let signals = modules.signals.expect("section présente dans l'exemple");
         assert!(!signals.is_usable());
+    }
+
+    #[test]
+    fn erreur_de_lecture_sans_valeur_de_configuration() {
+        let err = parse::<ModulesConfig>("[jobs]\nmin_score = \"valeur-secrete\"\n").unwrap_err().to_string();
+        assert!(!err.contains("valeur-secrete"), "{err}");
+        assert!(err.contains("ligne 2"), "{err}");
+    }
+
+    fn profile_with_legacy_jobs() -> Profile {
+        let example = std::fs::read_to_string("config/profile.example.toml").unwrap();
+        let legacy = example.replace("[preferences]\n", "[preferences]\nmin_score = 0.75\nlocation_keywords = [\"Ancien\"]\n")
+            + "\n[filters]\nblacklist_companies = [\"AncienneCorp\"]\n";
+        toml::from_str(&legacy).unwrap()
+    }
+
+    fn modules_with_jobs() -> ModulesConfig {
+        toml::from_str("[jobs]\nmin_score = 0.5\nlocation_keywords = [\"Nouveau\"]\nblacklist_keywords = [\"terme\"]\n").unwrap()
+    }
+
+    #[test]
+    fn jobs_lus_dans_la_section_des_modules() {
+        let profile = Profile::from_file("config/profile.example.toml").unwrap();
+        let jobs = modules_with_jobs().jobs(&profile);
+        assert_eq!(jobs.min_score, 0.5);
+        assert_eq!(jobs.location_keywords, vec!["Nouveau".to_string()]);
+        assert_eq!(jobs.blacklist_keywords, vec!["terme".to_string()]);
+        assert!(jobs.blacklist_companies.is_empty());
+    }
+
+    #[test]
+    fn jobs_repli_sur_l_ancien_emplacement_du_profil() {
+        let jobs = ModulesConfig::default().jobs(&profile_with_legacy_jobs());
+        assert_eq!(jobs.min_score, 0.75);
+        assert_eq!(jobs.location_keywords, vec!["Ancien".to_string()]);
+        assert_eq!(jobs.blacklist_companies, vec!["AncienneCorp".to_string()]);
+    }
+
+    #[test]
+    fn jobs_section_des_modules_prevaut_sur_le_profil() {
+        let jobs = modules_with_jobs().jobs(&profile_with_legacy_jobs());
+        assert_eq!(jobs.min_score, 0.5);
+        assert_eq!(jobs.location_keywords, vec!["Nouveau".to_string()]);
+        assert!(jobs.blacklist_companies.is_empty());
+    }
+
+    #[test]
+    fn jobs_valeurs_par_defaut_sans_aucun_reglage() {
+        let profile = Profile::from_file("config/profile.example.toml").unwrap();
+        let jobs = ModulesConfig::default().jobs(&profile);
+        assert_eq!(jobs.min_score, 0.60);
+        assert!(jobs.location_keywords.is_empty());
     }
 }
