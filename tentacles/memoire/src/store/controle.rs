@@ -5,6 +5,8 @@ use super::*;
 
 /// Taille maximale des listes rendues à l'application.
 pub const CONTROLE_MAX: usize = 100;
+/// Texte montré pour une conversation ni résumée ni étiquetée.
+pub const CONVERSATION_VIDE: &str = "Conversation sans résumé";
 /// Natures que l'utilisateur peut ancrer ; jamais une déduction ni une habitude.
 const NATURES_ANCRABLES: [&str; 4] = ["fait", "journal", "conversation", "synthese"];
 
@@ -77,7 +79,7 @@ impl MemoryStore {
                 depuis: estompe.then(|| estompe_le.date()),
                 nature: lu.nature,
                 r#ref: lu.r#ref,
-                texte: lu.texte,
+                texte: if lu.texte.is_empty() { CONVERSATION_VIDE.into() } else { lu.texte },
                 sensitive: lu.sensible,
                 devenir: lu.devenir,
             };
@@ -418,5 +420,35 @@ mod tests {
         assert!(s.raviver("deduction", &ded, t()).unwrap());
         s.oublier(t()).unwrap();
         assert!(s.force("deduction", &ded).unwrap().is_some());
+    }
+
+    #[test]
+    fn syntheses_are_sensitive() {
+        let s = store();
+        let id = s.synthese_creer("semaine", "2026-W40", "Exemple de semaine", jours(400)).unwrap().to_string();
+        let annee = s.synthese_creer("annee", "2025", "Exemple d'année", t()).unwrap().to_string();
+        let c = s.controle(t()).unwrap();
+        assert!(trouve(&c.estompes, "synthese", &id).expect("estompée").sensitive);
+        assert!(trouve(&c.ancres, "synthese", &annee).expect("ancre").sensitive);
+    }
+
+    #[test]
+    fn empty_anchored_conversation_is_listed() {
+        let s = store();
+        let c = NewConversation {
+            channel: "voix".into(),
+            device: "d".into(),
+            started_at: t(),
+            ended_at: t(),
+            transcript: "Exemple".into(),
+            session_id: None,
+        };
+        let id = s.conversation_ingest(&c).unwrap().to_string();
+        assert_eq!(s.marquer_ancre("conversation", &id, true, t()).unwrap(), Ancrage::Fait);
+        let vu = s.controle(t()).unwrap();
+        assert_eq!(trouve(&vu.ancres, "conversation", &id).expect("listée").texte, CONVERSATION_VIDE);
+        assert_eq!(vu.ancres.len(), s.ancres_app().unwrap().len());
+        // Le rappel n'en dit toujours rien.
+        assert!(!s.rappel(None, t(), 50).unwrap().iter().any(|r| r.nature == "conversation"));
     }
 }

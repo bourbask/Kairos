@@ -560,7 +560,7 @@ struct Lu {
     ancre: bool,
     /// Force propre d'une habitude (sa moyenne glissante).
     force: Option<f64>,
-    /// Entrée de journal non commune.
+    /// Entrée de journal non commune, ou synthèse (qui peut en condenser).
     sensible: bool,
     /// Ce que la nuit en fera : `condensation` ou `oubli`.
     devenir: Option<String>,
@@ -1564,7 +1564,7 @@ impl MemoryStore {
                     s.stabilite, s.dernier_rappel, s.importance, s.ancre, NULL, 0, 'condensation'
              FROM souvenirs s JOIN conversations c ON c.id = CAST(s.ref AS INTEGER) WHERE s.nature = 'conversation' AND {episodes}
              UNION ALL
-             SELECT 'synthese', s.ref, y.periode || ' : ' || y.texte, s.stabilite, s.dernier_rappel, s.importance, s.ancre, NULL, 0,
+             SELECT 'synthese', s.ref, y.periode || ' : ' || y.texte, s.stabilite, s.dernier_rappel, s.importance, s.ancre, NULL, 1,
                     CASE WHEN y.niveau = 'annee' THEN NULL WHEN y.fondue = 0 THEN 'condensation' ELSE 'oubli' END
              FROM souvenirs s JOIN syntheses y ON y.id = CAST(s.ref AS INTEGER) WHERE s.nature = 'synthese'
              UNION ALL
@@ -1598,9 +1598,8 @@ impl MemoryStore {
                     let (resume, sujets) = reste.split_once('\u{1}').unwrap_or((reste, "[]"));
                     let sujets: Vec<String> = serde_json::from_str(sujets).unwrap_or_default();
                     let corps = if resume.is_empty() { sujets.join(", ") } else { resume.to_string() };
-                    // Conversation sans résumé ni sujets : rien à rappeler.
-                    if corps.is_empty() { continue }
-                    format!("{date} : {corps}")
+                    // Conversation sans résumé ni sujets : texte vide, le lecteur décide.
+                    if corps.is_empty() { String::new() } else { format!("{date} : {corps}") }
                 }
                 _ => brut,
             };
@@ -1655,7 +1654,8 @@ impl MemoryStore {
         struct Cand { r: Rappel, importance: f64, dernier: NaiveDateTime, rang: Option<usize> }
         let mut ancres = Vec::new();
         let mut autres = Vec::new();
-        for lu in self.lire_souvenirs(&episodes)? {
+        // Conversation sans résumé ni sujets : rien à rappeler.
+        for lu in self.lire_souvenirs(&episodes)?.into_iter().filter(|l| !l.texte.is_empty()) {
             // Une habitude a pour force sa moyenne glissante, pas la courbe d'oubli.
             let rec = lu.force.unwrap_or_else(|| recuperabilite(lu.dernier, lu.stabilite, maintenant, lu.ancre));
             let rang = rang.get(&(lu.nature.as_str(), lu.r#ref.as_str())).copied();

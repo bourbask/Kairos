@@ -738,11 +738,12 @@ fn precision(motif: &str) -> &'static str {
 }
 
 impl MemoryServer {
-    /// Section mémoire du briefing à l'instant `now`.
+    /// Contrôle de la mémoire vu à l'instant `now`.
     fn souvenirs_at(&self, now: NaiveDateTime) -> Out {
         json_out(self.db()?.controle(now).map_err(err)?)
     }
 
+    /// Section mémoire du briefing à l'instant `now`.
     fn brief_at(&self, now: NaiveDateTime, period: BriefPeriod) -> Out {
         let limit = now + Duration::hours(24);
         let db = self.db()?;
