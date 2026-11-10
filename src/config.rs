@@ -33,7 +33,7 @@ impl ModulesConfig {
         let Ok(content) = std::fs::read_to_string(path.as_ref()) else {
             return Self::default();
         };
-        toml::from_str(&content).unwrap_or_else(|e| {
+        parse(&content).unwrap_or_else(|e| {
             tracing::warn!("configuration des modules ignorée : {e}");
             Self::default()
         })
@@ -128,8 +128,7 @@ pub struct Experience {
 impl Profile {
     pub fn from_file(path: impl AsRef<Path>) -> anyhow::Result<Self> {
         let content = std::fs::read_to_string(path.as_ref())?;
-        let profile: Profile = toml::from_str(&content)?;
-        Ok(profile)
+        Ok(parse(&content)?)
     }
 }
 
@@ -237,8 +236,22 @@ pub struct EngineConfig {
 impl LlmRoutingConfig {
     pub fn from_file(path: impl AsRef<Path>) -> anyhow::Result<Self> {
         let content = std::fs::read_to_string(path.as_ref())?;
-        Ok(toml::from_str(&content)?)
+        Ok(parse(&content)?)
     }
+}
+
+/// Erreur de lecture réduite à sa position : le message natif cite la ligne
+/// fautive, donc potentiellement une valeur de configuration.
+fn parse<T: serde::de::DeserializeOwned>(content: &str) -> anyhow::Result<T> {
+    toml::from_str(content).map_err(|e| {
+        let Some(start) = e.span().map(|s| s.start) else {
+            return anyhow::anyhow!("fichier TOML invalide");
+        };
+        let before = &content[..start.min(content.len())];
+        let line = before.matches('\n').count() + 1;
+        let column = before.rsplit('\n').next().unwrap_or("").chars().count() + 1;
+        anyhow::anyhow!("fichier TOML invalide (ligne {line}, colonne {column})")
+    })
 }
 
 #[cfg(test)]
@@ -266,6 +279,13 @@ mod tests {
         let modules = ModulesConfig::load("config/modules.example.toml");
         let signals = modules.signals.expect("section présente dans l'exemple");
         assert!(!signals.is_usable());
+    }
+
+    #[test]
+    fn erreur_de_lecture_sans_valeur_de_configuration() {
+        let err = parse::<ModulesConfig>("[jobs]\nmin_score = \"valeur-secrete\"\n").unwrap_err().to_string();
+        assert!(!err.contains("valeur-secrete"), "{err}");
+        assert!(err.contains("ligne 2"), "{err}");
     }
 
     fn profile_with_legacy_jobs() -> Profile {

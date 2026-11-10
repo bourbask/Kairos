@@ -188,6 +188,8 @@ services:
   # Répète l'environment de x-kairos-common (le `<<:` ne fusionne pas les sous-clés d'un
   # bloc `environment:` redéfini localement — cf. note ci-dessus) avec 3 valeurs overridées.
   # Exécutions manuelles :
+  # modules.toml est partagé : une section [jobs] y vaut pour les deux profils. Avant d'en
+  # ajouter une, donner à ce service (et à scheduler-secondary) son propre MODULES_PATH.
   kairos-secondary:
     logging: *logging
     <<: *kairos-common
