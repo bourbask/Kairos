@@ -58,11 +58,11 @@ fun ControleSection(
     view.issue?.let { Caption("$it · dernière liste lue") }
 
     fun anchorId(s: Souvenir) = anchorCard(s.nature, s.ref, true).id
-    val ancres = c.ancres.filterNot { anchorId(it) in hidden }
+    val ancres = visibleAnchors(c, hidden)
     val habitudes = c.habitudes.filterNot { habitErasure(it.id).id in hidden }
     val estompes = c.estompes.filterNot { anchorId(it) in hidden || reviveCard(it).id in hidden }
 
-    Fold(anchorsTitle(c), null) {
+    Fold(anchorsTitle(c, hidden), null) {
         if (ancres.isEmpty()) Caption("Aucun souvenir ancré.")
         ancres.forEach { s ->
             SouvenirRow(s, null, revealed, masked, onReveal) {

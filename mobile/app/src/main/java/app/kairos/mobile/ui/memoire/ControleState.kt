@@ -44,7 +44,8 @@ fun reviveCard(s: Souvenir): Card = gesture("raviver/${s.nature}/${s.ref}", REVI
     put("ref", s.ref)
 })
 
-fun habitCard(h: Habitude, confirm: Boolean): Card = gesture("habitude/${h.id}", HABIT, buildJsonObject {
+/** Confirmer ou rejeter : identifiant distinct de l'oubli, la ligne reste affichée pendant l'annulation. */
+fun habitCard(h: Habitude, confirm: Boolean): Card = gesture("habitude-set/${h.id}", HABIT, buildJsonObject {
     put("id", h.id)
     put("confirmee", confirm)
 })
@@ -72,7 +73,12 @@ fun withoutControl(c: Controle, card: Card): Controle {
     }
 }
 
-fun anchorsTitle(c: Controle): String = "Toujours retenu · ${c.ancres.size}/${c.ancresMax}"
+/** Ancres affichées : sans celles dont le retrait est en cours ([hidden]). */
+fun visibleAnchors(c: Controle, hidden: Set<String>): List<Souvenir> =
+    c.ancres.filterNot { anchorCard(it.nature, it.ref, false).id in hidden }
+
+fun anchorsTitle(c: Controle, hidden: Set<String>): String =
+    "Toujours retenu · ${visibleAnchors(c, hidden).size}/${c.ancresMax}"
 
 private val DAY = DateTimeFormatter.ofPattern("dd/MM/yyyy")
 

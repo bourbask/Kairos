@@ -98,7 +98,8 @@ class ControleStateTest {
         assertEquals("12", r.done!!.args["ref"]!!.jsonPrimitive.content)
 
         val h = habitCard(habitude, confirm = false)
-        assertEquals("habitude/4", h.id)
+        // Distinct de l'oubli : la ligne reste visible pendant la fenêtre d'annulation.
+        assertEquals("habitude-set/4", h.id)
         assertEquals("app_habitude_set", h.done!!.tool)
         assertEquals(setOf("id", "confirmee"), h.done!!.args.keys)
         assertEquals(4L, h.done!!.args["id"]!!.jsonPrimitive.long)
@@ -144,7 +145,12 @@ class ControleStateTest {
 
     @Test
     fun labels() {
-        assertEquals("Toujours retenu · 3/20", anchorsTitle(Controle(ancres = List(3) { fait })))
+        val ancres = Controle(ancres = listOf(fait, fait.copy(ref = "b"), fait.copy(ref = "c")))
+        assertEquals("Toujours retenu · 3/20", anchorsTitle(ancres, emptySet()))
+        // Un retrait en cours ne compte plus.
+        val pending = setOf(anchorCard("fait", "b", false).id)
+        assertEquals(listOf("cafe.prefere", "c"), visibleAnchors(ancres, pending).map { it.ref })
+        assertEquals("Toujours retenu · 2/20", anchorsTitle(ancres, pending))
         assertEquals("Estompé depuis le 03/11/2026 · sera résumé", fadedHint(note.copy(devenir = "condensation")))
         assertEquals("Estompé depuis le 03/11/2026 · sera oublié", fadedHint(note))
         assertEquals("Estompé depuis le 03/11/2026", fadedHint(note.copy(depuis = "2026-11-03T22:00:00", devenir = null)))
