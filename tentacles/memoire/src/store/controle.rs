@@ -5,6 +5,8 @@ use super::*;
 
 /// Taille maximale des listes rendues à l'application.
 pub const CONTROLE_MAX: usize = 100;
+/// Natures que l'utilisateur peut ancrer ; jamais une déduction ni une habitude.
+const NATURES_ANCRABLES: [&str; 4] = ["fait", "journal", "conversation", "synthese"];
 
 /// Souvenir tel que l'utilisateur le voit dans le contrôle.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -33,6 +35,16 @@ pub struct HabitudeVue {
     pub rejetee: bool,
     pub estompee: bool,
     pub ancienne_depuis: Option<String>,
+}
+
+/// Issue d'une pose ou d'un retrait d'ancre.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ancrage {
+    Fait,
+    Inconnu,
+    Plein,
+    NonAncrable,
+    Protege,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -109,6 +121,55 @@ impl MemoryStore {
         })
     }
 
+    /// Pose ou retire l'ancre demandée par l'utilisateur, dans la limite de
+    /// `ANCRES_MAX`. Une ancre retirée repart de `maintenant` ; une ancre déjà
+    /// posée (ou un retrait sans ancre) ne change rien.
+    pub fn marquer_ancre(&self, nature: &str, r#ref: &str, ancre: bool, maintenant: NaiveDateTime) -> Result<Ancrage> {
+        if !NATURES_ANCRABLES.contains(&nature) {
+            return Ok(Ancrage::NonAncrable);
+        }
+        let tx = self.conn.unchecked_transaction()?;
+        let Some(deja) = tx
+            .query_row("SELECT ancre FROM souvenirs WHERE nature = ? AND ref = ?", [nature, r#ref], |r| r.get::<_, bool>(0))
+            .optional()?
+        else {
+            return Ok(Ancrage::Inconnu);
+        };
+        if deja == ancre {
+            return Ok(Ancrage::Fait);
+        }
+        if ancre {
+            let n: i64 = tx.query_row("SELECT COUNT(*) FROM souvenirs WHERE ancre = 1", [], |r| r.get(0))?;
+            if n >= ANCRES_MAX as i64 {
+                return Ok(Ancrage::Plein);
+            }
+            tx.execute("UPDATE souvenirs SET ancre = 1 WHERE nature = ? AND ref = ?", [nature, r#ref])?;
+        } else {
+            let annee = nature == "synthese"
+                && tx
+                    .prepare("SELECT 1 FROM syntheses WHERE CAST(id AS TEXT) = ? AND niveau = 'annee'")?
+                    .exists([r#ref])?;
+            if annee {
+                return Ok(Ancrage::Protege);
+            }
+            tx.execute(
+                "UPDATE souvenirs SET ancre = 0, dernier_rappel = ? WHERE nature = ? AND ref = ?",
+                params![ts(maintenant), nature, r#ref],
+            )?;
+        }
+        tx.commit()?;
+        Ok(Ancrage::Fait)
+    }
+
+    /// Ravive un souvenir (signal réel de l'utilisateur) ; `false` pour une
+    /// habitude, dont la force ne suit pas la courbe d'oubli, ou un souvenir absent.
+    pub fn raviver(&self, nature: &str, r#ref: &str, maintenant: NaiveDateTime) -> Result<bool> {
+        if nature == "habitude" {
+            return Ok(false);
+        }
+        renforcer_souvenir(&self.conn, nature, r#ref, maintenant)
+    }
+
     /// `(nature, ref)` des souvenirs ancrés.
     pub fn ancres_app(&self) -> Result<BTreeSet<(String, String)>> {
         Ok(self
@@ -121,7 +182,7 @@ impl MemoryStore {
 
 #[cfg(test)]
 mod tests {
-    use super::super::tests::{store, t, note, vieillir};
+    use super::super::tests::{compte, episode_le, note, store, store_extrait, t, vieillir};
     use super::*;
     use chrono::Duration;
 
@@ -243,5 +304,119 @@ mod tests {
         let c = s.controle(t()).unwrap();
         assert!(trouve(&c.ancres, "synthese", &id).expect("ancre").protege);
         assert!(s.ancres_app().unwrap().contains(&("synthese".to_string(), id)));
+    }
+
+    fn ancre(s: &MemoryStore, nature: &str, r#ref: &str, ancre: bool) -> Ancrage {
+        s.marquer_ancre(nature, r#ref, ancre, t()).unwrap()
+    }
+
+    #[test]
+    fn anchor_cap_is_twenty() {
+        let s = store();
+        for i in 0..21 {
+            s.fact_set_at(&format!("f{i}"), "Exemple", "p", t()).unwrap();
+        }
+        for i in 0..20 {
+            assert_eq!(ancre(&s, "fait", &format!("f{i}"), true), Ancrage::Fait);
+        }
+        assert_eq!(ancre(&s, "fait", "f20", true), Ancrage::Plein);
+        assert!(!s.force("fait", "f20").unwrap().unwrap().ancre);
+        // Reposée : déjà comptée, rien ne change.
+        assert_eq!(ancre(&s, "fait", "f3", true), Ancrage::Fait);
+        assert_eq!(ancre(&s, "fait", "f3", false), Ancrage::Fait);
+        assert_eq!(ancre(&s, "fait", "f20", true), Ancrage::Fait);
+        assert!(s.force("fait", "f20").unwrap().unwrap().ancre);
+
+        // Une synthèse d'année compte parmi les vingt.
+        let s = store();
+        s.synthese_creer("annee", "2025", "Exemple d'année", t()).unwrap();
+        for i in 0..20 {
+            s.fact_set_at(&format!("f{i}"), "Exemple", "p", t()).unwrap();
+        }
+        for i in 0..19 {
+            assert_eq!(ancre(&s, "fait", &format!("f{i}"), true), Ancrage::Fait);
+        }
+        assert_eq!(ancre(&s, "fait", "f19", true), Ancrage::Plein);
+    }
+
+    #[test]
+    fn unanchor_restarts_from_now() {
+        let s = store();
+        s.fact_set_at("cafe.prefere", "noir", "p", jours(400)).unwrap();
+        assert_eq!(ancre(&s, "fait", "cafe.prefere", true), Ancrage::Fait);
+        let avant = s.force("fait", "cafe.prefere").unwrap().unwrap();
+        assert_eq!(ancre(&s, "fait", "cafe.prefere", false), Ancrage::Fait);
+        let apres = s.force("fait", "cafe.prefere").unwrap().unwrap();
+        assert!(!apres.ancre);
+        assert_eq!(apres.dernier_rappel, t());
+        assert_eq!((apres.stabilite, apres.rappels), (avant.stabilite, avant.rappels));
+        assert!(trouve(&s.controle(t()).unwrap().estompes, "fait", "cafe.prefere").is_none());
+    }
+
+    #[test]
+    fn deduction_and_habit_not_anchorable() {
+        let s = store();
+        let ded = deduction(&s, "loisir", "voile", t());
+        let h = habitude(&s, "repas : maison", 0.6, true, false).to_string();
+        s.conn
+            .execute("INSERT INTO souvenirs VALUES ('habitude', ?, 14.0, ?, 0, 0.0, 0, 0.6)", params![h, ts(t())])
+            .unwrap();
+        assert_eq!(ancre(&s, "deduction", &ded, true), Ancrage::NonAncrable);
+        assert_eq!(ancre(&s, "habitude", &h, true), Ancrage::NonAncrable);
+        assert!(!s.force("deduction", &ded).unwrap().unwrap().ancre);
+        let annee = s.synthese_creer("annee", "2025", "Exemple d'année", t()).unwrap().to_string();
+        assert_eq!(ancre(&s, "synthese", &annee, false), Ancrage::Protege);
+        assert!(s.force("synthese", &annee).unwrap().unwrap().ancre);
+    }
+
+    #[test]
+    fn revive_reinforces_with_spacing() {
+        let s = store();
+        s.fact_set_at("ville.exemple", "Exemple", "p", jours(90)).unwrap();
+        let avant = s.force("fait", "ville.exemple").unwrap().unwrap();
+        assert_eq!(avant.stabilite, 90.0);
+        assert!(trouve(&s.controle(t()).unwrap().estompes, "fait", "ville.exemple").is_some());
+        assert!(s.raviver("fait", "ville.exemple", t()).unwrap());
+        let f = s.force("fait", "ville.exemple").unwrap().unwrap();
+        assert!((f.stabilite - 90.0 * (1.0 + 2.0 * (1.0 - (-1f64).exp()))).abs() < 1e-9, "{}", f.stabilite);
+        assert_eq!((f.rappels, f.dernier_rappel), (avant.rappels + 1, t()));
+        assert!(trouve(&s.controle(t()).unwrap().estompes, "fait", "ville.exemple").is_none());
+    }
+
+    #[test]
+    fn revive_or_anchor_erased_is_refused() {
+        let s = store();
+        s.fact_set_at("ville.exemple", "Exemple", "p", jours(90)).unwrap();
+        s.fact_forget("ville.exemple").unwrap();
+        assert!(!s.raviver("fait", "ville.exemple", t()).unwrap());
+        assert_eq!(ancre(&s, "fait", "ville.exemple", true), Ancrage::Inconnu);
+        assert_eq!(compte(&s, "SELECT COUNT(*) FROM souvenirs"), 0);
+        let h = habitude(&s, "repas : maison", 0.6, true, false).to_string();
+        s.conn
+            .execute("INSERT INTO souvenirs VALUES ('habitude', ?, 14.0, ?, 0, 0.0, 0, 0.6)", params![h, ts(jours(30))])
+            .unwrap();
+        assert!(!s.raviver("habitude", &h, t()).unwrap());
+        assert_eq!(s.force("habitude", &h).unwrap().unwrap().rappels, 0);
+    }
+
+    #[test]
+    fn revive_blocks_pending_condensation() {
+        let s = store_extrait();
+        let a = episode_le(&s, "Exemple de semis", t());
+        let b = episode_le(&s, "Exemple d'arrosage", t() + Duration::days(1));
+        let m = t() + Duration::days(19);
+        let lot = s.condensables(m, 10).unwrap().remove(0);
+        assert!(s.raviver("journal", &b.to_string(), m).unwrap());
+        assert_eq!(s.condenser("semaine", &lot.periode, "Exemple de synthèse", &lot.empreinte, m).unwrap(), None);
+        assert_eq!(compte(&s, &format!("SELECT COUNT(*) FROM journal WHERE id IN ({a}, {b})")), 2);
+    }
+
+    #[test]
+    fn revived_deduction_survives_forget() {
+        let s = store();
+        let ded = deduction(&s, "loisir", "voile", jours(120));
+        assert!(s.raviver("deduction", &ded, t()).unwrap());
+        s.oublier(t()).unwrap();
+        assert!(s.force("deduction", &ded).unwrap().is_some());
     }
 }

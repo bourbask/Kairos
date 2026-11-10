@@ -15,7 +15,7 @@ use crate::force::{Famille, est_actif, recuperabilite, renforcer, stabilite_init
 
 mod controle;
 mod habitudes;
-pub use controle::{CONTROLE_MAX, Controle, HabitudeVue, SouvenirVu};
+pub use controle::{Ancrage, CONTROLE_MAX, Controle, HabitudeVue, SouvenirVu};
 pub use habitudes::{BilanHabitudes, Observation};
 
 /// Clé réservée du fait portant la personnalité.
