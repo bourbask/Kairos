@@ -168,6 +168,11 @@ pub struct LlmRoutingConfig {
     /// l'intégralité des exceptions en vigueur.
     #[serde(default)]
     pub strategic_concessions: Vec<String>,
+    /// Usages déclarés communs, par nom d'usage. Un usage absent reste
+    /// stratégique ; les usages de mémoire et de conversation ne peuvent pas
+    /// y figurer (refusés au démarrage).
+    #[serde(default)]
+    pub common_usages: Vec<String>,
     /// Moteurs nommés, déclarés en plus des deux voies historiques.
     #[serde(default)]
     pub engines: HashMap<String, EngineConfig>,

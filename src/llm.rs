@@ -48,8 +48,25 @@ pub struct LlmRouter {
     db_path: Option<std::path::PathBuf>,
 }
 
+/// Usages qui traitent la mémoire personnelle ou le contenu des conversations :
+/// toujours stratégiques, quoi que déclare la configuration. Liste unique.
+const ALWAYS_STRATEGIC: [&str; 2] = ["conversation", "resume_conversation"];
+
+fn always_strategic(usage: &str) -> bool {
+    ALWAYS_STRATEGIC.contains(&usage) || usage.starts_with("memoire_")
+}
+
 impl LlmRouter {
-    pub fn from_config(config: LlmRoutingConfig) -> Self {
+    pub fn from_config(mut config: LlmRoutingConfig) -> Self {
+        config.common_usages.retain(|usage| {
+            let refused = always_strategic(usage);
+            if refused {
+                tracing::warn!(
+                    "usage {usage} : déclaration « commun » refusée, cet usage reste stratégique"
+                );
+            }
+            !refused
+        });
         let redactor = std::sync::Arc::new(Redactor::new(&config.redact_terms));
         Self { config, redactor, db_path: None }
     }
@@ -83,6 +100,15 @@ impl LlmRouter {
     /// Vrai si `[usages]` déclare explicitement cet usage.
     pub fn has_usage(&self, usage: &str) -> bool {
         self.config.usages.contains_key(usage)
+    }
+
+    /// Sensibilité déclarée en configuration ; stratégique par défaut.
+    pub fn sensitivity(&self, usage: &str) -> Sensitivity {
+        if self.config.common_usages.iter().any(|u| u == usage) {
+            Sensitivity::Common
+        } else {
+            Sensitivity::Strategic
+        }
     }
 
     fn usable(voie: &Option<LlmConfig>) -> Option<&LlmConfig> {
@@ -1181,6 +1207,7 @@ mod tests {
         assert!(!config.self_hosted.unwrap().is_usable());
         assert!(!config.external.unwrap().is_usable());
         assert!(config.strategic_concessions.is_empty());
+        assert!(config.common_usages.is_empty());
     }
 
     #[test]
@@ -1295,6 +1322,72 @@ mod tests {
         assert_eq!(fort.daily_token_cap, Some(1000));
         assert_eq!(fort.llm.model, "m");
         assert_eq!(config.usages["conversation"], "fort");
+    }
+
+    fn common_router(common_usages: Vec<String>) -> LlmRouter {
+        LlmRouter::from_config(LlmRoutingConfig {
+            self_hosted: Some(voie("http://interne.invalid")),
+            common_usages,
+            engines: HashMap::from([(
+                "fort".to_string(),
+                moteur("http://fort.invalid", Placement::External),
+            )]),
+            usages: ["brief", "conversation", "resume_conversation", "memoire_extraction"]
+                .into_iter()
+                .map(|u| (u.to_string(), "fort".to_string()))
+                .collect(),
+            ..Default::default()
+        })
+    }
+
+    #[test]
+    fn undeclared_usage_is_strategic() {
+        let r = common_router(vec![]);
+        assert_eq!(r.sensitivity("brief"), Sensitivity::Strategic);
+        assert_eq!(r.sensitivity("inconnu"), Sensitivity::Strategic);
+        let choice = r.route("brief", r.sensitivity("brief")).unwrap();
+        assert_eq!(choice.engine, Engine::SelfHosted);
+    }
+
+    #[test]
+    fn declared_common_usage_goes_external() {
+        let r = common_router(vec!["brief".into()]);
+        assert_eq!(r.sensitivity("brief"), Sensitivity::Common);
+        let choice = r.route("brief", r.sensitivity("brief")).unwrap();
+        assert_eq!(choice.engine, Engine::External);
+        assert_eq!(choice.engine_name, "fort");
+    }
+
+    #[test]
+    fn memory_and_conversation_usages_stay_strategic() {
+        let forced = ["conversation", "resume_conversation", "memoire_extraction", "memoire_condensation", "memoire_autre"];
+        let r = common_router(forced.iter().map(|u| u.to_string()).collect());
+        for usage in forced {
+            assert_eq!(r.sensitivity(usage), Sensitivity::Strategic, "{usage}");
+        }
+        for usage in ["conversation", "resume_conversation", "memoire_extraction"] {
+            assert_eq!(r.route(usage, r.sensitivity(usage)).unwrap().engine, Engine::SelfHosted);
+        }
+    }
+
+    #[test]
+    fn config_without_common_usages_still_parses() {
+        let config: LlmRoutingConfig = toml::from_str(
+            r#"
+            strategic_concessions = []
+            [usages]
+            conversation = "fort"
+            "#,
+        )
+        .unwrap();
+        assert!(config.common_usages.is_empty());
+        assert_eq!(config.usages["conversation"], "fort");
+    }
+
+    #[test]
+    fn common_usages_from_toml() {
+        let config: LlmRoutingConfig = toml::from_str(r#"common_usages = ["brief"]"#).unwrap();
+        assert_eq!(config.common_usages, vec!["brief".to_string()]);
     }
 
     fn chat_tools() -> Vec<ToolSpec> {
