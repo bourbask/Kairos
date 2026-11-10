@@ -233,6 +233,12 @@ struct AppLotArgs {
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
+struct NuitObservationsArgs {
+    /// AAAA-MM-JJ, journée terminée.
+    jour: String,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
 struct AppMealDoneArgs {
     /// AAAA-MM-JJ.
     day: String,
@@ -980,6 +986,45 @@ impl FoodServer {
     }
 
     #[tool(
+        description = "Nuit : observations des repas d'une journée terminée (lieu du déjeuner et du dîner) pour l'apprentissage des habitudes."
+    )]
+    async fn nuit_observations(&self, Parameters(a): Parameters<NuitObservationsArgs>) -> Out {
+        let jour = date(&a.jour)?;
+        if jour >= self.today().to_string() {
+            return Err(format!("Journée du {jour} non terminée : rien à observer."));
+        }
+        let weekend = chrono::NaiveDate::parse_from_str(&jour, "%Y-%m-%d")
+            .map_err(|e| e.to_string())?
+            .weekday()
+            .number_from_monday()
+            > 5;
+        let (jour_code, jour_lib) = if weekend { ("weekend", "le week-end") } else { ("ouvre", "en semaine") };
+        let mut out = Vec::new();
+        for (slot, lieu) in self.store.meals_on(&jour).map_err(|e| e.to_string())? {
+            let (code, repas) = match slot.as_str() {
+                "midi" => ("midi", "déjeuner"),
+                "soir" => ("soir", "dîner"),
+                _ => continue,
+            };
+            let (valeur, lib) = match crate::units::fold(lieu.trim()).as_str() {
+                "maison" => ("maison", "à la maison"),
+                "bureau" => ("bureau", "au bureau"),
+                "restaurant" | "resto" => ("restaurant", "au restaurant"),
+                _ => ("ailleurs", "ailleurs"),
+            };
+            // Le nom du plat et les notes ne sortent jamais.
+            out.push(serde_json::json!({
+                "quoi": "repas.lieu",
+                "contexte": format!("{code}.{jour_code}"),
+                "valeur": valeur,
+                "libelle": format!("{repas} {jour_lib} : {lib}"),
+                "cadence": "quotidien",
+            }));
+        }
+        Ok(serde_json::Value::Array(out).to_string())
+    }
+
+    #[tool(
         description = "Historique des repas sur N jours, avec un bilan (repas à la maison ou dehors, plats qui reviennent). Sert à repérer les habitudes."
     )]
     async fn meals(&self, Parameters(a): Parameters<MealsArgs>) -> Out {
@@ -1421,7 +1466,7 @@ impl FoodServer {
                     "location": loc, "fresh": fresh(&l.name, &loc, l.expiry.clone()), "done": done.contains(&i),
                 }));
             }
-            out.push(json!({"id": o.id, "store": o.store, "pickup": o.pickup, "lines": lines}));
+            out.push(serde_json::json!({"id": o.id, "store": o.store, "pickup": o.pickup, "lines": lines}));
         }
         Ok(serde_json::Value::Array(out).to_string())
     }
@@ -2368,6 +2413,60 @@ mod tests {
         assert!(s.meal_log(Parameters(serde_json::from_value(a).unwrap())).await.is_err());
         assert_eq!(s.store.meals_since(day).unwrap().len(), 1);
         assert_eq!(s.store.lots(None, Some("lentilles")).unwrap()[0].qty, 700.0);
+    }
+
+    async fn log_at(s: &FoodServer, day: &str, slot: &str, name: &str, place: &str, notes: Option<&str>) {
+        let a = serde_json::json!({"slot": slot, "name": name, "day": day, "place": place, "notes": notes});
+        s.meal_log(Parameters(serde_json::from_value(a).unwrap())).await.unwrap();
+    }
+
+    async fn observations(s: &FoodServer, jour: &str) -> Result<Vec<serde_json::Value>, String> {
+        let a = serde_json::json!({"jour": jour});
+        s.nuit_observations(Parameters(serde_json::from_value(a).unwrap()))
+            .await
+            .map(|t| serde_json::from_str(&t).unwrap())
+    }
+
+    #[tokio::test]
+    async fn meal_observations_closed_vocabulary() {
+        let s = server();
+        log_at(&s, "2026-11-04", "midi", "Exemple", "bureau", None).await;
+        log_at(&s, "2026-11-04", "soir", "Exemple", "chez des amis", None).await;
+        let o = observations(&s, "2026-11-04").await.unwrap();
+        assert_eq!(o.len(), 2);
+        assert_eq!((o[0]["contexte"].as_str(), o[0]["valeur"].as_str()), (Some("midi.ouvre"), Some("bureau")));
+        assert_eq!(o[0]["libelle"], "déjeuner en semaine : au bureau");
+        assert_eq!((o[1]["contexte"].as_str(), o[1]["valeur"].as_str()), (Some("soir.ouvre"), Some("ailleurs")));
+        assert_eq!((o[0]["quoi"].as_str(), o[0]["cadence"].as_str()), (Some("repas.lieu"), Some("quotidien")));
+        log_at(&s, "2026-11-07", "midi", "Exemple", "Resto", None).await;
+        let o = observations(&s, "2026-11-07").await.unwrap();
+        assert_eq!(o[0]["contexte"], "midi.weekend");
+        assert_eq!(o[0]["valeur"], "restaurant");
+        assert_eq!(o[0]["libelle"], "déjeuner le week-end : au restaurant");
+    }
+
+    #[tokio::test]
+    async fn unlogged_slot_is_no_observation() {
+        let s = server();
+        assert!(observations(&s, "2026-11-04").await.unwrap().is_empty());
+        log_at(&s, "2026-11-04", "midi", "Exemple", "maison", None).await;
+        assert_eq!(observations(&s, "2026-11-04").await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn meal_observations_hide_dish() {
+        let s = server();
+        log_at(&s, "2026-11-04", "midi", "Plat Exemple", "maison", Some("note secrete")).await;
+        let a = serde_json::json!({"jour": "2026-11-04"});
+        let t = s.nuit_observations(Parameters(serde_json::from_value(a).unwrap())).await.unwrap();
+        assert!(!t.contains("Exemple") && !t.contains("secrete"));
+    }
+
+    #[tokio::test]
+    async fn meal_observations_refuse_unfinished_day() {
+        let s = server();
+        assert!(observations(&s, &s.today().to_string()).await.is_err());
+        assert!(observations(&s, "pas-une-date").await.is_err());
     }
 
     async fn add_by_name(s: &FoodServer, name: &str, qty: f64, unit: &str) {

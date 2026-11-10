@@ -309,4 +309,11 @@ mod tests {
         }
         assert!(!super::is_app_tool("nuitee"));
     }
+
+    #[test]
+    fn night_and_app_habit_tools_hidden() {
+        for t in ["nuit_habitudes", "nuit_observations", "app_habitude_forget"] {
+            assert!(super::is_app_tool(t), "{t}");
+        }
+    }
 }

@@ -13,6 +13,9 @@ use sha2::{Digest, Sha256};
 
 use crate::force::{Famille, est_actif, recuperabilite, renforcer, stabilite_initiale};
 
+mod habitudes;
+pub use habitudes::{BilanHabitudes, Observation};
+
 /// Clé réservée du fait portant la personnalité.
 pub const PERSONA_KEY: &str = "persona";
 /// Taille maximale d'une transcription acceptée.
@@ -232,9 +235,11 @@ pub struct Bilan {
 }
 
 /// Étapes de la nuit dont l'état est conservé.
-pub const ETAPES_NUIT: [&str; 3] = ["extraction", "condensation", "oubli"];
+pub const ETAPES_NUIT: [&str; 4] = ["extraction", "habitudes", "condensation", "oubli"];
 /// Statuts possibles d'une étape de nuit : des codes, jamais de texte libre.
-pub const STATUTS_NUIT: [&str; 4] = ["ok", "modele_indisponible", "sortie_invalide", "echec"];
+pub const STATUTS_NUIT: [&str; 5] = ["ok", "modele_indisponible", "sortie_invalide", "echec", "source_indisponible"];
+/// En dessous de cette force, une habitude est estompée.
+const SEUIL_ESTOMPE_HABITUDE: f64 = 0.3;
 /// Motifs possibles d'une sortie invalide : des codes, jamais de texte libre.
 pub const MOTIFS_NUIT: [&str; 4] = ["lot_trop_long", "reponse_coupee", "reponse_vide", "synthese_trop_longue"];
 /// En dessous de cette récupérabilité, un souvenir oubliable est effacé.
@@ -276,6 +281,15 @@ fn question_prefixe(key: &str) -> String {
 /// Référence du souvenir d'une déduction.
 fn ref_deduction(key: &str, value: &str) -> String {
     format!("{key}\u{1f}{value}")
+}
+
+/// Pose une question de confirmation, valable `QUESTION_JOURS` ; renvoie son identifiant.
+fn proposer_question(c: &Connection, what: &str, maintenant: NaiveDateTime) -> Result<i64> {
+    c.execute(
+        "INSERT INTO intentions (what, constraints, expires_at, state) VALUES (?, '', ?, ?)",
+        params![what, ts(maintenant + chrono::Duration::days(QUESTION_JOURS)), IntentionState::Proposee.as_str()],
+    )?;
+    Ok(c.last_insert_rowid())
 }
 
 /// Renforce un souvenir existant au moment `now` (rappel).
@@ -477,6 +491,16 @@ CREATE TABLE IF NOT EXISTS renforcements_jour (
     key TEXT NOT NULL, jour TEXT NOT NULL, PRIMARY KEY (key, jour));
 CREATE TABLE IF NOT EXISTS nuit_etat (
     etape TEXT PRIMARY KEY, dernier_jour TEXT, derniere_execution TEXT, statut TEXT, motif TEXT);
+CREATE TABLE IF NOT EXISTS habitudes (
+    id INTEGER PRIMARY KEY, source TEXT NOT NULL, quoi TEXT NOT NULL, contexte TEXT NOT NULL,
+    valeur TEXT NOT NULL, libelle TEXT NOT NULL,
+    cadence TEXT NOT NULL CHECK(cadence IN ('quotidien','hebdomadaire')),
+    m REAL NOT NULL, positifs INTEGER NOT NULL,
+    etat TEXT NOT NULL DEFAULT 'candidate' CHECK(etat IN ('candidate','active','ancienne')),
+    nee_le TEXT, ancienne_depuis TEXT, question INTEGER, annoncee_le TEXT,
+    confirmee INTEGER NOT NULL DEFAULT 0, rejetee INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(source, quoi, contexte, valeur));
+CREATE TABLE IF NOT EXISTS habitudes_sources (source TEXT PRIMARY KEY, dernier_jour TEXT NOT NULL, vu_le TEXT NOT NULL);
 ";
 
 fn now_local() -> NaiveDateTime {
@@ -679,6 +703,7 @@ impl MemoryStore {
              SELECT 'deduction', key || char(31) || value, ?1, ?2, 0.0, confiance FROM deductions",
             params![stabilite_initiale(Famille::Connaissance, 0.0), maintenant],
         )?;
+        habitudes::migrer(&tx, now_local())?;
         tx.execute("DELETE FROM facts_fts", [])?;
         tx.execute(
             "INSERT INTO facts_fts (key, value) SELECT key, value FROM fact_log
@@ -872,6 +897,7 @@ impl MemoryStore {
             "DELETE FROM intentions WHERE substr(what, 1, length(?1)) = ?1",
             [question_prefixe(key)],
         )?;
+        habitudes::delier_questions(&tx)?;
         tx.execute("DELETE FROM facts_fts WHERE key = ?", [key])?;
         tx.execute("INSERT INTO facts_fts (facts_fts) VALUES ('optimize')", [])?;
         tx.commit()?;
@@ -941,10 +967,7 @@ impl MemoryStore {
                         .iter()
                         .any(|w| norme(w) == norme(&what));
                     if !deja {
-                        tx.execute(
-                            "INSERT INTO intentions (what, constraints, expires_at, state) VALUES (?, '', ?, ?)",
-                            params![what, ts(maintenant + chrono::Duration::days(QUESTION_JOURS)), IntentionState::Proposee.as_str()],
-                        )?;
+                        proposer_question(&tx, &what, maintenant)?;
                         b.questions += 1;
                     }
                 }
@@ -1000,10 +1023,15 @@ impl MemoryStore {
         Ok(self.conn.last_insert_rowid())
     }
 
+    /// Change l'état d'une intention ; une réponse à une question d'habitude
+    /// la confirme ou la rejette dans la même transaction.
     pub fn intention_set_state(&self, id: i64, state: IntentionState) -> Result<bool> {
-        let n = self
-            .conn
-            .execute("UPDATE intentions SET state = ? WHERE id = ?", params![state.as_str(), id])?;
+        let tx = self.conn.unchecked_transaction()?;
+        let n = tx.execute("UPDATE intentions SET state = ? WHERE id = ?", params![state.as_str(), id])?;
+        if n > 0 {
+            habitudes::repondre(&tx, id, state, now_local())?;
+        }
+        tx.commit()?;
         Ok(n > 0)
     }
 
@@ -1280,6 +1308,7 @@ impl MemoryStore {
         if n > 0 {
             tx.execute("INSERT INTO syntheses_fts (syntheses_fts) VALUES ('optimize')", [])?;
         }
+        n += habitudes::oublier(&tx)?;
         tx.commit()?;
         Ok(n)
     }
@@ -1536,39 +1565,47 @@ impl MemoryStore {
         // Candidats : tous les faits ; épisodes récents, ancrés ou trouvés.
         // ponytail: tous les faits sont lus à chaque rappel ; filtrer en SQL si leur nombre explose.
         let sql = format!(
-            "SELECT 'fait', s.ref, s.ref || ' : ' || f.value, s.stabilite, s.dernier_rappel, s.importance, s.ancre
+            "SELECT 'fait', s.ref, s.ref || ' : ' || f.value, s.stabilite, s.dernier_rappel, s.importance, s.ancre, NULL
              FROM souvenirs s JOIN facts_fts f ON f.key = s.ref WHERE s.nature = 'fait'
              UNION ALL
-             SELECT 'journal', s.ref, substr(j.at, 1, 10) || char(1) || j.content, s.stabilite, s.dernier_rappel, s.importance, s.ancre
+             SELECT 'journal', s.ref, substr(j.at, 1, 10) || char(1) || j.content, s.stabilite, s.dernier_rappel, s.importance, s.ancre, NULL
              FROM souvenirs s JOIN journal j ON j.id = CAST(s.ref AS INTEGER) WHERE s.nature = 'journal'
                AND (s.ancre OR j.id IN (SELECT id FROM journal ORDER BY id DESC LIMIT {RAPPEL_JOURNAL_RECENT})
                     OR j.id IN ({journal_hits}))
              UNION ALL
              SELECT 'conversation', s.ref, substr(c.started_at, 1, 10) || char(1) || coalesce(c.summary, '') || char(1) || c.topics,
-                    s.stabilite, s.dernier_rappel, s.importance, s.ancre
+                    s.stabilite, s.dernier_rappel, s.importance, s.ancre, NULL
              FROM souvenirs s JOIN conversations c ON c.id = CAST(s.ref AS INTEGER) WHERE s.nature = 'conversation'
                AND (s.ancre OR c.id IN (SELECT id FROM conversations ORDER BY id DESC LIMIT {RAPPEL_JOURNAL_RECENT})
                     OR c.id IN ({conv_hits}))
              UNION ALL
-             SELECT 'synthese', s.ref, y.periode || ' : ' || y.texte, s.stabilite, s.dernier_rappel, s.importance, s.ancre
+             SELECT 'synthese', s.ref, y.periode || ' : ' || y.texte, s.stabilite, s.dernier_rappel, s.importance, s.ancre, NULL
              FROM souvenirs s JOIN syntheses y ON y.id = CAST(s.ref AS INTEGER) WHERE s.nature = 'synthese'
              UNION ALL
-             SELECT 'deduction', s.ref, 'je crois que ' || d.key || ' : ' || d.value, s.stabilite, s.dernier_rappel, s.importance, s.ancre
+             SELECT 'deduction', s.ref, 'je crois que ' || d.key || ' : ' || d.value, s.stabilite, s.dernier_rappel, s.importance, s.ancre, NULL
              FROM souvenirs s JOIN deductions d ON s.ref = d.key || char(31) || d.value WHERE s.nature = 'deduction'
                AND d.key NOT IN (SELECT key FROM fact_log)
                AND NOT EXISTS (SELECT 1 FROM deductions e WHERE e.key = d.key
-                   AND (e.confiance > d.confiance OR (e.confiance = d.confiance AND e.value < d.value)))"
+                   AND (e.confiance > d.confiance OR (e.confiance = d.confiance AND e.value < d.value)))
+             UNION ALL
+             SELECT 'habitude', s.ref,
+                    CASE h.confirmee WHEN 1 THEN '' ELSE 'je crois que ' END || 'habitude : ' || h.libelle
+                    || coalesce(' (ancienne habitude depuis le ' || substr(h.ancienne_depuis, 9, 2) || '/'
+                       || substr(h.ancienne_depuis, 6, 2) || '/' || substr(h.ancienne_depuis, 1, 4) || ')', ''),
+                    s.stabilite, s.dernier_rappel, s.importance, s.ancre, h.m
+             FROM souvenirs s JOIN habitudes h ON CAST(h.id AS TEXT) = s.ref WHERE s.nature = 'habitude'
+               AND h.nee_le IS NOT NULL AND h.rejetee = 0"
         );
         struct Cand { r: Rappel, importance: f64, dernier: NaiveDateTime, rang: Option<usize> }
         let mut st = self.conn.prepare(&sql)?;
         let rows = st.query_map([], |r| {
             Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, f64>(3)?,
-                r.get::<_, String>(4)?, r.get::<_, f64>(5)?, r.get::<_, bool>(6)?))
+                r.get::<_, String>(4)?, r.get::<_, f64>(5)?, r.get::<_, bool>(6)?, r.get::<_, Option<f64>>(7)?))
         })?;
         let mut ancres = Vec::new();
         let mut autres = Vec::new();
         for row in rows {
-            let (nature, r#ref, brut, stabilite, dr, importance, ancre) = row?;
+            let (nature, r#ref, brut, stabilite, dr, importance, ancre, force) = row?;
             let texte = match brut.split_once('\u{1}') {
                 Some((date, content)) if nature == "journal" => format!("{date} : {}", texte_journal(content)),
                 Some((date, reste)) if nature == "conversation" => {
@@ -1583,13 +1620,14 @@ impl MemoryStore {
             };
             // Ligne illisible : ignorée sans bloquer le rappel ni exposer son contenu.
             let Ok(dernier) = parse_ts(&dr) else { continue };
-            let rec = recuperabilite(dernier, stabilite, maintenant, ancre);
+            // Une habitude a pour force sa moyenne glissante, pas la courbe d'oubli.
+            let rec = force.unwrap_or_else(|| recuperabilite(dernier, stabilite, maintenant, ancre));
             let rang = rang.get(&(nature.as_str(), r#ref.as_str())).copied();
             let pertinence = rang.map_or(0.0, |i| 1.0 / (1.0 + i as f64));
             let r = Rappel {
                 texte: tronquer(&texte),
                 score: rec + importance + pertinence,
-                estompe: !est_actif(rec),
+                estompe: if force.is_some() { rec < SEUIL_ESTOMPE_HABITUDE } else { !est_actif(rec) },
                 ancre,
                 nature,
                 r#ref,
@@ -2879,7 +2917,7 @@ mod tests {
         let s = store();
         // Chaque étape existe dès l'ouverture : son horloge part de là.
         let e = s.nuit_etat().unwrap();
-        assert_eq!(e.iter().map(|e| e.etape.as_str()).collect::<Vec<_>>(), ["condensation", "extraction", "oubli"]);
+        assert_eq!(e.iter().map(|e| e.etape.as_str()).collect::<Vec<_>>(), ["condensation", "extraction", "habitudes", "oubli"]);
         assert!(e.iter().all(|e| e.statut == "ok" && e.derniere_execution.is_some() && e.dernier_jour.is_none() && !e.illisible));
         s.nuit_noter("extraction", "ok", None, Some(d(3)), jour(2026, 11, 4)).unwrap();
         s.nuit_noter("extraction", "modele_indisponible", None, None, jour(2026, 11, 5)).unwrap();

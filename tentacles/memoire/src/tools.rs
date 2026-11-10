@@ -1,5 +1,6 @@
 //! Outils MCP du tentacule mémoire : fine couche d'adaptation au-dessus de `MemoryStore`.
 
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use chrono::{Duration, NaiveDate, NaiveDateTime, Utc};
@@ -16,7 +17,7 @@ use tentacle_common::BriefPeriod;
 
 use crate::store::{
     ConversationCard, Indice, IntentionState, JournalEntry, MemoryStore, NewConversation, NewJournalEntry, NewLesson,
-    PERSONA_KEY, Sensitivity,
+    Observation, PERSONA_KEY, Sensitivity,
 };
 
 /// Handler MCP ; bon marché à construire (le stockage est partagé).
@@ -231,6 +232,16 @@ struct AppliquerArgs {
     indices: Vec<Indice>,
 }
 #[derive(Deserialize, schemars::JsonSchema)]
+struct NuitHabitudesArgs {
+    /// `AAAA-MM-JJ`.
+    jour: String,
+    /// Observations de la journée, par source.
+    sources: BTreeMap<String, Value>,
+    /// Sources qui devraient répondre, même si elles n'ont rien rendu.
+    #[serde(default)]
+    attendues: Vec<String>,
+}
+#[derive(Deserialize, schemars::JsonSchema)]
 struct MaxArgs {
     max: usize,
 }
@@ -251,8 +262,6 @@ struct NoterArgs {
     dernier_jour: Option<String>,
 }
 #[derive(Deserialize, schemars::JsonSchema)]
-// La période est validée mais ne change pas encore le contenu.
-#[allow(dead_code)]
 struct BriefArgs {
     period: BriefPeriod,
 }
@@ -523,6 +532,14 @@ impl MemoryServer {
         json_out(json!({"message": "Fait oublié."}))
     }
 
+    #[tool(description = "Oublier définitivement une habitude depuis l'application.")]
+    fn app_habitude_forget(&self, Parameters(a): Parameters<IdArgs>) -> Out {
+        if !self.db()?.habitude_oublier(a.id).map_err(err)? {
+            return Err("habitude inconnue".into());
+        }
+        json_out(json!({"message": "Habitude oubliée."}))
+    }
+
     #[tool(description = "Supprimer définitivement une conversation depuis l'application.")]
     fn app_conversation_delete(&self, Parameters(a): Parameters<IdArgs>) -> Out {
         if !self.db()?.conversation_delete(a.id).map_err(err)? {
@@ -538,9 +555,8 @@ impl MemoryServer {
     }
 
     #[tool(description = "Obtenir le texte court de la section mémoire d'un briefing (intentions expirant sous 24 h), vide si rien.")]
-    fn brief_section(&self, Parameters(_): Parameters<BriefArgs>) -> Out {
-        // Même contenu matin et soir pour l'instant.
-        self.brief_at(now_local())
+    fn brief_section(&self, Parameters(a): Parameters<BriefArgs>) -> Out {
+        self.brief_at(now_local(), a.period)
     }
 
     // --- Nuit : usage interne de la tête, jamais proposé au modèle ---
@@ -563,6 +579,27 @@ impl MemoryServer {
     #[tool(description = "Usage interne de la tête : appliquer les indices extraits d'une journée.")]
     fn nuit_appliquer(&self, Parameters(a): Parameters<AppliquerArgs>) -> Out {
         json_out(self.db()?.appliquer_extraction(parse_jour(&a.jour)?, &a.indices, now_local()).map_err(err)?)
+    }
+
+    #[tool(description = "Usage interne de la tête : compter les observations d'habitudes d'une journée.")]
+    fn nuit_habitudes(&self, Parameters(a): Parameters<NuitHabitudesArgs>) -> Out {
+        let jour = parse_jour(&a.jour)?;
+        // Un élément mal formé est ignoré sans bloquer la source ; une source qui
+        // n'est pas un tableau est absente, et la journée attend.
+        let mut mal_formees = 0;
+        let mut sources = BTreeMap::new();
+        for (source, v) in a.sources {
+            let Value::Array(items) = v else { continue };
+            let total = items.len();
+            let obs: Vec<Observation> = items.into_iter().filter_map(|o| serde_json::from_value(o).ok()).collect();
+            mal_formees += (total - obs.len()) as u32;
+            sources.insert(source, obs);
+        }
+        let db = self.db()?;
+        db.attendre_sources(jour, &a.attendues, now_local()).map_err(err)?;
+        let mut bilan = db.appliquer_observations(jour, &sources, now_local()).map_err(err)?;
+        bilan.ignorees += mal_formees;
+        json_out(bilan)
     }
 
     #[tool(description = "Usage interne de la tête : lots de souvenirs à condenser.")]
@@ -602,6 +639,7 @@ fn raison(statut: &str) -> &'static str {
     match statut {
         "modele_indisponible" => "modèle indisponible",
         "sortie_invalide" => "réponse du modèle inutilisable",
+        "source_indisponible" => "source indisponible",
         _ => "échec",
     }
 }
@@ -619,12 +657,18 @@ fn precision(motif: &str) -> &'static str {
 
 impl MemoryServer {
     /// Section mémoire du briefing à l'instant `now`.
-    fn brief_at(&self, now: NaiveDateTime) -> Out {
+    fn brief_at(&self, now: NaiveDateTime, period: BriefPeriod) -> Out {
         let limit = now + Duration::hours(24);
         let db = self.db()?;
         let soon: Vec<_> = db.intentions_open(now).map_err(err)?.into_iter().filter(|i| i.expires_at <= limit).collect();
         let mut lignes: Vec<String> =
             soon.iter().map(|i| format!("- {} (avant le {})", i.what, i.expires_at.format("%d/%m %H:%M"))).collect();
+        // Une habitude remarquée la nuit se dit au matin qui suit.
+        if period == BriefPeriod::Matin {
+            for l in db.habitudes_annoncees(now - Duration::hours(24)).map_err(err)? {
+                lignes.push(format!("- Habitude remarquée : {l} — à confirmer"));
+            }
+        }
         // État de la nuit seulement : jamais le contenu de la mémoire.
         let jj = |d: NaiveDate| d.format("%d/%m/%Y").to_string();
         for e in db.nuit_etat().map_err(err)? {
@@ -659,6 +703,7 @@ impl ServerHandler for MemoryServer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Datelike;
 
     fn srv() -> MemoryServer {
         MemoryServer::new(Arc::new(Mutex::new(MemoryStore::open(":memory:").unwrap())))
@@ -969,22 +1014,22 @@ mod tests {
         for etape in crate::store::ETAPES_NUIT {
             noter(etape, "ok", None);
         }
-        assert_eq!(s.brief_at(now).unwrap(), "");
+        assert_eq!(s.brief_at(now, BriefPeriod::Matin).unwrap(), "");
         noter("extraction", "modele_indisponible", NaiveDate::from_ymd_opt(2026, 11, 3));
-        let b = s.brief_at(now).unwrap();
+        let b = s.brief_at(now, BriefPeriod::Matin).unwrap();
         assert!(b.contains("Mémoire : extraction en attente depuis le 04/11/2026 — modèle indisponible"), "{b}");
         assert!(!b.contains("condensation"), "{b}");
         noter("oubli", "echec", None);
-        assert!(s.brief_at(now).unwrap().contains("Mémoire : oubli en attente depuis le 09/11/2026 — échec"));
+        assert!(s.brief_at(now, BriefPeriod::Matin).unwrap().contains("Mémoire : oubli en attente depuis le 09/11/2026 — échec"));
         noter("condensation", "sortie_invalide", None);
-        assert!(s.brief_at(now).unwrap().contains("condensation en attente depuis le 09/11/2026 — réponse du modèle inutilisable"));
+        assert!(s.brief_at(now, BriefPeriod::Matin).unwrap().contains("condensation en attente depuis le 09/11/2026 — réponse du modèle inutilisable"));
         // Motif du refus : dit, sans rien du contenu.
         s.db().unwrap().nuit_noter("condensation", "sortie_invalide", Some("lot_trop_long"), None, now).unwrap();
-        let b = s.brief_at(now).unwrap();
+        let b = s.brief_at(now, BriefPeriod::Matin).unwrap();
         assert!(b.contains("condensation en attente depuis le 09/11/2026 — réponse du modèle inutilisable (souvenirs trop longs à résumer)"), "{b}");
         // Rattrapée : la ligne disparaît.
         noter("extraction", "ok", NaiveDate::from_ymd_opt(2026, 11, 8));
-        assert!(!s.brief_at(now).unwrap().contains("extraction"));
+        assert!(!s.brief_at(now, BriefPeriod::Matin).unwrap().contains("extraction"));
         // Conversation sans résumé depuis plus d'une semaine, sans rien en révéler.
         let vieux = now - Duration::days(9);
         let c = NewConversation {
@@ -996,7 +1041,7 @@ mod tests {
             session_id: None,
         };
         s.db().unwrap().conversation_ingest(&c).unwrap();
-        let b = s.brief_at(now).unwrap();
+        let b = s.brief_at(now, BriefPeriod::Matin).unwrap();
         assert!(b.contains("Mémoire : 1 conversation(s) à résumer depuis plus d'une semaine"), "{b}");
         assert!(!b.contains("jardin"));
     }
@@ -1014,13 +1059,13 @@ mod tests {
         for etape in crate::store::ETAPES_NUIT {
             s.db().unwrap().nuit_noter(etape, "ok", None, None, now - Duration::hours(35)).unwrap();
         }
-        assert_eq!(s.brief_at(now).unwrap(), "");
+        assert_eq!(s.brief_at(now, BriefPeriod::Matin).unwrap(), "");
         s.db().unwrap().nuit_noter("oubli", "ok", None, None, now - Duration::hours(37)).unwrap();
-        let b = s.brief_at(now).unwrap();
+        let b = s.brief_at(now, BriefPeriod::Matin).unwrap();
         assert_eq!(b, "- Mémoire : oubli n'a pas tourné depuis le 07/11/2026");
         // En échec et arrêtée : les deux se voient.
         s.db().unwrap().nuit_noter("oubli", "echec", None, None, now - Duration::hours(37)).unwrap();
-        let b = s.brief_at(now).unwrap();
+        let b = s.brief_at(now, BriefPeriod::Matin).unwrap();
         assert!(b.contains("oubli en attente") && b.contains("oubli n'a pas tourné"), "{b}");
     }
 
@@ -1036,7 +1081,7 @@ mod tests {
             .unwrap()
             .execute("UPDATE nuit_etat SET derniere_execution = 'secret', statut = 'secret' WHERE etape = 'oubli'", [])
             .unwrap();
-        let b = s.brief_at(now).unwrap();
+        let b = s.brief_at(now, BriefPeriod::Matin).unwrap();
         let _ = std::fs::remove_file(&chemin);
         assert!(b.contains("arroser"), "{b}");
         assert!(b.contains("- Mémoire : état de nuit illisible"), "{b}");
@@ -1065,7 +1110,7 @@ mod tests {
         assert_eq!(js(s.nuit_condenser(Parameters(a))), json!({"id": null}));
         assert_eq!(js(s.nuit_oublier()), json!({"supprimes": 0}));
 
-        assert_eq!(js(s.nuit_etat()).as_array().unwrap().len(), 3);
+        assert_eq!(js(s.nuit_etat()).as_array().unwrap().len(), 4);
         let a = NoterArgs { etape: "extraction".into(), statut: "ok".into(), motif: None, dernier_jour: Some("2026-11-08".into()) };
         assert!(js(s.nuit_noter(Parameters(a)))["message"].is_string());
         let e = &js(s.nuit_etat())[1];
@@ -1078,5 +1123,98 @@ mod tests {
         assert_eq!(js(s.nuit_etat())[0]["motif"], "reponse_coupee");
         let a = NoterArgs { etape: "condensation".into(), statut: "sortie_invalide".into(), motif: Some("inventé".into()), dernier_jour: None };
         assert!(s.nuit_noter(Parameters(a)).is_err());
+    }
+
+    fn obs_soir(valeur: &str) -> Observation {
+        Observation {
+            quoi: "repas.lieu".into(),
+            contexte: "soir.ouvre".into(),
+            valeur: valeur.into(),
+            libelle: format!("repas du soir : {valeur}"),
+            cadence: "quotidien".into(),
+        }
+    }
+
+    #[test]
+    fn night_habits_tool_shape() {
+        let s = srv();
+        let sources = BTreeMap::from([("test".to_string(), json!([obs_soir("maison")]))]);
+        let v = js(s.nuit_habitudes(Parameters(NuitHabitudesArgs { jour: "2026-11-09".into(), sources, attendues: vec![] })));
+        for k in ["complet", "appliquees", "nees", "changements", "retours", "ignorees"] {
+            assert!(v.get(k).is_some(), "{k} : {v}");
+        }
+        assert_eq!(v["appliquees"], 1);
+        assert!(s.nuit_habitudes(Parameters(NuitHabitudesArgs { jour: "hier".into(), sources: BTreeMap::new(), attendues: vec![] })).is_err());
+        let e = s.app_habitude_forget(Parameters(IdArgs { id: 999 })).unwrap_err();
+        assert_eq!(e, "habitude inconnue");
+    }
+
+    #[test]
+    fn malformed_observation_is_ignored_not_blocking() {
+        let s = srv();
+        let jour = |j: &str, sources: Value| {
+            let sources = serde_json::from_value(sources).unwrap();
+            js(s.nuit_habitudes(Parameters(NuitHabitudesArgs { jour: j.into(), sources, attendues: vec![] })))
+        };
+        let v = jour("2026-11-08", json!({"a": [obs_soir("maison")], "b": [obs_soir("maison")]}));
+        assert_eq!(v["complet"], true);
+        // Un élément mal formé parmi des valides : le reste s'applique.
+        let mut midi = obs_soir("bureau");
+        midi.contexte = "midi.ouvre".into();
+        let v = jour("2026-11-09", json!({"a": [obs_soir("maison"), {"quoi": 3}, "x", midi], "b": [obs_soir("maison")]}));
+        assert_eq!((v["appliquees"].as_u64(), v["ignorees"].as_u64(), v["complet"].as_bool()), (Some(3), Some(2), Some(true)));
+        // Une source qui n'est pas un tableau est absente : la journée attend.
+        let v = jour("2026-11-10", json!({"a": {"quoi": "repas.lieu"}, "b": [obs_soir("maison")]}));
+        assert_eq!((v["appliquees"].as_u64(), v["complet"].as_bool()), (Some(1), Some(false)));
+    }
+
+    #[test]
+    fn expected_source_absent_holds_first_day() {
+        let s = srv();
+        let nuit = |args: Value| js(s.nuit_habitudes(Parameters(serde_json::from_value(args).unwrap())));
+        // Première nuit : `a` attendue mais muette, la journée attend.
+        let v = nuit(json!({"jour": "2026-11-09", "sources": {"b": [obs_soir("maison")]}, "attendues": ["a", "b"]}));
+        assert_eq!((v["appliquees"].as_u64(), v["complet"].as_bool()), (Some(1), Some(false)));
+        let v = nuit(json!({"jour": "2026-11-09", "sources": {"a": [obs_soir("maison")], "b": []}, "attendues": ["a", "b"]}));
+        assert_eq!((v["appliquees"].as_u64(), v["complet"].as_bool()), (Some(1), Some(true)));
+        // Sans `attendues` : seules les sources connues sont attendues.
+        let s2 = srv();
+        let v = js(s2.nuit_habitudes(Parameters(serde_json::from_value(json!({"jour": "2026-11-09", "sources": {}})).unwrap())));
+        assert_eq!(v["complet"], true);
+    }
+
+    #[test]
+    fn habits_step_pending_shows_in_brief() {
+        let s = srv();
+        let now = NaiveDate::from_ymd_opt(2026, 11, 9).unwrap().and_hms_opt(7, 0, 0).unwrap();
+        for etape in crate::store::ETAPES_NUIT {
+            s.db().unwrap().nuit_noter(etape, "ok", None, None, now).unwrap();
+        }
+        s.db().unwrap().nuit_noter("habitudes", "source_indisponible", None, NaiveDate::from_ymd_opt(2026, 11, 6), now).unwrap();
+        let b = s.brief_at(now, BriefPeriod::Matin).unwrap();
+        assert!(b.contains("habitudes en attente depuis le") && b.contains("source indisponible"), "{b}");
+    }
+
+    #[test]
+    fn new_habit_announced_in_morning_brief_only() {
+        let s = srv();
+        let lundi = NaiveDate::from_ymd_opt(2026, 11, 2).unwrap();
+        let mut nuit = lundi.and_hms_opt(3, 0, 0).unwrap();
+        for n in 0..9u64 {
+            let jour = lundi + chrono::Days::new(n);
+            if jour.weekday().num_days_from_monday() >= 5 {
+                continue;
+            }
+            nuit = (jour + chrono::Days::new(1)).and_hms_opt(3, 0, 0).unwrap();
+            let sources = BTreeMap::from([("test".to_string(), vec![obs_soir("maison")])]);
+            s.db().unwrap().appliquer_observations(jour, &sources, nuit).unwrap();
+        }
+        let matin = nuit + Duration::hours(4);
+        let b = s.brief_at(matin, BriefPeriod::Matin).unwrap();
+        assert!(b.contains("- Habitude remarquée : repas du soir : maison — à confirmer"), "{b}");
+        assert!(!s.brief_at(matin, BriefPeriod::Soir).unwrap().contains("Habitude remarquée : "));
+        let q = s.db().unwrap().intentions_open(matin).unwrap()[0].id;
+        s.db().unwrap().intention_set_state(q, IntentionState::Refusee).unwrap();
+        assert!(!s.brief_at(matin, BriefPeriod::Matin).unwrap().contains("Habitude remarquée"));
     }
 }
