@@ -57,7 +57,7 @@ class SpriteFidelityTest {
     @Test
     fun scene_frames_match_prototype() {
         val scenes = golden["scenes"]!!.jsonObject
-        assertEquals(8, scenes.size)
+        assertEquals(9, scenes.size)
         for ((key, byMascot) in scenes) {
             val scene = SceneKind.entries.first { key.startsWith(it.name.lowercase()) }
             val down = key.endsWith("-baisse")

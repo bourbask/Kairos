@@ -456,6 +456,59 @@ enum class SceneKind(val ms: IntArray, val key: Int, private val lift: Int = 0) 
             }
         }
     },
+
+    /** Espace Politique : plie son bulletin, le glisse dans l'urne transparente, le voyant s'allume, petite joie. */
+    Urne(intArrayOf(380, 260, 240, 200, 200, 160, 120, 200, 180, 180, 240, 300, 260, 260), 7) {
+        override fun draw(lb: Grid, lm: Grid, lf: Grid, m: MascotKind, i: Int, t: Int, down: Boolean) {
+            val b = Pen(lb)
+            val f = Pen(lf)
+            floorLine(b, 2, 31, 26)
+            // Urne transparente posée au sol : cadre d'encre, verre laissé ouvert sur le fond, reflets, bulletins au fond.
+            b.rect(19, 14, 1, 12, 'D'); b.rect(29, 14, 1, 12, 'D'); b.rect(19, 25, 11, 1, 'D')
+            b.pts(xy(21, 16, 21, 17, 22, 16, 27, 15), 'm')
+            b.rect(20, 24, 3, 1, 'F'); b.rect(24, 24, 4, 1, 'F'); b.rect(22, 23, 3, 1, 'F'); b.rect(26, 23, 2, 1, 'h')
+            // Couvercle à fente, devant le bulletin qui passe.
+            f.rect(18, 13, 13, 1, 'h'); f.rect(22, 13, 4, 1, 'D')
+            // Voyant : éteint, puis allumé avec ses éclats.
+            f.rect(27, 11, 2, 2, if (i in 7..11) 'A' else 'a')
+            if (i == 7 || i == 9) f.pts(xy(26, 9, 29, 9), 'A')
+            if (i == 8 || i == 10) f.pts(xy(27, 9, 28, 9, 30, 11, 25, 11), 'A')
+            // Réserve de bulletins vierges, au pied de l'urne.
+            b.rect(15, 25, 4, 1, 's'); b.rect(15, 24, 4, 1, 'F'); b.rect(15, 23, 4, 1, 'h')
+            val at = stage(m, 8, 26)
+            val g = Geo(m, at)
+            val px = g.right + 1
+            val py = g.top - 2
+            val p = when (i) {
+                0 -> Pose(look = look(1, 0), eyes = Eye.Focus, handL = xy(px - 1, py + 3), handR = xy(px + 5, py + 2))
+                1 -> Pose(look = look(1, 0), eyes = Eye.Focus, handL = xy(px - 1, py + 3), handR = xy(px + 5, py + 3))
+                2 -> Pose(look = look(1, 0), handR = xy(px + 4, py + 3))
+                3 -> Pose(dx = 1, look = look(1, -1), handR = xy(g.right + 3, g.top - 3))
+                4 -> Pose(dx = 2, look = look(1, -1), eyes = Eye.Focus, handR = xy(22, 10))
+                5 -> Pose(dx = 2, look = look(1, -1), eyes = Eye.Focus, handR = xy(22, 11))
+                6 -> Pose(dx = 2, look = look(1, 0), eyes = Eye.Wide, handR = xy(22, 10))
+                7 -> Pose(dx = 1, look = look(1, -1), eyes = Eye.Wide)
+                8 -> Pose(dx = 1, dy = -1, eyes = Eye.Happy, handL = xy(g.left, g.top - 2), handR = xy(g.right + 2, g.top - 2))
+                9 -> Pose(dx = 1, dy = -2, eyes = Eye.Happy, handL = xy(g.left, g.top - 3), handR = xy(g.right + 2, g.top - 3))
+                10 -> Pose(dx = 1, eyes = Eye.Happy)
+                11 -> Pose(look = look(1, -1))
+                12 -> Pose(look = look(1, 1))
+                else -> Pose(look = look(1, 1), handR = xy(17, 22))
+            }
+            putMascot(lm, m, at, p, t) { h ->
+                if (i == 0) { paper(h, px, py, 5, 6); h.rect(px + 1, py + 1, 3, 1, 's'); h.rect(px + 1, py + 3, 3, 1, 's') }
+                if (i == 1) { paper(h, px, py + 2, 5, 3); h.rect(px, py + 2, 4, 1, 'h') }
+                if (i == 2) { paper(h, px + 1, py + 2, 3, 3); h.rect(px + 1, py + 3, 2, 1, 'h') }
+                if (i == 3) paper(h, g.right + 3, g.top - 6, 3, 3)
+                // Le bulletin se redresse au-dessus de la fente, y entre, tombe et rejoint la pile.
+                if (i == 4) paper(h, 23, 9, 2, 4)
+                if (i == 5) { paper(h, 23, 10, 2, 3); h.rect(23, 14, 2, 2, 'F') }
+                if (i == 6) h.rect(23, 17, 2, 2, 'F')
+                if (i == 7) h.rect(22, 22, 3, 1, 'F')
+                if (i == 13) h.rect(16, 21, 3, 2, 'F')
+            }
+        }
+    },
     ;
 
     protected abstract fun draw(lb: Grid, lm: Grid, lf: Grid, m: MascotKind, i: Int, t: Int, down: Boolean)
