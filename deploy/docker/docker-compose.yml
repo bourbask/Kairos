@@ -7,8 +7,16 @@ x-logging: &logging
     max-size: 10m
     max-file: "3"
 
+# Durcissement des conteneurs Kairos : aucune capacité, aucune élévation de privilèges.
+x-hardening: &hardening
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+
 # Config commune aux conteneurs Kairos (scheduler + runs manuels).
 x-kairos-common: &kairos-common
+  <<: *hardening
   image: kairos:local
   user: "1001:1001"             # conteneurs non-root : fichiers créés = propriété de l'utilisateur hôte
   environment: &kairos-env
@@ -75,6 +83,7 @@ services:
   # Tentacules MCP (HTTP /mcp) : publiés sur le réseau privé uniquement, jeton obligatoire (kairos.env).
   memoire:
     logging: *logging
+    <<: *hardening
     image: kairos:local
     restart: unless-stopped
     user: "1001:1001"
@@ -94,6 +103,7 @@ services:
 
   agenda:
     logging: *logging
+    <<: *hardening
     image: kairos:local
     restart: unless-stopped
     user: "1001:1001"
@@ -113,6 +123,7 @@ services:
 
   finances:
     logging: *logging
+    <<: *hardening
     image: kairos:local
     restart: unless-stopped
     user: "1001:1001"
@@ -129,6 +140,7 @@ services:
 
   alimentation:
     logging: *logging
+    <<: *hardening
     image: kairos:local
     restart: unless-stopped
     user: "1001:1001"
@@ -148,6 +160,7 @@ services:
 
   marches:
     logging: *logging
+    <<: *hardening
     image: kairos:local
     restart: unless-stopped
     user: "1001:1001"

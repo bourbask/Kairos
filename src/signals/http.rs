@@ -79,8 +79,10 @@ pub struct HttpSignalSource {
 
 impl HttpSignalSource {
     pub fn new(config: SignalsConfig) -> anyhow::Result<Self> {
+        // Sans redirection : l'en-tête de clé, au nom libre, suivrait vers un autre hôte.
         let client = reqwest::Client::builder()
             .timeout(REQUEST_TIMEOUT)
+            .redirect(reqwest::redirect::Policy::none())
             .build()?;
         Ok(Self { config, client })
     }
