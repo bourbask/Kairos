@@ -722,6 +722,7 @@ fn raison(statut: &str) -> &'static str {
         "modele_indisponible" => "modèle indisponible",
         "sortie_invalide" => "réponse du modèle inutilisable",
         "source_indisponible" => "source indisponible",
+        "rattrapage_en_cours" => "rattrapage en cours",
         _ => "échec",
     }
 }
@@ -1119,6 +1120,10 @@ mod tests {
         s.db().unwrap().nuit_noter("condensation", "sortie_invalide", Some("lot_trop_long"), None, now).unwrap();
         let b = s.brief_at(now, BriefPeriod::Matin).unwrap();
         assert!(b.contains("condensation en attente depuis le 09/11/2026 — réponse du modèle inutilisable (souvenirs trop longs à résumer)"), "{b}");
+        // Rattrapage plafonné par nuit : dit, jusqu'à ce qu'il soit fini.
+        noter("extraction", "rattrapage_en_cours", NaiveDate::from_ymd_opt(2026, 11, 1));
+        let b = s.brief_at(now, BriefPeriod::Matin).unwrap();
+        assert!(b.contains("Mémoire : extraction en attente depuis le 02/11/2026 — rattrapage en cours"), "{b}");
         // Rattrapée : la ligne disparaît.
         noter("extraction", "ok", NaiveDate::from_ymd_opt(2026, 11, 8));
         assert!(!s.brief_at(now, BriefPeriod::Matin).unwrap().contains("extraction"));

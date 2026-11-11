@@ -1163,7 +1163,8 @@ async fn skipped_days_are_caught_up_next_night() {
     fx.llm.lock().unwrap().replies.extend([hint.clone(), hint]);
     run(Job::Summaries, at(9, 3, 0), &mut fx.ctx).await.unwrap();
     assert_eq!(applied_days(&fx.rec), vec!["2026-10-31"]);
-    assert_eq!(etat(&fx.rec, "extraction"), (Some("2026-11-06".into()), "ok".into()));
+    // Jours restants au-delà de la limite de la nuit : signalés, pas tus.
+    assert_eq!(etat(&fx.rec, "extraction"), (Some("2026-11-06".into()), "rattrapage_en_cours".into()));
     run(Job::Summaries, at(10, 3, 0), &mut fx.ctx).await.unwrap();
     assert_eq!(applied_days(&fx.rec), vec!["2026-10-31", "2026-11-08"]);
     assert_eq!(etat(&fx.rec, "extraction"), (Some("2026-11-09".into()), "ok".into()));
@@ -1394,7 +1395,7 @@ async fn stuck_day_retried_until_source_dropped() {
     for k in 0..15 {
         let now = at(1, 3, 0) + chrono::TimeDelta::days(k);
         run(Job::Summaries, now, &mut fx.ctx).await.unwrap();
-        let attendu = if k < 14 { "source_indisponible" } else { "ok" };
+        let attendu = if k < 14 { "source_indisponible" } else { "rattrapage_en_cours" };
         assert_eq!(etat(&fx.rec, "habitudes").1, attendu, "nuit {k}");
     }
     let jours = habit_days(&fx.rec);
@@ -1410,4 +1411,31 @@ async fn failing_source_is_still_expected() {
     let h = fx.rec.habits.lock().unwrap()[0].clone();
     assert_eq!(h["sources"], json!({}));
     assert_eq!(h["attendues"], json!(["t"]));
+}
+
+#[tokio::test]
+async fn capped_habits_catch_up_is_reported() {
+    let mut fx = fixture("JB_H7", &[], vec![]).await;
+    set_etat(&fx.rec, "habitudes", "2026-10-25");
+    run(Job::Summaries, at(9, 3, 0), &mut fx.ctx).await.unwrap();
+    assert_eq!(habit_days(&fx.rec).len(), 7);
+    assert_eq!(etat(&fx.rec, "habitudes"), (Some("2026-11-01".into()), "rattrapage_en_cours".into()));
+    // Exactement sept jours restants : la nuit suivante rattrape tout.
+    run(Job::Summaries, at(10, 3, 0), &mut fx.ctx).await.unwrap();
+    assert_eq!(etat(&fx.rec, "habitudes"), (Some("2026-11-08".into()), "ok".into()));
+}
+
+#[tokio::test]
+async fn capped_condensation_is_reported() {
+    let replies = (0..4).map(|_| text("Semaine calme.")).collect();
+    let mut fx = fixture("JB_N11", NIGHT_USAGES, replies).await;
+    *fx.rec.lots.lock().unwrap() = (41..46).map(|w| lot(&format!("2026-W{w}"), false)).collect();
+    run(Job::Summaries, at(9, 3, 0), &mut fx.ctx).await.unwrap();
+    assert_eq!(fx.rec.condensed.lock().unwrap().len(), 4);
+    assert_eq!(etat(&fx.rec, "condensation").1, "rattrapage_en_cours");
+    assert_eq!(motif(&fx.rec, "condensation"), None);
+    fx.llm.lock().unwrap().replies.push_back(text("Semaine calme."));
+    run(Job::Summaries, at(10, 3, 0), &mut fx.ctx).await.unwrap();
+    assert_eq!(fx.rec.condensed.lock().unwrap().len(), 5);
+    assert_eq!(etat(&fx.rec, "condensation").1, "ok");
 }

@@ -239,7 +239,8 @@ pub struct Bilan {
 /// Étapes de la nuit dont l'état est conservé.
 pub const ETAPES_NUIT: [&str; 4] = ["extraction", "habitudes", "condensation", "oubli"];
 /// Statuts possibles d'une étape de nuit : des codes, jamais de texte libre.
-pub const STATUTS_NUIT: [&str; 5] = ["ok", "modele_indisponible", "sortie_invalide", "echec", "source_indisponible"];
+/// `rattrapage_en_cours` : la nuit a atteint son plafond, des jours ou lots restent.
+pub const STATUTS_NUIT: [&str; 6] = ["ok", "modele_indisponible", "sortie_invalide", "echec", "source_indisponible", "rattrapage_en_cours"];
 /// En dessous de cette force, une habitude est estompée.
 const SEUIL_ESTOMPE_HABITUDE: f64 = 0.3;
 /// Motifs possibles d'une sortie invalide : des codes, jamais de texte libre.
