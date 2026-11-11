@@ -6,6 +6,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.remember
 import androidx.compose.ui.unit.dp
 
 /** Réglage du thème ; clair par défaut, automatique selon la luminosité ambiante. */
@@ -20,13 +21,14 @@ private val KairosShapes = Shapes(
 )
 
 @Composable
-fun KairosTheme(dark: Boolean, content: @Composable () -> Unit) {
-    val colors = if (dark) DarkColors else LightColors
+fun KairosTheme(dark: Boolean, palette: ThemePalette = ThemePalette.Fougere, content: @Composable () -> Unit) {
+    val colors = remember(palette, dark) { colorScheme(palette.roles(dark), dark) }
+    val kairos = remember(palette, dark) { KairosColors.of(palette, dark) }
     MaterialTheme(colorScheme = colors, typography = KairosTypography, shapes = KairosShapes) {
         // Texte posé hors d'une Surface : couleur du thème, pas le noir par défaut de Compose.
         CompositionLocalProvider(
             LocalContentColor provides colors.onBackground,
-            LocalKairosColors provides if (dark) DarkKairosColors else LightKairosColors,
+            LocalKairosColors provides kairos,
             content = content,
         )
     }

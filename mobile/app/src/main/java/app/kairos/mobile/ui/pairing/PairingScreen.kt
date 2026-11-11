@@ -50,6 +50,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import app.kairos.mobile.data.Credentials
 import app.kairos.mobile.data.Pairing
 import app.kairos.mobile.ui.mascot.Mascot
+import app.kairos.mobile.ui.mascot.onPageColors
 import app.kairos.mobile.ui.mascot.MascotState
 import com.google.mlkit.vision.barcode.BarcodeScannerOptions
 import com.google.mlkit.vision.barcode.BarcodeScanning
@@ -103,7 +104,7 @@ fun PairingScreen(message: String?, onSubmit: suspend (Credentials) -> String?) 
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         Spacer(Modifier.height(8.dp))
-        Mascot(if (busy) MascotState.Reflechit else MascotState.Attend, size = 88.dp, onBackground = MaterialTheme.colorScheme.background)
+        Mascot(if (busy) MascotState.Reflechit else MascotState.Attend, size = 88.dp, colors = onPageColors())
         Text("Appairer Kairos", style = MaterialTheme.typography.headlineMedium)
         Text(
             "Sur le serveur, lance « tete pair <nom> » puis scanne le QR code affiché.",
