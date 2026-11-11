@@ -12,11 +12,10 @@ use crate::briefing::sanitize;
 use crate::config::Profile;
 use crate::llm::{LlmRouter, Sensitivity, Urgency};
 
-/// Voie de génération déclarée par le module : la synthèse porte sur des sujets
-/// suivis par l'utilisateur, et sa production n'attend aucun lecteur immédiat.
-/// Le nom d'usage est celui auquel une concession de configuration se rattache.
+/// Voie de génération du module : sa production n'attend aucun lecteur
+/// immédiat. La sensibilité vient de la configuration de routage (stratégique
+/// par défaut) ; déclaré commun, l'usage ne reçoit que les signaux publics.
 pub const LLM_USAGE: &str = "signals";
-pub const LLM_SENSITIVITY: Sensitivity = Sensitivity::Strategic;
 pub const LLM_URGENCY: Urgency = Urgency::Deferred;
 
 /// Source de signaux prospectifs et modèle chargé de leur synthèse. Toutes les
@@ -122,47 +121,43 @@ pub trait SignalSource: Send + Sync {
 /// reformulation. Le reste du profil est volontairement écarté : il décrit une
 /// recherche d'emploi et ne fait que détourner la lecture des signaux.
 ///
+/// En voie commune, aucun élément propre au lecteur (sujets suivis,
+/// localisation, zones) n'entre dans le prompt : seuls les signaux publics
+/// quittent la machine.
+///
 /// Les énoncés sont déjà assainis (`Signal::new`) : ils proviennent d'une API et
 /// sont traités comme non fiables avant d'entrer dans le prompt.
-pub fn build_synthesis_prompt(profile: &Profile, interests: &[String], signals: &[Signal]) -> String {
+pub fn build_synthesis_prompt(
+    profile: &Profile,
+    interests: &[String],
+    signals: &[Signal],
+    sensitivity: Sensitivity,
+) -> String {
+    let with_reader = sensitivity == Sensitivity::Strategic;
     let mut prompt = String::new();
 
     prompt.push_str(
         "Tu es un analyste. À partir des signaux ci-dessous, rédige une synthèse \
          courte en français (200 mots maximum).\n\n\
          Contraintes :\n\
-         - Dégage les 2 ou 3 éléments qui comptent, ignore le reste.\n\
-         - Lis-les uniquement à travers les sujets suivis ci-dessous.\n\
-         - N'évoque ni carrière, ni emploi, ni compétences techniques : hors sujet ici.\n\
+         - Dégage les 2 ou 3 éléments qui comptent, ignore le reste.\n",
+    );
+    if with_reader {
+        prompt.push_str("- Lis-les uniquement à travers les sujets suivis ci-dessous.\n");
+    }
+    prompt.push_str(
+        "- N'évoque ni carrière, ni emploi, ni compétences techniques : hors sujet ici.\n\
          - Distingue une estimation de modèle d'une cotation de marché : la seconde engage de l'argent.\n\
          - N'invente aucun chiffre, aucun événement, aucune source absente de la liste.\n\
          - Si les signaux sont trop faibles pour conclure, dis-le en une phrase et arrête-toi.\n\
          - Pas de titre, pas de préambule, pas de liste à puces : du texte suivi.\n\n",
     );
 
-    prompt.push_str("Contexte du lecteur :\n");
-    if !interests.is_empty() {
-        prompt.push_str(&format!(
-            "- Sujets suivis : {}\n",
-            interests
-                .iter()
-                .map(|i| sanitize(i))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ));
-    }
-    prompt.push_str(&format!(
-        "- Localisation : {}\n",
-        sanitize(&profile.contact.location)
-    ));
-    if !profile.preferences.countries.is_empty() {
-        prompt.push_str(&format!(
-            "- Zones d'intérêt : {}\n",
-            profile.preferences.countries.join(", ")
-        ));
+    if with_reader {
+        push_reader_context(&mut prompt, profile, interests);
     }
 
-    prompt.push_str("\nSignaux :\n");
+    prompt.push_str("Signaux :\n");
     for kind in [SignalKind::Market, SignalKind::Forecast] {
         for signal in signals.iter().filter(|s| s.kind == kind).take(MAX_PER_KIND) {
             prompt.push_str(&format!(
@@ -184,8 +179,34 @@ pub fn build_synthesis_prompt(profile: &Profile, interests: &[String], signals: 
     prompt
 }
 
+/// Cadre de lecture propre à l'utilisateur, réservé à la voie stratégique.
+fn push_reader_context(prompt: &mut String, profile: &Profile, interests: &[String]) {
+    prompt.push_str("Contexte du lecteur :\n");
+    if !interests.is_empty() {
+        prompt.push_str(&format!(
+            "- Sujets suivis : {}\n",
+            interests
+                .iter()
+                .map(|i| sanitize(i))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    prompt.push_str(&format!(
+        "- Localisation : {}\n",
+        sanitize(&profile.contact.location)
+    ));
+    if !profile.preferences.countries.is_empty() {
+        prompt.push_str(&format!(
+            "- Zones d'intérêt : {}\n",
+            profile.preferences.countries.join(", ")
+        ));
+    }
+    prompt.push('\n');
+}
+
 /// Récupère les signaux et rend la synthèse. Le profil ne fournit que le cadre
-/// de lecture (localisation, zones). Renvoie `None` dès qu'une étape n'aboutit
+/// de lecture (localisation, zones), en voie stratégique seulement. Renvoie `None` dès qu'une étape n'aboutit
 /// pas — configuration absente incluse : la section est omise, le briefing reste
 /// produit.
 pub async fn synthesize(
@@ -216,8 +237,9 @@ pub async fn synthesize(
         }
     };
 
-    let prompt = build_synthesis_prompt(profile, &config.interests, &signals);
-    let client = match router.client(LLM_USAGE, LLM_SENSITIVITY, LLM_URGENCY) {
+    let sensitivity = router.sensitivity(LLM_USAGE);
+    let prompt = build_synthesis_prompt(profile, &config.interests, &signals, sensitivity);
+    let client = match router.client(LLM_USAGE, sensitivity, LLM_URGENCY) {
         Ok(client) => client,
         Err(e) => {
             tracing::warn!("synthèse non routée : {e}");
@@ -305,6 +327,7 @@ mod tests {
             &profile(),
             &["géopolitique".into(), "[énergie](x)".into()],
             &[signal(SignalKind::Market, "A", 0.5)],
+            Sensitivity::Strategic,
         );
         assert!(prompt.contains("Sujets suivis : géopolitique"));
         assert!(!prompt.contains("[énergie]"));
@@ -313,7 +336,12 @@ mod tests {
     #[test]
     fn prompt_omits_topics_line_when_none_configured() {
         let prompt =
-            build_synthesis_prompt(&profile(), &[], &[signal(SignalKind::Market, "A", 0.5)]);
+            build_synthesis_prompt(
+            &profile(),
+            &[],
+            &[signal(SignalKind::Market, "A", 0.5)],
+            Sensitivity::Strategic,
+        );
         assert!(!prompt.contains("Sujets suivis"));
     }
 
@@ -322,7 +350,7 @@ mod tests {
         let signals: Vec<_> = (0..MAX_PER_KIND + 5)
             .map(|i| signal(SignalKind::Market, &format!("marche {i}"), 0.5))
             .collect();
-        let prompt = build_synthesis_prompt(&profile(), &[], &signals);
+        let prompt = build_synthesis_prompt(&profile(), &[], &signals, Sensitivity::Strategic);
         assert_eq!(prompt.matches("[Marché]").count(), MAX_PER_KIND);
     }
 
@@ -332,6 +360,7 @@ mod tests {
             &profile(),
             &[],
             &[signal(SignalKind::Forecast, "escalade", 0.79)],
+            Sensitivity::Strategic,
         );
         assert!(prompt.contains("79 %"), "prompt = {prompt}");
         assert!(prompt.contains("horizon 7d"));
@@ -344,14 +373,8 @@ mod tests {
         assert!(synthesize(None, &profile(), &router).await.is_none());
     }
 
-    /// La déclaration du module est stratégique : le routeur refuse la voie
-    /// externe pour cet usage, même quand elle est la seule configurée.
-    #[test]
-    fn module_declares_a_strategic_deferred_generation() {
-        assert_eq!(LLM_SENSITIVITY, Sensitivity::Strategic);
-        assert_eq!(LLM_URGENCY, Urgency::Deferred);
-
-        let router = LlmRouter::from_config(crate::config::LlmRoutingConfig {
+    fn external_only_router(common_usages: Vec<String>) -> LlmRouter {
+        LlmRouter::from_config(crate::config::LlmRoutingConfig {
             self_hosted: None,
             external: Some(crate::config::LlmConfig {
                 endpoint: "http://externe.invalid".into(),
@@ -360,12 +383,62 @@ mod tests {
                 api_key: None,
                 ..Default::default()
             }),
-            strategic_concessions: vec![],
+            common_usages,
             ..Default::default()
-        });
+        })
+    }
+
+    /// Sans déclaration, l'usage reste stratégique : le routeur refuse la voie
+    /// externe, même quand elle est la seule configurée.
+    #[test]
+    fn undeclared_usage_stays_strategic() {
+        let router = external_only_router(vec![]);
+        assert_eq!(router.sensitivity(LLM_USAGE), Sensitivity::Strategic);
+        assert_eq!(LLM_URGENCY, Urgency::Deferred);
         assert!(router
-            .client(LLM_USAGE, LLM_SENSITIVITY, LLM_URGENCY)
+            .client(LLM_USAGE, router.sensitivity(LLM_USAGE), LLM_URGENCY)
             .is_err());
+    }
+
+    /// Déclaré commun par l'opérateur, l'usage peut suivre la voie externe.
+    #[test]
+    fn declared_common_usage_reaches_external_route() {
+        let router = external_only_router(vec![LLM_USAGE.into()]);
+        assert_eq!(router.sensitivity(LLM_USAGE), Sensitivity::Common);
+        assert!(router
+            .client(LLM_USAGE, router.sensitivity(LLM_USAGE), LLM_URGENCY)
+            .is_ok());
+    }
+
+    /// En voie commune, le prompt ne contient que les signaux publics : aucun
+    /// élément du profil ni des sujets suivis.
+    #[test]
+    fn common_prompt_carries_no_reader_context() {
+        let mut p = profile();
+        p.contact.location = "Villefictive".into();
+        p.preferences.countries = vec!["ZZ".into()];
+        let prompt = build_synthesis_prompt(
+            &p,
+            &["sujetfictif".into()],
+            &[signal(SignalKind::Market, "A", 0.5)],
+            Sensitivity::Common,
+        );
+        assert!(!prompt.contains("Villefictive"));
+        assert!(!prompt.contains("ZZ"));
+        assert!(!prompt.contains("sujetfictif"));
+        assert!(!prompt.contains("Contexte du lecteur"));
+        assert!(!prompt.contains("sujets suivis"));
+        assert!(prompt.contains("[Marché] A"));
+
+        let strategic = build_synthesis_prompt(
+            &p,
+            &["sujetfictif".into()],
+            &[signal(SignalKind::Market, "A", 0.5)],
+            Sensitivity::Strategic,
+        );
+        assert!(strategic.contains("Villefictive"));
+        assert!(strategic.contains("ZZ"));
+        assert!(strategic.contains("sujetfictif"));
     }
 
     #[test]
