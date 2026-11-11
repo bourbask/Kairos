@@ -87,6 +87,7 @@ import app.kairos.mobile.ui.agenda.AgendaScreen
 import java.time.LocalDate
 import app.kairos.mobile.ui.finances.FinancesScreen
 import app.kairos.mobile.ui.marches.MarchesScreen
+import app.kairos.mobile.ui.marches.marketsFalling
 import app.kairos.mobile.ui.memoire.laterIds
 import app.kairos.mobile.ui.memoire.MemoireScreen
 import app.kairos.mobile.ui.medias.MediasScreen
@@ -98,6 +99,7 @@ import app.kairos.mobile.ui.kit.NotifierHost
 import app.kairos.mobile.ui.kit.rememberNotifier
 import app.kairos.mobile.ui.mascot.LocalMascot
 import app.kairos.mobile.ui.mascot.MascotKind
+import app.kairos.mobile.ui.mascot.SceneKind
 import app.kairos.mobile.ui.mascot.mascotDescription
 import app.kairos.mobile.ui.pairing.PairingScreen
 import app.kairos.mobile.ui.talk.ChatScreen
@@ -128,6 +130,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 
@@ -631,6 +635,19 @@ private fun KairosRoot(model: AppModel, dark: Boolean) {
     }
 
     val mascot = mascotFor(talk.mode, conversation.busy || conversation.awaiting, conversation.decisions, conversation.unread)
+    // Espace ouvert : le bouton Kairos joue sa scène (Mimir n'en a pas).
+    val scene = when {
+        tab != Tab.Espaces -> null
+        maisonOpen -> SceneKind.Inventaire
+        financesOpen -> SceneKind.Finances
+        agendaOpen -> SceneKind.Agenda
+        marchesOpen -> SceneKind.Marches
+        memoireOpen -> SceneKind.Memoire
+        mediasOpen -> SceneKind.Medias
+        documentsOpen -> SceneKind.Documents
+        else -> null
+    }
+    val marchesFalling by remember(session) { session.repository.marches.map(::marketsFalling).distinctUntilChanged() }.collectAsState(false)
     val deck = rememberOverlayState(decisionsOpen, Origin.Anchor)
     val chat = rememberOverlayState(chatOpen, Origin.Anchor)
     val settings = rememberOverlayState(settingsOpen, Origin.Anchor)
@@ -644,6 +661,8 @@ private fun KairosRoot(model: AppModel, dark: Boolean) {
             modifier = Modifier.underOverlays(rtl, deck, chat, settings, unpack, add),
             kairosModifier = Modifier.overlayAnchor(chat, KairosButtonCorner),
             mascotState = mascot,
+            scene = scene,
+            sceneDown = marchesFalling,
             kairosState = mascotDescription(mascot, conversation.decisions),
             tab = tab,
             onTab = { tab = it },
