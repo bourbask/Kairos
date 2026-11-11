@@ -619,3 +619,77 @@ data class DocumentsSnapshot(
     val fetchedAt: String? = null,
     val issue: String? = null,
 )
+
+/**
+ * Identité (candidat ou parti) de l'espace Politique. [avatar] : petit personnage facultatif,
+ * gardé brut et validé à l'affichage : une forme inattendue ne fait jamais échouer la lecture.
+ */
+@Serializable
+data class PolIdentity(
+    val id: String,
+    val nom: String = "",
+    val parti: String? = null,
+    val couleur: String? = null,
+    val avatar: JsonElement? = null,
+)
+
+@Serializable
+data class PolRubricSummary(val id: String, val titre: String = "", val resume: String? = null, val entrees: Int = 0)
+
+@Serializable
+data class PolTheme(val id: String, val titre: String = "")
+
+/** Accueil de l'espace Politique (`app_politique_accueil`). */
+@Serializable
+data class PolHome(
+    @SerialName("verifie_le") val checkedOn: String? = null,
+    val identites: List<PolIdentity> = emptyList(),
+    val rubriques: List<PolRubricSummary> = emptyList(),
+    val themes: List<PolTheme> = emptyList(),
+)
+
+/**
+ * Rubrique telle que publiée (`app_politique_rubrique`) : [contenu] hétérogène ;
+ * [rattachements] : par chemin de liste, les identités de chaque entrée, dans l'ordre.
+ */
+@Serializable
+data class PolRubric(
+    val id: String = "",
+    val titre: String = "",
+    val contenu: JsonElement? = null,
+    val rattachements: JsonObject = JsonObject(emptyMap()),
+)
+
+/** Entrées d'une rubrique : fiche (`id`) ou recherche (`rubrique`). */
+@Serializable
+data class PolGroup(
+    val id: String = "",
+    val rubrique: String = "",
+    val titre: String = "",
+    val entrees: List<JsonElement> = emptyList(),
+) {
+    val key: String get() = id.ifEmpty { rubrique }
+}
+
+/** Fiche d'une identité (`app_politique_fiche`). */
+@Serializable
+data class PolFiche(val identite: PolIdentity, val rubriques: List<PolGroup> = emptyList())
+
+/** Résultats de recherche (`app_politique_chercher`). */
+@Serializable
+data class PolSearch(val q: String = "", val resultats: List<PolGroup> = emptyList())
+
+/** Valeur d'une identité ; [valeur] absente ou nulle : non renseignée. */
+@Serializable
+data class PolValue(val id: String = "", val valeur: JsonElement? = null, val source: JsonElement? = null)
+
+@Serializable
+data class PolLine(val libelle: String = "", val unite: String? = null, val valeurs: List<PolValue> = emptyList())
+
+/** Comparaison (`app_politique_comparer`) ; thème et identités en objet ou en identifiant. */
+@Serializable
+data class PolCompare(
+    val theme: JsonElement? = null,
+    val identites: List<JsonElement> = emptyList(),
+    val lignes: List<PolLine> = emptyList(),
+)
