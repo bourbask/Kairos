@@ -23,6 +23,8 @@ pub const KEY_HEADER: &str = "x-partage-cle";
 pub struct PublicState {
     pub store: Arc<Store>,
     pub session_ttl: Ts,
+    /// Appareils qu'un même lien peut ouvrir.
+    pub max_devices: i64,
     pub now: fn() -> Ts,
 }
 
@@ -38,7 +40,7 @@ fn status(code: StatusCode) -> Response {
 
 async fn redeem(State(s): State<PublicState>, headers: HeaderMap) -> Response {
     let token = headers.get(KEY_HEADER).and_then(|v| v.to_str().ok()).unwrap_or_default();
-    match s.store.redeem(token, (s.now)(), s.session_ttl) {
+    match s.store.redeem(token, (s.now)(), s.session_ttl, s.max_devices) {
         Ok(Some(session)) => {
             let cookie = format!("{COOKIE}={session}; Path=/; Max-Age={}; HttpOnly; Secure; SameSite=Lax", s.session_ttl);
             let mut r = status(StatusCode::NO_CONTENT);
@@ -75,7 +77,7 @@ mod tests {
     const TTL: Ts = 30 * 24 * 3600;
 
     fn state() -> PublicState {
-        PublicState { store: Arc::new(Store::memory().unwrap()), session_ttl: TTL, now: || 1_000 }
+        PublicState { store: Arc::new(Store::memory().unwrap()), session_ttl: TTL, max_devices: 3, now: || 1_000 }
     }
 
     async fn cle(s: &PublicState, token: Option<&str>) -> Response {
@@ -105,13 +107,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn redeem_once_sets_cookie_then_404() {
+    async fn each_device_gets_its_cookie_until_cap_then_404() {
         let s = state();
         let (_, tok, _) = s.store.create("a", 900, 3600).unwrap();
-        let r = cle(&s, Some(&tok)).await;
-        assert_eq!(r.status(), StatusCode::NO_CONTENT);
-        let c = cookie_value(&r);
-        assert_eq!(verifier(&s, Some(&format!("autre=1; {c}"))).await, StatusCode::NO_CONTENT);
+        let mut cookies = Vec::new();
+        for _ in 0..3 {
+            let r = cle(&s, Some(&tok)).await;
+            assert_eq!(r.status(), StatusCode::NO_CONTENT);
+            cookies.push(cookie_value(&r));
+        }
+        cookies.dedup();
+        assert_eq!(cookies.len(), 3, "une session par appareil");
+        for c in &cookies {
+            assert_eq!(verifier(&s, Some(&format!("autre=1; {c}"))).await, StatusCode::NO_CONTENT);
+        }
         let again = cle(&s, Some(&tok)).await;
         assert_eq!(again.status(), StatusCode::NOT_FOUND);
         assert!(again.headers().get(header::SET_COOKIE).is_none());
@@ -132,8 +141,10 @@ mod tests {
         assert_eq!(verifier(&s, None).await, StatusCode::UNAUTHORIZED);
         assert_eq!(verifier(&s, Some("__Host-acces=nope")).await, StatusCode::UNAUTHORIZED);
         let (id, tok, _) = s.store.create("a", 900, 3600).unwrap();
-        let c = cookie_value(&cle(&s, Some(&tok)).await);
+        let c1 = cookie_value(&cle(&s, Some(&tok)).await);
+        let c2 = cookie_value(&cle(&s, Some(&tok)).await);
         s.store.revoke(id, 950).unwrap();
-        assert_eq!(verifier(&s, Some(&c)).await, StatusCode::UNAUTHORIZED);
+        assert_eq!(verifier(&s, Some(&c1)).await, StatusCode::UNAUTHORIZED);
+        assert_eq!(verifier(&s, Some(&c2)).await, StatusCode::UNAUTHORIZED);
     }
 }
