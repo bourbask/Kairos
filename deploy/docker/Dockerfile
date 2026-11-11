@@ -12,10 +12,12 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates libssl3 curl \
  && rm -rf /var/lib/apt/lists/*
 # supercronic : planificateur cron pour conteneur.
-# ponytail: version épinglée ; ajouter le sha256 pour la vérif d'intégrité.
+# Version et empreinte épinglées (SHA1 publiée en amont vérifiée) : à changer ensemble.
 ARG SUPERCRONIC_VERSION=v0.2.33
+ARG SUPERCRONIC_SHA256=feefa310da569c81b99e1027b86b27b51e6ee9ab647747b49099645120cfc671
 RUN curl -fsSL -o /usr/local/bin/supercronic \
       "https://github.com/aptible/supercronic/releases/download/${SUPERCRONIC_VERSION}/supercronic-linux-amd64" \
+ && echo "${SUPERCRONIC_SHA256}  /usr/local/bin/supercronic" | sha256sum -c - \
  && chmod +x /usr/local/bin/supercronic
 WORKDIR /app
 # Répertoires des données des tentacules : propriété de l'utilisateur d'exécution (hérité par le volume nommé).

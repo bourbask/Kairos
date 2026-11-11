@@ -78,8 +78,10 @@ impl Store {
     fn init(c: Connection) -> anyhow::Result<Store> {
         // L'administration depuis l'hôte peut écrire en même temps que le service.
         c.busy_timeout(std::time::Duration::from_secs(5))?;
+        // Libellés (tiers) et empreintes purgés réellement effacés du fichier, pas seulement délistés.
         c.execute_batch(
             "PRAGMA journal_mode=WAL;
+             PRAGMA secure_delete=ON;
              CREATE TABLE IF NOT EXISTS liens (
                  id INTEGER PRIMARY KEY,
                  libelle TEXT NOT NULL,
@@ -325,6 +327,13 @@ mod tests {
         // Rouvrir ne refait rien.
         let s = Store::init(s.db.into_inner().unwrap()).unwrap();
         assert!(s.get(1).unwrap().unwrap().proprietaire);
+    }
+
+    #[test]
+    fn secure_delete_is_on() {
+        let s = Store::memory().unwrap();
+        let on: i64 = s.db().query_row("PRAGMA secure_delete", [], |r| r.get(0)).unwrap();
+        assert_eq!(on, 1);
     }
 
     #[test]

@@ -104,10 +104,10 @@ enum class MascotKind(
         }
     },
 
-    /** Caillou rond et lourd ; corps décrit par largeurs de lignes, du bas vers le haut. */
+    /** Caillou de rivière, dessus plat, légèrement de biais ; lignes [x début, x fin], du bas vers le haut. */
     Lithos(
         "Lithos", "Lithos, « la pierre » en grec.",
-        Anchor(7.5, 6, 3, 11, 7, 9), Breath(2600, 0.35f, Breath.Ease.Sine), 1.3,
+        Anchor(7.5, 6, 3, 11, 6, 9), Breath(2600, 0.35f, Breath.Ease.Sine), 1.3,
         Hand(xy(0, 0, 1, 0), 'h'),
         listOf(t(12, 520), t(4, 420), t(6, 600), t(6, 140, 120, 160, 160, 120, 260), t(8, 640)),
     ) {
@@ -139,8 +139,10 @@ enum class MascotKind(
             val q = p.shift(0, hop)
             val bottom = 13
             val top = bottom - shape.size + 1
-            shape.forEachIndexed { i, w -> q.rect((16 - w) / 2, bottom - i, w, 1, if (i == shape.size - 1) 'h' else 'F') }
-            q.pts(xy(4, bottom - 1, 11, bottom - 3, 12, bottom - 1), 'h')
+            shape.forEachIndexed { i, r -> q.rect(r[0], bottom - i, r[1] - r[0] + 1, 1, if (i == 0) 'h' else 'F') }
+            // Face ombrée en bas à droite et grain de la pierre.
+            q.rect(shape[1][1] - 4, bottom - 1, 5, 1, 'h'); q.pts(xy(shape[2][1], bottom - 2, shape[3][1], bottom - 3), 'h')
+            q.pts(xy(9, top + 1, 6, bottom - 1), 'm')
             q.pts(sprout, 'A', 0, top)
             drawEyes(q, EyeRig(4, top + 3, 10, top + 3, 2, 2), eyeMode(pose, auto.both(), blink), look)
             if (st == MascotState.Ecoute) {
@@ -313,15 +315,12 @@ enum class MascotKind(
                 MascotState.Attend -> { tip = if (f % 8 < 4) TIP_S else TIP_C; auto = Eye.Low; handY = 11 }
             }
             val q = p.shift(0, hop)
-            for (r in FLAME_ROWS) q.rect(r[1], r[0], r[2] - r[1] + 1, 1, 'F')
-            for (r in tip) q.rect(r[1], r[0], r[2] - r[1] + 1, 1, 'F')
-            // Base couleur braise.
-            q.rect(4, 12, 8, 1, 'A'); q.rect(5, 13, 6, 1, 'a'); q.pts(xy(3, 11, 12, 11), 'A')
+            // Langues du haut, puis corps à base couleur braise.
+            q.rows(tip, 0, 0); q.rows(FLAME_LOW, 0, 7)
             q.set(if (odd) 6 else 9, 14, 'A')
             drawEyes(q, EyeRig(5, 8, 9, 8, 2, 2), eyeMode(pose, auto.both(), blink), look)
             if (pose.handL == null) q.rect(1, handY, 1, 2, 'h')
             if (pose.handR == null) q.rect(14, if (st == MascotState.Repos) (if (odd) 9 else 10) else handY, 1, 2, 'h')
-            if (st != MascotState.Reflechit && st != MascotState.Attend) q.pts(if (odd) xy(3, 7, 2, 6) else xy(12, 7, 13, 6), 'F')
             spark?.let { q.pts(it, 'A') }
             if (st == MascotState.Reflechit) bubbles(q, xy(9, 3 - f % 2, 10, 1 - f % 2, 11, -1 - f % 2), 1 + f % 3)
         }
@@ -338,9 +337,10 @@ enum class MascotKind(
         Grid(16 + 2 * pad).also { draw(Pen(it, pad, pad), Pose(state = state), f) }
 }
 
-private val GALET_N = intArrayOf(12, 14, 14, 14, 14, 14, 12, 8)
-private val GALET_S = intArrayOf(14, 16, 16, 16, 14, 12, 8)
-private val GALET_T = intArrayOf(10, 12, 12, 12, 12, 12, 12, 10, 6)
+private fun spans(vararg r: Int) = List(r.size / 2) { xy(r[2 * it], r[2 * it + 1]) }
+private val GALET_N = spans(4, 12, 2, 13, 2, 13, 2, 13, 2, 13, 2, 13, 2, 12, 4, 10)
+private val GALET_S = spans(3, 12, 1, 14, 1, 14, 1, 14, 1, 14, 2, 13, 4, 11)
+private val GALET_T = spans(4, 11, 3, 12, 3, 12, 3, 12, 3, 12, 3, 12, 3, 12, 3, 11, 5, 10)
 private val SPROUT_REST = xy(8, -1, 7, -2, 9, -2)
 private val SPROUT_SWAY_L = xy(8, -1, 7, -2, 6, -3)
 private val SPROUT_SWAY_R = xy(8, -1, 9, -2, 10, -3)
@@ -406,13 +406,21 @@ private val TAIL_A = xy(10, 12, 11, 12, 12, 12, 13, 11, 14, 10, 14, 9)
 private val TAIL_B = xy(10, 12, 11, 12, 12, 11, 13, 10, 13, 9, 12, 8)
 private val TAIL_C = xy(10, 12, 11, 12, 12, 12, 13, 12, 14, 11, 15, 10)
 
-/** Lignes de la flamme : y, x de début, x de fin. */
-private val FLAME_ROWS = listOf(xy(5, 6, 9), xy(6, 5, 10), xy(7, 4, 11), xy(8, 3, 12), xy(9, 3, 12), xy(10, 3, 12), xy(11, 3, 12), xy(12, 4, 11), xy(13, 5, 10))
-private val TIP_C = listOf(xy(4, 6, 9), xy(3, 6, 8), xy(2, 7, 8), xy(1, 7, 7))
-private val TIP_L = listOf(xy(4, 6, 8), xy(3, 6, 7), xy(2, 5, 6), xy(1, 5, 5))
-private val TIP_R = listOf(xy(4, 7, 9), xy(3, 8, 9), xy(2, 9, 10), xy(1, 10, 10))
-private val TIP_T = listOf(xy(4, 6, 9), xy(3, 7, 8), xy(2, 7, 8), xy(1, 8, 8), xy(0, 8, 8))
-private val TIP_S = listOf(xy(4, 7, 8))
+/** Corps de la flamme (y 7 à 13, base braise) et langues du haut (y 0 à 6), qui changent à chaque image. */
+private val FLAME_LOW = listOf(
+    "....FFFFFFFF....",
+    "...FFFFFFFFFF...",
+    "...FFFFFFFFFF...",
+    "...AFFFFFFFFA...",
+    "...AAFFFFFFAA...",
+    "....AAAAAAAA....",
+    ".....aaaaaa.....",
+)
+private val TIP_C = listOf(".........F......", "........FF......", ".......FFF......", "....F..FFF......", "....F.FFFFF.....", "....FFFFFFF.F...", "....FFFFFFFFF...")
+private val TIP_R = listOf("..........F.....", ".........FF.....", "........FFF.....", "...F....FF......", "...F...FFFF.....", "....F.FFFFF.....", "....FFFFFFFF....")
+private val TIP_L = listOf("......F.........", "......FF........", "......FFF.......", "......FFF..F....", ".....FFFFF.F....", "...F.FFFFFFF....", "...FFFFFFFFF....")
+private val TIP_T = listOf(".......F........", ".......FF.......", "......FFF.......", "....F.FFFF.F....", "....F.FFFF.F....", "....FFFFFFFF....", "....FFFFFFFF....")
+private val TIP_S = listOf("................", "................", "................", ".......F........", ".......FF.......", "....F.FFF.F.....", "....FFFFFFFF....")
 private val TIP_FLICKER = listOf(TIP_C, TIP_R, TIP_C, TIP_L, TIP_C, TIP_R, TIP_C, TIP_L)
 
 /** État du personnage en mots, pour le lecteur d'écran (le dessin seul ne se lit pas). */
