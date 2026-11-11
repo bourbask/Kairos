@@ -66,6 +66,13 @@ object KairosIcons {
             moveTo(12f, 14f); verticalLineTo(20f)
         }
     }
+    val Share by lazy {
+        icon("Partager") {
+            circle(18f, 5f, 2.5f); circle(6f, 12f, 2.5f); circle(18f, 19f, 2.5f)
+            moveTo(8.2f, 10.8f); lineTo(15.8f, 6.2f)
+            moveTo(8.2f, 13.2f); lineTo(15.8f, 17.8f)
+        }
+    }
     val EyeOff by lazy { icon("Masquer") { eye(); moveTo(4f, 4f); lineTo(20f, 20f) } }
 
     private fun PathBuilder.circle(cx: Float, cy: Float, r: Float) {

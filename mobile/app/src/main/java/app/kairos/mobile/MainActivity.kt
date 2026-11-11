@@ -829,7 +829,7 @@ private fun KairosRoot(model: AppModel, dark: Boolean) {
                             onUnauthorized = model::unauthorized,
                         )
                     },
-                    // Site externe : rien à demander à la tête, seulement le lien enregistré sur l'appareil.
+                    // Site externe : lien enregistré sur l'appareil ; la tête n'émet que les liens de partage.
                     mimirConfigured = model.mimirLink != null,
                     mimirOpen = mimirOpen,
                     onOpenMimir = { mimirOpen = true },
@@ -841,6 +841,9 @@ private fun KairosRoot(model: AppModel, dark: Boolean) {
                             onSave = model::saveMimirLink,
                             onClear = model::clearMimirLink,
                             onClose = { mimirOpen = false },
+                            repository = session.repository,
+                            appScope = model.viewModelScope,
+                            onUnauthorized = model::unauthorized,
                         )
                     },
                 ) {
