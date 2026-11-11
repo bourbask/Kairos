@@ -751,9 +751,9 @@ impl MemoryServer {
         let soon: Vec<_> = db.intentions_open(now).map_err(err)?.into_iter().filter(|i| i.expires_at <= limit).collect();
         let mut lignes: Vec<String> =
             soon.iter().map(|i| format!("- {} (avant le {})", i.what, i.expires_at.format("%d/%m %H:%M"))).collect();
-        // Une habitude remarquée la nuit se dit au matin qui suit.
+        // Une habitude remarquée la nuit se dit au premier matin qui suit, une seule fois.
         if period == BriefPeriod::Matin {
-            for l in db.habitudes_annoncees(now - Duration::hours(24)).map_err(err)? {
+            for l in db.habitudes_annoncees(now).map_err(err)? {
                 lignes.push(format!("- Habitude remarquée : {l} — à confirmer"));
             }
             // Synthèse d'année ancrée au-delà de la limite : dit le matin qui suit, sans contenu.
@@ -1334,6 +1334,22 @@ mod tests {
         let q = s.db().unwrap().intentions_open(matin).unwrap()[0].id;
         s.db().unwrap().intention_set_state(q, IntentionState::Refusee).unwrap();
         assert!(!s.brief_at(matin, BriefPeriod::Matin).unwrap().contains("Habitude remarquée"));
+    }
+
+    #[test]
+    fn habit_announced_in_exactly_one_morning() {
+        let s = srv();
+        let nuit = naitre(&s);
+        let annonce = |at: NaiveDateTime| s.brief_at(at, BriefPeriod::Matin).unwrap().contains("Habitude remarquée");
+        // Brief du soir avant le matin : ne consomme pas l'annonce.
+        assert!(!s.brief_at(nuit + Duration::hours(1), BriefPeriod::Soir).unwrap().contains("Habitude remarquée"));
+        // Matin manqué au-delà de 24 h : l'habitude est dite au premier matin qui suit.
+        let matin = nuit + Duration::hours(28);
+        assert!(annonce(matin));
+        // Brief refait le même matin : encore là.
+        assert!(annonce(matin + Duration::hours(2)));
+        // Le lendemain : plus rien.
+        assert!(!annonce(matin + Duration::days(1)));
     }
 
     /// Sept soirs ouvrés de la même valeur : une habitude naît ; renvoie la dernière nuit.

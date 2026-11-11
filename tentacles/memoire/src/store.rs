@@ -503,7 +503,7 @@ CREATE TABLE IF NOT EXISTS habitudes (
     cadence TEXT NOT NULL CHECK(cadence IN ('quotidien','hebdomadaire')),
     m REAL NOT NULL, positifs INTEGER NOT NULL,
     etat TEXT NOT NULL DEFAULT 'candidate' CHECK(etat IN ('candidate','active','ancienne')),
-    nee_le TEXT, ancienne_depuis TEXT, question INTEGER, annoncee_le TEXT,
+    nee_le TEXT, ancienne_depuis TEXT, question INTEGER, annoncee_le TEXT, briefee_le TEXT,
     confirmee INTEGER NOT NULL DEFAULT 0, rejetee INTEGER NOT NULL DEFAULT 0,
     UNIQUE(source, quoi, contexte, valeur));
 CREATE TABLE IF NOT EXISTS habitudes_sources (source TEXT PRIMARY KEY, dernier_jour TEXT NOT NULL, vu_le TEXT NOT NULL);
@@ -643,6 +643,14 @@ impl MemoryStore {
         )?;
         Self::migrate_souvenirs(&conn)?;
         Self::migrer_nuit(&conn)?;
+        // Bases créées avant l'annonce au briefing : une annonce de plus de 24 h a déjà été dite.
+        if !conn.prepare("SELECT 1 FROM pragma_table_info('habitudes') WHERE name = 'briefee_le'")?.exists([])? {
+            conn.execute_batch("ALTER TABLE habitudes ADD COLUMN briefee_le TEXT;")?;
+            conn.execute(
+                "UPDATE habitudes SET briefee_le = substr(annoncee_le, 1, 10) WHERE annoncee_le < ?",
+                [ts(now_local() - chrono::Duration::hours(24))],
+            )?;
+        }
         Ok(MemoryStore { conn })
     }
 
