@@ -62,7 +62,7 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
-    let state = public::PublicState { store: store.clone(), session_ttl, limiter: Arc::new(public::Limiter::new(public::REDEEM_PER_MINUTE)), now };
+    let state = public::PublicState { store: store.clone(), session_ttl, now };
     let listener = tokio::net::TcpListener::bind(public_bind).await?;
     let public = async move { axum::serve(listener, public::router(state)).await.map_err(anyhow::Error::from) };
     let mcp = tentacle_common::serve(env, move || ShareServer::new(store.clone(), &site, link_ttl, now));

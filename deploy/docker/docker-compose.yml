@@ -164,6 +164,10 @@ services:
     user: "1001:1001"
     mem_limit: 32m
     read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     tmpfs:
       - /tmp
     entrypoint: ["/app/kairos-partage"]
@@ -171,8 +175,9 @@ services:
       PARTAGE_BIND: 0.0.0.0:8101
       PARTAGE_PUBLIC_BIND: 0.0.0.0:8102
       PARTAGE_DB: /app/partage/partage.db
-    env_file:   # PARTAGE_TOKEN, PARTAGE_PUBLIC_URL (obligatoires)
-      - path: kairos.env
+    # Fichier dédié : ce conteneur répond au serveur web public, il ne reçoit aucun autre secret.
+    env_file:   # PARTAGE_TOKEN, PARTAGE_PUBLIC_URL (obligatoires) — cf. partage.env.example
+      - path: partage.env
         required: false
     volumes:
       - partage-data:/app/partage

@@ -66,6 +66,8 @@ impl Store {
     }
 
     fn init(c: Connection) -> anyhow::Result<Store> {
+        // L'administration depuis l'hôte peut écrire en même temps que le service.
+        c.busy_timeout(std::time::Duration::from_secs(5))?;
         c.execute_batch(
             "PRAGMA journal_mode=WAL;
              CREATE TABLE IF NOT EXISTS liens (

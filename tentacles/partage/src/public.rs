@@ -2,8 +2,7 @@
 //! session (`POST /cle`) et contrôle d'une session (`GET /verifier`). Aucune réponse ne
 //! dit pourquoi un jeton est refusé ; rien n'est journalisé.
 
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::sync::Arc;
 
 use axum::{
     Router,
@@ -19,38 +18,16 @@ use crate::store::{Store, Ts};
 pub const COOKIE: &str = "__Host-acces";
 /// En-tête qui porte le jeton, posé par la page d'entrée du site.
 pub const KEY_HEADER: &str = "x-partage-cle";
-/// Plafond global d'échanges par minute (aucune adresse n'est connue ni conservée).
-pub const REDEEM_PER_MINUTE: u32 = 30;
 
 #[derive(Clone)]
 pub struct PublicState {
     pub store: Arc<Store>,
     pub session_ttl: Ts,
-    pub limiter: Arc<Limiter>,
     pub now: fn() -> Ts,
 }
 
-/// Fenêtre fixe d'une minute, en mémoire seulement.
-pub struct Limiter {
-    max: u32,
-    window: Mutex<(Instant, u32)>,
-}
-
-impl Limiter {
-    pub fn new(max: u32) -> Limiter {
-        Limiter { max, window: Mutex::new((Instant::now(), 0)) }
-    }
-
-    fn allow(&self) -> bool {
-        let mut w = self.window.lock().unwrap_or_else(|p| p.into_inner());
-        if w.0.elapsed() >= Duration::from_secs(60) {
-            *w = (Instant::now(), 0);
-        }
-        w.1 += 1;
-        w.1 <= self.max
-    }
-}
-
+/// La limite de débit est posée par le serveur web, par client : ici, tous les appels
+/// arrivent de la même adresse.
 pub fn router(state: PublicState) -> Router {
     Router::new().route("/cle", post(redeem)).route("/verifier", get(verify)).with_state(state)
 }
@@ -60,9 +37,6 @@ fn status(code: StatusCode) -> Response {
 }
 
 async fn redeem(State(s): State<PublicState>, headers: HeaderMap) -> Response {
-    if !s.limiter.allow() {
-        return status(StatusCode::NOT_FOUND);
-    }
     let token = headers.get(KEY_HEADER).and_then(|v| v.to_str().ok()).unwrap_or_default();
     match s.store.redeem(token, (s.now)(), s.session_ttl) {
         Ok(Some(session)) => {
@@ -100,8 +74,8 @@ mod tests {
 
     const TTL: Ts = 30 * 24 * 3600;
 
-    fn state(max: u32) -> PublicState {
-        PublicState { store: Arc::new(Store::memory().unwrap()), session_ttl: TTL, limiter: Arc::new(Limiter::new(max)), now: || 1_000 }
+    fn state() -> PublicState {
+        PublicState { store: Arc::new(Store::memory().unwrap()), session_ttl: TTL, now: || 1_000 }
     }
 
     async fn cle(s: &PublicState, token: Option<&str>) -> Response {
@@ -132,7 +106,7 @@ mod tests {
 
     #[tokio::test]
     async fn redeem_once_sets_cookie_then_404() {
-        let s = state(100);
+        let s = state();
         let (_, tok, _) = s.store.create("a", 900, 3600).unwrap();
         let r = cle(&s, Some(&tok)).await;
         assert_eq!(r.status(), StatusCode::NO_CONTENT);
@@ -145,7 +119,7 @@ mod tests {
 
     #[tokio::test]
     async fn bad_or_missing_token_404() {
-        let s = state(100);
+        let s = state();
         assert_eq!(cle(&s, None).await.status(), StatusCode::NOT_FOUND);
         assert_eq!(cle(&s, Some("abc")).await.status(), StatusCode::NOT_FOUND);
         let (_, tok, _) = s.store.create("a", 0, 10).unwrap();
@@ -154,21 +128,12 @@ mod tests {
 
     #[tokio::test]
     async fn verifier_refuses_without_valid_session() {
-        let s = state(100);
+        let s = state();
         assert_eq!(verifier(&s, None).await, StatusCode::UNAUTHORIZED);
         assert_eq!(verifier(&s, Some("__Host-acces=nope")).await, StatusCode::UNAUTHORIZED);
         let (id, tok, _) = s.store.create("a", 900, 3600).unwrap();
         let c = cookie_value(&cle(&s, Some(&tok)).await);
         s.store.revoke(id, 950).unwrap();
         assert_eq!(verifier(&s, Some(&c)).await, StatusCode::UNAUTHORIZED);
-    }
-
-    #[tokio::test]
-    async fn rate_limited_redeem_is_404() {
-        let s = state(1);
-        let (_, a, _) = s.store.create("a", 900, 3600).unwrap();
-        let (_, b, _) = s.store.create("b", 900, 3600).unwrap();
-        assert_eq!(cle(&s, Some(&a)).await.status(), StatusCode::NO_CONTENT);
-        assert_eq!(cle(&s, Some(&b)).await.status(), StatusCode::NOT_FOUND);
     }
 }
