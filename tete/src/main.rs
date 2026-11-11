@@ -18,6 +18,14 @@ use tokio::sync::RwLock;
 
 const LLM_ROUTING_PATH: &str = "config/llm.toml";
 const REFRESH_EVERY: Duration = Duration::from_secs(300);
+/// Un tentacule absent (redémarré en même temps que la tête, par exemple) est recherché plus souvent.
+const RETRY_EVERY: Duration = Duration::from_secs(20);
+
+/// Délai avant le prochain rafraîchissement : tant qu'un tentacule manque, on le recherche
+/// vite (redémarré en même temps que la tête), puis de plus en plus rarement (poste éteint).
+fn refresh_delay(all_connected: bool, previous: Duration) -> Duration {
+    if all_connected { REFRESH_EVERY } else { (previous * 2).clamp(RETRY_EVERY, REFRESH_EVERY) }
+}
 /// Purge du journal de conversation : au démarrage, puis une fois par jour.
 const PURGE_EVERY: Duration = Duration::from_secs(24 * 3600);
 /// Au-delà, l'utilisateur est prévenu que la réponse arrive.
@@ -94,12 +102,14 @@ async fn main() -> anyhow::Result<()> {
         };
         let entries = cfg.tentacles.clone();
         tokio::spawn(async move {
+            let mut delay = refresh_delay(modules.read().await.all_connected(), RETRY_EVERY / 2);
             loop {
-                tokio::time::sleep(REFRESH_EVERY).await;
+                tokio::time::sleep(delay).await;
                 // Reconnexion complète hors verrou, puis échange de l'`Arc` : ni un tentacule
                 // injoignable ni un appel en cours ne font attendre l'application.
                 // ponytail: reconnecte aussi les tentacules sains ; ne relancer que les absents si le coût se voit.
                 let fresh = Tentacles::connect(&entries).await;
+                delay = refresh_delay(fresh.all_connected(), delay);
                 *modules.write().await = Arc::new(fresh);
             }
         });
@@ -118,6 +128,7 @@ async fn main() -> anyhow::Result<()> {
     let mut tick = tokio::time::interval(Duration::from_secs(60));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut last_refresh = tokio::time::Instant::now();
+    let mut next_refresh = refresh_delay(ctx.tentacles.all_connected(), RETRY_EVERY / 2);
     let mut last_purge: Option<tokio::time::Instant> = None;
     tracing::info!(tentacules = ctx.cfg.tentacles.len(), "tête prête");
 
@@ -175,9 +186,10 @@ async fn main() -> anyhow::Result<()> {
                     }
                     last_purge = Some(tokio::time::Instant::now());
                 }
-                if last_refresh.elapsed() >= REFRESH_EVERY {
+                if last_refresh.elapsed() >= next_refresh {
                     ctx.tentacles.refresh().await;
                     last_refresh = tokio::time::Instant::now();
+                    next_refresh = refresh_delay(ctx.tentacles.all_connected(), next_refresh);
                 }
                 for job in due(now(), &ctx.cfg, &ctx.state, ctx.last_suggestion, ctx.last_alerts) {
                     if let Err(e) = run(job, now(), &mut ctx).await {
@@ -186,5 +198,22 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod refresh_tests {
+    use super::*;
+
+    #[test]
+    fn missing_tentacle_retried_fast_then_backs_off() {
+        let d1 = refresh_delay(false, RETRY_EVERY / 2);
+        assert_eq!(d1, RETRY_EVERY);
+        let d2 = refresh_delay(false, d1);
+        assert_eq!(d2, RETRY_EVERY * 2);
+        let mut d = d2;
+        for _ in 0..10 { d = refresh_delay(false, d); }
+        assert_eq!(d, REFRESH_EVERY);
+        assert_eq!(refresh_delay(true, RETRY_EVERY), REFRESH_EVERY);
     }
 }
