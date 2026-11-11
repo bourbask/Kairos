@@ -42,6 +42,8 @@ const NIGHT_MAX_CHARS: usize = 64_000;
 /// Jours rattrapés au plus par nuit.
 const NIGHT_DAYS: usize = 7;
 const NIGHT_LOTS: usize = 4;
+/// Journées déjà extraites rejouées au plus par nuit, en plus de l'avance.
+const NIGHT_REPLAYS: usize = 3;
 const HINTS_MAX: usize = 50;
 /// Taille maximale du texte d'un lot soumis au moteur : au-delà, l'entrée
 /// risquerait d'être coupée par la fenêtre de contexte et la synthèse d'oublier
@@ -638,51 +640,99 @@ async fn note(name: &str, step: &str, status: &str, motif: Option<&str>, day: Op
     }
 }
 
+#[derive(Deserialize)]
+struct Replay {
+    jour: NaiveDate,
+    n: i64,
+}
+
 /// Jours en attente depuis le dernier traité (sinon la veille seule), jusqu'à
-/// la veille, plus anciens d'abord. Un jour en échec reste en attente.
+/// la veille, plus anciens d'abord. Un jour en échec reste en attente. Avant
+/// eux, quelques journées déjà extraites qui ont reçu un résumé depuis sont
+/// rejouées : bornées, elles ne retardent jamais l'avance.
 async fn extract(name: &str, last: Option<NaiveDate>, now: NaiveDateTime, ctx: &Ctx) -> &'static str {
+    let mut client = None;
+    let Ok(replays) = night_tool(name, "nuit_a_rejouer", json!({"max": NIGHT_REPLAYS}), ctx)
+        .await
+        .and_then(|v| Ok(serde_json::from_value::<Vec<Replay>>(v)?))
+    else {
+        return FAILED;
+    };
+    // Un rejeu en échec est signalé sans arrêter l'avance.
+    let mut replay_status = None;
+    for r in replays {
+        // Journée encore en attente d'un résumé : rejouée une prochaine nuit.
+        let res = match pending(name, r.jour, ctx).await {
+            Ok(0) => extract_day(name, r.jour, Some(r.n), &mut client, ctx).await,
+            Ok(_) => continue,
+            Err(status) => Err(status),
+        };
+        if let Err(status) = res {
+            replay_status = Some(status);
+            break;
+        }
+    }
     let yesterday = now.date() - TimeDelta::days(1);
     let first = last.map_or(yesterday, |d| d + TimeDelta::days(1));
-    let mut client = None;
     let done = catch_up(first, yesterday);
     for day in first.iter_days().take_while(|d| *d <= yesterday).take(NIGHT_DAYS) {
-        let jour = day.format("%Y-%m-%d").to_string();
         // Une conversation pas encore résumée n'est pas un épisode : la journée attend son résumé.
-        match night_tool(name, "nuit_en_attente", json!({"jour": jour}), ctx).await.map(|v| v["conversations"].as_u64()) {
-            Ok(Some(0)) => {}
-            Ok(Some(_)) => return NO_MODEL,
-            _ => return FAILED,
+        match pending(name, day, ctx).await {
+            Ok(0) => {}
+            Ok(_) => return NO_MODEL,
+            Err(status) => return status,
         }
-        let Ok(episodes) = night_tool(name, "nuit_episodes", json!({"jour": jour}), ctx).await.and_then(|v| Ok(serde_json::from_value::<Vec<Element>>(v)?)) else {
-            return FAILED;
-        };
-        if !episodes.is_empty() {
-            if client.is_none() {
-                let Ok(c) = engine(ctx.agent.router(), "memoire_extraction", Urgency::Deferred).await else {
-                    return NO_MODEL;
-                };
-                client = Some(c);
-            }
-            let Ok(keys) = night_tool(name, "nuit_cles", json!({}), ctx).await.and_then(|v| Ok(serde_json::from_value::<Vec<String>>(v)?)) else {
-                return FAILED;
-            };
-            let texts: Vec<String> = episodes.iter().map(|e| format!("- {}", e.texte)).collect();
-            let input = format!("Jour : {jour}\nClés connues : {}\n\nJournée :\n{}", keys.join(", "), texts.join("\n"));
-            let Ok(reply) = chat(client.as_ref().expect("moteur obtenu"), Urgency::Deferred, EXTRACTION_PROMPT, &[ChatTurn::User(input)], &[]).await else {
-                return NO_MODEL;
-            };
-            let hints = serde_json::from_str::<Vec<Hint>>(unfence(reply.text.as_deref().unwrap_or_default()));
-            let Some(hints) = hints.ok().filter(|h| h.len() <= HINTS_MAX) else {
-                return INVALID;
-            };
-            match night_tool(name, "nuit_appliquer", json!({"jour": jour, "indices": hints}), ctx).await {
-                Ok(b) => tracing::info!(tentacule = %name, indices = hints.len(), deduits = b["deduits"].as_u64().unwrap_or(0), "extraction de nuit"),
-                Err(_) => return FAILED,
-            }
+        if let Err(status) = extract_day(name, day, None, &mut client, ctx).await {
+            return status;
         }
         note(name, "extraction", OK, None, Some(day), ctx).await;
     }
-    done
+    replay_status.unwrap_or(done)
+}
+
+/// Conversations du jour encore à résumer.
+async fn pending(name: &str, day: NaiveDate, ctx: &Ctx) -> Result<u64, &'static str> {
+    let jour = day.format("%Y-%m-%d").to_string();
+    night_tool(name, "nuit_en_attente", json!({"jour": jour}), ctx).await.ok().and_then(|v| v["conversations"].as_u64()).ok_or(FAILED)
+}
+
+/// Extrait et applique les indices d'une journée. Une journée rejouée est
+/// toujours appliquée, même vide : c'est ce qui la retire de la file.
+async fn extract_day(name: &str, day: NaiveDate, replay: Option<i64>, client: &mut Option<LlmClient>, ctx: &Ctx) -> Result<(), &'static str> {
+    let jour = day.format("%Y-%m-%d").to_string();
+    let episodes = night_tool(name, "nuit_episodes", json!({"jour": jour}), ctx)
+        .await
+        .and_then(|v| Ok(serde_json::from_value::<Vec<Element>>(v)?))
+        .map_err(|_| FAILED)?;
+    if episodes.is_empty() && replay.is_none() {
+        return Ok(());
+    }
+    let mut hints = Vec::new();
+    if !episodes.is_empty() {
+        if client.is_none() {
+            *client = Some(engine(ctx.agent.router(), "memoire_extraction", Urgency::Deferred).await.map_err(|_| NO_MODEL)?);
+        }
+        let keys = night_tool(name, "nuit_cles", json!({}), ctx)
+            .await
+            .and_then(|v| Ok(serde_json::from_value::<Vec<String>>(v)?))
+            .map_err(|_| FAILED)?;
+        let texts: Vec<String> = episodes.iter().map(|e| format!("- {}", e.texte)).collect();
+        let input = format!("Jour : {jour}\nClés connues : {}\n\nJournée :\n{}", keys.join(", "), texts.join("\n"));
+        let reply = chat(client.as_ref().expect("moteur obtenu"), Urgency::Deferred, EXTRACTION_PROMPT, &[ChatTurn::User(input)], &[])
+            .await
+            .map_err(|_| NO_MODEL)?;
+        hints = serde_json::from_str::<Vec<Hint>>(unfence(reply.text.as_deref().unwrap_or_default()))
+            .ok()
+            .filter(|h| h.len() <= HINTS_MAX)
+            .ok_or(INVALID)?;
+    }
+    let mut args = json!({"jour": jour, "indices": hints});
+    if let Some(n) = replay {
+        args["rejeu"] = json!(n);
+    }
+    let b = night_tool(name, "nuit_appliquer", args, ctx).await.map_err(|_| FAILED)?;
+    tracing::info!(tentacule = %name, indices = hints.len(), deduits = b["deduits"].as_u64().unwrap_or(0), rejeu = replay.is_some(), "extraction de nuit");
+    Ok(())
 }
 
 /// Statut d'un rattrapage jour par jour de `first` à `until`, plafonné à

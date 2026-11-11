@@ -227,6 +227,13 @@ pub struct Indice {
     pub value: String,
 }
 
+/// Journée à rejouer ; `n` change à chaque résumé tardif.
+#[derive(Debug, Serialize)]
+pub struct Rejeu {
+    pub jour: NaiveDate,
+    pub n: i64,
+}
+
 /// Effet de l'application d'une extraction.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct Bilan {
@@ -267,9 +274,6 @@ const INDICE_VALEUR_MAX: usize = 300;
 const PAS_CONFIANCE: f64 = 0.25;
 /// Durée de vie d'une question de confirmation, en jours.
 const QUESTION_JOURS: i64 = 7;
-/// Durée de conservation des marques de renforcement : une journée rejouée
-/// dans cette fenêtre ne renforce pas deux fois.
-const RENFORCEMENT_JOURS: i64 = 30;
 
 /// Forme comparable d'une valeur : sans casse, espaces réduits.
 fn norme(v: &str) -> String {
@@ -506,6 +510,8 @@ CREATE TABLE IF NOT EXISTS habitudes (
     nee_le TEXT, ancienne_depuis TEXT, question INTEGER, annoncee_le TEXT, briefee_le TEXT,
     confirmee INTEGER NOT NULL DEFAULT 0, rejetee INTEGER NOT NULL DEFAULT 0,
     UNIQUE(source, quoi, contexte, valeur));
+CREATE TABLE IF NOT EXISTS jours_a_rejouer (
+    jour TEXT PRIMARY KEY, n INTEGER NOT NULL DEFAULT 1, depuis TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS habitudes_sources (source TEXT PRIMARY KEY, dernier_jour TEXT NOT NULL, vu_le TEXT NOT NULL);
 ";
 
@@ -981,14 +987,22 @@ impl MemoryStore {
     /// valeur qui la contredit devient une question de confirmation, le reste
     /// une déduction. Ne modifie jamais une valeur déclarée. Rejouable sans effet.
     pub fn appliquer_extraction(&self, jour: NaiveDate, indices: &[Indice], maintenant: NaiveDateTime) -> Result<Bilan> {
+        self.appliquer(jour, indices, maintenant, None)
+    }
+
+    /// Rejeu d'une journée déjà extraite : seules les déductions comptent, la
+    /// journée a déjà eu ses renforcements et ses questions. Retire la journée
+    /// de la file si aucun résumé n'est arrivé depuis sa lecture (`n`).
+    pub fn rejouer_extraction(&self, jour: NaiveDate, n: i64, indices: &[Indice], maintenant: NaiveDateTime) -> Result<Bilan> {
+        self.appliquer(jour, indices, maintenant, Some(n))
+    }
+
+    fn appliquer(&self, jour: NaiveDate, indices: &[Indice], maintenant: NaiveDateTime, rejeu: Option<i64>) -> Result<Bilan> {
         let j = jour.format("%Y-%m-%d").to_string();
         let mut b = Bilan::default();
         let connues = self.cles()?;
-        // Marques gardées sur une fenêtre glissante : une journée rejouée y retrouve les siennes.
-        let fenetre = (maintenant.date() - Days::new(RENFORCEMENT_JOURS as u64)).format("%Y-%m-%d").to_string();
-        let renforcable = j >= fenetre;
         let tx = self.conn.unchecked_transaction()?;
-        tx.execute("DELETE FROM renforcements_jour WHERE jour < ?", [&fenetre])?;
+        tx.execute("DELETE FROM renforcements_jour WHERE jour < ?", [&j])?;
         for i in indices {
             let (Some(key), value) = (cle_connue(&connues, i.key.trim()), i.value.trim()) else {
                 b.ignores += 1;
@@ -1003,8 +1017,9 @@ impl MemoryStore {
                 .query_row("SELECT value FROM fact_log WHERE key = ? ORDER BY id DESC LIMIT 1", [key], |r| r.get(0))
                 .optional()?;
             match declaree {
+                Some(_) if rejeu.is_some() => {}
                 Some(v) if norme(&v) == norme(value) => {
-                    let nouveau = renforcable && tx.execute("INSERT OR IGNORE INTO renforcements_jour (key, jour) VALUES (?, ?)", [key, &j])? > 0;
+                    let nouveau = tx.execute("INSERT OR IGNORE INTO renforcements_jour (key, jour) VALUES (?, ?)", [key, &j])? > 0;
                     if nouveau && renforcer_souvenir(&tx, "fait", key, maintenant)? {
                         b.renforces += 1;
                     }
@@ -1064,8 +1079,30 @@ impl MemoryStore {
                 }
             }
         }
+        if let Some(n) = rejeu {
+            tx.execute("DELETE FROM jours_a_rejouer WHERE jour = ? AND n = ?", params![j, n])?;
+        }
         tx.commit()?;
         Ok(b)
+    }
+
+    /// Journées déjà extraites à rejouer, plus anciennes d'abord.
+    pub fn jours_a_rejouer(&self, max: usize) -> Result<Vec<Rejeu>> {
+        let mut st = self.conn.prepare("SELECT jour, n FROM jours_a_rejouer ORDER BY jour LIMIT ?")?;
+        st.query_map([max as i64], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?
+            .map(|row| {
+                let (jour, n) = row?;
+                Ok(Rejeu { jour: NaiveDate::parse_from_str(&jour, "%Y-%m-%d")?, n })
+            })
+            .collect()
+    }
+
+    /// Vrai si une journée attend son rejeu depuis plus de deux nuits.
+    pub fn rejeu_en_retard(&self, maintenant: NaiveDateTime) -> Result<bool> {
+        Ok(self
+            .conn
+            .prepare("SELECT 1 FROM jours_a_rejouer WHERE depuis < ?")?
+            .exists([ts(maintenant - chrono::Duration::hours(48))])?)
     }
 
     // --- Intentions ---
@@ -1211,11 +1248,13 @@ impl MemoryStore {
                 "UPDATE conversations_fts SET text = (SELECT summary || ' ' || transcript FROM conversations WHERE id = ?1) WHERE rowid = ?1",
                 [id],
             )?;
-            // Journée déjà extraite : l'extraction y revient pour ne pas perdre ses indices.
+            // Journée déjà extraite : rejouée la nuit suivante pour ne pas perdre ses indices.
             tx.execute(
-                "UPDATE nuit_etat SET dernier_jour = date((SELECT substr(started_at, 1, 10) FROM conversations WHERE id = ?1), '-1 day')
-                 WHERE etape = 'extraction' AND dernier_jour >= (SELECT substr(started_at, 1, 10) FROM conversations WHERE id = ?1)",
-                [id],
+                "INSERT INTO jours_a_rejouer (jour, depuis)
+                 SELECT substr(c.started_at, 1, 10), ?2 FROM conversations c JOIN nuit_etat e ON e.etape = 'extraction'
+                 WHERE c.id = ?1 AND substr(c.started_at, 1, 10) <= e.dernier_jour
+                 ON CONFLICT(jour) DO UPDATE SET n = n + 1",
+                params![id, ts(now_local())],
             )?;
         }
         tx.commit()?;
@@ -1749,12 +1788,6 @@ mod tests {
         let s = store();
         s.nuit_noter("extraction", "ok", None, NaiveDate::from_ymd_opt(2099, 12, 31), t()).unwrap();
         s
-    }
-
-    /// Résume une conversation puis remet l'extraction à jour : seule la condensation décide.
-    fn resumer(s: &MemoryStore, id: i64, resume: &str, sujets: &[String], decisions: &[String]) {
-        s.conversation_set_summary(id, resume, sujets, decisions).unwrap();
-        s.nuit_noter("extraction", "ok", None, NaiveDate::from_ymd_opt(2099, 12, 31), t()).unwrap();
     }
 
     pub(super) fn t() -> NaiveDateTime {
@@ -2505,7 +2538,7 @@ mod tests {
         let s = store_extrait();
         let j = episode_le(&s, "taille des rosiers", t());
         let c = s.conversation_ingest(&conv("discussion sur les rosiers")).unwrap();
-        resumer(&s, c, "conseils de taille", &[], &[]);
+        s.conversation_set_summary(c, "conseils de taille", &[], &[]).unwrap();
         vieillir(&s, "conversation", &c.to_string(), t());
         let m = t() + Duration::days(30);
         assert_eq!(s.condensables(m, 10).unwrap()[0].elements.len(), 2);
@@ -2536,7 +2569,7 @@ mod tests {
         let s = store_extrait();
         let j = episode_le(&s, "zygomorphe", t());
         let c = s.conversation_ingest(&conv("xylophone")).unwrap();
-        resumer(&s, c, "quokka", &[], &[]);
+        s.conversation_set_summary(c, "quokka", &[], &[]).unwrap();
         vieillir(&s, "conversation", &c.to_string(), t());
         assert!(index_garde(&s, "journal_fts", "zygomorphe") && index_garde(&s, "conversations_fts", "quokka"));
         condense(&s, "semaine", "2026-W44", "ornithorynque", t() + Duration::days(30)).unwrap().unwrap();
@@ -2593,7 +2626,7 @@ mod tests {
         s.conn.execute("UPDATE journal SET at = ?", [ts(t())]).unwrap();
         vieillir(&s, "journal", &j.to_string(), t());
         let c = s.conversation_ingest(&conv("bavardage")).unwrap();
-        resumer(&s, c, "bilan", &["jardin".into()], &["planter des fèves".into()]);
+        s.conversation_set_summary(c, "bilan", &["jardin".into()], &["planter des fèves".into()]).unwrap();
         vieillir(&s, "conversation", &c.to_string(), t());
         s.conversation_ingest(&NewConversation { session_id: Some("x".into()), ..conv("pas résumée") }).unwrap();
         s.conn.execute("UPDATE conversations SET started_at = '2026-10-01 10:00:00' WHERE session_id = 'x'", []).unwrap();
@@ -2680,11 +2713,11 @@ mod tests {
         let debut = maintenant - Duration::days(30);
         let c = NewConversation { started_at: debut, ended_at: debut, session_id: Some("s".into()), ..conv("première") };
         let id = s.conversation_ingest(&c).unwrap();
-        resumer(&s, id, "bilan", &[], &[]);
+        s.conversation_set_summary(id, "bilan", &[], &[]).unwrap();
         vieillir(&s, "conversation", &id.to_string(), debut);
         assert_eq!(s.condensables(maintenant, 10).unwrap().len(), 1);
         s.conversation_ingest(&NewConversation { transcript: "suite".into(), ..c }).unwrap();
-        resumer(&s, id, "bilan complet", &[], &[]);
+        s.conversation_set_summary(id, "bilan complet", &[], &[]).unwrap();
         assert!(s.condensables(maintenant, 10).unwrap().is_empty());
     }
 
@@ -2692,17 +2725,17 @@ mod tests {
     fn conversation_with_topics_only_has_content() {
         let s = store_extrait();
         let c = s.conversation_ingest(&conv("bavardage")).unwrap();
-        resumer(&s, c, "", &["jardin".into()], &[]);
+        s.conversation_set_summary(c, "", &["jardin".into()], &[]).unwrap();
         vieillir(&s, "conversation", &c.to_string(), t());
         assert_eq!(s.conversations_non_resumees_avant(t().date() + Duration::days(1)).unwrap(), 0);
         let lots = s.condensables(t() + Duration::days(30), 10).unwrap();
         assert_eq!(lots.len(), 1);
         assert!(lots[0].elements[0].texte.contains("Sujets : jardin"));
         let d = s.conversation_ingest(&NewConversation { session_id: Some("y".into()), ..conv("muette") }).unwrap();
-        resumer(&s, d, "", &[], &["arroser".into()]);
+        s.conversation_set_summary(d, "", &[], &["arroser".into()]).unwrap();
         assert_eq!(s.conversations_non_resumees_avant(t().date() + Duration::days(1)).unwrap(), 0);
         // Résumé blanc : un résultat, rien à retenir ; la conversation n'attend plus.
-        resumer(&s, d, " ", &[], &[]);
+        s.conversation_set_summary(d, " ", &[], &[]).unwrap();
         assert_eq!(s.conversations_non_resumees_avant(t().date() + Duration::days(1)).unwrap(), 0);
     }
 
@@ -2879,39 +2912,58 @@ mod tests {
         s.fact_set_at("ville", "Ville-A", "utilisateur", t()).unwrap();
         s.appliquer_extraction(d(1), &[indice("ville", "Ville-A")], jour(2026, 11, 1)).unwrap();
         s.appliquer_extraction(d(2), &[indice("ville", "Ville-A")], jour(2026, 11, 2)).unwrap();
-        assert_eq!(compte(&s, "SELECT COUNT(*) FROM renforcements_jour"), 2);
-        let tard = jour(2026, 11, 2) + Duration::days(RENFORCEMENT_JOURS + 1);
-        s.appliquer_extraction(d(2), &[], tard).unwrap();
-        assert_eq!(compte(&s, "SELECT COUNT(*) FROM renforcements_jour"), 0);
+        assert_eq!(compte(&s, "SELECT COUNT(*) FROM renforcements_jour WHERE jour < '2026-11-02'"), 0);
+        assert_eq!(compte(&s, "SELECT COUNT(*) FROM renforcements_jour"), 1);
     }
 
     #[test]
-    fn replayed_day_reinforces_once() {
-        let s = store();
-        s.fact_set_at("ville", "Ville-A", "utilisateur", t()).unwrap();
-        assert_eq!(s.appliquer_extraction(d(1), &[indice("ville", "Ville-A")], jour(2026, 11, 2)).unwrap().renforces, 1);
-        s.appliquer_extraction(d(2), &[indice("ville", "Ville-A")], jour(2026, 11, 3)).unwrap();
-        // Journée rejouée après une conversation tardive : déjà comptée.
-        assert_eq!(s.appliquer_extraction(d(1), &[indice("ville", "Ville-A")], jour(2026, 11, 4)).unwrap().renforces, 0);
-        // Au-delà de la fenêtre, la marque a disparu : la journée ne renforce plus.
-        let tard = jour(2026, 11, 2) + Duration::days(RENFORCEMENT_JOURS + 1);
-        assert_eq!(s.appliquer_extraction(d(1), &[indice("ville", "Ville-A")], tard).unwrap().renforces, 0);
-    }
-
-    #[test]
-    fn late_summary_reopens_extracted_day() {
+    fn late_summary_queues_extracted_day() {
         let s = store();
         let pointeur = |s: &MemoryStore| s.nuit_etat().unwrap().into_iter().find(|e| e.etape == "extraction").unwrap().dernier_jour;
         let id = s.conversation_ingest(&conv("tardive")).unwrap();
-        // Journée de la conversation déjà extraite : elle sera rejouée.
-        s.nuit_noter("extraction", "ok", None, Some(t().date() + Duration::days(2)), t()).unwrap();
+        // Journée pas encore extraite : rien à rejouer.
+        s.nuit_noter("extraction", "ok", None, Some(t().date() - Duration::days(1)), t()).unwrap();
+        s.conversation_set_summary(id, "Résumé.", &[], &[]).unwrap();
+        assert!(s.jours_a_rejouer(10).unwrap().is_empty());
+        // Journée déjà extraite : mise en file, le pointeur ne bouge pas.
+        let fin = t().date() + Duration::days(2);
+        s.nuit_noter("extraction", "ok", None, Some(fin), t()).unwrap();
         s.conversation_set_summary(id, "Résumé tardif.", &[], &[]).unwrap();
-        assert_eq!(pointeur(&s), Some(t().date() - Duration::days(1)));
-        // Journée pas encore extraite : rien ne bouge.
-        let avant = t().date() - Duration::days(5);
-        s.nuit_noter("extraction", "ok", None, Some(avant), t()).unwrap();
+        let file = s.jours_a_rejouer(10).unwrap();
+        assert_eq!(file.iter().map(|r| r.jour).collect::<Vec<_>>(), [t().date()]);
+        assert_eq!(pointeur(&s), Some(fin));
+        // Résumé refait pendant le rejeu : la journée reste en file pour le nouveau résumé.
         s.conversation_set_summary(id, "Résumé refait.", &[], &[]).unwrap();
-        assert_eq!(pointeur(&s), Some(avant));
+        s.rejouer_extraction(file[0].jour, file[0].n, &[], t()).unwrap();
+        let file = s.jours_a_rejouer(10).unwrap();
+        assert_eq!(file.len(), 1);
+        s.rejouer_extraction(file[0].jour, file[0].n, &[], t()).unwrap();
+        assert!(s.jours_a_rejouer(10).unwrap().is_empty());
+        // Rejouée deux fois : sans effet.
+        s.rejouer_extraction(file[0].jour, file[0].n, &[], t()).unwrap();
+        assert!(s.jours_a_rejouer(10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn replay_neither_reinforces_nor_asks() {
+        let s = store();
+        s.fact_set_at("ville", "Ville-A", "utilisateur", t()).unwrap();
+        s.fact_set_at("animal", "chat", "utilisateur", t()).unwrap();
+        let indices = [indice("ville", "Ville-A"), indice("animal", "chien"), indice("ville.quartier", "Nord")];
+        let b = s.rejouer_extraction(d(1), 1, &indices, jour(2026, 11, 3)).unwrap();
+        assert_eq!((b.renforces, b.questions, b.deduits), (0, 0, 1));
+        assert!(s.intentions_open(jour(2026, 11, 3)).unwrap().is_empty());
+    }
+
+    #[test]
+    fn replay_overdue_after_two_nights() {
+        let s = store();
+        let id = s.conversation_ingest(&conv("tardive")).unwrap();
+        s.nuit_noter("extraction", "ok", None, Some(t().date()), t()).unwrap();
+        s.conversation_set_summary(id, "Résumé tardif.", &[], &[]).unwrap();
+        let depuis = now_local();
+        assert!(!s.rejeu_en_retard(depuis + Duration::hours(47)).unwrap());
+        assert!(s.rejeu_en_retard(depuis + Duration::hours(49)).unwrap());
     }
 
     #[test]
