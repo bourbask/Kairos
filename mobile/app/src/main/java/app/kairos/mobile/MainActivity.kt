@@ -130,7 +130,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            val dark = rememberDark(model.theme)
+            val dark = rememberDark(model.theme.takeIf { model.loaded })
             // Icônes des barres système : sombres sur thème clair, claires sur thème sombre.
             DisposableEffect(dark) {
                 enableEdgeToEdge(

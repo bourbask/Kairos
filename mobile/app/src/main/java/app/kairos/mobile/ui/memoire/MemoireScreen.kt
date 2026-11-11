@@ -843,7 +843,7 @@ private fun FactPanel(
             .background(MaterialTheme.colorScheme.background)
             .padding(top = padding.calculateTopPadding()),
     ) {
-        SpaceHeader(factLabel(key).replaceFirstChar { it.titlecase() }, onClose, backLabel = "Retour à la mémoire")
+        SpaceHeader(factLabel(key).replaceFirstChar { it.titlecase() }, onClose)
         Column(
             Modifier
                 .fillMaxSize()
