@@ -145,7 +145,7 @@ fn elire(c: &Connection, source: &str, o: &Observation, j: &str, maintenant: Nai
     };
     let question = proposer_question(c, &what, maintenant)?;
     c.execute(
-        "UPDATE habitudes SET etat = 'active', nee_le = ?, question = ?, annoncee_le = ? WHERE id = ?",
+        "UPDATE habitudes SET etat = 'active', nee_le = ?, question = ?, annoncee_le = ?, briefee_le = NULL WHERE id = ?",
         params![j, question, ts(maintenant), id],
     )?;
     c.execute(
@@ -241,13 +241,21 @@ pub(super) fn migrer(c: &Connection, maintenant: NaiveDateTime) -> Result<()> {
 }
 
 impl MemoryStore {
-    /// Libellés des habitudes annoncées depuis `depuis` dont la question attend une réponse.
-    pub fn habitudes_annoncees(&self, depuis: NaiveDateTime) -> Result<Vec<String>> {
-        let mut st = self.conn.prepare(
-            "SELECT h.libelle FROM habitudes h JOIN intentions i ON i.id = h.question
-             WHERE i.state = 'proposee' AND h.rejetee = 0 AND h.annoncee_le >= ? ORDER BY h.annoncee_le, h.id",
-        )?;
-        Ok(st.query_map([ts(depuis)], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?)
+    /// Libellés des habitudes à dire au briefing du matin de `maintenant` :
+    /// une annonce est dite un seul matin, et reste ce matin-là si le briefing
+    /// est refait.
+    pub fn habitudes_annoncees(&self, maintenant: NaiveDateTime) -> Result<Vec<String>> {
+        let jour = maintenant.date().format("%Y-%m-%d").to_string();
+        let attente = "FROM habitudes h JOIN intentions i ON i.id = h.question
+             WHERE i.state = 'proposee' AND h.rejetee = 0 AND h.annoncee_le IS NOT NULL";
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(&format!("UPDATE habitudes SET briefee_le = ?1 WHERE briefee_le IS NULL AND id IN (SELECT h.id {attente})"), [&jour])?;
+        let out = tx
+            .prepare(&format!("SELECT h.libelle {attente} AND h.briefee_le = ? ORDER BY h.annoncee_le, h.id"))?
+            .query_map([&jour], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        tx.commit()?;
+        Ok(out)
     }
 
     /// Efface pour de bon une habitude, son souvenir et sa question ouverte ;
@@ -776,6 +784,23 @@ mod tests {
         assert_eq!(compte(&s, "SELECT COUNT(*) FROM souvenirs WHERE nature = 'habitude'"), 0);
         assert_eq!(compte(&s, "SELECT COUNT(*) FROM intentions"), 0);
         assert!(!s.habitude_oublier(id).unwrap());
+    }
+
+    #[test]
+    fn migration_marks_every_past_announcement_as_said() {
+        let chemin = std::env::temp_dir().join(format!("memoire-annonce-{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&chemin);
+        let p = chemin.to_str().unwrap();
+        let s = MemoryStore::open(p).unwrap();
+        serie(&s, 0, 7, "maison");
+        // Base d'avant le marqueur, annonce toute récente : l'ancien briefing l'a peut-être déjà dite.
+        s.conn.execute("UPDATE habitudes SET annoncee_le = ? WHERE annoncee_le IS NOT NULL", [ts(now_local())]).unwrap();
+        s.conn.execute_batch("ALTER TABLE habitudes DROP COLUMN briefee_le;").unwrap();
+        drop(s);
+        let s = MemoryStore::open(p).unwrap();
+        assert!(s.habitudes_annoncees(now_local() + chrono::Duration::days(1)).unwrap().is_empty());
+        drop(s);
+        let _ = std::fs::remove_file(&chemin);
     }
 
     #[test]

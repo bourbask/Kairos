@@ -127,7 +127,7 @@ fun MimirScreen(
         ownerBusy = true
         try {
             // Le lien rejoint le parcours habituel : gardé jusqu'à l'ouverture de session, puis réduit à l'origine.
-            save(createShareLink(repository, OWNER_LABEL))
+            save(createShareLink(repository, OWNER_LABEL, owner = true))
         } catch (_: ApiError.Unauthorized) {
             unauthorized()
         } catch (e: ApiError) {

@@ -143,6 +143,13 @@ class MimirStateTest {
     }
 
     @Test
+    fun owner_link_request_is_flagged() {
+        // Le module remplace les liens du propriétaire jamais ouverts : le marqueur doit partir.
+        assertEquals("""{"libelle":"moi","proprietaire":true}""", shareRequest(OWNER_LABEL, owner = true).toString())
+        assertEquals("""{"libelle":"Exemple"}""", shareRequest("Exemple").toString())
+    }
+
+    @Test
     fun module_replies_are_read() {
         val link = KairosJson.decodeFromString(ShareLink.serializer(), """{"lien":"https://site.example.org/entrer#k=abc","expire_le":"2027-03-08T10:00:00Z"}""")
         assertEquals("https://site.example.org/entrer#k=abc", link.lien)
