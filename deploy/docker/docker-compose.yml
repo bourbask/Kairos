@@ -178,7 +178,7 @@ services:
     ports:
       - "${TENTACLES_BIND_ADDR:-127.0.0.1}:${MARCHES_BIND_PORT:-8099}:8099"
 
-  # Partage du site par liens à usage unique. Port MCP (8101) : joint par la tête sur le réseau
+  # Partage du site par liens ouvrables sur quelques appareils. Port MCP (8101) : joint par la tête sur le réseau
   # interne, jamais publié. Port 8102 : réservé au serveur web du site, via le réseau
   # `partage-public` (le compose du site le rejoint en `external: true`).
   partage:

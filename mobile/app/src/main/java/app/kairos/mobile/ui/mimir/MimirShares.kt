@@ -48,7 +48,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import java.time.LocalDate
 
-/** Demande un nouveau lien à usage unique ; rend le lien vérifié (https, jeton dans le fragment). */
+/** Demande un nouveau lien ; rend le lien vérifié (https, jeton dans le fragment). */
 suspend fun createShareLink(repository: Repository, label: String, owner: Boolean = false): String {
     val r = repository.lookup(PARTAGE, "app_partage_creer", ShareLink.serializer(), shareRequest(label, owner))
     return normalizeMimirLink(r.lien).getOrElse { throw ApiError.Server(200, ApiError.Server.UNREADABLE) }
@@ -65,8 +65,8 @@ private fun sendLink(context: Context, link: String) {
 }
 
 /**
- * « Partager » : libellé prérempli, modifiable, puis un lien neuf, valable une fois,
- * remis aussitôt à la feuille de partage.
+ * « Partager » : libellé prérempli, modifiable, puis un lien neuf, ouvrable sur quelques
+ * appareils, remis aussitôt à la feuille de partage.
  */
 @Composable
 fun ShareDialog(repository: Repository, onDismiss: () -> Unit, onUnauthorized: () -> Unit) {
@@ -101,7 +101,7 @@ fun ShareDialog(repository: Repository, onDismiss: () -> Unit, onUnauthorized: (
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
-                    "Un lien neuf, à ouvrir une seule fois dans les 3 jours. Révocable à tout moment.",
+                    "Un lien neuf, valable 3 jours, jusqu'à 3 appareils. Révocable à tout moment.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

@@ -3,17 +3,17 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, bail};
-use kairos_partage::{now, public, store::Store, tools::{ShareServer, clean_label}};
+use kairos_partage::{now, public, store::{MAX_DEVICES, Store}, tools::{ShareServer, clean_label}};
 use tentacle_common::TentacleEnv;
 
 fn var(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|v| !v.is_empty())
 }
 
-fn hours(name: &str, default: i64) -> anyhow::Result<i64> {
+fn positive(name: &str, default: i64) -> anyhow::Result<i64> {
     match var(name) {
         None => Ok(default),
-        Some(v) => v.parse::<i64>().ok().filter(|h| *h > 0).with_context(|| format!("{name} : nombre d'heures positif attendu")),
+        Some(v) => v.parse::<i64>().ok().filter(|h| *h > 0).with_context(|| format!("{name} : entier positif attendu")),
     }
 }
 
@@ -29,8 +29,9 @@ fn site_url() -> anyhow::Result<String> {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let store = Arc::new(Store::open(var("PARTAGE_DB").unwrap_or_else(|| "/app/partage/partage.db".into()))?);
-    let link_ttl = hours("PARTAGE_LIEN_HEURES", 72)? * 3600;
-    let session_ttl = hours("PARTAGE_SESSION_HEURES", 30 * 24)? * 3600;
+    let link_ttl = positive("PARTAGE_LIEN_HEURES", 72)? * 3600;
+    let session_ttl = positive("PARTAGE_SESSION_HEURES", 30 * 24)? * 3600;
+    let max_devices = positive("PARTAGE_APPAREILS_MAX", MAX_DEVICES)?;
 
     // Administration depuis l'hôte, sans l'application : `kairos-partage creer <libellé>` ou `revoquer <id>`.
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -62,10 +63,10 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
-    let state = public::PublicState { store: store.clone(), session_ttl, now };
+    let state = public::PublicState { store: store.clone(), session_ttl, max_devices, now };
     let listener = tokio::net::TcpListener::bind(public_bind).await?;
     let public = async move { axum::serve(listener, public::router(state)).await.map_err(anyhow::Error::from) };
-    let mcp = tentacle_common::serve(env, move || ShareServer::new(store.clone(), &site, link_ttl, now));
+    let mcp = tentacle_common::serve(env, move || ShareServer::new(store.clone(), &site, link_ttl, max_devices, now));
     tokio::try_join!(public, mcp)?;
     Ok(())
 }

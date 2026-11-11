@@ -7,6 +7,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 
@@ -155,9 +156,10 @@ class MimirStateTest {
         assertEquals("https://site.example.org/entrer#k=abc", link.lien)
         val list = KairosJson.decodeFromString(
             ListSerializer(Share.serializer()),
-            """[{"id":2,"libelle":"b","cree_le":"2027-03-05T10:00:00Z","expire_le":"2027-03-08T10:00:00Z","ouvert_le":null,"actif":true}]""",
+            """[{"id":2,"libelle":"b","cree_le":"2027-03-05T10:00:00Z","expire_le":"2027-03-08T10:00:00Z","ouvert_le":null,"acces_jusqu_au":null,"appareils":0,"max_appareils":3,"actif":true}]""",
         )
         assertEquals(null, list[0].openedAt)
+        assertEquals(3, list[0].maxDevices)
         assertTrue(list[0].actif)
     }
 
@@ -165,10 +167,28 @@ class MimirStateTest {
     fun status_line_follows_state() {
         val s = Share(1, "a", "2027-03-05T09:00:00Z", "2027-03-08T09:00:00Z", null, true)
         assertEquals("Créé le 05/03 10:00 · à ouvrir avant le 08/03 10:00", shareStatus(s, paris))
-        val opened = s.copy(openedAt = "2027-03-06T09:00:00Z", expiresAt = "2027-04-05T09:00:00Z")
-        assertEquals("Ouvert le 06/03 10:00 · accès jusqu'au 05/04 11:00", shareStatus(opened, paris))
+        val opened = s.copy(openedAt = "2027-03-06T09:00:00Z", accessUntil = "2027-04-05T09:00:00Z", devices = 1, maxDevices = 3)
+        val during = Instant.parse("2027-03-07T00:00:00Z")
+        assertEquals(
+            "Ouvert sur 1 appareil sur 3 · accès jusqu'au 05/04 11:00 · autre appareil avant le 08/03 10:00",
+            shareStatus(opened, paris, during),
+        )
+        val after = Instant.parse("2027-03-09T00:00:00Z")
+        assertEquals("Ouvert sur 1 appareil sur 3 · accès jusqu'au 05/04 11:00", shareStatus(opened, paris, after))
+        val full = opened.copy(devices = 3, accessUntil = "2027-04-06T09:00:00Z")
+        assertEquals("Ouvert sur 3 appareils sur 3 · accès jusqu'au 06/04 11:00", shareStatus(full, paris, during))
         assertEquals("Inactif · ouvert le 06/03 10:00", shareStatus(opened.copy(actif = false), paris))
         assertEquals("Inactif · jamais ouvert", shareStatus(s.copy(actif = false), paris))
+    }
+
+    @Test
+    fun older_module_reply_keeps_former_wording() {
+        // Module pas encore à jour : ni décompte ni fin d'accès, l'échéance tient lieu de fin d'accès.
+        val s = KairosJson.decodeFromString(
+            Share.serializer(),
+            """{"id":1,"libelle":"a","cree_le":"2027-03-05T09:00:00Z","expire_le":"2027-04-05T09:00:00Z","ouvert_le":"2027-03-06T09:00:00Z","actif":true}""",
+        )
+        assertEquals("Ouvert le 06/03 10:00 · accès jusqu'au 05/04 11:00", shareStatus(s, paris))
     }
 
     @Test
