@@ -25,6 +25,8 @@ pub struct ShareServer {
     /// Adresse du site, sans `/` final.
     site: String,
     link_ttl: Ts,
+    /// Appareils qu'un même lien peut ouvrir.
+    max_devices: i64,
     now: fn() -> Ts,
     tool_router: ToolRouter<Self>,
 }
@@ -65,26 +67,30 @@ pub fn clean_label(raw: &str) -> Result<String, String> {
     Ok(s)
 }
 
-fn share_json(s: &Share, now: Ts) -> Value {
+/// `expire_le` : fin de la fenêtre d'ouverture ; `acces_jusqu_au` : fin de la dernière session.
+fn share_json(s: &Share, now: Ts, max_devices: i64) -> Value {
     json!({
         "id": s.id,
         "libelle": s.libelle,
         "cree_le": rfc(s.cree_le),
         "expire_le": rfc(s.expire_le),
         "ouvert_le": s.ouvert_le.map(rfc),
+        "acces_jusqu_au": s.acces_jusqu_au().map(rfc),
+        "appareils": s.appareils(now),
+        "max_appareils": max_devices,
         "actif": s.actif(now),
     })
 }
 
 impl ShareServer {
-    pub fn new(store: Arc<Store>, site: &str, link_ttl: Ts, now: fn() -> Ts) -> Self {
-        Self { store, site: site.trim_end_matches('/').to_string(), link_ttl, now, tool_router: Self::tool_router() }
+    pub fn new(store: Arc<Store>, site: &str, link_ttl: Ts, max_devices: i64, now: fn() -> Ts) -> Self {
+        Self { store, site: site.trim_end_matches('/').to_string(), link_ttl, max_devices, now, tool_router: Self::tool_router() }
     }
 }
 
 #[tool_router]
 impl ShareServer {
-    #[tool(description = "Créer un lien de partage à usage unique (application).")]
+    #[tool(description = "Créer un lien de partage, à ouvrir sur quelques appareils (application).")]
     fn app_partage_creer(&self, Parameters(a): Parameters<CreateArgs>) -> Out {
         let label = clean_label(&a.libelle)?;
         let create = if a.proprietaire { Store::create_owner } else { Store::create };
@@ -97,10 +103,10 @@ impl ShareServer {
     fn app_partage_liste(&self) -> Out {
         let now = (self.now)();
         let list = self.store.list().map_err(|e| e.to_string())?;
-        json_out(Value::Array(list.iter().filter(|s| s.visible(now)).map(|s| share_json(s, now)).collect()))
+        json_out(Value::Array(list.iter().filter(|s| s.visible(now)).map(|s| share_json(s, now, self.max_devices)).collect()))
     }
 
-    #[tool(description = "Révoquer un partage et la session qui en est issue (application).")]
+    #[tool(description = "Révoquer un partage et les sessions qui en sont issues (application).")]
     fn app_partage_revoquer(&self, Parameters(a): Parameters<IdArgs>) -> Out {
         let s = self.store.get(a.id).map_err(|e| e.to_string())?.ok_or("Partage inconnu.")?;
         if !self.store.revoke(a.id, (self.now)()).map_err(|e| e.to_string())? {
@@ -122,7 +128,7 @@ mod tests {
     use super::*;
 
     fn server() -> ShareServer {
-        ShareServer::new(Arc::new(Store::memory().unwrap()), "https://site.example.org/", 72 * 3600, || 1_000)
+        ShareServer::new(Arc::new(Store::memory().unwrap()), "https://site.example.org/", 72 * 3600, 3, || 1_000)
     }
 
     fn create(s: &ShareServer, label: &str) -> Value {
@@ -145,6 +151,20 @@ mod tests {
         assert!(crate::store::well_formed(token));
         assert_eq!(v["expire_le"], rfc(1_000 + 72 * 3600));
         assert_eq!(s.store.list().unwrap()[0].libelle, "Partage du 01/02");
+    }
+
+    #[test]
+    fn list_counts_open_devices() {
+        let s = server();
+        let v = create(&s, "a");
+        let token = v["lien"].as_str().unwrap().rsplit("#k=").next().unwrap().to_string();
+        s.store.redeem(&token, 1_000, 3600, 3).unwrap().unwrap();
+        s.store.redeem(&token, 1_010, 3600, 3).unwrap().unwrap();
+        let list: Value = serde_json::from_str(&s.app_partage_liste().unwrap()).unwrap();
+        assert_eq!(list[0]["appareils"], 2);
+        assert_eq!(list[0]["ouvert_le"], rfc(1_000));
+        assert_eq!(list[0]["acces_jusqu_au"], rfc(1_010 + 3600));
+        assert_eq!(list[0]["expire_le"], rfc(1_000 + 72 * 3600));
     }
 
     #[test]
@@ -177,6 +197,8 @@ mod tests {
         assert_eq!(first["actif"], true);
         assert!(first["ouvert_le"].is_null());
         assert_eq!(first["cree_le"], rfc(1_000));
+        assert_eq!((first["appareils"].as_i64(), first["max_appareils"].as_i64()), (Some(0), Some(3)));
+        assert!(first["acces_jusqu_au"].is_null());
         let id = first["id"].as_i64().unwrap();
         let m: Value = serde_json::from_str(&s.app_partage_revoquer(Parameters(IdArgs { id })).unwrap()).unwrap();
         assert!(m["message"].as_str().unwrap().contains("révoqué"));
