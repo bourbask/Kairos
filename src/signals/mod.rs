@@ -143,11 +143,13 @@ pub fn build_synthesis_prompt(
          - Dégage les 2 ou 3 éléments qui comptent, ignore le reste.\n",
     );
     if with_reader {
-        prompt.push_str("- Lis-les uniquement à travers les sujets suivis ci-dessous.\n");
+        prompt.push_str(
+            "- Lis-les uniquement à travers les sujets suivis ci-dessous.\n\
+             - N'évoque ni carrière, ni emploi, ni compétences techniques : hors sujet ici.\n",
+        );
     }
     prompt.push_str(
-        "- N'évoque ni carrière, ni emploi, ni compétences techniques : hors sujet ici.\n\
-         - Distingue une estimation de modèle d'une cotation de marché : la seconde engage de l'argent.\n\
+        "- Distingue une estimation de modèle d'une cotation de marché : la seconde engage de l'argent.\n\
          - N'invente aucun chiffre, aucun événement, aucune source absente de la liste.\n\
          - Si les signaux sont trop faibles pour conclure, dis-le en une phrase et arrête-toi.\n\
          - Pas de titre, pas de préambule, pas de liste à puces : du texte suivi.\n\n",
@@ -335,8 +337,7 @@ mod tests {
 
     #[test]
     fn prompt_omits_topics_line_when_none_configured() {
-        let prompt =
-            build_synthesis_prompt(
+        let prompt = build_synthesis_prompt(
             &profile(),
             &[],
             &[signal(SignalKind::Market, "A", 0.5)],
@@ -395,9 +396,11 @@ mod tests {
         let router = external_only_router(vec![]);
         assert_eq!(router.sensitivity(LLM_USAGE), Sensitivity::Strategic);
         assert_eq!(LLM_URGENCY, Urgency::Deferred);
-        assert!(router
-            .client(LLM_USAGE, router.sensitivity(LLM_USAGE), LLM_URGENCY)
-            .is_err());
+        assert!(
+            router
+                .client(LLM_USAGE, router.sensitivity(LLM_USAGE), LLM_URGENCY)
+                .is_err()
+        );
     }
 
     /// Déclaré commun par l'opérateur, l'usage peut suivre la voie externe.
@@ -405,9 +408,11 @@ mod tests {
     fn declared_common_usage_reaches_external_route() {
         let router = external_only_router(vec![LLM_USAGE.into()]);
         assert_eq!(router.sensitivity(LLM_USAGE), Sensitivity::Common);
-        assert!(router
-            .client(LLM_USAGE, router.sensitivity(LLM_USAGE), LLM_URGENCY)
-            .is_ok());
+        assert!(
+            router
+                .client(LLM_USAGE, router.sensitivity(LLM_USAGE), LLM_URGENCY)
+                .is_ok()
+        );
     }
 
     /// En voie commune, le prompt ne contient que les signaux publics : aucun
@@ -428,6 +433,8 @@ mod tests {
         assert!(!prompt.contains("sujetfictif"));
         assert!(!prompt.contains("Contexte du lecteur"));
         assert!(!prompt.contains("sujets suivis"));
+        assert!(!prompt.contains("carrière"));
+        assert!(!prompt.contains("emploi"));
         assert!(prompt.contains("[Marché] A"));
 
         let strategic = build_synthesis_prompt(
@@ -439,6 +446,7 @@ mod tests {
         assert!(strategic.contains("Villefictive"));
         assert!(strategic.contains("ZZ"));
         assert!(strategic.contains("sujetfictif"));
+        assert!(strategic.contains("carrière"));
     }
 
     #[test]

@@ -19,6 +19,8 @@ interests = []           # sujets suivis, ex. ["géopolitique", "énergie", "mar
 # Le moteur de synthèse n'est pas déclaré ici : génération différée, stratégique
 # par défaut ; le routage vit dans llm.toml (cf. llm.example.toml). Déclaré
 # commun, l'usage n'envoie que les signaux publics, sans sujets ni profil.
+# Déclaré commun, les chemins de source ne portent aucun filtre propre au lecteur
+# (sujets, zones) : la sélection elle-même les révélerait.
 
 [jobs]
 # Recherche d'emploi. Section absente : repli sur les anciens réglages du profil,
