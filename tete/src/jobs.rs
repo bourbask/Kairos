@@ -552,6 +552,8 @@ const NO_MODEL: &str = "modele_indisponible";
 const INVALID: &str = "sortie_invalide";
 const FAILED: &str = "echec";
 const SOURCE_MISSING: &str = "source_indisponible";
+/// Plafond de la nuit atteint alors que du travail reste : signalé au briefing.
+const CATCHING_UP: &str = "rattrapage_en_cours";
 // Motifs d'une sortie invalide : codes fermés, connus de la mémoire.
 const TOO_LONG: &str = "lot_trop_long";
 const CUT: &str = "reponse_coupee";
@@ -642,6 +644,7 @@ async fn extract(name: &str, last: Option<NaiveDate>, now: NaiveDateTime, ctx: &
     let yesterday = now.date() - TimeDelta::days(1);
     let first = last.map_or(yesterday, |d| d + TimeDelta::days(1));
     let mut client = None;
+    let done = catch_up(first, yesterday);
     for day in first.iter_days().take_while(|d| *d <= yesterday).take(NIGHT_DAYS) {
         let jour = day.format("%Y-%m-%d").to_string();
         // Une conversation pas encore résumée n'est pas un épisode : la journée attend son résumé.
@@ -679,7 +682,13 @@ async fn extract(name: &str, last: Option<NaiveDate>, now: NaiveDateTime, ctx: &
         }
         note(name, "extraction", OK, None, Some(day), ctx).await;
     }
-    OK
+    done
+}
+
+/// Statut d'un rattrapage jour par jour de `first` à `until`, plafonné à
+/// `NIGHT_DAYS` par nuit : des jours restants ne sont pas tus.
+fn catch_up(first: NaiveDate, until: NaiveDate) -> &'static str {
+    if (until - first).num_days() >= NIGHT_DAYS as i64 { CATCHING_UP } else { OK }
 }
 
 /// Observations de chaque tentacule, jour par jour, comptées par la mémoire
@@ -690,6 +699,7 @@ async fn extract(name: &str, last: Option<NaiveDate>, now: NaiveDateTime, ctx: &
 async fn habits(name: &str, last: Option<NaiveDate>, now: NaiveDateTime, ctx: &Ctx) -> &'static str {
     let until = now.date() - TimeDelta::days(2);
     let first = last.map_or(until, |d| d + TimeDelta::days(1));
+    let done = catch_up(first, until);
     for day in first.iter_days().take_while(|d| *d <= until).take(NIGHT_DAYS) {
         let jour = day.format("%Y-%m-%d").to_string();
         let replies = ctx.tentacles.call_conventional_limited("nuit_observations", json!({"jour": jour}), NIGHT_MAX_CHARS).await;
@@ -723,7 +733,7 @@ async fn habits(name: &str, last: Option<NaiveDate>, now: NaiveDateTime, ctx: &C
             None => return FAILED,
         }
     }
-    OK
+    done
 }
 
 /// Issue d'un lot de condensation.
@@ -738,11 +748,13 @@ enum Issue {
 /// Statut de l'étape et motif du premier refus, d'après les issues des lots :
 /// une panne du moteur n'efface pas un refus qui la précède ; sans refus, elle
 /// est signalée même après une condensation réussie (lots restants reportés).
-fn condense_status(issues: &[Issue]) -> (&'static str, Option<&'static str>) {
+fn condense_status(issues: &[Issue], remaining: bool) -> (&'static str, Option<&'static str>) {
     if let Some(motif) = issues.iter().find_map(|i| if let Issue::Refuse(m) = i { Some(*m) } else { None }) {
         (INVALID, Some(motif))
     } else if issues.contains(&Issue::Panne) {
         (NO_MODEL, None)
+    } else if remaining {
+        (CATCHING_UP, None)
     } else {
         (OK, None)
     }
@@ -768,9 +780,12 @@ fn synthesis(text: Option<String>, truncated: bool) -> Result<String, &'static s
 /// Un lot refusé (sortie vide) n'empêche pas les suivants ; il reste condensable.
 /// Une panne du moteur arrête la condensation.
 async fn condense(name: &str, ctx: &Ctx) -> (&'static str, Option<&'static str>) {
-    let Ok(lots) = night_tool(name, "nuit_condensables", json!({"max": NIGHT_LOTS}), ctx).await.and_then(|v| Ok(serde_json::from_value::<Vec<Lot>>(v)?)) else {
+    // Un lot de plus que le plafond : dit s'il en reste après cette nuit.
+    let Ok(mut lots) = night_tool(name, "nuit_condensables", json!({"max": NIGHT_LOTS + 1}), ctx).await.and_then(|v| Ok(serde_json::from_value::<Vec<Lot>>(v)?)) else {
         return (FAILED, None);
     };
+    let remaining = lots.len() > NIGHT_LOTS;
+    lots.truncate(NIGHT_LOTS);
     if lots.is_empty() {
         return (OK, None);
     }
@@ -810,7 +825,7 @@ async fn condense(name: &str, ctx: &Ctx) -> (&'static str, Option<&'static str>)
         }
         issues.push(Issue::Condense);
     }
-    condense_status(&issues)
+    condense_status(&issues, remaining)
 }
 
 #[cfg(test)]
@@ -820,11 +835,13 @@ mod tests {
 
     #[test]
     fn engine_failure_keeps_earlier_outcome() {
-        assert_eq!(condense_status(&[Panne]), (NO_MODEL, None));
-        assert_eq!(condense_status(&[Refuse(TOO_LONG), Panne]), (INVALID, Some(TOO_LONG)));
-        assert_eq!(condense_status(&[Condense, Panne]), (NO_MODEL, None));
-        assert_eq!(condense_status(&[Condense, Refuse(CUT), Refuse(TOO_LONG)]), (INVALID, Some(CUT)));
-        assert_eq!(condense_status(&[Condense]), (OK, None));
+        assert_eq!(condense_status(&[Panne], false), (NO_MODEL, None));
+        assert_eq!(condense_status(&[Refuse(TOO_LONG), Panne], false), (INVALID, Some(TOO_LONG)));
+        assert_eq!(condense_status(&[Condense, Panne], false), (NO_MODEL, None));
+        assert_eq!(condense_status(&[Condense, Refuse(CUT), Refuse(TOO_LONG)], false), (INVALID, Some(CUT)));
+        assert_eq!(condense_status(&[Condense], false), (OK, None));
+        assert_eq!(condense_status(&[Condense], true), (CATCHING_UP, None));
+        assert_eq!(condense_status(&[Condense, Panne], true), (NO_MODEL, None));
     }
 
     #[test]
