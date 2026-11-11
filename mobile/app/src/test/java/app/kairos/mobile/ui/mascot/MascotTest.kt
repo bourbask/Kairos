@@ -6,35 +6,31 @@ import org.junit.Test
 
 class MascotTest {
 
-    private fun body(p: List<Pixel>) = p.filter { it.role == PixelRole.Corps }
+    private fun cells(state: MascotState, f: Int, role: Char): List<Pair<Int, Int>> {
+        val g = MascotKind.Kairos.frame(state, f)
+        return (0 until 16).flatMap { y -> (0 until 16).filter { x -> g[x, y] == role }.map { it to y } }
+    }
 
     @Test
-    fun sprite_has_forelock_and_wings() {
+    fun kairos_has_forelock_and_wings() {
         for (state in MascotState.entries) {
-            val p = MascotSprite.pixels(state, 0)
-            val corps = body(p)
-            val meche = p.filter { it.role == PixelRole.Meche }
-            val ailes = p.filter { it.role == PixelRole.Aile }
-            val pieds = p.filter { it.role == PixelRole.Pied }
-            assertTrue("$state : mèche", meche.isNotEmpty())
-            assertTrue("$state : mèche au-dessus du corps", meche.all { it.y < corps.minOf { c -> c.y } })
-            assertTrue("$state : pieds", pieds.isNotEmpty())
-            assertTrue("$state : aile à gauche", ailes.any { it.x < pieds.minOf { f -> f.x } })
-            assertTrue("$state : aile à droite", ailes.any { it.x > pieds.maxOf { f -> f.x } })
+            val body = cells(state, 0, 'F')
+            val wings = cells(state, 0, 'h').filter { (_, y) -> y > 10 }
+            assertTrue("$state : mèche au-dessus du corps", body.any { (_, y) -> y < 5 })
+            assertTrue("$state : aile à gauche", wings.any { (x, _) -> x < 4 })
+            assertTrue("$state : aile à droite", wings.any { (x, _) -> x > 11 })
         }
     }
 
     @Test
     fun eyes_change_with_state() {
-        fun eyes(s: MascotState) =
-            MascotSprite.pixels(s, 0).filter { it.role == PixelRole.Oeil }.map { it.x to it.y }.toSet()
-        assertNotEquals(eyes(MascotState.Repos), eyes(MascotState.Ecoute))
+        assertNotEquals(cells(MascotState.Repos, 0, 'D'), cells(MascotState.Ecoute, 0, 'D'))
     }
 
     @Test
-    fun sprite_within_grid() {
-        for (state in MascotState.entries) for (frame in 0 until 32) {
-            assertTrue(MascotSprite.pixels(state, frame).all { it.x in 0..15 && it.y in 0..15 })
+    fun every_frame_is_drawn() {
+        for (kind in MascotKind.entries) for (state in MascotState.entries) for (f in 0 until kind.timing(state).n) {
+            assertTrue("$kind $state $f", kind.frame(state, f).cells.any { it != Grid.EMPTY })
         }
     }
 }

@@ -185,7 +185,7 @@ internal fun Badge(state: MascotState, size: androidx.compose.ui.unit.Dp) {
             .size(size)
             .background(KairosColors.current.btn, RoundedCornerShape(size * 0.3f)),
         contentAlignment = Alignment.Center,
-    ) { Mascot(state, size = size * 0.68f, onBackground = KairosColors.current.body) }
+    ) { Mascot(state, size = size * 0.68f) }
 }
 
 private sealed interface ThreadRow {

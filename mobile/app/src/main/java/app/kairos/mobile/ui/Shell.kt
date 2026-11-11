@@ -270,7 +270,7 @@ fun KairosButton(
             },
         contentAlignment = Alignment.Center,
     ) {
-        Mascot(state, size = 46.dp, onBackground = KairosColors.current.body)
+        Mascot(state, size = 46.dp)
     }
 }
 
