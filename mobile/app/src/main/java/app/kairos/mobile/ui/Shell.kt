@@ -62,7 +62,7 @@ import app.kairos.mobile.ui.mascot.Mascot
 import app.kairos.mobile.ui.mascot.MascotState
 import app.kairos.mobile.ui.mascot.mascotDescription
 import app.kairos.mobile.ui.theme.Motion
-import app.kairos.mobile.ui.theme.Palette
+import app.kairos.mobile.ui.theme.KairosColors
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -217,14 +217,14 @@ fun KairosButton(
     var pressed by remember { mutableStateOf(false) }
     val scale by animateFloatAsState(if (pressed) 0.92f else 1f, Motion.settle(), label = "appui")
     val shape = RoundedCornerShape(KairosButtonCorner)
-    val primary = MaterialTheme.colorScheme.primary
+    val btn = KairosColors.current.btn
 
     Box(
         modifier
             .scale(scale)
-            .shadow(14.dp, shape, ambientColor = primary, spotColor = primary)
+            .shadow(14.dp, shape, ambientColor = btn, spotColor = btn)
             .size(68.dp)
-            .background(primary, shape)
+            .background(btn, shape)
             .semantics {
                 role = Role.Button
                 contentDescription = "Kairos"
@@ -270,7 +270,7 @@ fun KairosButton(
             },
         contentAlignment = Alignment.Center,
     ) {
-        Mascot(state, size = 46.dp, onBackground = Palette.CorpsKairos)
+        Mascot(state, size = 46.dp, onBackground = KairosColors.current.body)
     }
 }
 

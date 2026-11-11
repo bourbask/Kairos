@@ -105,6 +105,7 @@ import app.kairos.mobile.ui.talk.TalkEffect
 import app.kairos.mobile.ui.talk.TalkMode
 import app.kairos.mobile.ui.talk.TalkPanel
 import app.kairos.mobile.ui.talk.mascotFor
+import app.kairos.mobile.ui.theme.KairosColors
 import app.kairos.mobile.ui.theme.KairosTheme
 import app.kairos.mobile.ui.theme.ThemeMode
 import app.kairos.mobile.ui.theme.rememberDark
@@ -879,7 +880,8 @@ private fun KairosRoot(model: AppModel, dark: Boolean) {
                 onClose = { adding = false },
             )
         }
-        Overlay(chat, chatOpen, onClose = { chatOpen = false }, anchorColor = primary) {
+        // La conversation naît du bouton Kairos : même couleur que lui.
+        Overlay(chat, chatOpen, onClose = { chatOpen = false }, anchorColor = KairosColors.current.btn) {
             ChatScreen(
                 conversation = conversation,
                 mascot = mascot,

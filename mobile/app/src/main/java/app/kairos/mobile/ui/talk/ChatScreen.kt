@@ -90,7 +90,7 @@ import app.kairos.mobile.ui.DockHeight
 import app.kairos.mobile.ui.mascot.Mascot
 import app.kairos.mobile.ui.mascot.MascotState
 import app.kairos.mobile.ui.theme.Motion
-import app.kairos.mobile.ui.theme.Palette
+import app.kairos.mobile.ui.theme.KairosColors
 import kotlin.math.max
 
 /**
@@ -183,9 +183,9 @@ internal fun Badge(state: MascotState, size: androidx.compose.ui.unit.Dp) {
     Box(
         Modifier
             .size(size)
-            .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(size * 0.3f)),
+            .background(KairosColors.current.btn, RoundedCornerShape(size * 0.3f)),
         contentAlignment = Alignment.Center,
-    ) { Mascot(state, size = size * 0.68f, onBackground = Palette.CorpsKairos) }
+    ) { Mascot(state, size = size * 0.68f, onBackground = KairosColors.current.body) }
 }
 
 private sealed interface ThreadRow {
