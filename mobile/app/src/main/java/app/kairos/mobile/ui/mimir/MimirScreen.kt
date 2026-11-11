@@ -81,8 +81,8 @@ import kotlinx.coroutines.CoroutineScope
 /**
  * Espace Mimir : un site web affiché dans une WebView, à partir d'un lien de partage collé
  * sur l'appareil (jamais dans le code). Sans lien, l'espace en demande un à la tête pour
- * son propriétaire, et à défaut demande de le coller. « Partager » émet un lien neuf à
- * usage unique ; « Accès partagés » liste et révoque les partages. Le lien
+ * son propriétaire, et à défaut demande de le coller. « Partager » émet un lien neuf,
+ * ouvrable sur quelques appareils ; « Accès partagés » liste et révoque les partages. Le lien
  * porte un jeton : il n'est ni journalisé, ni affiché, ni gardé dans l'état sauvegardé, et
  * il est remplacé par la seule origine du site dès que la session est ouverte.
  * Retour : page précédente du site s'il y en a une, sinon fermeture de l'espace.

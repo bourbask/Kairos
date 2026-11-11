@@ -8,6 +8,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import java.time.Instant
 import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.time.ZoneId
@@ -94,7 +95,10 @@ const val SHARE_LABEL_MAX = 40
 @Serializable
 data class ShareLink(val lien: String, @SerialName("expire_le") val expiresAt: String)
 
-/** Partage connu du module ; [expiresAt] : échéance du lien avant ouverture, fin d'accès ensuite. */
+/**
+ * Partage connu du module ; [expiresAt] : fin de la fenêtre où le lien peut ouvrir un appareil,
+ * [accessUntil] : fin de la dernière session ouverte, [devices] : appareils dont l'accès court.
+ */
 @Serializable
 data class Share(
     val id: Long,
@@ -103,6 +107,9 @@ data class Share(
     @SerialName("expire_le") val expiresAt: String,
     @SerialName("ouvert_le") val openedAt: String? = null,
     val actif: Boolean = false,
+    @SerialName("acces_jusqu_au") val accessUntil: String? = null,
+    @SerialName("appareils") val devices: Int = 0,
+    @SerialName("max_appareils") val maxDevices: Int = 1,
 )
 
 /** Demande d'un lien ; [owner] : accès du propriétaire, qui remplace ses liens jamais ouverts. */
@@ -129,12 +136,19 @@ fun shareTime(at: String, zone: ZoneId = ZoneId.systemDefault()): String =
     runCatching { OffsetDateTime.parse(at).atZoneSameInstant(zone).format(DAY_TIME) }.getOrDefault(at)
 
 /** État d'un partage en une ligne. */
-fun shareStatus(s: Share, zone: ZoneId = ZoneId.systemDefault()): String {
+fun shareStatus(s: Share, zone: ZoneId = ZoneId.systemDefault(), now: Instant = Instant.now()): String {
     val created = "Créé le ${shareTime(s.createdAt, zone)}"
     return when {
         !s.actif -> if (s.openedAt != null) "Inactif · ouvert le ${shareTime(s.openedAt, zone)}" else "Inactif · jamais ouvert"
-        s.openedAt != null -> "Ouvert le ${shareTime(s.openedAt, zone)} · accès jusqu'au ${shareTime(s.expiresAt, zone)}"
-        else -> "$created · à ouvrir avant le ${shareTime(s.expiresAt, zone)}"
+        s.openedAt == null -> "$created · à ouvrir avant le ${shareTime(s.expiresAt, zone)}"
+        // Module antérieur aux sessions multiples : l'échéance y était la fin d'accès.
+        s.accessUntil == null -> "Ouvert le ${shareTime(s.openedAt, zone)} · accès jusqu'au ${shareTime(s.expiresAt, zone)}"
+        else -> {
+            val count = "${s.devices} appareil${if (s.devices > 1) "s" else ""} sur ${s.maxDevices}"
+            val windowOpen = runCatching { OffsetDateTime.parse(s.expiresAt).toInstant().isAfter(now) }.getOrDefault(false)
+            val more = if (windowOpen && s.devices < s.maxDevices) " · autre appareil avant le ${shareTime(s.expiresAt, zone)}" else ""
+            "Ouvert sur $count · accès jusqu'au ${shareTime(s.accessUntil, zone)}$more"
+        }
     }
 }
 
