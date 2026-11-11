@@ -87,6 +87,7 @@ import app.kairos.mobile.ui.agenda.AgendaScreen
 import java.time.LocalDate
 import app.kairos.mobile.ui.finances.FinancesScreen
 import app.kairos.mobile.ui.marches.MarchesScreen
+import app.kairos.mobile.ui.marches.marketsFalling
 import app.kairos.mobile.ui.memoire.laterIds
 import app.kairos.mobile.ui.memoire.MemoireScreen
 import app.kairos.mobile.ui.medias.MediasScreen
@@ -96,6 +97,9 @@ import app.kairos.mobile.ui.kit.LocalAmountsMasked
 import app.kairos.mobile.ui.kit.LocalNotifier
 import app.kairos.mobile.ui.kit.NotifierHost
 import app.kairos.mobile.ui.kit.rememberNotifier
+import app.kairos.mobile.ui.mascot.LocalMascot
+import app.kairos.mobile.ui.mascot.MascotKind
+import app.kairos.mobile.ui.mascot.SceneKind
 import app.kairos.mobile.ui.mascot.mascotDescription
 import app.kairos.mobile.ui.pairing.PairingScreen
 import app.kairos.mobile.ui.talk.ChatScreen
@@ -105,8 +109,10 @@ import app.kairos.mobile.ui.talk.TalkEffect
 import app.kairos.mobile.ui.talk.TalkMode
 import app.kairos.mobile.ui.talk.TalkPanel
 import app.kairos.mobile.ui.talk.mascotFor
+import app.kairos.mobile.ui.theme.KairosColors
 import app.kairos.mobile.ui.theme.KairosTheme
 import app.kairos.mobile.ui.theme.ThemeMode
+import app.kairos.mobile.ui.theme.ThemePalette
 import app.kairos.mobile.ui.theme.rememberDark
 import app.kairos.mobile.ui.settings.SettingsScreen
 import app.kairos.mobile.ui.settings.maskAddress
@@ -124,6 +130,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 
@@ -149,8 +157,9 @@ class MainActivity : ComponentActivity() {
                 else window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
                 onDispose {}
             }
-            KairosTheme(dark = dark) {
+            KairosTheme(dark = dark, palette = model.palette) {
                 CompositionLocalProvider(
+                    LocalMascot provides model.mascot,
                     LocalAmountsMasked provides model.amountsMasked,
                     LocalNotifier provides rememberNotifier(),
                 ) {
@@ -216,6 +225,10 @@ class AppModel(app: Application) : AndroidViewModel(app) {
     var speakReplies by mutableStateOf(false)
         private set
     var theme by mutableStateOf(ThemeMode.Clair)
+        private set
+    var palette by mutableStateOf(ThemePalette.Fougere)
+        private set
+    var mascot by mutableStateOf(MascotKind.Kairos)
         private set
 
     /** Montants masqués dans tous les espaces. */
@@ -370,6 +383,8 @@ class AppModel(app: Application) : AndroidViewModel(app) {
             val saved = runCatching { settings.load() }.getOrNull()
             speakReplies = saved?.speakReplies ?: false
             theme = saved?.theme ?: ThemeMode.Clair
+            palette = saved?.palette ?: ThemePalette.Fougere
+            mascot = saved?.mascot ?: MascotKind.Kairos
             amountsMasked = saved?.amountsMasked ?: false
             hideFromCaptures = saved?.hideFromCaptures ?: true
             mimirLink = runCatching { store.loadMimir() }.getOrNull()
@@ -424,6 +439,16 @@ class AppModel(app: Application) : AndroidViewModel(app) {
     fun changeTheme(mode: ThemeMode) {
         theme = mode
         viewModelScope.launch { settings.saveTheme(mode) }
+    }
+
+    fun changePalette(p: ThemePalette) {
+        palette = p
+        viewModelScope.launch { settings.savePalette(p) }
+    }
+
+    fun changeMascot(m: MascotKind) {
+        mascot = m
+        viewModelScope.launch { settings.saveMascot(m) }
     }
 
     fun changeHideFromCaptures(on: Boolean) {
@@ -610,6 +635,19 @@ private fun KairosRoot(model: AppModel, dark: Boolean) {
     }
 
     val mascot = mascotFor(talk.mode, conversation.busy || conversation.awaiting, conversation.decisions, conversation.unread)
+    // Espace ouvert : le bouton Kairos joue sa scène (Mimir n'en a pas).
+    val scene = when {
+        tab != Tab.Espaces -> null
+        maisonOpen -> SceneKind.Inventaire
+        financesOpen -> SceneKind.Finances
+        agendaOpen -> SceneKind.Agenda
+        marchesOpen -> SceneKind.Marches
+        memoireOpen -> SceneKind.Memoire
+        mediasOpen -> SceneKind.Medias
+        documentsOpen -> SceneKind.Documents
+        else -> null
+    }
+    val marchesFalling by remember(session) { session.repository.marches.map(::marketsFalling).distinctUntilChanged() }.collectAsState(false)
     val deck = rememberOverlayState(decisionsOpen, Origin.Anchor)
     val chat = rememberOverlayState(chatOpen, Origin.Anchor)
     val settings = rememberOverlayState(settingsOpen, Origin.Anchor)
@@ -623,6 +661,8 @@ private fun KairosRoot(model: AppModel, dark: Boolean) {
             modifier = Modifier.underOverlays(rtl, deck, chat, settings, unpack, add),
             kairosModifier = Modifier.overlayAnchor(chat, KairosButtonCorner),
             mascotState = mascot,
+            scene = scene,
+            sceneDown = marchesFalling,
             kairosState = mascotDescription(mascot, conversation.decisions),
             tab = tab,
             onTab = { tab = it },
@@ -879,7 +919,8 @@ private fun KairosRoot(model: AppModel, dark: Boolean) {
                 onClose = { adding = false },
             )
         }
-        Overlay(chat, chatOpen, onClose = { chatOpen = false }, anchorColor = primary) {
+        // La conversation naît du bouton Kairos : même couleur que lui.
+        Overlay(chat, chatOpen, onClose = { chatOpen = false }, anchorColor = KairosColors.current.btn) {
             ChatScreen(
                 conversation = conversation,
                 mascot = mascot,
@@ -894,6 +935,10 @@ private fun KairosRoot(model: AppModel, dark: Boolean) {
                 theme = model.theme,
                 dark = dark,
                 onTheme = model::changeTheme,
+                palette = model.palette,
+                onPalette = model::changePalette,
+                mascot = model.mascot,
+                onMascot = model::changeMascot,
                 speakReplies = model.speakReplies,
                 onSpeakReplies = model::changeSpeakReplies,
                 hideFromCaptures = model.hideFromCaptures,

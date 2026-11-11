@@ -83,6 +83,7 @@ import app.kairos.mobile.ui.decide.Stamp
 import app.kairos.mobile.ui.decide.Swipe
 import app.kairos.mobile.ui.decide.swipeOf
 import app.kairos.mobile.ui.mascot.Mascot
+import app.kairos.mobile.ui.mascot.onPageColors
 import app.kairos.mobile.ui.mascot.MascotState
 import app.kairos.mobile.ui.theme.Motion
 import java.time.Instant
@@ -566,7 +567,7 @@ internal fun DateStep(
 @Composable
 internal fun Done(text: String) {
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-        Mascot(MascotState.Agit, size = 120.dp, onBackground = MaterialTheme.colorScheme.background)
+        Mascot(MascotState.Agit, size = 120.dp, colors = onPageColors())
         Spacer(Modifier.height(16.dp))
         Text(text, style = MaterialTheme.typography.headlineMedium)
     }
