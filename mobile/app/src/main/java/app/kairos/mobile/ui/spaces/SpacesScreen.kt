@@ -27,6 +27,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
@@ -120,6 +121,11 @@ fun SpacesScreen(
     onOpenDocuments: () -> Unit,
     onCloseDocuments: () -> Unit,
     documentsContent: @Composable () -> Unit,
+    mimirConfigured: Boolean,
+    mimirOpen: Boolean,
+    onOpenMimir: () -> Unit,
+    onCloseMimir: () -> Unit,
+    mimirContent: @Composable () -> Unit,
     maisonContent: @Composable () -> Unit,
 ) {
     val overlay = rememberOverlayState(maisonOpen, Origin.Anchor)
@@ -129,12 +135,13 @@ fun SpacesScreen(
     val memoireOverlay = rememberOverlayState(memoireOpen, Origin.Anchor)
     val mediasOverlay = rememberOverlayState(mediasOpen, Origin.Anchor)
     val documentsOverlay = rememberOverlayState(documentsOpen, Origin.Anchor)
+    val mimirOverlay = rememberOverlayState(mimirOpen, Origin.Anchor)
     val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.outlineVariant)) {
         Column(
             Modifier
                 .fillMaxSize()
-                .underOverlays(rtl, overlay, financesOverlay, agendaOverlay, marchesOverlay, memoireOverlay, mediasOverlay, documentsOverlay)
+                .underOverlays(rtl, overlay, financesOverlay, agendaOverlay, marchesOverlay, memoireOverlay, mediasOverlay, documentsOverlay, mimirOverlay)
                 .background(MaterialTheme.colorScheme.background)
                 .verticalScroll(rememberScrollState())
                 .padding(padding)
@@ -155,6 +162,7 @@ fun SpacesScreen(
             MemoireRow(memoire, memoireLater, onOpenMemoire, onRetry, Modifier.overlayAnchor(memoireOverlay, CardCorner))
             MediasRow(medias, onOpenMedias, onRetry, Modifier.overlayAnchor(mediasOverlay, CardCorner))
             DocumentsRow(documents, onOpenDocuments, onRetry, Modifier.overlayAnchor(documentsOverlay, CardCorner))
+            MimirRow(mimirConfigured, onOpenMimir, Modifier.overlayAnchor(mimirOverlay, CardCorner))
             Spacer(Modifier.height(6.dp))
             SpaceRow("Réglages", onOpenSettings, icon = { GearIcon() }, modifier = settingsAnchor) { Status("Thème, lecture à voix haute, mise à jour") }
         }
@@ -178,6 +186,9 @@ fun SpacesScreen(
         }
         Overlay(documentsOverlay, documentsOpen, onClose = onCloseDocuments, anchorColor = MaterialTheme.colorScheme.surface) {
             documentsContent()
+        }
+        Overlay(mimirOverlay, mimirOpen, onClose = onCloseMimir, anchorColor = MaterialTheme.colorScheme.surface) {
+            mimirContent()
         }
     }
 }
@@ -361,6 +372,23 @@ private fun DocumentsRow(documents: DocumentsSnapshot, onClick: () -> Unit, onRe
     }
 }
 
+/**
+ * Site web affiché tel quel : pas d'état serveur à charger, seulement le lien à coller
+ * tant qu'il n'est pas enregistré sur l'appareil.
+ */
+@Composable
+private fun MimirRow(configured: Boolean, onClick: () -> Unit, modifier: Modifier) {
+    SpaceRow(
+        "Mimir",
+        onClick,
+        { GlobeIcon() },
+        modifier,
+        trailing = { if (!configured) StatePill("lien à coller", tone = Tone.Attention) },
+    ) {
+        Status("Site partagé")
+    }
+}
+
 /** Fond commun des icônes d'espace : 40 dp, couleur de l'espace. */
 private val IconSize = 40.dp
 
@@ -370,6 +398,18 @@ private fun iconModifier(): Modifier = Modifier.size(IconSize).background(Materi
 @Composable
 private fun GearIcon() = Box(iconModifier()) {
     Icon(KairosIcons.Gear, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+}
+
+/** Globe : un site web. */
+@Composable
+private fun GlobeIcon(line: Color = MaterialTheme.colorScheme.primary) = Canvas(iconModifier()) {
+    val stroke = 2.dp.toPx()
+    val r = size.minDimension / 2 - stroke / 2
+    val c = center
+    drawCircle(line.copy(alpha = 0.35f), radius = r, center = c)
+    drawCircle(line, radius = r, center = c, style = Stroke(stroke))
+    drawOval(line, Offset(c.x - r * 0.45f, c.y - r), Size(r * 0.9f, r * 2), style = Stroke(stroke))
+    drawLine(line, Offset(c.x - r, c.y), Offset(c.x + r, c.y), stroke)
 }
 
 /** Dossier. */

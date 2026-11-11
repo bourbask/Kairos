@@ -19,6 +19,7 @@ private val Context.dataStore by preferencesDataStore("kairos")
 /**
  * Adresse et jeton de l'appareil, chiffrés (AES-GCM) par une clé de l'Android
  * Keystore qui ne quitte jamais le matériel ; seul le chiffré est écrit.
+ * Le lien Mimir y est rangé de la même façon.
  */
 class SecureStore(private val context: Context) {
     suspend fun save(credentials: Credentials) {
@@ -45,9 +46,34 @@ class SecureStore(private val context: Context) {
         context.dataStore.edit { it.remove(KEY) }
     }
 
+    /** Lien Mimir (avec jeton tant que la session n'est pas ouverte, puis origine seule) : chiffré à part, sous sa propre clé. */
+    suspend fun saveMimir(link: String) {
+        val cipher = Cipher.getInstance(TRANSFORMATION).apply { init(Cipher.ENCRYPT_MODE, keystoreKey(MIMIR_ALIAS)) }
+        val sealed = cipher.iv + cipher.doFinal(link.toByteArray())
+        context.dataStore.edit { it[MIMIR_KEY] = Base64.getEncoder().encodeToString(sealed) }
+    }
+
+    /** null si aucun lien n'est enregistré ou s'il est illisible (clé perdue). */
+    suspend fun loadMimir(): String? {
+        val stored = context.dataStore.data.first()[MIMIR_KEY] ?: return null
+        return runCatching {
+            val sealed = Base64.getDecoder().decode(stored)
+            val cipher = Cipher.getInstance(TRANSFORMATION).apply {
+                init(Cipher.DECRYPT_MODE, keystoreKey(MIMIR_ALIAS), GCMParameterSpec(128, sealed, 0, IV_BYTES))
+            }
+            String(cipher.doFinal(sealed, IV_BYTES, sealed.size - IV_BYTES))
+        }.getOrNull()
+    }
+
+    suspend fun clearMimir() {
+        context.dataStore.edit { it.remove(MIMIR_KEY) }
+    }
+
     private companion object {
         const val ALIAS = "kairos-device"
         val KEY = stringPreferencesKey("device")
+        const val MIMIR_ALIAS = "kairos-mimir"
+        val MIMIR_KEY = stringPreferencesKey("mimir")
     }
 }
 
