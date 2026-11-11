@@ -43,6 +43,17 @@ fun sameOrigin(a: String, b: String): Boolean {
 fun mimirStoredLink(link: String, sessionOpen: Boolean): String =
     if (sessionOpen) mimirOrigin(link) ?: link else link
 
+/**
+ * Adresse chargée dans la vue : `embed=1` ajouté au fragment, pour que le site se présente en
+ * mode intégré. Le fragment n'est jamais envoyé au serveur ; aucun marqueur ne quitte l'appareil.
+ */
+fun mimirEmbedUrl(link: String): String {
+    val base = link.substringBefore('#')
+    val frag = link.substringAfter('#', missingDelimiterValue = "")
+    if (frag.split('&').contains("embed=1")) return link
+    return if (frag.isEmpty()) "$base#embed=1" else "$base#$frag&embed=1"
+}
+
 /** Où ouvrir une navigation demandée par la page. */
 enum class MimirRoute { InApp, External, Blocked }
 

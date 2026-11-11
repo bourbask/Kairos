@@ -377,7 +377,7 @@ private fun MimirWeb(link: String, reload: Int, bottom: Dp, onSettled: (String) 
     }
 
     DisposableEffect(web) {
-        web.loadUrl(link)
+        web.loadUrl(mimirEmbedUrl(link))
         onDispose {
             CookieManager.getInstance().flush()
             web.stopLoading()
@@ -389,7 +389,7 @@ private fun MimirWeb(link: String, reload: Int, bottom: Dp, onSettled: (String) 
         if (reload == lastReload) return@LaunchedEffect
         lastReload = reload
         failure = null
-        web.loadUrl(current)
+        web.loadUrl(mimirEmbedUrl(current))
     }
     LifecycleResumeEffect(web) {
         web.onResume()
@@ -442,7 +442,7 @@ private fun MimirWeb(link: String, reload: Int, bottom: Dp, onSettled: (String) 
                     onAction = {
                         failure = null
                         loading = true
-                        if (web.url == null) web.loadUrl(link) else web.reload()
+                        if (web.url == null) web.loadUrl(mimirEmbedUrl(link)) else web.reload()
                     },
                 )
                 Text(

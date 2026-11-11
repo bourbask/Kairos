@@ -114,4 +114,11 @@ class MimirStateTest {
         assertEquals(MimirRoute.Blocked, mimirRoute(base, "file:///sdcard/x"))
         assertEquals(MimirRoute.Blocked, mimirRoute(base, "intent://x#Intent;end"))
     }
+
+    @Test
+    fun embed_flag_rides_in_fragment() {
+        assertEquals("https://partage.example.org/#embed=1", mimirEmbedUrl("https://partage.example.org/"))
+        assertEquals("https://partage.example.org/entrer#k=abc&embed=1", mimirEmbedUrl("https://partage.example.org/entrer#k=abc"))
+        assertEquals("https://partage.example.org/#embed=1", mimirEmbedUrl("https://partage.example.org/#embed=1"))
+    }
 }
