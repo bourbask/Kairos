@@ -646,6 +646,7 @@ private fun KairosRoot(model: AppModel, dark: Boolean) {
         memoireOpen -> SceneKind.Memoire
         mediasOpen -> SceneKind.Medias
         documentsOpen -> SceneKind.Documents
+        politiqueOpen -> SceneKind.Urne
         else -> null
     }
     val marchesFalling by remember(session) { session.repository.marches.map(::marketsFalling).distinctUntilChanged() }.collectAsState(false)
