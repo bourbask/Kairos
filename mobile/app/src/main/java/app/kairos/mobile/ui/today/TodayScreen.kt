@@ -123,6 +123,7 @@ fun TodayScreen(
     updateProgress: Float?,
     onUpdate: () -> Unit,
     decisionsAnchor: Modifier = Modifier,
+    settingsAnchor: Modifier = Modifier,
 ) {
     val snapshot by repository.snapshot.collectAsState()
     val marks by repository.marks.collectAsState()
@@ -266,6 +267,7 @@ fun TodayScreen(
                         onSettings = onOpenSettings,
                         onOpenDecisions = onOpenDecisions,
                         decisionsAnchor = decisionsAnchor,
+                        settingsAnchor = settingsAnchor,
                         onDone = ::done,
                         onLater = ::later,
                         onUnmark = { day, card -> scope.launch { repository.mark(day, card.key, null) } },
@@ -307,6 +309,7 @@ private fun DayContent(
     onSettings: () -> Unit,
     onOpenDecisions: () -> Unit,
     decisionsAnchor: Modifier,
+    settingsAnchor: Modifier,
     onDone: (String, Card) -> Unit,
     onLater: (String, Card) -> Unit,
     onUnmark: (String, Card) -> Unit,
@@ -333,7 +336,7 @@ private fun DayContent(
         if (update != null) {
             item(key = "update") { UpdateStatus(update.version, updateProgress, onUpdate, Modifier.animateItem()) }
         }
-        item(key = "header") { Header(now, tomorrow?.work, onSettings) }
+        item(key = "header") { Header(now, tomorrow?.work, onSettings, settingsAnchor) }
         if (snapshot.decisions.isNotEmpty()) {
             item(key = "decisions") { DecisionsPeek(snapshot.decisions.size, onOpenDecisions, decisionsAnchor) }
         }
@@ -373,7 +376,7 @@ private fun DayContent(
 }
 
 @Composable
-private fun Header(now: LocalDateTime, tomorrowWork: String?, onSettings: () -> Unit) {
+private fun Header(now: LocalDateTime, tomorrowWork: String?, onSettings: () -> Unit, settingsAnchor: Modifier) {
     val date = now.format(DateTimeFormatter.ofPattern("EEEE d MMMM", Fr)).replaceFirstChar { it.titlecase(Fr) }
     Column(Modifier.fillMaxWidth().padding(start = 22.dp, end = 4.dp, top = 8.dp, bottom = 4.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -382,7 +385,7 @@ private fun Header(now: LocalDateTime, tomorrowWork: String?, onSettings: () -> 
                 style = MaterialTheme.typography.headlineMedium,
                 modifier = Modifier.weight(1f).semantics { heading() },
             )
-            IconButton(onClick = onSettings) {
+            IconButton(onClick = onSettings, modifier = settingsAnchor) {
                 Icon(KairosIcons.Gear, contentDescription = "Réglages", tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
@@ -463,6 +466,9 @@ private fun UpdateStatus(version: String, progress: Float?, onUpdate: () -> Unit
 
 /** Coins de la carte de tête de l'aperçu (la pile de décisions en naît). */
 internal val DecisionsPeekCorner = 18.dp
+
+/** Bouton rond des réglages : le panneau en naît et y retourne. */
+internal val SettingsButtonCorner = 24.dp
 
 /** Aperçu de la pile : trois cartes décalées, celle du dessus en couleur principale. */
 @Composable
