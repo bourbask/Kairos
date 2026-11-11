@@ -60,7 +60,7 @@ private fun jar(p: Pen, x: Int, y: Int) {
 
 private val COIN_FACE = listOf(".AA.", "AFAA", "AAaA", ".aa.")
 private val COIN_HALF = listOf("AA", "FA", "Aa", "aa")
-private val COIN_EDGE = listOf("a", "a", "a", "a")
+private val COIN_EDGE = listOf("A", "A", "A", "A")
 
 private fun coinStack(p: Pen, x: Int, yBottom: Int, n: Int) {
     for (i in 0 until n) {
@@ -144,14 +144,14 @@ enum class SceneKind(val ms: IntArray, val key: Int, private val lift: Int = 0) 
             if (i == 12) f.pts(xy(24, 17, 27, 17), 'F')
             val topL = 25 - 3 * 2
             val topR = 25 - 4 * 2 + 1
-            // Pièce en l'air : face, tranche ou trois-quarts, et sa hauteur.
+            // Pièce en l'air : vue, hauteur, décalage depuis le centre (un arc de la main droite vers les deux mains).
             val air = when (i) {
-                5 -> COIN_HALF to 9
-                6 -> COIN_EDGE to 5
-                7 -> COIN_FACE to 3
-                8 -> COIN_HALF to 4
-                9 -> COIN_EDGE to 7
-                10 -> COIN_FACE to 10
+                5 -> Triple(COIN_HALF, 9, 4)
+                6 -> Triple(COIN_EDGE, 5, 3)
+                7 -> Triple(COIN_FACE, 3, 1)
+                8 -> Triple(COIN_HALF, 4, -1)
+                9 -> Triple(COIN_EDGE, 7, -1)
+                10 -> Triple(COIN_FACE, 10, 0)
                 else -> null
             }
             val p = when (i) {
@@ -160,9 +160,10 @@ enum class SceneKind(val ms: IntArray, val key: Int, private val lift: Int = 0) 
                 2 -> Pose(look = look(-1, 0), handL = xy(9, topL - 2))
                 3 -> Pose(look = look(1, 1), handR = xy(23, topR))
                 4 -> Pose(look = look(1, 0), eyes = Eye.Wide, handR = xy(g.right + 4, topR - 1))
-                5 -> Pose(look = look(0, -1), eyes = Eye.Wide, handR = xy(g.right + 2, g.top - 1))
-                6, 7 -> Pose(look = look(0, -1), eyes = Eye.Wide, dy = -1)
-                8 -> Pose(look = look(0, -1), eyes = Eye.Wide)
+                5 -> Pose(look = look(1, -1), eyes = Eye.Wide, handR = xy(g.right + 2, g.top - 1))
+                6 -> Pose(look = look(1, -1), eyes = Eye.Wide, dy = -1)
+                7 -> Pose(look = look(0, -1), eyes = Eye.Wide, dy = -1)
+                8 -> Pose(look = look(-1, -1), eyes = Eye.Wide)
                 9 -> Pose(look = look(0, -1), eyes = Eye.Open, handL = xy(g.cx - 3, g.top - 1), handR = xy(g.cx + 3, g.top - 1))
                 10 -> Pose(look = look(0, -1), eyes = Eye.Open, handL = xy(g.cx - 3, 12), handR = xy(g.cx + 3, 12))
                 11 -> Pose(eyes = Eye.Happy, handL = xy(g.cx - 3, 12), handR = xy(g.cx + 3, 12))
@@ -171,64 +172,73 @@ enum class SceneKind(val ms: IntArray, val key: Int, private val lift: Int = 0) 
             }
             putMascot(lm, m, at, p, t) { h ->
                 if (i == 4) h.rows(COIN_FACE, g.right + 1, topR - 3)
-                air?.let { (s, y) -> h.rows(s, g.cx - s[0].length / 2, y) }
+                air?.let { (s, y, dx) -> h.rows(s, g.cx - s[0].length / 2 + dx, y) }
                 if (i == 11) h.rows(COIN_FACE, g.cx - 2, 10)
             }
         }
     },
 
     /** Tient un calendrier, tourne la page, coche un jour. */
-    Agenda(intArrayOf(380, 200, 140, 140, 160, 300, 220, 160, 260, 320, 260, 300), 9) {
+    Agenda(intArrayOf(380, 200, 140, 120, 140, 160, 300, 220, 160, 260, 320, 260, 300), 10) {
         override fun draw(lb: Grid, lm: Grid, lf: Grid, m: MascotKind, i: Int, t: Int, down: Boolean) {
             floorLine(Pen(lb), 3, 28, 26)
             val at = stage(m, 10, 26)
             // Coin haut gauche du calendrier.
             val cx0 = 17
             val cy0 = 11
-            val marked = i == 0 || i >= 8
-            val flip = when (i) { 2 -> 1; 3 -> 2; 4 -> 3; else -> 0 }
-            val tap = i == 7 || i == 8
+            val marked = i == 0 || i >= 9
+            // Étapes de la page qui tourne : coin levé, mi-course, au-dessus de l'en-tête, retombée.
+            val flip = when (i) { 2 -> 1; 3 -> 2; 4 -> 3; 5 -> 4; else -> 0 }
+            val tap = i == 8 || i == 9
             val hold = xy(cx0 - 1, cy0 + 4)
             val p = when (i) {
                 0 -> Pose(look = look(1, 0), handL = hold)
                 1 -> Pose(look = look(1, 0), handL = xy(cx0 - 1, cy0 + 8), handR = xy(cx0 + 10, cy0 + 8))
                 2 -> Pose(look = look(1, 1), eyes = Eye.Wide, handL = hold, handR = xy(cx0 + 10, cy0 + 7))
-                3 -> Pose(look = look(1, -1), eyes = Eye.Wide, handL = hold, handR = xy(cx0 + 10, cy0 + 1))
-                4 -> Pose(look = look(1, -1), handL = hold, handR = xy(cx0 + 10, cy0 - 3))
-                5 -> Pose(look = look(1, 0), eyes = Eye.Focus, handL = hold)
-                6 -> Pose(look = look(1, 1), eyes = Eye.Focus, handL = hold)
-                7 -> Pose(look = look(1, 1), handL = hold, handR = xy(cx0 + 6, cy0 + 7))
-                8 -> Pose(look = look(1, 1), eyes = Eye.Happy, handL = hold, handR = xy(cx0 + 6, cy0 + 8))
-                9 -> Pose(eyes = Eye.Happy, dy = 1, handL = hold)
+                3 -> Pose(look = look(1, 0), eyes = Eye.Wide, handL = hold, handR = xy(cx0 + 10, cy0 + 4))
+                4 -> Pose(look = look(1, -1), eyes = Eye.Wide, handL = hold, handR = xy(cx0 + 10, cy0 + 1))
+                5 -> Pose(look = look(1, -1), handL = hold, handR = xy(cx0 + 10, cy0 - 3))
+                6 -> Pose(look = look(1, 0), eyes = Eye.Focus, handL = hold)
+                7 -> Pose(look = look(1, 1), eyes = Eye.Focus, handL = hold)
+                8 -> Pose(look = look(1, 1), handL = hold, handR = xy(cx0 + 6, cy0 + 8))
+                9 -> Pose(look = look(1, 1), eyes = Eye.Happy, handL = hold, handR = xy(cx0 + 6, cy0 + 9))
+                10 -> Pose(eyes = Eye.Happy, dy = 1, handL = hold)
                 else -> Pose(look = look(1, 0), handL = hold)
             }
             putMascot(lm, m, at, p, t) { h ->
                 val x = cx0
-                val y = cy0 + if (i == 9) 1 else 0
+                val y = cy0 + if (i == 10) 1 else 0
                 // Corps 10×11 : anneaux, en-tête, page, tranche.
                 h.rect(x, y + 2, 10, 2, 'R')
                 h.rect(x, y + 4, 10, 6, 'F')
                 h.rect(x, y + 10, 10, 1, 'h')
                 h.pts(xy(x + 2, y + 1, x + 7, y + 1), 'D'); h.pts(xy(x + 2, y + 2, x + 7, y + 2), 'D')
-                val days = IntArray(24).also { d -> for (r in 0 until 3) for (c in 0 until 4) { val k = (r * 4 + c) * 2; d[k] = x + 1 + c * 2; d[k + 1] = y + 5 + r * 2 } }
-                val mx = days[12]
-                val my = days[13]
-                if (flip == 0 || flip == 3) h.pts(days, 'm')
-                if (marked) { h.rect(mx - 1, my - 1, 3, 3, 'A'); h.set(mx, my, 'D') }
-                if (tap && !marked) h.set(mx, my, 'A')
-                if (i == 7) h.pts(xy(mx - 1, my - 1, mx + 1, my - 1), 'A')
+                // Jours : trois rangées de trois cases de deux pixels, assez marquées pour se lire en petit.
+                val days = List(9) { k -> xy(x + 1 + (k % 3) * 3, y + 5 + (k / 3) * 2) }
+                fun day(d: IntArray) = h.rect(d[0], d[1], 2, 1, 's')
+                val mx = days[4][0]
+                val my = days[4][1]
+                if (flip == 0 || flip == 4) days.forEach(::day)
+                if (marked) { h.rect(mx - 1, my - 1, 4, 3, 'A'); h.rect(mx, my, 2, 1, 'D') }
+                if (tap && !marked) h.rect(mx, my, 2, 1, 'A')
+                if (i == 8) h.pts(xy(mx - 1, my - 1, mx + 2, my - 1), 'A')
                 if (flip == 1) {
                     // Le coin se soulève.
                     h.pts(xy(x + 8, y + 10, x + 9, y + 10, x + 9, y + 9), 'B')
                     h.pts(xy(x + 7, y + 9, x + 8, y + 8, x + 8, y + 9, x + 9, y + 8, x + 7, y + 8), 'h')
-                    h.pts(days.copyOfRange(0, 20), 'm')
+                    days.take(7).forEach(::day)
                 }
                 if (flip == 2) {
+                    // Mi-course : le bas de la page remonte, vu par la tranche.
+                    h.rect(x, y + 4, 10, 1, 'F'); h.rect(x + 1, y + 4, 9, 3, 'h'); h.rect(x + 1, y + 4, 9, 1, 'F')
+                    h.rect(x, y + 7, 10, 3, 'F'); days.drop(6).forEach(::day)
+                }
+                if (flip == 3) {
                     // La page monte au-dessus de l'en-tête.
                     h.rect(x + 1, y - 3, 9, 5, 'h'); h.rect(x + 1, y - 3, 9, 1, 'F'); h.rect(x + 4, y + 4, 6, 3, 'F')
-                    for (k in days.indices step 2) if (days[k + 1] > y + 6) h.set(days[k], days[k + 1], 'm')
+                    days.filter { it[1] > y + 6 }.forEach(::day)
                 }
-                if (flip == 3) h.rect(x + 2, y - 2, 7, 2, 'h')
+                if (flip == 4) h.rect(x + 2, y - 2, 7, 2, 'h')
             }
         }
     },
@@ -297,7 +307,7 @@ enum class SceneKind(val ms: IntArray, val key: Int, private val lift: Int = 0) 
     },
 
     /** Carnet à spirale, crayon, lignes qui s'écrivent, page arrachée. */
-    Memoire(intArrayOf(300, 150, 150, 150, 150, 380, 380, 150, 150, 300, 200, 180, 220, 240), 4) {
+    Memoire(intArrayOf(300, 150, 150, 150, 150, 380, 380, 150, 150, 300, 200, 140, 160, 220, 240), 4) {
         override fun draw(lb: Grid, lm: Grid, lf: Grid, m: MascotKind, i: Int, t: Int, down: Boolean) {
             floorLine(Pen(lb), 3, 28, 26)
             val at = stage(m, 9, 26)
@@ -308,37 +318,48 @@ enum class SceneKind(val ms: IntArray, val key: Int, private val lift: Int = 0) 
             val lines = listOf(xy(18, 16, 24), xy(18, 18, 22), xy(18, 20, 23))
             // Longueur écrite de chaque ligne selon l'image.
             val prog = MEMOIRE_PROG[i]
-            val tearing = i in 10..12
+            // Arrachage : page saisie, décollée à mi-hauteur, levée, puis au loin.
+            val tearing = i in 10..13
             var tip: IntArray? = null
             for (k in 0 until 3) if (prog[k] != 0 && (k == 2 || prog[k + 1] == 0)) tip = xy(lines[k][0] + prog[k] - 1, lines[k][1])
-            if (i == 0 || i >= 12) tip = xy(lines[0][0], lines[0][1] - 1)
+            if (i == 0 || i >= 13) tip = xy(lines[0][0], lines[0][1] - 1)
             val writing = i in intArrayOf(1, 2, 3, 4, 7, 8)
             val thinking = i == 5 || i == 6
+            // En réflexion, le crayon touche la tempe, hors du visage.
+            val ey = at.oy + m.anchor.eye
             val holdL = xy(px - 1, py + 7)
             val p = when {
-                thinking -> Pose(look = look(-1, -1), eyes = Eye.Focus, handL = holdL, handR = xy(g.cx + 2, g.top + 4))
+                thinking -> Pose(look = look(-1, -1), eyes = Eye.Focus, handL = holdL, handR = xy(g.right + 2, ey))
                 i == 9 -> Pose(eyes = Eye.Happy, handL = holdL, handR = xy(27, 12))
-                tearing -> Pose(look = look(1, -1), eyes = Eye.Wide, handL = holdL, handR = if (i == 10) xy(px + 8, py + 1) else xy(px + 5, py - 4))
+                tearing -> Pose(
+                    look = look(1, -1), eyes = Eye.Wide, handL = holdL,
+                    handR = when (i) { 10 -> xy(px + 8, py + 1); 11 -> xy(px + 8, py - 2); else -> xy(px + 5, py - 4) },
+                )
                 else -> Pose(look = look(1, 1), eyes = if (writing) Eye.Focus else Eye.Open, handL = holdL, handR = xy(tip!![0] + 2, tip[1] - 2))
             }
             putMascot(lm, m, at, p, t) { h ->
                 h.rect(px, py + 1, 9, 11, 'F'); h.rect(px, py + 11, 9, 1, 'h'); h.rect(px, py + 1, 1, 11, 'h')
                 for (x in px + 1 until px + 9 step 2) { h.set(x, py, 'D'); h.set(x, py + 1, 'D') }
-                if (!tearing) lines.forEachIndexed { k, ln -> if (prog[k] != 0) h.rect(ln[0], ln[1], prog[k], 1, 'm') }
+                // Lignes écrites à l'encre foncée, lisibles en petit.
+                if (!tearing) lines.forEachIndexed { k, ln -> if (prog[k] != 0) h.rect(ln[0], ln[1], prog[k], 1, 's') }
                 if (i == 10) {
                     h.rect(px + 1, py + 2, 8, 9, 'h'); h.rect(px + 1, py + 2, 8, 1, 'F')
-                    for (ln in lines) h.rect(ln[0], ln[1], ln[2] - ln[0], 1, 'm')
+                    for (ln in lines) h.rect(ln[0], ln[1], ln[2] - ln[0], 1, 's')
                 }
-                if (i == 11) { h.rect(px + 2, py - 5, 6, 5, 'h'); h.rect(px + 3, py - 4, 4, 1, 'm'); h.rect(px + 3, py - 2, 3, 1, 'm') }
-                if (i == 12) { h.rect(px + 5, py - 8, 4, 3, 'h'); h.rect(px + 6, py - 7, 2, 1, 'm') }
+                if (i == 11) {
+                    h.rect(px + 1, py - 1, 8, 7, 'h'); h.rect(px + 1, py - 1, 8, 1, 'F')
+                    h.rect(px + 2, py + 1, 6, 1, 's'); h.rect(px + 2, py + 3, 4, 1, 's')
+                }
+                if (i == 12) { h.rect(px + 2, py - 5, 6, 5, 'h'); h.rect(px + 3, py - 4, 4, 1, 's'); h.rect(px + 3, py - 2, 3, 1, 's') }
+                if (i == 13) { h.rect(px + 5, py - 8, 4, 3, 'h'); h.rect(px + 6, py - 7, 2, 1, 's') }
                 // Crayon : mine, corps, gomme.
                 val c = when {
-                    thinking -> xy(g.cx + 1, g.top + 6)
-                    writing || i == 0 || i == 13 -> xy(tip!![0], tip[1] - 1)
+                    thinking -> xy(g.right, ey)
+                    writing || i == 0 || i == 14 -> xy(tip!![0], tip[1] - 1)
                     else -> null
                 }
                 if (c != null) { h.set(c[0], c[1], 'D'); h.set(c[0] + 1, c[1] - 1, 'A'); h.set(c[0] + 2, c[1] - 2, 'A'); h.set(c[0] + 3, c[1] - 3, 'R') }
-                if (thinking) bubbles(h, xy(g.cx + 5, g.crown - 1, g.cx + 7, g.crown - 3, g.cx + 8, g.crown - 6), if (i == 5) 2 else 3)
+                if (thinking) bubbles(h, xy(g.cx + 3, g.crown - 2, g.cx + 4, g.crown - 4, g.cx + 5, g.crown - 7), if (i == 5) 2 else 3)
             }
         }
     },
@@ -355,11 +376,13 @@ enum class SceneKind(val ms: IntArray, val key: Int, private val lift: Int = 0) 
             if (i == 8) {
                 b.rect(21, 12, 8, 6, 'F')
             } else {
+                // Image simple en aplats de deux pixels : ciel, soleil, colline qui glisse d'une case.
                 val c = i in intArrayOf(0, 2, 4, 6, 9, 11)
-                b.rect(21, 12, 8, 6, 'm'); b.rect(21, 15, 8, 3, 'h')
-                b.pts(if (c) xy(23, 14, 24, 13, 25, 14, 26, 14) else xy(22, 14, 23, 13, 24, 14, 27, 14), 'B')
-                b.pts(if (c) xy(27, 13) else xy(22, 13), 'A')
-                b.rect(21, if (c) 16 else 13, 8, 1, 'F')
+                val o = if (c) 0 else 1
+                b.rect(21, 12, 8, 6, 'm')
+                b.rect(if (c) 26 else 22, 13, 2, 2, 'A')
+                b.rect(21, 16, 8, 2, 'B'); b.rect(22 + o, 15, 4, 1, 'B'); b.rect(23 + o, 14, 2, 1, 'B')
+                b.rect(21, if (c) 12 else 17, 8, 1, 'F')
             }
             // Canapé vu de profil : dossier à gauche, assise, accoudoir.
             b.rect(2, 14, 4, 11, 'a'); b.rect(3, 13, 2, 1, 'a'); b.rect(5, 14, 1, 10, 'A')
@@ -387,8 +410,8 @@ enum class SceneKind(val ms: IntArray, val key: Int, private val lift: Int = 0) 
         }
     },
 
-    /** Derrière un bureau, lève chaque feuille pour la lire, la classe (oui / non). */
-    Documents(intArrayOf(300, 180, 220, 320, 240, 160, 240, 260, 180, 220, 320, 120, 120, 240), 3, lift = 3) {
+    /** Derrière un bureau, prend chaque feuille en main pour la lire, la lance sur la bonne pile (oui / non). */
+    Documents(intArrayOf(300, 180, 220, 320, 240, 160, 140, 240, 260, 180, 220, 320, 120, 120, 140, 240), 3, lift = 3) {
         override fun draw(lb: Grid, lm: Grid, lf: Grid, m: MascotKind, i: Int, t: Int, down: Boolean) {
             val f = Pen(lf)
             val at = stage(m, 16, 23).also { it.oy = minOf(it.oy, 18 - m.anchor.eye) }
@@ -396,36 +419,40 @@ enum class SceneKind(val ms: IntArray, val key: Int, private val lift: Int = 0) 
             // Bureau.
             f.rect(1, 23, 30, 1, 'D'); f.rect(2, 24, 28, 6, 's'); f.rect(2, 24, 28, 1, 'a')
             // Piles : à trier (gauche), classées oui / non (droite, onglets accent et urgent).
-            fun stack(x: Int, w: Int, n: Int) { for (k in 0 until n) f.rect(x, 22 - k, w, 1, if (k % 2 == 1) 'm' else 'F') }
+            fun stack(x: Int, w: Int, n: Int) { for (k in 0 until n) f.rect(x, 22 - k, w, 1, if (k % 2 == 1) 's' else 'F') }
             stack(2, 6, 6); stack(22, 4, 3); stack(27, 4, 3)
             f.rect(25, 19, 1, 2, 'A'); f.rect(30, 19, 1, 2, 'R')
-            if (i == 6) f.pts(xy(22, 19, 23, 18), 'F')
-            if (i == 13) f.pts(xy(27, 19, 28, 18), 'F')
-            val sy = 9 + if (i == 4) 1 else 0
-            val sx = g.left - 6 + when (i) { 11 -> -1; 12 -> 1; else -> 0 }
-            val one = xy(sx + 6, sy + 4)
+            if (i == 7) f.pts(xy(22, 19, 23, 18), 'A')
+            if (i == 15) f.pts(xy(27, 19, 28, 18), 'R')
+            // Feuille tenue à deux mains, à hauteur des yeux, côté gauche.
+            val sx = g.left - 3 + when (i) { 12 -> -1; 13 -> 1; else -> 0 }
+            val sy = 12 + if (i == 4) 1 else 0
+            val read = i in intArrayOf(2, 3, 4, 10, 11, 12, 13)
+            val l = xy(sx - 1, sy + 4)
+            val r = xy(sx + 5, sy + 3)
             val p = when (i) {
-                0, 7 -> Pose(look = look(-1, 0))
-                1, 8 -> Pose(look = look(-1, 1), handL = xy(8, 16))
-                2, 9 -> Pose(look = look(-1, -1), eyes = Eye.Wide, handL = one)
-                3, 10 -> Pose(look = look(-1, -1), eyes = Eye.Focus, handL = one)
-                4 -> Pose(eyes = Eye.Happy, dy = 1, handL = one)
+                0, 8 -> Pose(look = look(-1, 0))
+                1, 9 -> Pose(look = look(-1, 1), handL = xy(8, 16))
+                2, 10 -> Pose(look = look(-1, 0), eyes = Eye.Wide, handL = l, handR = r)
+                3, 11 -> Pose(look = look(-1, 0), eyes = Eye.Focus, handL = l, handR = r)
+                4 -> Pose(eyes = Eye.Happy, dy = 1, handL = l, handR = r)
                 5 -> Pose(look = look(0, -1), handL = xy(g.cx - 4, g.crown - 3), handR = xy(g.cx + 4, g.crown - 3))
-                6 -> Pose(look = look(1, 1), eyes = Eye.Happy, handR = xy(27, 17))
-                11 -> Pose(look = look(-1, -1), eyes = Eye.Low, dx = -1, handL = one)
-                12 -> Pose(look = look(-1, -1), eyes = Eye.Low, dx = 1, handL = one)
+                6 -> Pose(look = look(1, -1), eyes = Eye.Happy, handR = xy(g.right + 2, g.crown - 1))
+                7 -> Pose(look = look(1, 1), eyes = Eye.Happy, handR = xy(27, 17))
+                12 -> Pose(look = look(-1, 0), eyes = Eye.Low, dx = -1, handL = l, handR = r)
+                13 -> Pose(look = look(-1, 0), eyes = Eye.Low, dx = 1, handL = l, handR = r)
+                14 -> Pose(look = look(1, 0), eyes = Eye.Low, handR = xy(g.right + 3, g.top))
                 else -> Pose(look = look(1, 1), eyes = Eye.Low, handR = xy(31, 17))
             }
             putMascot(lm, m, at, p, t) { h ->
-                if (i == 1 || i == 8) { h.rect(2, 15, 6, 1, 'F'); h.rect(2, 16, 6, 1, 'h') }
-                if (i in intArrayOf(2, 3, 4, 9, 10, 11, 12)) {
-                    // La feuille levée pour être lue.
-                    h.rect(sx, sy, 5, 7, 'F'); h.rect(sx + 1, sy + 1, 3, 1, 'm'); h.rect(sx + 1, sy + 3, 2, 1, 'm')
-                    h.rect(sx + 1, sy + 5, 3, 1, 'm'); h.rect(sx + 4, sy + 1, 1, 6, 'h')
-                }
-                if (i == 5) { val y = g.crown - 5; h.rect(g.cx - 3, y, 7, 2, 'F'); h.rect(g.cx - 3, y + 2, 7, 1, 'h') }
-                if (i == 6) h.rect(22, 18, 4, 1, 'F')
-                if (i == 13) h.rect(27, 18, 4, 1, 'F')
+                if (i == 1 || i == 9) paper(h, 2, 14, 6, 3)
+                if (read) { paper(h, sx, sy, 5, 7); h.rect(sx + 1, sy + 1, 2, 1, 's'); h.rect(sx + 1, sy + 3, 2, 1, 's') }
+                if (i == 5) paper(h, g.cx - 3, g.crown - 5, 7, 3)
+                // En vol : la feuille décrit un arc avant d'atterrir.
+                if (i == 6) paper(h, g.right + 1, g.crown - 4, 5, 3)
+                if (i == 14) paper(h, g.right + 3, g.top - 4, 4, 3)
+                if (i == 7) paper(h, 22, 17, 4, 2)
+                if (i == 15) paper(h, 27, 17, 4, 2)
             }
         }
     },
@@ -446,9 +473,14 @@ enum class SceneKind(val ms: IntArray, val key: Int, private val lift: Int = 0) 
     }
 }
 
+/** Feuille : papier ombré d'encre à droite et en bas, pour se détacher des corps clairs. */
+private fun paper(p: Pen, x: Int, y: Int, w: Int, h: Int) {
+    p.rect(x, y, w, h, 'D'); p.rect(x, y, w - 1, h - 1, 'F')
+}
+
 private val CURVE_UP = xy(17, 15, 18, 14, 19, 15, 20, 13, 21, 12, 22, 13, 23, 10, 24, 9, 25, 10, 26, 7)
 
 private val MEMOIRE_PROG = listOf(
     xy(0, 0, 0), xy(3, 0, 0), xy(7, 0, 0), xy(7, 2, 0), xy(7, 5, 0), xy(7, 5, 0), xy(7, 5, 0),
-    xy(7, 5, 3), xy(7, 5, 6), xy(7, 5, 6), xy(7, 5, 6), xy(0, 0, 0), xy(0, 0, 0), xy(0, 0, 0),
+    xy(7, 5, 3), xy(7, 5, 6), xy(7, 5, 6), xy(7, 5, 6), xy(0, 0, 0), xy(0, 0, 0), xy(0, 0, 0), xy(0, 0, 0),
 )

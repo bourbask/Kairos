@@ -35,12 +35,16 @@ x-kairos-common: &kairos-common
   depends_on:
     ollama:
       condition: service_healthy
+  mem_limit: 256m              # plafond mesuré (pic observé < 30 Mo) avec marge pour scrape/briefing
+  pids_limit: 128
 
 services:
   ollama:
     logging: *logging
     image: ollama/ollama:latest
     restart: unless-stopped
+    mem_limit: 3800m              # modèle chargé + cache de contexte ; un dépassement tue le conteneur, pas ses voisins
+    pids_limit: 512
     volumes:
       - ollama-models:/root/.ollama
     healthcheck:
@@ -55,6 +59,8 @@ services:
     logging: *logging
     image: tomsquest/docker-radicale:latest
     restart: unless-stopped
+    mem_limit: 128m
+    pids_limit: 64
     volumes:
       - ./radicale/config:/config:ro   # config + auth — hôte uniquement (gitignoré ; cf. config.example)
       - radicale-data:/data
@@ -82,6 +88,7 @@ services:
     restart: unless-stopped
     user: "1001:1001"
     mem_limit: 64m
+    pids_limit: 64
     entrypoint: ["/app/kairos-memoire"]
     environment:
       MEMOIRE_BIND: 0.0.0.0:8091
@@ -101,6 +108,7 @@ services:
     restart: unless-stopped
     user: "1001:1001"
     mem_limit: 64m
+    pids_limit: 64
     entrypoint: ["/app/kairos-agenda"]
     environment:
       AGENDA_BIND: 0.0.0.0:8092
@@ -120,6 +128,7 @@ services:
     restart: unless-stopped
     user: "1001:1001"
     mem_limit: 64m
+    pids_limit: 64
     entrypoint: ["/app/kairos-finances"]
     environment:
       FINANCES_BIND: 0.0.0.0:8094
@@ -136,6 +145,7 @@ services:
     restart: unless-stopped
     user: "1001:1001"
     mem_limit: 64m
+    pids_limit: 64
     entrypoint: ["/app/kairos-alimentation"]
     environment:
       ALIMENTATION_BIND: 0.0.0.0:8098
@@ -155,6 +165,7 @@ services:
     restart: unless-stopped
     user: "1001:1001"
     mem_limit: 64m
+    pids_limit: 64
     entrypoint: ["/app/kairos-marches"]
     environment:
       MARCHES_BIND: 0.0.0.0:8099
@@ -176,6 +187,7 @@ services:
     restart: unless-stopped
     user: "1001:1001"
     mem_limit: 32m
+    pids_limit: 32
     read_only: true
     security_opt:
       - no-new-privileges:true
@@ -204,6 +216,7 @@ services:
     <<: *kairos-common
     restart: unless-stopped
     mem_limit: 64m
+    pids_limit: 64
     entrypoint: ["/app/tete"]
     command: []
     depends_on: {}              # la tête se dégrade sans moteur : pas d'attente d'Ollama
