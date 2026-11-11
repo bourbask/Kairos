@@ -81,6 +81,7 @@ import app.kairos.mobile.ui.maison.UnpackScreen
 import app.kairos.mobile.ui.maison.UnpackState
 import app.kairos.mobile.ui.overlay.anchorTo
 import app.kairos.mobile.data.Order
+import app.kairos.mobile.ui.spaces.CardCorner
 import app.kairos.mobile.ui.spaces.SpacesScreen
 import app.kairos.mobile.ui.agenda.AgendaScreen
 import java.time.LocalDate
@@ -112,6 +113,7 @@ import app.kairos.mobile.ui.settings.maskAddress
 import app.kairos.mobile.data.Settings
 import androidx.compose.runtime.DisposableEffect
 import app.kairos.mobile.ui.today.DecisionsPeekCorner
+import app.kairos.mobile.ui.today.SettingsButtonCorner
 import app.kairos.mobile.ui.today.TodayScreen
 import app.kairos.mobile.voice.Speech
 import app.kairos.mobile.voice.Tts
@@ -610,7 +612,7 @@ private fun KairosRoot(model: AppModel, dark: Boolean) {
     val mascot = mascotFor(talk.mode, conversation.busy || conversation.awaiting, conversation.decisions, conversation.unread)
     val deck = rememberOverlayState(decisionsOpen, Origin.Anchor)
     val chat = rememberOverlayState(chatOpen, Origin.Anchor)
-    val settings = rememberOverlayState(settingsOpen, Origin.End)
+    val settings = rememberOverlayState(settingsOpen, Origin.Anchor)
     val unpack = rememberOverlayState(unpackOrder != null, Origin.Anchor)
     val add = rememberOverlayState(adding, Origin.Anchor)
     val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
@@ -650,6 +652,7 @@ private fun KairosRoot(model: AppModel, dark: Boolean) {
                     updateProgress = model.updateProgress,
                     onUpdate = model::startUpdate,
                     decisionsAnchor = Modifier.overlayAnchor(deck, DecisionsPeekCorner),
+                    settingsAnchor = Modifier.overlayAnchor(settings, SettingsButtonCorner),
                 )
             },
             spaces = { padding ->
@@ -689,6 +692,7 @@ private fun KairosRoot(model: AppModel, dark: Boolean) {
                     padding = padding,
                     onRetry = { refreshSpaces(force = true) },
                     onOpenSettings = { settingsOpen = true },
+                    settingsAnchor = Modifier.overlayAnchor(settings, CardCorner),
                     maison = maison,
                     maisonOpen = maisonOpen,
                     onOpenMaison = { maisonOpen = true },
@@ -885,7 +889,7 @@ private fun KairosRoot(model: AppModel, dark: Boolean) {
                 onClose = { chatOpen = false },
             )
         }
-        Overlay(settings, settingsOpen, onClose = { settingsOpen = false }) {
+        Overlay(settings, settingsOpen, onClose = { settingsOpen = false }, anchorColor = MaterialTheme.colorScheme.surface) {
             SettingsScreen(
                 theme = model.theme,
                 dark = dark,

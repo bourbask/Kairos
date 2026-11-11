@@ -72,7 +72,7 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 
 /** Coins des rangées (thème : `shapes.large`), repris par l'espace qui en naît. */
-private val CardCorner = 22.dp
+internal val CardCorner = 22.dp
 
 /**
  * Onglet Espaces : une rangée par espace, toujours avec un état (valeur clé, chargement, ou
@@ -84,6 +84,7 @@ fun SpacesScreen(
     padding: PaddingValues,
     onRetry: () -> Unit,
     onOpenSettings: () -> Unit,
+    settingsAnchor: Modifier = Modifier,
     maison: MaisonSnapshot,
     maisonOpen: Boolean,
     onOpenMaison: () -> Unit,
@@ -163,7 +164,7 @@ fun SpacesScreen(
             DocumentsRow(documents, onOpenDocuments, onRetry, Modifier.overlayAnchor(documentsOverlay, CardCorner))
             MimirRow(mimirConfigured, onOpenMimir, Modifier.overlayAnchor(mimirOverlay, CardCorner))
             Spacer(Modifier.height(6.dp))
-            SpaceRow("Réglages", onOpenSettings, icon = { GearIcon() }) { Status("Thème, lecture à voix haute, mise à jour") }
+            SpaceRow("Réglages", onOpenSettings, icon = { GearIcon() }, modifier = settingsAnchor) { Status("Thème, lecture à voix haute, mise à jour") }
         }
         Overlay(overlay, maisonOpen, onClose = onCloseMaison, anchorColor = MaterialTheme.colorScheme.surface) {
             maisonContent()

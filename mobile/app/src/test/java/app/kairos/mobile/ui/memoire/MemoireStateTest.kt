@@ -64,6 +64,28 @@ class MemoireStateTest {
     }
 
     @Test
+    fun expired_token_on_control_gesture_asks_pairing_not_refusal() = runBlocking {
+        val card = anchorCard("fait", "exemple", true)
+        val hidden = mutableSetOf<String>()
+        fun mark(m: Any?) { if (m == null) hidden -= card.id else hidden += card.id }
+
+        // Jeton refusé : l'appairage est demandé (exception remontée à l'écran), la carte revient.
+        val thrown = try {
+            completeCard(card, null, mark = { mark(it) }, undoWindow = { false }, call = { _, _, _ -> throw ApiError.Unauthorized })
+            null
+        } catch (e: ApiError.Unauthorized) {
+            e
+        }
+        assertEquals(ApiError.Unauthorized, thrown)
+        assertTrue(hidden.isEmpty())
+
+        // Autre refus du module : message affiché, la carte revient.
+        val refused = completeCard(card, null, mark = { mark(it) }, undoWindow = { false }, call = { _, _, _ -> throw ApiError.Offline })
+        assertTrue(refused is DoneOutcome.Refused)
+        assertTrue(hidden.isEmpty())
+    }
+
+    @Test
     fun refused_intention_removed_with_message() = runBlocking {
         val i = Intention(9, "rappeler", expires = "2026-11-09T10:00:00", state = "proposee")
         val hidden = mutableSetOf<Long>()

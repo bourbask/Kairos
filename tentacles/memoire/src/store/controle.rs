@@ -63,11 +63,7 @@ impl MemoryStore {
     /// estompés d'abord, `CONTROLE_MAX` au plus) et habitudes nées, rejetées
     /// comprises (actives puis anciennes, les plus fortes d'abord), sans rien renforcer.
     pub fn controle(&self, maintenant: NaiveDateTime) -> Result<Controle> {
-        let annees: BTreeSet<String> = self
-            .conn
-            .prepare("SELECT CAST(id AS TEXT) FROM syntheses WHERE niveau = 'annee'")?
-            .query_map([], |r| r.get(0))?
-            .collect::<rusqlite::Result<_>>()?;
+        let annees = self.syntheses_annee()?;
         let mut ancres = Vec::new();
         let mut estompes = Vec::new();
         for lu in self.lire_souvenirs("1")?.into_iter().filter(|l| l.nature != "habitude") {
@@ -124,7 +120,7 @@ impl MemoryStore {
     }
 
     /// Pose ou retire l'ancre demandée par l'utilisateur, dans la limite de
-    /// `ANCRES_MAX`. Une ancre retirée repart de `maintenant` ; une ancre déjà
+    /// `ANCRES_MAX` moins les synthèses d'année, qui réservent leur place. Une ancre retirée repart de `maintenant` ; une ancre déjà
     /// posée (ou un retrait sans ancre) ne change rien.
     pub fn marquer_ancre(&self, nature: &str, r#ref: &str, ancre: bool, maintenant: NaiveDateTime) -> Result<Ancrage> {
         if !NATURES_ANCRABLES.contains(&nature) {
