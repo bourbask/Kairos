@@ -115,6 +115,11 @@ impl Tentacles {
     }
 
     /// `Some(connecté)` si `name` est configuré, `None` sinon.
+    /// Vrai si chaque tentacule configuré est connecté.
+    pub fn all_connected(&self) -> bool {
+        self.list.iter().all(|t| t.link.is_some())
+    }
+
     pub fn connected(&self, name: &str) -> Option<bool> {
         self.list.iter().find(|t| t.name == name).map(|t| t.link.is_some())
     }
