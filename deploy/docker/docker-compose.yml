@@ -154,6 +154,32 @@ services:
     ports:
       - "${TENTACLES_BIND_ADDR:-127.0.0.1}:${MARCHES_BIND_PORT:-8099}:8099"
 
+  # Partage du site par liens à usage unique. Port MCP (8101) : joint par la tête sur le réseau
+  # interne, jamais publié. Port 8102 : réservé au serveur web du site, via le réseau
+  # `partage-public` (le compose du site le rejoint en `external: true`).
+  partage:
+    logging: *logging
+    image: kairos:local
+    restart: unless-stopped
+    user: "1001:1001"
+    mem_limit: 32m
+    read_only: true
+    tmpfs:
+      - /tmp
+    entrypoint: ["/app/kairos-partage"]
+    environment:
+      PARTAGE_BIND: 0.0.0.0:8101
+      PARTAGE_PUBLIC_BIND: 0.0.0.0:8102
+      PARTAGE_DB: /app/partage/partage.db
+    env_file:   # PARTAGE_TOKEN, PARTAGE_PUBLIC_URL (obligatoires)
+      - path: kairos.env
+        required: false
+    volumes:
+      - partage-data:/app/partage
+    networks:
+      - default
+      - partage-public
+
   # Tête : boucle principale (conversation, briefs, suggestions) ; joint les tentacules par nom de service.
   tete:
     logging: *logging
@@ -243,3 +269,10 @@ volumes:
   memoire-data:
   alimentation-data:
   marches-data:
+  partage-data:
+
+networks:
+  # Sans sortie vers l'extérieur ; nom fixe pour que le compose du site puisse le rejoindre.
+  partage-public:
+    name: partage-public
+    internal: true

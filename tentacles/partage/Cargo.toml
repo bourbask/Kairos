@@ -1,0 +1,25 @@
+[package]
+name = "kairos-partage"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "kairos-partage"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
+anyhow = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+tokio = { version = "1", features = ["full"] }
+axum = "0.8"
+sha2 = "0.10"
+getrandom = "0.3"
+tentacle-common = { path = "../../crates/tentacle-common" }
+rmcp = { version = "3.8", features = ["server", "macros"] }
+schemars = "1"
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }

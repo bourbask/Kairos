@@ -1434,6 +1434,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "kairos-partage"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "chrono",
+ "getrandom 0.3.4",
+ "rmcp",
+ "rusqlite",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tentacle-common",
+ "tokio",
+ "tower",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

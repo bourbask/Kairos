@@ -4,7 +4,7 @@
 FROM rust:1-bookworm AS build
 WORKDIR /src
 COPY . .
-RUN cargo build --release -p kairos -p kairos-memoire -p kairos-agenda -p kairos-finances -p kairos-alimentation -p kairos-marches -p tete
+RUN cargo build --release -p kairos -p kairos-memoire -p kairos-agenda -p kairos-finances -p kairos-alimentation -p kairos-marches -p kairos-partage -p tete
 
 # ---- Runtime ----
 FROM debian:bookworm-slim
@@ -19,8 +19,8 @@ RUN curl -fsSL -o /usr/local/bin/supercronic \
  && chmod +x /usr/local/bin/supercronic
 WORKDIR /app
 # Répertoires des données des tentacules : propriété de l'utilisateur d'exécution (hérité par le volume nommé).
-RUN mkdir -p /app/memoire /app/alimentation /app/marches && chown 1001:1001 /app/memoire /app/alimentation /app/marches
-COPY --from=build /src/target/release/kairos /src/target/release/kairos-memoire /src/target/release/kairos-agenda /src/target/release/kairos-finances /src/target/release/kairos-alimentation /src/target/release/kairos-marches /src/target/release/tete /app/
+RUN mkdir -p /app/memoire /app/alimentation /app/marches /app/partage && chown 1001:1001 /app/memoire /app/alimentation /app/marches /app/partage
+COPY --from=build /src/target/release/kairos /src/target/release/kairos-memoire /src/target/release/kairos-agenda /src/target/release/kairos-finances /src/target/release/kairos-alimentation /src/target/release/kairos-marches /src/target/release/kairos-partage /src/target/release/tete /app/
 COPY deploy/docker/supercronic.crontab /app/supercronic.crontab
 # config/profile.toml monté en volume sur /app/config ; data + briefings via env (volumes).
 ENTRYPOINT ["/app/kairos"]
