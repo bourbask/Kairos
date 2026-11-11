@@ -754,6 +754,27 @@ impl MemoryStore {
             .transpose()
     }
 
+    /// Identifiants des synthèses d'année, toujours ancrées.
+    fn syntheses_annee(&self) -> Result<BTreeSet<String>> {
+        Ok(self
+            .conn
+            .prepare("SELECT CAST(id AS TEXT) FROM syntheses WHERE niveau = 'annee'")?
+            .query_map([], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Ancres au-delà de la limite, si une synthèse d'année est née depuis
+    /// `depuis` : elle a pu dépasser la limite. Sinon 0.
+    pub fn ancres_en_trop(&self, depuis: NaiveDateTime) -> Result<usize> {
+        let n: i64 = self.conn.query_row(
+            "SELECT CASE WHEN EXISTS (SELECT 1 FROM syntheses WHERE niveau = 'annee' AND cree_le >= ?1)
+                 THEN (SELECT COUNT(*) FROM souvenirs WHERE ancre = 1) - ?2 ELSE 0 END",
+            params![ts(depuis), ANCRES_MAX as i64],
+            |r| r.get(0),
+        )?;
+        Ok(n.max(0) as usize)
+    }
+
     /// Pose ou retire l'ancre ; `false` si le souvenir est inconnu.
     pub fn ancrer(&self, nature: &str, r#ref: &str, ancre: bool) -> Result<bool> {
         let n = self.conn.execute(
@@ -1651,7 +1672,8 @@ impl MemoryStore {
               OR (s.nature = 'conversation' AND (CAST(s.ref AS INTEGER) IN (SELECT id FROM conversations ORDER BY id DESC LIMIT {RAPPEL_JOURNAL_RECENT})
                   OR CAST(s.ref AS INTEGER) IN ({conv_hits}))))"
         );
-        struct Cand { r: Rappel, importance: f64, dernier: NaiveDateTime, rang: Option<usize> }
+        struct Cand { r: Rappel, importance: f64, dernier: NaiveDateTime, rang: Option<usize>, annee: bool }
+        let annees = self.syntheses_annee()?;
         let mut ancres = Vec::new();
         let mut autres = Vec::new();
         // Conversation sans résumé ni sujets : rien à rappeler.
@@ -1668,16 +1690,19 @@ impl MemoryStore {
                 nature: lu.nature,
                 r#ref: lu.r#ref,
             };
-            let c = Cand { r, importance: lu.importance, dernier: lu.dernier, rang };
+            let annee = r.nature == "synthese" && annees.contains(&r.r#ref);
+            let c = Cand { r, importance: lu.importance, dernier: lu.dernier, rang, annee };
             if lu.ancre { ancres.push(c) } else { autres.push(c) }
         }
 
-        ancres.sort_by(|a, b| b.importance.total_cmp(&a.importance).then(b.dernier.cmp(&a.dernier)));
+        // Les synthèses d'année réservent leur place : jamais écartées, elles
+        // passent avant les ancres de l'utilisateur.
+        ancres.sort_by(|a, b| b.annee.cmp(&a.annee).then(b.importance.total_cmp(&a.importance)).then(b.dernier.cmp(&a.dernier)));
         let mut out = Vec::new();
         let mut budget = 0;
         for c in ancres {
             let n = c.r.texte.chars().count();
-            if out.len() < ANCRES_MAX && budget + n <= BUDGET_ANCRES {
+            if c.annee || (out.len() < ANCRES_MAX && budget + n <= BUDGET_ANCRES) {
                 budget += n;
                 out.push(c.r);
             }
@@ -2273,6 +2298,24 @@ mod tests {
         let r = s.rappel(None, t(), 12).unwrap();
         assert_eq!(r.iter().filter(|x| x.ancre).count(), 20);
         assert_eq!(r[0].r#ref, "a29");
+    }
+
+    #[test]
+    fn year_synthesis_never_dropped_from_recall() {
+        let s = store();
+        // Synthèse d'année créée alors que les ancres de l'utilisateur remplissent déjà la limite.
+        for i in 0..20 {
+            let k = format!("a{i}");
+            s.fact_set_at(&k, &"x".repeat(150), "p", t()).unwrap();
+            s.ancrer("fait", &k, true).unwrap();
+        }
+        s.conn.execute("UPDATE souvenirs SET importance = 0.9 WHERE nature = 'fait'", []).unwrap();
+        let an = s.synthese_creer("annee", "2025", &"année d'exemple ".repeat(20), t() - Duration::days(400)).unwrap().to_string();
+        let r = s.rappel(None, t(), 12).unwrap();
+        assert!(r.iter().any(|x| x.nature == "synthese" && x.r#ref == an));
+        assert!(r.iter().filter(|x| x.ancre).count() <= 20);
+        let total: usize = r.iter().filter(|x| x.ancre).map(|x| x.texte.chars().count()).sum();
+        assert!(total <= 3200, "{total}");
     }
 
     #[test]

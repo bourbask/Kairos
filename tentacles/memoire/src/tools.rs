@@ -755,6 +755,11 @@ impl MemoryServer {
             for l in db.habitudes_annoncees(now - Duration::hours(24)).map_err(err)? {
                 lignes.push(format!("- Habitude remarquée : {l} — à confirmer"));
             }
+            // Synthèse d'année ancrée au-delà de la limite : dit le matin qui suit, sans contenu.
+            let n = db.ancres_en_trop(now - Duration::hours(24)).map_err(err)?;
+            if n > 0 {
+                lignes.push(format!("- Mémoire : {n} souvenirs toujours retenus au-delà de la limite : retire une ancre"));
+            }
         }
         // État de la nuit seulement : jamais le contenu de la mémoire.
         let jj = |d: NaiveDate| d.format("%d/%m/%Y").to_string();
@@ -1268,6 +1273,34 @@ mod tests {
         let s2 = srv();
         let v = js(s2.nuit_habitudes(Parameters(serde_json::from_value(json!({"jour": "2026-11-09", "sources": {}})).unwrap())));
         assert_eq!(v["complet"], true);
+    }
+
+    #[test]
+    fn year_synthesis_beyond_cap_said_once() {
+        let s = srv();
+        let now = NaiveDate::from_ymd_opt(2026, 11, 9).unwrap().and_hms_opt(7, 0, 0).unwrap();
+        let db = s.db().unwrap();
+        for etape in crate::store::ETAPES_NUIT {
+            db.nuit_noter(etape, "ok", None, None, now).unwrap();
+        }
+        for i in 0..20 {
+            db.fact_set(&format!("f{i}"), "Exemple", "p").unwrap();
+            db.ancrer("fait", &format!("f{i}"), true).unwrap();
+        }
+        drop(db);
+        assert_eq!(s.brief_at(now, BriefPeriod::Matin).unwrap(), "");
+        // Synthèse d'année de la nuit : ancrée malgré la limite, dite une fois, sans contenu.
+        s.db().unwrap().synthese_creer("annee", "2025", "Année d'exemple", now - Duration::hours(4)).unwrap();
+        let b = s.brief_at(now, BriefPeriod::Matin).unwrap();
+        assert!(b.contains("- Mémoire : 1 souvenirs toujours retenus au-delà de la limite : retire une ancre"), "{b}");
+        assert!(!b.contains("Exemple") && !b.contains("exemple"), "{b}");
+        let lendemain = now + Duration::days(1);
+        let db = s.db().unwrap();
+        for etape in crate::store::ETAPES_NUIT {
+            db.nuit_noter(etape, "ok", None, None, lendemain).unwrap();
+        }
+        drop(db);
+        assert!(!s.brief_at(lendemain, BriefPeriod::Matin).unwrap().contains("au-delà"));
     }
 
     #[test]
