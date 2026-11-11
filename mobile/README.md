@@ -57,6 +57,24 @@ Le téléphone doit pouvoir joindre l'adresse de l'API (réseau privé).
 Le mode Auto écoute le capteur de lumière uniquement au premier plan, avec deux seuils
 et un délai pour éviter le clignotement ; sans capteur il suit le thème du téléphone.
 
+## Espace Mimir
+
+Affiche dans l'application un site web (« Le Crible 2027 ») à partir d'un lien de
+partage personnel, sans navigateur à ouvrir. L'adresse n'est jamais dans le code :
+elle se colle sur l'appareil.
+
+1. Onglet Espaces → **Mimir** : au premier passage, coller le lien de partage
+   (`https://exemple.org/...?k=...`) puis **Enregistrer**. Seuls les liens `https://`
+   sont acceptés.
+2. Le lien porte un jeton : il est chiffré par la clé de l'appareil (comme le jeton
+   d'appairage) et n'apparaît dans aucun journal.
+3. L'icône ⚙ de l'espace permet de recharger la page, de modifier le lien ou de
+   l'effacer (cookies et stockage du site sont alors oubliés).
+
+Le site est chargé avec l'agent utilisateur suffixé de `KairosApp`. Le bouton retour
+revient à la page précédente du site, puis ferme l'espace. Les liens vers un autre
+domaine, les nouvelles fenêtres, `mailto:` et `tel:` s'ouvrent hors de l'application.
+
 ## Limites connues
 
 - Pas encore testée sur un appareil réel : compilation et tests unitaires seulement.
