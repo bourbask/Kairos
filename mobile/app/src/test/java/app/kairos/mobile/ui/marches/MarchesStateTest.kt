@@ -220,4 +220,15 @@ class MarchesStateTest {
         assertEquals("soutient", signWord(1))
         assertEquals("contredit", signWord(-1))
     }
+
+    @Test
+    fun scene_falls_only_when_recent_moves_sum_negative() {
+        fun snap(vararg m: FollowedMarket) = MarchesSnapshot(markets = Markets(followed = m.toList()))
+        assertEquals(false, marketsFalling(MarchesSnapshot()))
+        assertEquals(false, marketsFalling(snap(FollowedMarket("a"))))
+        assertEquals(true, marketsFalling(snap(FollowedMarket("a", d1 = -0.04), FollowedMarket("b", d1 = 0.01))))
+        assertEquals(false, marketsFalling(snap(FollowedMarket("a", d1 = -0.01), FollowedMarket("b", d7 = 0.05))))
+        // Une question dénouée ne compte plus.
+        assertEquals(false, marketsFalling(snap(FollowedMarket("a", d1 = -0.2, closed = true))))
+    }
 }
