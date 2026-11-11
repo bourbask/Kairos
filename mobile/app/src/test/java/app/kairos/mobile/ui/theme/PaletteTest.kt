@@ -48,4 +48,16 @@ class PaletteTest {
         // Ombre du corps de Fougère : corps mêlé à 30 % du bouton.
         assertEquals(Color(0xFFC5D0BB), mix(Color(0xFFF7F5EF), Color(0xFF4F7942), 0.3f))
     }
+
+    /** Hors du bouton : le corps se détache du fond, les yeux du corps, 3:1 au moins. */
+    @Test
+    fun mascot_reads_on_page() {
+        for (p in ThemePalette.entries) for (dark in listOf(false, true)) {
+            val c = SceneColors.onPage(p, dark)
+            val mode = if (dark) "sombre" else "clair"
+            assertEquals(p.roles(dark).background, c['B'])
+            assertTrue("${p.label} $mode corps/fond", contrast(c['F'], c['B']) >= 3.0)
+            assertTrue("${p.label} $mode yeux/corps", contrast(c['D'], c['F']) >= 3.0)
+        }
+    }
 }

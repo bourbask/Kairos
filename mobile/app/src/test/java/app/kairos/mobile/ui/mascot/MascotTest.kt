@@ -1,5 +1,6 @@
 package app.kairos.mobile.ui.mascot
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -25,6 +26,24 @@ class MascotTest {
     @Test
     fun eyes_change_with_state() {
         assertNotEquals(cells(MascotState.Repos, 0, 'D'), cells(MascotState.Ecoute, 0, 'D'))
+    }
+
+    @Test
+    fun scene_rest_counter_repeats_without_one_off_squash() {
+        assertEquals(9L, restFrame(9, 24))
+        assertEquals(24L + 9, restFrame(24 + 9, 24))
+        assertEquals(24L + 9, restFrame(5 * 24 + 9, 24))
+        // Après le premier tour, chaque image de repos se redessine comme au premier tour, sauf l'écrasement.
+        val kind = MascotKind.Lithos
+        val p = kind.restPeriod()
+        for (f in 0 until p) {
+            val first = kind.frame(MascotState.Repos, f).rows()
+            val later = kind.frame(MascotState.Repos, f + p).rows()
+            if (f == 9) assertNotEquals(first, later) else assertEquals(first, later)
+        }
+        for (other in MascotKind.entries) for (f in 0 until other.restPeriod()) {
+            if (other != MascotKind.Lithos) assertEquals("$other $f", other.frame(MascotState.Repos, f).rows(), other.frame(MascotState.Repos, f + other.restPeriod()).rows())
+        }
     }
 
     @Test

@@ -2,7 +2,6 @@ package app.kairos.mobile.ui.mascot
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.size
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -43,7 +42,7 @@ internal object SpriteCache {
         mascots.getOrPut((kind.ordinal * 8 + state.ordinal) * 64 + f) { pack(kind.frame(state, f, PAD)) }
 
     fun scene(scene: SceneKind, down: Boolean, kind: MascotKind, i: Int, t: Int): Array<IntArray> {
-        val key = (((scene.ordinal * 2L + (if (down) 1 else 0)) * 8 + kind.ordinal) * 16 + i) * 64 + t
+        val key = (((scene.ordinal * 2L + (if (down) 1 else 0)) * 8 + kind.ordinal) * 16 + i) * 128 + t
         return scenes.getOrPut(key) { scene.frame(kind, i, t, down).let { arrayOf(pack(it.back), pack(it.mascot), pack(it.front)) } }
     }
 
@@ -62,6 +61,14 @@ internal object SpriteCache {
  * motifs du personnage (clignements une fois sur deux cycles compris).
  */
 internal fun MascotKind.restPeriod(): Int = 2 * timing(MascotState.Repos).n
+
+/**
+ * Image de repos passée à la scène : le premier tour tel quel, puis un tour sur
+ * [0, période) décalé d'une période. Les motifs cycliques restent identiques ; ce
+ * qui n'arrive qu'une fois dans la maquette (l'écrasement de Lithos) n'arrive
+ * qu'une fois par ouverture de la scène, sans compteur qui grandit sans fin.
+ */
+internal fun restFrame(count: Long, period: Int): Long = if (count < period) count else period + count % period
 
 /** Dessine des cases empaquetées ; [origin] = case placée au coin du canevas, [dy] en pixels. */
 private fun DrawScope.cells(packed: IntArray, cell: Float, origin: Int, dy: Float, colors: SceneColors) {
@@ -133,7 +140,7 @@ fun MascotScene(
             val still = motion?.scaleFactor == 0f
             val elapsed = now - start
             frame = if (still) scene.key else (steps.countAt(elapsed, kind.tempo) % steps.n).toInt()
-            rest = if (still) 0 else idle.countAt(elapsed) % kind.restPeriod()
+            rest = if (still) 0 else restFrame(idle.countAt(elapsed), kind.restPeriod())
             lift = if (still) 0f else kind.breath.at(now)
         }
     }
@@ -146,10 +153,6 @@ fun MascotScene(
     }
 }
 
-/** Teintes d'un personnage posé sur le fond de l'écran plutôt que sur le bouton : corps couleur du fond. */
+/** Teintes d'un personnage posé sur le fond de l'écran plutôt que sur le bouton. */
 @Composable
-fun onPageColors(): SceneColors {
-    val bg = MaterialTheme.colorScheme.background
-    val s = KairosColors.current.scene
-    return remember(bg, s) { SceneColors(bg, bg, s['D'], s['A'], s['R']) }
-}
+fun onPageColors(): SceneColors = KairosColors.current.page

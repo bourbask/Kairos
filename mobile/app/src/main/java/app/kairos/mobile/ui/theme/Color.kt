@@ -166,10 +166,10 @@ fun contrast(a: Color, b: Color): Double {
  * D encre · A accent · a accent sombre · R urgent.
  */
 @Immutable
-class SceneColors(btn: Color, body: Color, ink: Color, attention: Color, urgent: Color) {
+class SceneColors(btn: Color, body: Color, ink: Color, attention: Color, urgent: Color, eye: Color = ink) {
     /** Indexé comme [ROLES]. */
     val byRole: List<Color> = listOf(
-        btn, body, mix(body, btn, 0.3f), mix(body, btn, 0.58f), mix(btn, ink, 0.34f), ink, attention, mix(attention, ink, 0.42f), urgent,
+        btn, body, mix(body, btn, 0.3f), mix(body, btn, 0.58f), mix(btn, ink, 0.34f), eye, attention, mix(attention, ink, 0.42f), urgent,
     )
 
     operator fun get(role: Char): Color = byRole[ROLES.indexOf(role)]
@@ -179,6 +179,18 @@ class SceneColors(btn: Color, body: Color, ink: Color, attention: Color, urgent:
 
         fun of(palette: ThemePalette, dark: Boolean): SceneColors = with(palette.roles(dark)) {
             SceneColors(btn, body, palette.ink, attention, urgent)
+        }
+
+        /**
+         * Personnage posé sur le fond de l'écran : corps couleur du bouton, fond de l'écran
+         * à la place du bouton. Le bouton sombre, trop proche du fond dans certaines palettes
+         * (moins de 3:1), cède la place à la couleur principale. Yeux à l'encre ou couleur
+         * papier, selon ce qui se détache le mieux du corps.
+         */
+        fun onPage(palette: ThemePalette, dark: Boolean): SceneColors = with(palette.roles(dark)) {
+            val body = if (contrast(btn, background) >= 3.0) btn else primary
+            val eye = if (contrast(palette.ink, body) >= contrast(this.body, body)) palette.ink else this.body
+            SceneColors(background, body, palette.ink, attention, urgent, eye)
         }
     }
 }
@@ -194,6 +206,8 @@ data class KairosColors(
     val body: Color,
     /** Teintes du personnage et de ses scènes sur le bouton. */
     val scene: SceneColors,
+    /** Teintes du personnage posé sur le fond de l'écran. */
+    val page: SceneColors,
 ) {
     companion object {
         /** Rôles du thème courant. */
@@ -201,7 +215,7 @@ data class KairosColors(
             @Composable @ReadOnlyComposable get() = LocalKairosColors.current
 
         fun of(palette: ThemePalette, dark: Boolean): KairosColors = with(palette.roles(dark)) {
-            KairosColors(attentionText, btn, body, SceneColors.of(palette, dark))
+            KairosColors(attentionText, btn, body, SceneColors.of(palette, dark), SceneColors.onPage(palette, dark))
         }
     }
 }
