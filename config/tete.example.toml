@@ -57,3 +57,10 @@ end = "18:00"
 # url = "http://partage:8101/mcp"
 # token_env = "PARTAGE_TOKEN"
 # private = true
+#
+# Données publiques d'information politique (outils réservés à l'application) :
+# [[tentacles]]
+# name = "politique"
+# url = "http://politique:8103/mcp"
+# token_env = "POLITIQUE_TOKEN"
+# private = true
