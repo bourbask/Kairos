@@ -91,6 +91,7 @@ import app.kairos.mobile.ui.memoire.laterIds
 import app.kairos.mobile.ui.memoire.MemoireScreen
 import app.kairos.mobile.ui.medias.MediasScreen
 import app.kairos.mobile.ui.documents.DocumentsScreen
+import app.kairos.mobile.ui.mimir.MimirScreen
 import app.kairos.mobile.ui.kit.LocalAmountsMasked
 import app.kairos.mobile.ui.kit.LocalNotifier
 import app.kairos.mobile.ui.kit.NotifierHost
@@ -223,6 +224,10 @@ class AppModel(app: Application) : AndroidViewModel(app) {
 
     /** Fenêtre exclue des captures et des applications récentes (activé par défaut). */
     var hideFromCaptures by mutableStateOf(true)
+        private set
+
+    /** Lien de partage de l'espace Mimir, collé sur l'appareil ; null tant qu'il ne l'est pas. */
+    var mimirLink by mutableStateOf<String?>(null)
         private set
 
     private val processStarted: Boolean
@@ -367,6 +372,7 @@ class AppModel(app: Application) : AndroidViewModel(app) {
             theme = saved?.theme ?: ThemeMode.Clair
             amountsMasked = saved?.amountsMasked ?: false
             hideFromCaptures = saved?.hideFromCaptures ?: true
+            mimirLink = runCatching { store.loadMimir() }.getOrNull()
             session = runCatching { store.load() }.getOrNull()?.let(::open)
             loaded = true
             checkUpdate()
@@ -423,6 +429,17 @@ class AppModel(app: Application) : AndroidViewModel(app) {
     fun changeHideFromCaptures(on: Boolean) {
         hideFromCaptures = on
         viewModelScope.launch { settings.saveHideFromCaptures(on) }
+    }
+
+    /** [link] déjà validé ([app.kairos.mobile.ui.mimir.normalizeMimirLink]) ; chiffré avant écriture. */
+    fun saveMimirLink(link: String) {
+        mimirLink = link
+        viewModelScope.launch { runCatching { store.saveMimir(link) } }
+    }
+
+    fun clearMimirLink() {
+        mimirLink = null
+        viewModelScope.launch { runCatching { store.clearMimir() } }
     }
 
     fun toggleAmountsMasked() {
@@ -530,6 +547,7 @@ private fun KairosRoot(model: AppModel, dark: Boolean) {
     var memoireOpen by rememberSaveable { mutableStateOf(false) }
     var mediasOpen by rememberSaveable { mutableStateOf(false) }
     var documentsOpen by rememberSaveable { mutableStateOf(false) }
+    var mimirOpen by rememberSaveable { mutableStateOf(false) }
     var unpackOrder by rememberSaveable { mutableStateOf<Long?>(null) }
     var adding by rememberSaveable { mutableStateOf(false) }
     var focusInput by remember { mutableStateOf(false) }
@@ -769,6 +787,20 @@ private fun KairosRoot(model: AppModel, dark: Boolean) {
                             padding = padding,
                             onClose = { documentsOpen = false },
                             onUnauthorized = model::unauthorized,
+                        )
+                    },
+                    // Site externe : rien à demander à la tête, seulement le lien enregistré sur l'appareil.
+                    mimirConfigured = model.mimirLink != null,
+                    mimirOpen = mimirOpen,
+                    onOpenMimir = { mimirOpen = true },
+                    onCloseMimir = { mimirOpen = false },
+                    mimirContent = {
+                        MimirScreen(
+                            link = model.mimirLink,
+                            padding = padding,
+                            onSave = model::saveMimirLink,
+                            onClear = model::clearMimirLink,
+                            onClose = { mimirOpen = false },
                         )
                     },
                 ) {
