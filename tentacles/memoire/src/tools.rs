@@ -759,7 +759,11 @@ impl MemoryServer {
             // Synthèse d'année ancrée au-delà de la limite : dit le matin qui suit, sans contenu.
             let n = db.ancres_en_trop(now - Duration::hours(24)).map_err(err)?;
             if n > 0 {
-                lignes.push(format!("- Mémoire : {n} souvenirs toujours retenus au-delà de la limite : retire une ancre"));
+                lignes.push(if n == 1 {
+                    "- Mémoire : 1 souvenir toujours retenu au-delà de la limite : retire une ancre".to_owned()
+                } else {
+                    format!("- Mémoire : {n} souvenirs toujours retenus au-delà de la limite : retire une ancre")
+                });
             }
         }
         // État de la nuit seulement : jamais le contenu de la mémoire.
@@ -1297,7 +1301,7 @@ mod tests {
         // Synthèse d'année de la nuit : ancrée malgré la limite, dite une fois, sans contenu.
         s.db().unwrap().synthese_creer("annee", "2025", "Année d'exemple", now - Duration::hours(4)).unwrap();
         let b = s.brief_at(now, BriefPeriod::Matin).unwrap();
-        assert!(b.contains("- Mémoire : 1 souvenirs toujours retenus au-delà de la limite : retire une ancre"), "{b}");
+        assert!(b.contains("- Mémoire : 1 souvenir toujours retenu au-delà de la limite : retire une ancre"), "{b}");
         assert!(!b.contains("Exemple") && !b.contains("exemple"), "{b}");
         let lendemain = now + Duration::days(1);
         let db = s.db().unwrap();
