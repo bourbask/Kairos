@@ -1,0 +1,9 @@
+{
+  "CAMPS": ["gauche", "droite"],
+  "CLAIMS": [
+    {"theme": "Énergie", "camp": "Candidat A", "q": "Le prix de l'électricité a doublé.", "v": "Exagéré",
+     "facts": ["Hausse fictive de 40 % en trois ans."], "src": [["Source fictive", "https://example.org/elec"]]},
+    {"theme": "Santé", "camp": "Inconnu Z", "q": "Les hôpitaux ferment tous.", "v": "Faux",
+     "facts": ["Chiffre fictif."], "src": [["Source fictive", "https://example.org/sante"]]}
+  ]
+}

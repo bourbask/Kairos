@@ -1,0 +1,4 @@
+{
+  "AIDE": {"rows": [{"l": "Parti Bleu", "v": 1.5}, {"l": "Parti Vert", "v": 0.8}], "scale": {"min": 0, "max": 10, "unit": "M€", "dec": 1}},
+  "PARTIS": [["PB", 1.2, 0.3, 0.1], ["Parti Vert", 0.9, 0.2, 0.0]]
+}

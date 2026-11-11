@@ -1,0 +1,8 @@
+[
+  {"id": "budget", "titre": "Budget des programmes", "rubrique": "budgets", "chemin": "PROGRAMS", "cle_identite": "who",
+   "indicateurs": [{"champ": "deficit", "libelle": "Déficit", "unite": "Md€"}, {"champ": "hh", "libelle": "Effet par ménage", "unite": "€/an"}],
+   "source": "src"},
+  {"id": "niveau-de-vie", "titre": "Niveau de vie", "rubrique": "niveau-de-vie", "chemin": "MEASURES", "cle_identite": "who",
+   "indicateurs": [{"champ": "hh", "libelle": "Revenu des ménages", "unite": "€/an"}],
+   "source": "Évaluation fictive, example.org"}
+]
