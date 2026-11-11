@@ -24,7 +24,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
 /**
- * En-tête d'un espace : chevron retour (48 dp), titre, sous-titre, actions à droite.
+ * En-tête d'un espace : chevron de fermeture vers le bas (48 dp, le panneau redescend), titre, sous-titre, actions à droite.
  * Seul, pour les écrans qui gèrent eux-mêmes leur corps (onglets).
  */
 @Composable
@@ -33,8 +33,8 @@ fun SpaceHeader(
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
     subtitle: String? = null,
-    backLabel: String = "Retour aux espaces",
-    backIcon: ImageVector = KairosIcons.ChevronBack,
+    backLabel: String = "Fermer",
+    backIcon: ImageVector = KairosIcons.ChevronDown,
     actions: @Composable RowScope.() -> Unit = {},
 ) {
     Row(
@@ -73,7 +73,7 @@ fun SpaceScaffold(
     padding: PaddingValues,
     modifier: Modifier = Modifier,
     subtitle: String? = null,
-    backLabel: String = "Retour aux espaces",
+    backLabel: String = "Fermer",
     scrolled: Boolean = false,
     actions: @Composable RowScope.() -> Unit = {},
     banner: (@Composable () -> Unit)? = null,

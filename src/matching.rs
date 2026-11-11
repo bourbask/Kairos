@@ -1,26 +1,57 @@
 use crate::config::Profile;
 use crate::models::{JobOffer, ScoredJob, ScoreBreakdown};
+use serde::Deserialize;
+
+/// Réglages du module de recherche d'emploi (section `[jobs]` des modules).
+#[derive(Debug, Clone, Deserialize)]
+pub struct JobsConfig {
+    /// Seuil 0-1 : offres sous ce score exclues du briefing.
+    #[serde(default = "default_min_score")]
+    pub min_score: f64,
+    /// Vide = aucune contrainte géographique.
+    #[serde(default)]
+    pub location_keywords: Vec<String>,
+    /// Filtrage négatif : sous-chaînes insensibles à la casse.
+    #[serde(default)]
+    pub blacklist_companies: Vec<String>,
+    #[serde(default)]
+    pub blacklist_keywords: Vec<String>,
+}
+
+fn default_min_score() -> f64 { 0.60 }
+
+impl Default for JobsConfig {
+    fn default() -> Self {
+        Self {
+            min_score: default_min_score(),
+            location_keywords: Vec::new(),
+            blacklist_companies: Vec::new(),
+            blacklist_keywords: Vec::new(),
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct Matcher {
     profile: Profile,
+    jobs: JobsConfig,
 }
 
 impl Matcher {
-    pub fn new(profile: Profile) -> Self {
-        Self { profile }
+    pub fn new(profile: Profile, jobs: JobsConfig) -> Self {
+        Self { profile, jobs }
     }
 
-    /// Seuil de pertinence minimal (préférence profil, défaut 0.60), tunable sans rebuild.
+    /// Seuil de pertinence minimal (défaut 0.60), tunable sans rebuild.
     pub fn min_score(&self) -> f64 {
-        self.profile.preferences.min_score
+        self.jobs.min_score
     }
 
     /// Filtre négatif : entreprise blacklistée (sous-chaîne du nom) ou mot-clé
     /// secteur indésirable dans le titre/description. Insensible à la casse.
     /// Les entrées vides sont ignorées (sinon `""` exclurait toutes les offres).
     pub fn is_blacklisted(&self, offer: &JobOffer) -> bool {
-        let f = &self.profile.filters;
+        let f = &self.jobs;
         let company = offer.company.to_lowercase();
         if f.blacklist_companies.iter()
             .any(|c| !c.is_empty() && company.contains(&c.to_lowercase()))
@@ -80,7 +111,7 @@ impl Matcher {
     }
 
     fn location_gate_ok(&self, offer: &JobOffer) -> bool {
-        let keywords = &self.profile.preferences.location_keywords;
+        let keywords = &self.jobs.location_keywords;
         if keywords.is_empty() {
             return true;
         }
@@ -222,7 +253,7 @@ mod tests {
 
     #[test]
     fn offre_realiste_depasse_le_seuil() {
-        let matcher = Matcher::new(test_profile());
+        let matcher = Matcher::new(test_profile(), JobsConfig::default());
         // 6/7 compétences du profil (pas SQLite) + remote confirmé + CDI + salaire >= cible + pays préféré,
         // titre sans marqueur senior (pas de malus séniorité)
         let offer = make_offer(
@@ -237,7 +268,7 @@ mod tests {
 
     #[test]
     fn gate_remote_echoue_score_nul() {
-        let matcher = Matcher::new(test_profile());
+        let matcher = Matcher::new(test_profile(), JobsConfig::default());
         let offer = make_offer("Dev", "On-site position in the Paris office", Some(false), Some("FR"), None, Some(60000));
         let (score, breakdown) = matcher.score_with_breakdown(&offer);
         assert_eq!(score, 0.0);
@@ -246,7 +277,7 @@ mod tests {
 
     #[test]
     fn gate_freelance_echoue_score_nul() {
-        let matcher = Matcher::new(test_profile());
+        let matcher = Matcher::new(test_profile(), JobsConfig::default());
         let offer = make_offer("Freelance React Developer", "Fully remote contractor role", Some(true), Some("FR"), None, Some(60000));
         let (score, _) = matcher.score_with_breakdown(&offer);
         assert_eq!(score, 0.0);
@@ -255,7 +286,7 @@ mod tests {
     #[test]
     fn salaire_quatre_paliers_relatifs_au_profil() {
         // profile.example.toml : salary_min=35000, salary_target=50000, mid=42500
-        let matcher = Matcher::new(test_profile());
+        let matcher = Matcher::new(test_profile(), JobsConfig::default());
         let bonus = make_offer("Dev", "Permanent position, fully remote", Some(true), None, None, Some(58000));
         let mi_chemin = make_offer("Dev", "Permanent position, fully remote", Some(true), None, None, Some(46000));
         let neutre = make_offer("Dev", "Permanent position, fully remote", Some(true), None, None, Some(37000));
@@ -277,7 +308,7 @@ mod tests {
         let mut profile = test_profile();
         profile.preferences.salary_min = 45000;
         profile.preferences.salary_target = 45000; // dégénéré : target == min
-        let matcher = Matcher::new(profile);
+        let matcher = Matcher::new(profile, JobsConfig::default());
         let offer = make_offer("Dev", "Permanent position, fully remote", Some(true), None, None, Some(46000));
         let (score, _) = matcher.score_with_breakdown(&offer);
         // Avant le fix : `mid` collapse à 45000, la garde `>= target` matchait tout salaire >= min,
@@ -289,7 +320,7 @@ mod tests {
     fn remote_gate_desactive_si_profil_onsite() {
         let mut profile = test_profile();
         profile.preferences.remote = "on-site".to_string();
-        let matcher = Matcher::new(profile);
+        let matcher = Matcher::new(profile, JobsConfig::default());
         // Offre clairement non-remote : passe quand même, le gate remote est sauté pour ce profil.
         let offer = make_offer("Dev", "On-site position in the office", Some(false), None, None, None);
         let (score, breakdown) = matcher.score_with_breakdown(&offer);
@@ -299,7 +330,7 @@ mod tests {
 
     #[test]
     fn location_gate_vide_ne_bloque_rien() {
-        let matcher = Matcher::new(test_profile()); // location_keywords vide par défaut (profile.example.toml ne le déclare pas)
+        let matcher = Matcher::new(test_profile(), JobsConfig::default()); // location_keywords vide par défaut
         let offer = make_offer("Dev", "Permanent position, fully remote", Some(true), None, None, None);
         let (score, _) = matcher.score_with_breakdown(&offer);
         assert!(score > 0.0);
@@ -307,9 +338,8 @@ mod tests {
 
     #[test]
     fn location_gate_exclut_hors_zone() {
-        let mut profile = test_profile();
-        profile.preferences.location_keywords = vec!["Lyon".into()];
-        let matcher = Matcher::new(profile);
+        let jobs = JobsConfig { location_keywords: vec!["Lyon".into()], ..Default::default() };
+        let matcher = Matcher::new(test_profile(), jobs);
         let hors_zone = make_offer("Dev", "Poste basé à Lille", Some(true), None, None, None);
         let (score, _) = matcher.score_with_breakdown(&hors_zone);
         assert_eq!(score, 0.0);
@@ -317,9 +347,8 @@ mod tests {
 
     #[test]
     fn location_gate_accepte_zone_matchee() {
-        let mut profile = test_profile();
-        profile.preferences.location_keywords = vec!["Lyon".into()];
-        let matcher = Matcher::new(profile);
+        let jobs = JobsConfig { location_keywords: vec!["Lyon".into()], ..Default::default() };
+        let matcher = Matcher::new(test_profile(), jobs);
         let dans_zone = make_offer("Dev", "Poste basé à Lyon", Some(true), None, None, None);
         let (score, _) = matcher.score_with_breakdown(&dans_zone);
         assert!(score > 0.0);
@@ -327,7 +356,7 @@ mod tests {
 
     #[test]
     fn salaire_inconnu_neutre() {
-        let matcher = Matcher::new(test_profile());
+        let matcher = Matcher::new(test_profile(), JobsConfig::default());
         let offer = make_offer("Dev", "Permanent position, fully remote", Some(true), None, None, None);
         let (score, breakdown) = matcher.score_with_breakdown(&offer);
         assert_eq!(breakdown.salary, 0.0);
@@ -336,7 +365,7 @@ mod tests {
 
     #[test]
     fn pays_hors_liste_pas_de_malus() {
-        let matcher = Matcher::new(test_profile());
+        let matcher = Matcher::new(test_profile(), JobsConfig::default());
         let offer = make_offer("Dev", "Permanent position, fully remote", Some(true), Some("JP"), None, None);
         let (_, breakdown) = matcher.score_with_breakdown(&offer);
         assert_eq!(breakdown.location, 0.0);
@@ -344,10 +373,12 @@ mod tests {
 
     #[test]
     fn blacklist_entreprise_et_mot_cle() {
-        let mut profile = test_profile();
-        profile.filters.blacklist_companies = vec!["EvilCorp".into()];
-        profile.filters.blacklist_keywords = vec!["gambling".into()];
-        let matcher = Matcher::new(profile);
+        let jobs = JobsConfig {
+            blacklist_companies: vec!["EvilCorp".into()],
+            blacklist_keywords: vec!["gambling".into()],
+            ..Default::default()
+        };
+        let matcher = Matcher::new(test_profile(), jobs);
 
         let mut o = make_offer("Dev", "great job", Some(true), Some("CH"), None, None);
         assert!(!matcher.is_blacklisted(&o), "rien ne matche");
@@ -360,16 +391,15 @@ mod tests {
 
     #[test]
     fn blacklist_vide_nexclut_rien() {
-        let mut profile = test_profile();
-        profile.filters.blacklist_companies = vec!["".into()];
-        let matcher = Matcher::new(profile);
+        let jobs = JobsConfig { blacklist_companies: vec!["".into()], ..Default::default() };
+        let matcher = Matcher::new(test_profile(), jobs);
         let o = make_offer("Dev", "x", Some(true), Some("CH"), None, None);
         assert!(!matcher.is_blacklisted(&o));
     }
 
     #[test]
     fn test_ranking_order() {
-        let matcher = Matcher::new(test_profile());
+        let matcher = Matcher::new(test_profile(), JobsConfig::default());
         let good = make_offer("Symfony React", "Symfony React Docker", Some(true), Some("CH"), None, Some(110000));
         let bad = make_offer("Cleaner", "Cleaning, on-site only", Some(false), Some("JP"), None, None);
 
@@ -382,7 +412,7 @@ mod tests {
     fn hybride_accepte_si_ville_configuree() {
         let mut profile = test_profile();
         profile.preferences.onsite_cities = vec!["Lyon".into()];
-        let matcher = Matcher::new(profile);
+        let matcher = Matcher::new(profile, JobsConfig::default());
         // Offre hybride (pas full-remote) mais localisée dans une ville acceptée : passe le gate
         let offer = make_offer("Full-Stack Developer", "Hybrid role based in Lyon. Permanent.", None, Some("FR"), None, Some(46000));
         let (score, breakdown) = matcher.score_with_breakdown(&offer);
@@ -392,7 +422,7 @@ mod tests {
 
     #[test]
     fn hybride_rejete_sans_ville_configuree() {
-        let matcher = Matcher::new(test_profile());
+        let matcher = Matcher::new(test_profile(), JobsConfig::default());
         let offer = make_offer("Full-Stack Developer", "Hybrid role based in Lyon. Permanent.", None, Some("FR"), None, Some(46000));
         let (score, _) = matcher.score_with_breakdown(&offer);
         assert_eq!(score, 0.0, "sans onsite_cities, full-remote strict : hybride rejeté");
@@ -400,7 +430,7 @@ mod tests {
 
     #[test]
     fn malus_seniorite_deprioritise_sans_exclure() {
-        let matcher = Matcher::new(test_profile());
+        let matcher = Matcher::new(test_profile(), JobsConfig::default());
         let base = make_offer("Full-Stack Developer", "Permanent, fully remote", Some(true), Some("FR"), None, Some(46000));
         let senior = make_offer("Senior Full-Stack Developer", "Permanent, fully remote", Some(true), Some("FR"), None, Some(46000));
         let (s_base, _) = matcher.score_with_breakdown(&base);

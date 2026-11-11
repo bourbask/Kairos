@@ -48,8 +48,33 @@ pub struct LlmRouter {
     db_path: Option<std::path::PathBuf>,
 }
 
+/// Usages dont l'entrée porte des données personnelles (mémoire, conversations,
+/// sections du brief) : toujours stratégiques, quoi que déclare la
+/// configuration, pour qu'aucune ligne de réglage ne suffise à les faire
+/// sortir. Liste unique ; tout nouvel usage de cette nature s'y ajoute.
+const ALWAYS_STRATEGIC: [&str; 4] = ["conversation", "resume_conversation", "brief", "suggestion"];
+
+/// Casse ignorée : une variante d'écriture ne contourne pas la règle.
+fn always_strategic(usage: &str) -> bool {
+    let usage = usage.to_lowercase();
+    ALWAYS_STRATEGIC.contains(&usage.as_str()) || usage.starts_with("memoire_")
+}
+
 impl LlmRouter {
-    pub fn from_config(config: LlmRoutingConfig) -> Self {
+    pub fn from_config(mut config: LlmRoutingConfig) -> Self {
+        // Ni déclaration commune ni concession pour un usage personnel.
+        for (list, what) in [
+            (&mut config.common_usages, "déclaration « commun »"),
+            (&mut config.strategic_concessions, "concession"),
+        ] {
+            list.retain(|usage| {
+                let refused = always_strategic(usage);
+                if refused {
+                    tracing::warn!("usage {usage} : {what} refusée, cet usage reste stratégique");
+                }
+                !refused
+            });
+        }
         let redactor = std::sync::Arc::new(Redactor::new(&config.redact_terms));
         Self { config, redactor, db_path: None }
     }
@@ -83,6 +108,15 @@ impl LlmRouter {
     /// Vrai si `[usages]` déclare explicitement cet usage.
     pub fn has_usage(&self, usage: &str) -> bool {
         self.config.usages.contains_key(usage)
+    }
+
+    /// Sensibilité déclarée en configuration ; stratégique par défaut.
+    pub fn sensitivity(&self, usage: &str) -> Sensitivity {
+        if self.config.common_usages.iter().any(|u| u == usage) {
+            Sensitivity::Common
+        } else {
+            Sensitivity::Strategic
+        }
     }
 
     fn usable(voie: &Option<LlmConfig>) -> Option<&LlmConfig> {
@@ -1181,6 +1215,7 @@ mod tests {
         assert!(!config.self_hosted.unwrap().is_usable());
         assert!(!config.external.unwrap().is_usable());
         assert!(config.strategic_concessions.is_empty());
+        assert!(config.common_usages.is_empty());
     }
 
     #[test]
@@ -1214,7 +1249,7 @@ mod tests {
                 "fort".to_string(),
                 moteur("http://fort.invalid", Placement::External),
             )]),
-            usages: HashMap::from([("conversation".to_string(), "fort".to_string())]),
+            usages: HashMap::from([("veille".to_string(), "fort".to_string())]),
             ..Default::default()
         })
     }
@@ -1222,7 +1257,7 @@ mod tests {
     #[test]
     fn mapped_usage_uses_named_engine() {
         let r = mapped_router(None, vec![]);
-        let choice = r.route("conversation", Sensitivity::Common).unwrap();
+        let choice = r.route("veille", Sensitivity::Common).unwrap();
         assert_eq!(choice.engine_name, "fort");
         assert_eq!(choice.engine, Engine::External);
         assert_eq!(choice.config.endpoint, "http://fort.invalid");
@@ -1231,21 +1266,21 @@ mod tests {
     #[test]
     fn mapped_external_strategic_without_concession_is_refused() {
         let r = mapped_router(None, vec![]);
-        assert!(r.route("conversation", Sensitivity::Strategic).is_err());
+        assert!(r.route("veille", Sensitivity::Strategic).is_err());
     }
 
     #[test]
     fn mapped_external_strategic_falls_back_to_self_hosted() {
         let r = mapped_router(Some(voie("http://interne.invalid")), vec![]);
-        let choice = r.route("conversation", Sensitivity::Strategic).unwrap();
+        let choice = r.route("veille", Sensitivity::Strategic).unwrap();
         assert_eq!(choice.engine, Engine::SelfHosted);
         assert_eq!(choice.engine_name, "self_hosted");
     }
 
     #[test]
     fn mapped_external_strategic_with_concession_goes_external() {
-        let r = mapped_router(None, vec!["conversation".into()]);
-        let choice = r.route("conversation", Sensitivity::Strategic).unwrap();
+        let r = mapped_router(None, vec!["veille".into()]);
+        let choice = r.route("veille", Sensitivity::Strategic).unwrap();
         assert_eq!(choice.engine_name, "fort");
         assert_eq!(choice.engine, Engine::External);
     }
@@ -1263,7 +1298,7 @@ mod tests {
     #[test]
     fn has_usage_only_for_declared_usages() {
         let r = mapped_router(Some(voie("http://interne.invalid")), vec![]);
-        assert!(r.has_usage("conversation"));
+        assert!(r.has_usage("veille"));
         assert!(!r.has_usage("autre"));
     }
 
@@ -1295,6 +1330,107 @@ mod tests {
         assert_eq!(fort.daily_token_cap, Some(1000));
         assert_eq!(fort.llm.model, "m");
         assert_eq!(config.usages["conversation"], "fort");
+    }
+
+    fn common_router(common_usages: Vec<String>) -> LlmRouter {
+        LlmRouter::from_config(LlmRoutingConfig {
+            self_hosted: Some(voie("http://interne.invalid")),
+            common_usages,
+            engines: HashMap::from([(
+                "fort".to_string(),
+                moteur("http://fort.invalid", Placement::External),
+            )]),
+            usages: ["veille_publique", "brief", "suggestion", "conversation", "resume_conversation", "memoire_extraction"]
+                .into_iter()
+                .map(|u| (u.to_string(), "fort".to_string()))
+                .collect(),
+            ..Default::default()
+        })
+    }
+
+    #[test]
+    fn undeclared_usage_is_strategic() {
+        let r = common_router(vec![]);
+        assert_eq!(r.sensitivity("veille_publique"), Sensitivity::Strategic);
+        assert_eq!(r.sensitivity("inconnu"), Sensitivity::Strategic);
+        let choice = r.route("veille_publique", r.sensitivity("veille_publique")).unwrap();
+        assert_eq!(choice.engine, Engine::SelfHosted);
+    }
+
+    #[test]
+    fn declared_common_usage_goes_external() {
+        let r = common_router(vec!["veille_publique".into()]);
+        assert_eq!(r.sensitivity("veille_publique"), Sensitivity::Common);
+        let choice = r.route("veille_publique", r.sensitivity("veille_publique")).unwrap();
+        assert_eq!(choice.engine, Engine::External);
+        assert_eq!(choice.engine_name, "fort");
+    }
+
+    #[test]
+    fn brief_and_suggestion_stay_strategic() {
+        let r = common_router(vec!["brief".into(), "suggestion".into()]);
+        for usage in ["brief", "suggestion"] {
+            assert_eq!(r.sensitivity(usage), Sensitivity::Strategic, "{usage}");
+            assert_eq!(r.route(usage, r.sensitivity(usage)).unwrap().engine, Engine::SelfHosted);
+        }
+    }
+
+    #[test]
+    fn memory_and_conversation_usages_stay_strategic() {
+        let forced = ["conversation", "resume_conversation", "memoire_extraction", "memoire_condensation", "memoire_autre"];
+        let r = common_router(forced.iter().map(|u| u.to_string()).collect());
+        for usage in forced {
+            assert_eq!(r.sensitivity(usage), Sensitivity::Strategic, "{usage}");
+        }
+        for usage in ["conversation", "resume_conversation", "memoire_extraction"] {
+            assert_eq!(r.route(usage, r.sensitivity(usage)).unwrap().engine, Engine::SelfHosted);
+        }
+    }
+
+    #[test]
+    fn no_concession_for_personal_usages() {
+        let mut config = LlmRoutingConfig {
+            self_hosted: Some(voie("http://interne.invalid")),
+            external: Some(voie("http://externe.invalid")),
+            strategic_concessions: vec!["conversation".into(), "memoire_extraction".into(), "Brief".into()],
+            engines: HashMap::from([(
+                "fort".to_string(),
+                moteur("http://fort.invalid", Placement::External),
+            )]),
+            ..Default::default()
+        };
+        config.usages.insert("conversation".into(), "fort".into());
+        let r = LlmRouter::from_config(config);
+        for usage in ["conversation", "memoire_extraction", "brief"] {
+            let choice = r.route(usage, Sensitivity::Strategic).unwrap();
+            assert_eq!(choice.engine, Engine::SelfHosted, "{usage}");
+        }
+    }
+
+    #[test]
+    fn always_strategic_ignores_case() {
+        let r = common_router(vec!["Brief".into(), "MEMOIRE_x".into(), "Conversation".into()]);
+        assert!(r.config.common_usages.is_empty());
+    }
+
+    #[test]
+    fn config_without_common_usages_still_parses() {
+        let config: LlmRoutingConfig = toml::from_str(
+            r#"
+            strategic_concessions = []
+            [usages]
+            conversation = "fort"
+            "#,
+        )
+        .unwrap();
+        assert!(config.common_usages.is_empty());
+        assert_eq!(config.usages["conversation"], "fort");
+    }
+
+    #[test]
+    fn common_usages_from_toml() {
+        let config: LlmRoutingConfig = toml::from_str(r#"common_usages = ["brief"]"#).unwrap();
+        assert_eq!(config.common_usages, vec!["brief".to_string()]);
     }
 
     fn chat_tools() -> Vec<ToolSpec> {

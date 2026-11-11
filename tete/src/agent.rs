@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use anyhow::{Context, anyhow, bail};
 use chrono::{Datelike, NaiveDateTime, TimeDelta, Weekday};
-use kairos::llm::{ChatReply, ChatTurn, LlmClient, LlmRouter, Sensitivity, ToolCall, ToolSpec, Urgency};
+use kairos::llm::{ChatReply, ChatTurn, LlmClient, LlmRouter, ToolCall, ToolSpec, Urgency};
 use serde_json::{Value, json};
 
 use crate::config::{WorkMode, WorkRhythm};
@@ -60,12 +60,13 @@ pub fn override_llm_timeout(d: Duration) {
 }
 
 /// Client du moteur de `usage`. Un usage non déclaré compte comme absent
-/// (`NoEngine`) : aucun repli implicite vers une voie par défaut.
+/// (`NoEngine`) : aucun repli implicite vers une voie par défaut. La
+/// sensibilité est celle que la configuration déclare pour l'usage.
 pub async fn engine(router: &LlmRouter, usage: &str, urgency: Urgency) -> anyhow::Result<LlmClient> {
     if !router.has_usage(usage) {
         return Err(anyhow::Error::msg(NoEngine));
     }
-    router.client_live(usage, Sensitivity::Strategic, urgency).await.context(NoEngine)
+    router.client_live(usage, router.sensitivity(usage), urgency).await.context(NoEngine)
 }
 
 /// Appel au moteur borné dans le temps : un moteur muet ne bloque pas la boucle.

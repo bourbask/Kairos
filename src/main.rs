@@ -142,6 +142,9 @@ async fn main() -> anyhow::Result<()> {
     let db_path = Storage::default_path();
     let profile_path = std::env::var("PROFILE_PATH").unwrap_or_else(|_| "config/profile.toml".into());
     let profile = Profile::from_file(&profile_path)?;
+    let modules_path = std::env::var("MODULES_PATH").unwrap_or_else(|_| "config/modules.toml".into());
+    let modules = config::ModulesConfig::load(&modules_path);
+    let jobs = modules.jobs(&profile);
     let storage = Arc::new(Storage::open(&db_path)?);
 
     match cli.command {
@@ -169,7 +172,7 @@ async fn main() -> anyhow::Result<()> {
                         let count = storage.insert_offers(&offers)?;
                         tracing::info!("{}: {} new offers stored", collector.name(), count);
 
-                        let matcher = Matcher::new(profile.clone());
+                        let matcher = Matcher::new(profile.clone(), jobs.clone());
                         let ranker = Ranker::new(matcher, Arc::clone(&storage));
                         let scored = ranker.score_new_offers(offers);
                         tracing::info!("{}: {} offers scored", collector.name(), scored.len());
@@ -181,7 +184,7 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         Command::Rescore => {
-            let matcher = Matcher::new(profile);
+            let matcher = Matcher::new(profile, jobs);
             let offers = storage.get_all_offers()?;
             let total = offers.len();
             let mut updated = 0;
@@ -194,11 +197,10 @@ async fn main() -> anyhow::Result<()> {
             println!("Rescored {updated}/{total} offers.");
         }
         Command::Briefing { top_n } => {
-            let modules = config::ModulesConfig::load("config/modules.toml");
             let router = llm::LlmRouter::load(LLM_ROUTING_PATH);
             let synthesis = signals::synthesize(modules.signals.as_ref(), &profile, &router).await;
 
-            let matcher = Matcher::new(profile);
+            let matcher = Matcher::new(profile, jobs);
             let ranker = Ranker::new(matcher, Arc::clone(&storage));
             let top_jobs = ranker.top_unpresented(top_n);
 
