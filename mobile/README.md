@@ -64,7 +64,7 @@ partage personnel, sans navigateur à ouvrir. L'adresse n'est jamais dans le cod
 elle se colle sur l'appareil.
 
 1. Onglet Espaces → **Mimir** : au premier passage, coller le lien de partage
-   (`https://exemple.org/...?k=...`) puis **Enregistrer**. Seuls les liens `https://`
+   (`https://exemple.org/entrer#k=...`) puis **Enregistrer**. Seuls les liens `https://`
    sont acceptés.
 2. Le lien porte un jeton : il est chiffré par la clé de l'appareil (comme le jeton
    d'appairage) et n'apparaît dans aucun journal.

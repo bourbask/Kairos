@@ -12,6 +12,12 @@ class MimirStateTest {
     }
 
     @Test
+    fun keeps_token_in_fragment() {
+        // Le jeton reste dans le fragment (#k=...), jamais envoyé au serveur ni journalisé.
+        assertEquals("https://exemple.org/entrer#k=abc123", normalizeMimirLink("https://exemple.org/entrer#k=abc123").getOrThrow())
+    }
+
+    @Test
     fun strips_spaces_and_line_breaks_from_paste() {
         // Copier-coller : espaces autour, retour à la ligne au milieu.
         val link = normalizeMimirLink("  https://exemple.org/partage\n?k=abc123 \t").getOrThrow()
