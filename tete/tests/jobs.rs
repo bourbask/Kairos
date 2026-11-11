@@ -43,8 +43,10 @@ struct Rec {
     motifs: Mutex<HashMap<String, Option<String>>>,
     /// Textes des épisodes, par jour.
     episodes: Mutex<HashMap<String, Vec<String>>>,
-    /// Indices appliqués : `{jour, indices}`.
+    /// Indices appliqués : `{jour, indices}`, plus `rejeu` pour une journée rejouée.
     applied: Mutex<Vec<Value>>,
+    /// Journées à rejouer : `(jour, n)`.
+    replay: Mutex<Vec<(String, i64)>>,
     /// Lots encore condensables.
     lots: Mutex<Vec<Value>>,
     /// Synthèses enregistrées : `{periode, texte, empreinte}`.
@@ -121,6 +123,7 @@ struct Habitudes {
 struct Appliquer {
     jour: String,
     indices: Value,
+    rejeu: Option<i64>,
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
@@ -213,8 +216,22 @@ impl Fake {
     #[tool(description = "Applique des indices.")]
     fn nuit_appliquer(&self, Parameters(a): Parameters<Appliquer>) -> Result<String, String> {
         self.night("appliquer");
-        self.rec.applied.lock().unwrap().push(json!({"jour": a.jour, "indices": a.indices}));
+        let mut v = json!({"jour": a.jour, "indices": a.indices});
+        if let Some(n) = a.rejeu {
+            v["rejeu"] = json!(n);
+            self.rec.replay.lock().unwrap().retain(|(j, m)| !(*j == a.jour && *m == n));
+        }
+        self.rec.applied.lock().unwrap().push(v);
         Ok(r#"{"renforces":0,"deduits":1,"questions":0,"ignores":0}"#.into())
+    }
+
+    #[tool(description = "Journées à rejouer.")]
+    fn nuit_a_rejouer(&self, Parameters(a): Parameters<Max>) -> Result<String, String> {
+        self.night("a_rejouer");
+        let mut r = self.rec.replay.lock().unwrap().clone();
+        r.sort();
+        let v: Vec<Value> = r.into_iter().take(a.max).map(|(j, n)| json!({"jour": j, "n": n})).collect();
+        Ok(Value::Array(v).to_string())
     }
 
     #[tool(description = "Lots condensables.")]
@@ -1438,4 +1455,76 @@ async fn capped_condensation_is_reported() {
     run(Job::Summaries, at(10, 3, 0), &mut fx.ctx).await.unwrap();
     assert_eq!(fx.rec.condensed.lock().unwrap().len(), 5);
     assert_eq!(etat(&fx.rec, "condensation").1, "ok");
+}
+
+fn queue(rec: &Rec, jour: &str, n: i64) {
+    rec.replay.lock().unwrap().push((jour.into(), n));
+}
+
+fn hint() -> Value {
+    text(r#"[{"key": "sport", "value": "course"}]"#)
+}
+
+#[tokio::test]
+async fn queued_day_replayed_once_then_forward() {
+    let mut fx = fixture("JB_R1", NIGHT_USAGES, vec![hint(), hint()]).await;
+    set_etat(&fx.rec, "extraction", "2026-11-07");
+    episode(&fx.rec, "2026-11-02", "Je cours le samedi.");
+    episode(&fx.rec, "2026-11-08", "J'habite à Ville-A.");
+    queue(&fx.rec, "2026-11-02", 1);
+    run(Job::Summaries, at(9, 3, 0), &mut fx.ctx).await.unwrap();
+    assert_eq!(applied_days(&fx.rec), vec!["2026-11-02", "2026-11-08"]);
+    assert_eq!(fx.rec.applied.lock().unwrap()[0]["rejeu"], 1);
+    assert!(fx.rec.replay.lock().unwrap().is_empty());
+    assert_eq!(etat(&fx.rec, "extraction"), (Some("2026-11-08".into()), "ok".into()));
+    // Nuit rejouée : rien de plus.
+    run(Job::Summaries, at(9, 3, 0), &mut fx.ctx).await.unwrap();
+    assert_eq!(fx.rec.applied.lock().unwrap().len(), 2);
+    assert_eq!(fx.llm.lock().unwrap().requests.len(), 2);
+}
+
+#[tokio::test]
+async fn resumed_old_session_does_not_starve_recent_days() {
+    let mut fx = fixture("JB_R2", NIGHT_USAGES, vec![]).await;
+    set_etat(&fx.rec, "extraction", "2026-11-07");
+    episode(&fx.rec, "2026-10-01", "Séance reprise chaque jour.");
+    for (n, d) in [(1, 9), (2, 10), (3, 11)] {
+        // Même vieille session, résumée de nouveau chaque jour.
+        queue(&fx.rec, "2026-10-01", n);
+        let hier = format!("2026-11-{:02}", d - 1);
+        episode(&fx.rec, &hier, "Journée ordinaire.");
+        fx.llm.lock().unwrap().replies.extend([hint(), hint()]);
+        run(Job::Summaries, at(d, 3, 0), &mut fx.ctx).await.unwrap();
+        // Le pointeur avance chaque nuit : la condensation n'est pas bloquée.
+        assert_eq!(etat(&fx.rec, "extraction"), (Some(hier.clone()), "ok".into()));
+        assert_eq!(applied_days(&fx.rec).last(), Some(&hier));
+    }
+    assert_eq!(applied_days(&fx.rec).iter().filter(|j| *j == "2026-10-01").count(), 3);
+}
+
+#[tokio::test]
+async fn replays_capped_and_forward_continues() {
+    let mut fx = fixture("JB_R3", NIGHT_USAGES, vec![hint()]).await;
+    set_etat(&fx.rec, "extraction", "2026-11-07");
+    episode(&fx.rec, "2026-11-08", "J'habite à Ville-A.");
+    for d in 1..=5 {
+        queue(&fx.rec, &format!("2026-10-{d:02}"), 1);
+    }
+    run(Job::Summaries, at(9, 3, 0), &mut fx.ctx).await.unwrap();
+    assert_eq!(applied_days(&fx.rec), vec!["2026-10-01", "2026-10-02", "2026-10-03", "2026-11-08"]);
+    assert_eq!(fx.rec.replay.lock().unwrap().len(), 2);
+    assert_eq!(etat(&fx.rec, "extraction"), (Some("2026-11-08".into()), "ok".into()));
+}
+
+#[tokio::test]
+async fn replay_day_awaiting_summary_waits_without_blocking() {
+    let mut fx = fixture("JB_R4", NIGHT_USAGES, vec![hint()]).await;
+    set_etat(&fx.rec, "extraction", "2026-11-07");
+    episode(&fx.rec, "2026-11-08", "J'habite à Ville-A.");
+    queue(&fx.rec, "2026-10-01", 1);
+    fx.rec.unsummarized_days.lock().unwrap().insert("2026-10-01".into(), 1);
+    run(Job::Summaries, at(9, 3, 0), &mut fx.ctx).await.unwrap();
+    assert_eq!(applied_days(&fx.rec), vec!["2026-11-08"]);
+    assert_eq!(fx.rec.replay.lock().unwrap().len(), 1);
+    assert_eq!(etat(&fx.rec, "extraction"), (Some("2026-11-08".into()), "ok".into()));
 }

@@ -10,9 +10,17 @@ private/
 # Secrets et fichiers locaux : jamais dans le contexte de build (ils finiraient
 # dans le cache de l'étape de compilation via `COPY . .`).
 **/.env
-**/*.env
+# Copies de sauvegarde comprises (kairos.env.bak-…).
+**/*.env*
 **/docker-compose.override.yml
 deploy/docker/radicale/config/
 CLAUDE.local.md
 .claude/
 .worktrees/
+# Configuration réelle de l'hôte : lue au démarrage par volume, jamais compilée.
+config/*.toml
+!config/*.example.toml
+# Hors du binaire : application mobile, APK déposé, briefings du profil supplémentaire.
+mobile/
+apk/
+briefings-secondary/

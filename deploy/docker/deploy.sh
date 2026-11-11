@@ -6,8 +6,9 @@
 #
 # Services (re)démarrés : KAIROS_SERVICES s'il est fourni (liste séparée par des
 # espaces) ; sinon ollama, scheduler et les tentacules, plus la tête seulement
-# si sa configuration (config/tete.toml) existe sur l'hôte — sans elle, la tête
-# redémarrerait en boucle.
+# si sa configuration (config/tete.toml) existe sur l'hôte et le partage seulement
+# si son fichier (deploy/docker/partage.env) y existe — sans eux, ils
+# redémarreraient en boucle.
 #
 # APK de l'application : si `gh` est disponible et authentifié, l'APK de la
 # release fusionnée (PR « Release X.Y.Z » dont HEAD est le commit de fusion, sinon dernier tag), attendu au besoin, est déposé dans <KAIROS_DIR>/apk sur
@@ -17,7 +18,7 @@ set -euo pipefail
 VPS_HOST="${VPS_HOST:?export VPS_HOST=user@hote}"
 KAIROS_DIR="${KAIROS_DIR:-kairos}"                                   # dossier distant (relatif au home)
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-BASE_SERVICES="ollama scheduler memoire agenda finances alimentation"
+BASE_SERVICES="ollama scheduler memoire agenda finances alimentation marches"
 
 if [ -n "${KAIROS_SERVICES:-}" ]; then
     # Interpolée dans une commande distante : noms de services uniquement.
@@ -95,11 +96,18 @@ echo "==> [4/4] (Re)démarrage des services"
 # Les services propres à l'hôte (docker-compose.override.yml, non versionné) sont démarrés par l'opérateur.
 if [ -n "${KAIROS_SERVICES:-}" ]; then
     SERVICES="$KAIROS_SERVICES"
-elif ssh "$VPS_HOST" "test -f '$KAIROS_DIR/config/tete.toml'"; then
-    SERVICES="$BASE_SERVICES tete"
 else
     SERVICES="$BASE_SERVICES"
-    echo "    Tête non démarrée : config/tete.toml absent sur l'hôte."
+    if ssh "$VPS_HOST" "test -f '$KAIROS_DIR/config/tete.toml'"; then
+        SERVICES="$SERVICES tete"
+    else
+        echo "    Tête non démarrée : config/tete.toml absent sur l'hôte."
+    fi
+    if ssh "$VPS_HOST" "test -f '$KAIROS_DIR/deploy/docker/partage.env'"; then
+        SERVICES="$SERVICES partage"
+    else
+        echo "    Partage non démarré : deploy/docker/partage.env absent sur l'hôte."
+    fi
 fi
 echo "    Services : $SERVICES"
 ssh "$VPS_HOST" "cd '$KAIROS_DIR/deploy/docker' && docker compose up -d $SERVICES"

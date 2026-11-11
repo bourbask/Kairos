@@ -49,8 +49,8 @@ import kotlinx.serialization.json.put
 import java.time.LocalDate
 
 /** Demande un nouveau lien à usage unique ; rend le lien vérifié (https, jeton dans le fragment). */
-suspend fun createShareLink(repository: Repository, label: String): String {
-    val r = repository.lookup(PARTAGE, "app_partage_creer", ShareLink.serializer(), buildJsonObject { put("libelle", label) })
+suspend fun createShareLink(repository: Repository, label: String, owner: Boolean = false): String {
+    val r = repository.lookup(PARTAGE, "app_partage_creer", ShareLink.serializer(), shareRequest(label, owner))
     return normalizeMimirLink(r.lien).getOrElse { throw ApiError.Server(200, ApiError.Server.UNREADABLE) }
 }
 

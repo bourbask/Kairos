@@ -254,6 +254,9 @@ struct AppliquerArgs {
     /// `AAAA-MM-JJ`.
     jour: String,
     indices: Vec<Indice>,
+    /// Rejeu d'une journée déjà extraite : le `n` lu dans la file.
+    #[serde(default)]
+    rejeu: Option<i64>,
 }
 #[derive(Deserialize, schemars::JsonSchema)]
 struct NuitHabitudesArgs {
@@ -660,7 +663,17 @@ impl MemoryServer {
 
     #[tool(description = "Usage interne de la tête : appliquer les indices extraits d'une journée.")]
     fn nuit_appliquer(&self, Parameters(a): Parameters<AppliquerArgs>) -> Out {
-        json_out(self.db()?.appliquer_extraction(parse_jour(&a.jour)?, &a.indices, now_local()).map_err(err)?)
+        let (db, jour) = (self.db()?, parse_jour(&a.jour)?);
+        let bilan = match a.rejeu {
+            Some(n) => db.rejouer_extraction(jour, n, &a.indices, now_local()),
+            None => db.appliquer_extraction(jour, &a.indices, now_local()),
+        };
+        json_out(bilan.map_err(err)?)
+    }
+
+    #[tool(description = "Usage interne de la tête : journées déjà extraites à rejouer.")]
+    fn nuit_a_rejouer(&self, Parameters(a): Parameters<MaxArgs>) -> Out {
+        json_out(self.db()?.jours_a_rejouer(a.max).map_err(err)?)
     }
 
     #[tool(description = "Usage interne de la tête : compter les observations d'habitudes d'une journée.")]
@@ -751,9 +764,9 @@ impl MemoryServer {
         let soon: Vec<_> = db.intentions_open(now).map_err(err)?.into_iter().filter(|i| i.expires_at <= limit).collect();
         let mut lignes: Vec<String> =
             soon.iter().map(|i| format!("- {} (avant le {})", i.what, i.expires_at.format("%d/%m %H:%M"))).collect();
-        // Une habitude remarquée la nuit se dit au matin qui suit.
+        // Une habitude remarquée la nuit se dit au premier matin qui suit, une seule fois.
         if period == BriefPeriod::Matin {
-            for l in db.habitudes_annoncees(now - Duration::hours(24)).map_err(err)? {
+            for l in db.habitudes_annoncees(now).map_err(err)? {
                 lignes.push(format!("- Habitude remarquée : {l} — à confirmer"));
             }
             // Synthèse d'année ancrée au-delà de la limite : dit le matin qui suit, sans contenu.
@@ -781,6 +794,9 @@ impl MemoryServer {
             if now - derniere > Duration::hours(NUIT_MUETTE_HEURES) {
                 lignes.push(format!("- Mémoire : {} n'a pas tourné depuis le {}", e.etape, jj(derniere.date())));
             }
+        }
+        if db.rejeu_en_retard(now).map_err(err)? {
+            lignes.push("- Mémoire : journées tardives à rejouer — rattrapage en cours".into());
         }
         let n = db.conversations_non_resumees_avant(now.date() - Duration::days(7)).map_err(err)?;
         if n > 0 {
@@ -1202,7 +1218,7 @@ mod tests {
 
         s.db().unwrap().fact_set("ville", "Ville-A", "x").unwrap();
         let indices = vec![Indice { key: "ville.quartier".into(), value: "Nord".into() }, Indice { key: "ville".into(), value: "Ville-B".into() }];
-        let v = js(s.nuit_appliquer(Parameters(AppliquerArgs { jour: j.clone(), indices })));
+        let v = js(s.nuit_appliquer(Parameters(AppliquerArgs { jour: j.clone(), indices, rejeu: None })));
         assert_eq!((v["deduits"].as_u64(), v["questions"].as_u64()), (Some(1), Some(1)));
         assert_eq!(js(s.nuit_cles()), json!(["ville", "ville.quartier"]));
 
@@ -1270,6 +1286,30 @@ mod tests {
     }
 
     #[test]
+    fn late_day_replayed_through_night_tools() {
+        let s = srv();
+        let db = s.db().unwrap();
+        let id = db
+            .conversation_ingest(&crate::store::NewConversation {
+                channel: "voix".into(), device: "d".into(), started_at: now_local(), ended_at: now_local(),
+                transcript: "tardive".into(), session_id: None,
+            })
+            .unwrap();
+        db.nuit_noter("extraction", "ok", None, Some(now_local().date()), now_local()).unwrap();
+        db.conversation_set_summary(id, "Résumé tardif.", &[], &[]).unwrap();
+        drop(db);
+        let file = js(s.nuit_a_rejouer(Parameters(MaxArgs { max: 3 })));
+        assert_eq!(file, json!([{"jour": now_local().date().format("%Y-%m-%d").to_string(), "n": 1}]));
+        // Plus de deux nuits sans rejeu : signalé, sans contenu.
+        let tard = now_local() + Duration::hours(49);
+        assert!(s.brief_at(tard, BriefPeriod::Matin).unwrap().contains("- Mémoire : journées tardives à rejouer — rattrapage en cours"));
+        let a: AppliquerArgs = serde_json::from_value(json!({"jour": file[0]["jour"], "indices": [], "rejeu": 1})).unwrap();
+        js(s.nuit_appliquer(Parameters(a)));
+        assert_eq!(js(s.nuit_a_rejouer(Parameters(MaxArgs { max: 3 }))), json!([]));
+        assert!(!s.brief_at(tard, BriefPeriod::Matin).unwrap().contains("journées tardives"));
+    }
+
+    #[test]
     fn expected_source_absent_holds_first_day() {
         let s = srv();
         let nuit = |args: Value| js(s.nuit_habitudes(Parameters(serde_json::from_value(args).unwrap())));
@@ -1334,6 +1374,22 @@ mod tests {
         let q = s.db().unwrap().intentions_open(matin).unwrap()[0].id;
         s.db().unwrap().intention_set_state(q, IntentionState::Refusee).unwrap();
         assert!(!s.brief_at(matin, BriefPeriod::Matin).unwrap().contains("Habitude remarquée"));
+    }
+
+    #[test]
+    fn habit_announced_in_exactly_one_morning() {
+        let s = srv();
+        let nuit = naitre(&s);
+        let annonce = |at: NaiveDateTime| s.brief_at(at, BriefPeriod::Matin).unwrap().contains("Habitude remarquée");
+        // Brief du soir avant le matin : ne consomme pas l'annonce.
+        assert!(!s.brief_at(nuit + Duration::hours(1), BriefPeriod::Soir).unwrap().contains("Habitude remarquée"));
+        // Matin manqué au-delà de 24 h : l'habitude est dite au premier matin qui suit.
+        let matin = nuit + Duration::hours(28);
+        assert!(annonce(matin));
+        // Brief refait le même matin : encore là.
+        assert!(annonce(matin + Duration::hours(2)));
+        // Le lendemain : plus rien.
+        assert!(!annonce(matin + Duration::days(1)));
     }
 
     /// Sept soirs ouvrés de la même valeur : une habitude naît ; renvoie la dernière nuit.

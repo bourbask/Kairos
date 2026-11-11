@@ -20,7 +20,7 @@ logs/
 private/
 
 # Config et secrets locaux du déploiement (garder les *.example)
-deploy/docker/*.env
+deploy/docker/*.env*
 !deploy/docker/*.env.example
 deploy/docker/.env
 deploy/docker/radicale/config/config
