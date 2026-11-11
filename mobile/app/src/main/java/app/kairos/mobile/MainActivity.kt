@@ -96,6 +96,8 @@ import app.kairos.mobile.ui.kit.LocalAmountsMasked
 import app.kairos.mobile.ui.kit.LocalNotifier
 import app.kairos.mobile.ui.kit.NotifierHost
 import app.kairos.mobile.ui.kit.rememberNotifier
+import app.kairos.mobile.ui.mascot.LocalMascot
+import app.kairos.mobile.ui.mascot.MascotKind
 import app.kairos.mobile.ui.mascot.mascotDescription
 import app.kairos.mobile.ui.pairing.PairingScreen
 import app.kairos.mobile.ui.talk.ChatScreen
@@ -108,6 +110,7 @@ import app.kairos.mobile.ui.talk.mascotFor
 import app.kairos.mobile.ui.theme.KairosColors
 import app.kairos.mobile.ui.theme.KairosTheme
 import app.kairos.mobile.ui.theme.ThemeMode
+import app.kairos.mobile.ui.theme.ThemePalette
 import app.kairos.mobile.ui.theme.rememberDark
 import app.kairos.mobile.ui.settings.SettingsScreen
 import app.kairos.mobile.ui.settings.maskAddress
@@ -150,8 +153,9 @@ class MainActivity : ComponentActivity() {
                 else window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
                 onDispose {}
             }
-            KairosTheme(dark = dark) {
+            KairosTheme(dark = dark, palette = model.palette) {
                 CompositionLocalProvider(
+                    LocalMascot provides model.mascot,
                     LocalAmountsMasked provides model.amountsMasked,
                     LocalNotifier provides rememberNotifier(),
                 ) {
@@ -217,6 +221,10 @@ class AppModel(app: Application) : AndroidViewModel(app) {
     var speakReplies by mutableStateOf(false)
         private set
     var theme by mutableStateOf(ThemeMode.Clair)
+        private set
+    var palette by mutableStateOf(ThemePalette.Fougere)
+        private set
+    var mascot by mutableStateOf(MascotKind.Kairos)
         private set
 
     /** Montants masqués dans tous les espaces. */
@@ -371,6 +379,8 @@ class AppModel(app: Application) : AndroidViewModel(app) {
             val saved = runCatching { settings.load() }.getOrNull()
             speakReplies = saved?.speakReplies ?: false
             theme = saved?.theme ?: ThemeMode.Clair
+            palette = saved?.palette ?: ThemePalette.Fougere
+            mascot = saved?.mascot ?: MascotKind.Kairos
             amountsMasked = saved?.amountsMasked ?: false
             hideFromCaptures = saved?.hideFromCaptures ?: true
             mimirLink = runCatching { store.loadMimir() }.getOrNull()
@@ -425,6 +435,16 @@ class AppModel(app: Application) : AndroidViewModel(app) {
     fun changeTheme(mode: ThemeMode) {
         theme = mode
         viewModelScope.launch { settings.saveTheme(mode) }
+    }
+
+    fun changePalette(p: ThemePalette) {
+        palette = p
+        viewModelScope.launch { settings.savePalette(p) }
+    }
+
+    fun changeMascot(m: MascotKind) {
+        mascot = m
+        viewModelScope.launch { settings.saveMascot(m) }
     }
 
     fun changeHideFromCaptures(on: Boolean) {
@@ -896,6 +916,10 @@ private fun KairosRoot(model: AppModel, dark: Boolean) {
                 theme = model.theme,
                 dark = dark,
                 onTheme = model::changeTheme,
+                palette = model.palette,
+                onPalette = model::changePalette,
+                mascot = model.mascot,
+                onMascot = model::changeMascot,
                 speakReplies = model.speakReplies,
                 onSpeakReplies = model::changeSpeakReplies,
                 hideFromCaptures = model.hideFromCaptures,

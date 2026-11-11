@@ -32,6 +32,21 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.runtime.LaunchedEffect
 import app.kairos.mobile.data.AppRelease
 import app.kairos.mobile.ui.theme.ThemeMode
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.RadioButton
+import androidx.compose.ui.draw.clip
+import app.kairos.mobile.ui.mascot.Mascot
+import app.kairos.mobile.ui.mascot.MascotKind
+import app.kairos.mobile.ui.mascot.MascotState
+import app.kairos.mobile.ui.theme.KairosColors
+import app.kairos.mobile.ui.theme.ThemePalette
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.selection.toggleable
@@ -54,6 +69,10 @@ fun SettingsScreen(
     theme: ThemeMode,
     dark: Boolean,
     onTheme: (ThemeMode) -> Unit,
+    palette: ThemePalette,
+    onPalette: (ThemePalette) -> Unit,
+    mascot: MascotKind,
+    onMascot: (MascotKind) -> Unit,
     speakReplies: Boolean,
     onSpeakReplies: (Boolean) -> Unit,
     hideFromCaptures: Boolean,
@@ -102,6 +121,17 @@ fun SettingsScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
 
+            SectionHeader("Personnalisation")
+            Text("Couleurs", style = MaterialTheme.typography.titleMedium)
+            FlowRow(Modifier.selectableGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                for (p in ThemePalette.entries) PaletteCard(p, p == palette) { onPalette(p) }
+            }
+            Text(palette.mood, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Personnage", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 8.dp))
+            Column(Modifier.selectableGroup()) {
+                for (m in MascotKind.entries) MascotRow(m, m == mascot) { onMascot(m) }
+            }
+
             SectionHeader("Confidentialité")
             SwitchRow(
                 "Masquer les montants",
@@ -145,6 +175,56 @@ fun SettingsScreen(
             confirmButton = { TextButton(onClick = { confirm = false; onLogout() }) { Text("Se déconnecter", color = MaterialTheme.colorScheme.error) } },
             dismissButton = { TextButton(onClick = { confirm = false }) { Text("Annuler") } },
         )
+    }
+}
+
+/** Palette en vignette : moitié claire, moitié sombre, avec le bouton Kairos de chacune. */
+@Composable
+private fun PaletteCard(palette: ThemePalette, selected: Boolean, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(14.dp)
+    Column(
+        Modifier
+            .widthIn(min = 72.dp)
+            .clip(shape)
+            .border(
+                if (selected) 2.dp else 1.dp,
+                if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                shape,
+            )
+            .selectable(selected = selected, role = Role.RadioButton, onClick = onClick)
+            .padding(8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Row(Modifier.size(width = 56.dp, height = 36.dp).clip(RoundedCornerShape(8.dp))) {
+            for (roles in listOf(palette.light, palette.dark)) {
+                Box(Modifier.weight(1f).fillMaxHeight().background(roles.background), contentAlignment = Alignment.Center) {
+                    Box(Modifier.size(16.dp).background(roles.btn, RoundedCornerShape(5.dp)), contentAlignment = Alignment.Center) {
+                        Box(Modifier.size(7.dp).background(roles.body, RoundedCornerShape(1.dp)))
+                    }
+                }
+            }
+        }
+        Text(palette.label, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+/** Personnage au choix, animé au repos sur son bouton, avec l'origine de son nom. */
+@Composable
+private fun MascotRow(kind: MascotKind, selected: Boolean, onClick: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().selectable(selected = selected, role = Role.RadioButton, onClick = onClick).padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            Modifier.size(44.dp).background(KairosColors.current.btn, RoundedCornerShape(14.dp)),
+            contentAlignment = Alignment.Center,
+        ) { Mascot(MascotState.Repos, size = 28.dp, kind = kind) }
+        Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+            Text(kind.label, style = MaterialTheme.typography.titleMedium)
+            Text(kind.origin, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        RadioButton(selected = selected, onClick = null)
     }
 }
 
