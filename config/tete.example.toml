@@ -50,3 +50,10 @@ end = "18:00"
 # url = "http://marches:8099/mcp"
 # token_env = "MARCHES_TOKEN"
 # private = true
+#
+# Partage du site (outils réservés à l'application ; privé par prudence) :
+# [[tentacles]]
+# name = "partage"
+# url = "http://partage:8101/mcp"
+# token_env = "PARTAGE_TOKEN"
+# private = true

@@ -70,14 +70,19 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.LifecycleResumeEffect
+import app.kairos.mobile.data.ApiError
+import app.kairos.mobile.data.Repository
 import app.kairos.mobile.ui.kit.KairosIcons
 import app.kairos.mobile.ui.kit.SpaceScaffold
 import app.kairos.mobile.ui.kit.StatusBanner
 import app.kairos.mobile.ui.kit.Tone
+import kotlinx.coroutines.CoroutineScope
 
 /**
  * Espace Mimir : un site web affiché dans une WebView, à partir d'un lien de partage collé
- * sur l'appareil (jamais dans le code). Sans lien, l'espace demande de le coller. Le lien
+ * sur l'appareil (jamais dans le code). Sans lien, l'espace en demande un à la tête pour
+ * son propriétaire, et à défaut demande de le coller. « Partager » émet un lien neuf à
+ * usage unique ; « Accès partagés » liste et révoque les partages. Le lien
  * porte un jeton : il n'est ni journalisé, ni affiché, ni gardé dans l'état sauvegardé, et
  * il est remplacé par la seule origine du site dès que la session est ouverte.
  * Retour : page précédente du site s'il y en a une, sinon fermeture de l'espace.
@@ -89,8 +94,19 @@ fun MimirScreen(
     onSave: (String) -> Unit,
     onClear: () -> Unit,
     onClose: () -> Unit,
+    repository: Repository,
+    appScope: CoroutineScope,
+    onUnauthorized: () -> Unit,
 ) {
     var editing by rememberSaveable { mutableStateOf(false) }
+    var sharesOpen by rememberSaveable { mutableStateOf(false) }
+    var sharing by remember { mutableStateOf(false) }
+    // Lien du propriétaire demandé une fois par ouverture de l'espace ; échec : saisie manuelle.
+    var ownerTried by remember { mutableStateOf(false) }
+    var ownerBusy by remember { mutableStateOf(false) }
+    var ownerNote by remember { mutableStateOf<String?>(null) }
+    val unauthorized by rememberUpdatedState(onUnauthorized)
+    val save by rememberUpdatedState(onSave)
     var menu by remember { mutableStateOf(false) }
     var confirmClear by remember { mutableStateOf(false) }
     // Nouveau lien d'une autre origine, en attente de confirmation (jamais sauvegardé).
@@ -103,6 +119,23 @@ fun MimirScreen(
 
     // Modification abandonnée : retour à la page, l'espace reste ouvert.
     BackHandler(enabled = editing && link != null) { editing = false }
+    BackHandler(enabled = sharesOpen) { sharesOpen = false }
+
+    LaunchedEffect(link == null) {
+        if (link != null || ownerTried) return@LaunchedEffect
+        ownerTried = true
+        ownerBusy = true
+        try {
+            // Le lien rejoint le parcours habituel : gardé jusqu'à l'ouverture de session, puis réduit à l'origine.
+            save(createShareLink(repository, OWNER_LABEL))
+        } catch (_: ApiError.Unauthorized) {
+            unauthorized()
+        } catch (e: ApiError) {
+            ownerNote = "Lien automatique indisponible : ${shareIssue(e)}"
+        } finally {
+            ownerBusy = false
+        }
+    }
 
     SpaceScaffold(
         "Mimir",
@@ -110,32 +143,44 @@ fun MimirScreen(
         padding,
         subtitle = "Site partagé",
         actions = {
-            if (!showForm) {
-                Box {
-                    IconButton(onClick = { menu = true }) {
-                        Icon(KairosIcons.Gear, contentDescription = "Lien Mimir", tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                        DropdownMenuItem(text = { Text("Recharger") }, onClick = {
-                            menu = false
-                            reload++
-                        })
-                        DropdownMenuItem(text = { Text("Modifier le lien") }, onClick = {
-                            menu = false
-                            editing = true
-                        })
-                        DropdownMenuItem(text = { Text("Effacer le lien") }, onClick = {
-                            menu = false
-                            confirmClear = true
-                        })
-                    }
+            IconButton(onClick = { sharing = true }) {
+                Icon(KairosIcons.Share, contentDescription = "Partager", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Box {
+                IconButton(onClick = { menu = true }) {
+                    Icon(KairosIcons.Gear, contentDescription = "Lien Mimir", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                    DropdownMenuItem(text = { Text(if (sharesOpen) "Revenir au site" else "Accès partagés") }, onClick = {
+                        menu = false
+                        sharesOpen = !sharesOpen
+                    })
+                    if (!showForm && !sharesOpen) DropdownMenuItem(text = { Text("Recharger") }, onClick = {
+                        menu = false
+                        reload++
+                    })
+                    if (!showForm && !sharesOpen) DropdownMenuItem(text = { Text("Modifier le lien") }, onClick = {
+                        menu = false
+                        editing = true
+                    })
+                    if (!showForm && !sharesOpen) DropdownMenuItem(text = { Text("Effacer le lien") }, onClick = {
+                        menu = false
+                        confirmClear = true
+                    })
                 }
             }
         },
     ) { _ ->
-        if (showForm) {
+        if (sharesOpen) {
+            SharesPanel(repository, appScope, bottom, onUnauthorized)
+        } else if (link == null && ownerBusy) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(Modifier.semantics { contentDescription = "Ouverture de Mimir" })
+            }
+        } else if (showForm) {
             LinkForm(
                 bottom = bottom,
+                note = ownerNote.takeIf { link == null },
                 onSave = {
                     if (link != null && !sameOrigin(link, it)) {
                         pendingSwitch = it
@@ -154,6 +199,8 @@ fun MimirScreen(
             MimirWeb(link!!, reload, bottom, onSettled = onSave)
         }
     }
+
+    if (sharing) ShareDialog(repository, onDismiss = { sharing = false }, onUnauthorized = onUnauthorized)
 
     if (confirmClear) {
         AlertDialog(
@@ -191,7 +238,7 @@ fun MimirScreen(
 
 /** Saisie du lien de partage : validé avant d'être enregistré, refusé avec un message clair. */
 @Composable
-private fun LinkForm(bottom: Dp, onSave: (String) -> Unit, onCancel: (() -> Unit)?) {
+private fun LinkForm(bottom: Dp, note: String?, onSave: (String) -> Unit, onCancel: (() -> Unit)?) {
     // Pas de rememberSaveable : le jeton n'a pas à entrer dans l'état sauvegardé de l'activité.
     var text by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
@@ -208,6 +255,7 @@ private fun LinkForm(bottom: Dp, onSave: (String) -> Unit, onCancel: (() -> Unit
             .padding(top = 16.dp, bottom = bottom + 24.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
+        note?.let { StatusBanner(it, tone = Tone.Attention) }
         Text("Colle ton lien de partage Mimir", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onBackground)
         Text(
             "Il commence par https:// et reste sur ce téléphone, chiffré.",

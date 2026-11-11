@@ -1,7 +1,14 @@
 package app.kairos.mobile.ui.mimir
 
+import app.kairos.mobile.data.ApiError
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import java.time.LocalDate
+import java.time.OffsetDateTime
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 
 /**
  * Lien de partage Mimir collé par l'utilisateur, nettoyé : espaces et retours à la ligne
@@ -68,5 +75,72 @@ fun mimirRoute(base: String, target: String): MimirRoute {
         "https", "http" -> if (sameOrigin(base, target)) MimirRoute.InApp else MimirRoute.External
         "mailto", "tel" -> MimirRoute.External
         else -> MimirRoute.Blocked
+    }
+}
+
+/** Module de la tête qui émet les liens de partage. */
+const val PARTAGE = "partage"
+
+/** Libellé du lien que l'application demande pour l'accès du propriétaire. */
+const val OWNER_LABEL = "moi"
+
+/** Longueur maximale d'un libellé, alignée sur le module. */
+const val SHARE_LABEL_MAX = 40
+
+/** Lien émis : à transmettre aussitôt, jamais gardé ni journalisé. */
+@Serializable
+data class ShareLink(val lien: String, @SerialName("expire_le") val expiresAt: String)
+
+/** Partage connu du module ; [expiresAt] : échéance du lien avant ouverture, fin d'accès ensuite. */
+@Serializable
+data class Share(
+    val id: Long,
+    val libelle: String,
+    @SerialName("cree_le") val createdAt: String,
+    @SerialName("expire_le") val expiresAt: String,
+    @SerialName("ouvert_le") val openedAt: String? = null,
+    val actif: Boolean = false,
+)
+
+/** Libellé proposé : « Partage du JJ/MM ». */
+fun defaultShareLabel(day: LocalDate): String = "Partage du %02d/%02d".format(day.dayOfMonth, day.monthValue)
+
+/** Libellé saisi : espaces resserrés, non vide, [SHARE_LABEL_MAX] caractères au plus. */
+fun cleanShareLabel(raw: String): Result<String> = runCatching {
+    val text = raw.trim().split(Regex("\\s+")).joinToString(" ")
+    require(text.isNotEmpty()) { "Donne un nom à ce partage." }
+    require(text.codePointCount(0, text.length) <= SHARE_LABEL_MAX) { "$SHARE_LABEL_MAX caractères au plus." }
+    text
+}
+
+private val DAY_TIME: DateTimeFormatter = DateTimeFormatter.ofPattern("dd/MM HH:mm")
+
+/** Date du module (RFC 3339) en heure locale « JJ/MM HH:mm » ; illisible : telle quelle. */
+fun shareTime(at: String, zone: ZoneId = ZoneId.systemDefault()): String =
+    runCatching { OffsetDateTime.parse(at).atZoneSameInstant(zone).format(DAY_TIME) }.getOrDefault(at)
+
+/** État d'un partage en une ligne. */
+fun shareStatus(s: Share, zone: ZoneId = ZoneId.systemDefault()): String {
+    val created = "Créé le ${shareTime(s.createdAt, zone)}"
+    return when {
+        !s.actif -> if (s.openedAt != null) "Inactif · ouvert le ${shareTime(s.openedAt, zone)}" else "Inactif · jamais ouvert"
+        s.openedAt != null -> "Ouvert le ${shareTime(s.openedAt, zone)} · accès jusqu'au ${shareTime(s.expiresAt, zone)}"
+        else -> "$created · à ouvrir avant le ${shareTime(s.expiresAt, zone)}"
+    }
+}
+
+/** Partages actifs d'abord, puis les plus récents. */
+fun sortedShares(list: List<Share>): List<Share> =
+    list.sortedWith(compareByDescending<Share> { it.actif }.thenByDescending { it.createdAt })
+
+/** Raison lisible d'un échec du module de partage ; [ApiError.Unauthorized] remonte. */
+fun shareIssue(e: ApiError): String = when (e) {
+    ApiError.Unauthorized -> throw e
+    ApiError.Offline -> "Serveur injoignable."
+    ApiError.NoReply -> "Pas de réponse du serveur."
+    is ApiError.Server -> when {
+        e.code == 404 && !e.bare -> "Partage non configuré sur le serveur."
+        e.code == 422 -> e.message ?: "Refusé."
+        else -> "${e.unavailable()}."
     }
 }

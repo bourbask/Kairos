@@ -1,9 +1,14 @@
 package app.kairos.mobile.ui.mimir
 
+import app.kairos.mobile.data.ApiError
+import app.kairos.mobile.data.KairosJson
+import kotlinx.serialization.builtins.ListSerializer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.time.LocalDate
+import java.time.ZoneId
 
 class MimirStateTest {
     @Test
@@ -120,5 +125,63 @@ class MimirStateTest {
         assertEquals("https://partage.example.org/#embed=1", mimirEmbedUrl("https://partage.example.org/"))
         assertEquals("https://partage.example.org/entrer#k=abc&embed=1", mimirEmbedUrl("https://partage.example.org/entrer#k=abc"))
         assertEquals("https://partage.example.org/#embed=1", mimirEmbedUrl("https://partage.example.org/#embed=1"))
+    }
+
+    private val paris = ZoneId.of("Europe/Paris")
+
+    @Test
+    fun default_label_is_dated() {
+        assertEquals("Partage du 05/03", defaultShareLabel(LocalDate.of(2027, 3, 5)))
+    }
+
+    @Test
+    fun label_is_tidied_and_bounded() {
+        assertEquals("Partage du 05/03", cleanShareLabel("  Partage \n du   05/03 ").getOrThrow())
+        assertTrue(cleanShareLabel("  ").isFailure)
+        assertTrue(cleanShareLabel("x".repeat(SHARE_LABEL_MAX + 1)).isFailure)
+        assertEquals(SHARE_LABEL_MAX, cleanShareLabel("é".repeat(SHARE_LABEL_MAX)).getOrThrow().length)
+    }
+
+    @Test
+    fun module_replies_are_read() {
+        val link = KairosJson.decodeFromString(ShareLink.serializer(), """{"lien":"https://site.example.org/entrer#k=abc","expire_le":"2027-03-08T10:00:00Z"}""")
+        assertEquals("https://site.example.org/entrer#k=abc", link.lien)
+        val list = KairosJson.decodeFromString(
+            ListSerializer(Share.serializer()),
+            """[{"id":2,"libelle":"b","cree_le":"2027-03-05T10:00:00Z","expire_le":"2027-03-08T10:00:00Z","ouvert_le":null,"actif":true}]""",
+        )
+        assertEquals(null, list[0].openedAt)
+        assertTrue(list[0].actif)
+    }
+
+    @Test
+    fun status_line_follows_state() {
+        val s = Share(1, "a", "2027-03-05T09:00:00Z", "2027-03-08T09:00:00Z", null, true)
+        assertEquals("Créé le 05/03 10:00 · à ouvrir avant le 08/03 10:00", shareStatus(s, paris))
+        val opened = s.copy(openedAt = "2027-03-06T09:00:00Z", expiresAt = "2027-04-05T09:00:00Z")
+        assertEquals("Ouvert le 06/03 10:00 · accès jusqu'au 05/04 11:00", shareStatus(opened, paris))
+        assertEquals("Inactif · ouvert le 06/03 10:00", shareStatus(opened.copy(actif = false), paris))
+        assertEquals("Inactif · jamais ouvert", shareStatus(s.copy(actif = false), paris))
+    }
+
+    @Test
+    fun active_shares_first_then_newest() {
+        val old = Share(1, "a", "2027-03-01T00:00:00Z", "2027-03-04T00:00:00Z", actif = true)
+        val newer = old.copy(id = 2, createdAt = "2027-03-02T00:00:00Z")
+        val dead = old.copy(id = 3, createdAt = "2027-03-03T00:00:00Z", actif = false)
+        assertEquals(listOf(2L, 1L, 3L), sortedShares(listOf(old, dead, newer)).map { it.id })
+    }
+
+    @Test
+    fun share_issues_are_readable() {
+        assertEquals("Serveur injoignable.", shareIssue(ApiError.Offline))
+        assertEquals("Partage non configuré sur le serveur.", shareIssue(ApiError.Server(404, "module inconnu")))
+        assertEquals("${ApiError.Server.OUTDATED}.", shareIssue(ApiError.Server(404, "x", bare = true)))
+        assertEquals("Libellé vide.", shareIssue(ApiError.Server(422, "Libellé vide.")))
+    }
+
+    @Test(expected = ApiError.Unauthorized::class)
+    fun unauthorized_goes_up() {
+        shareIssue(ApiError.Unauthorized)
     }
 }

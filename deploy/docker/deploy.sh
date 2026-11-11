@@ -10,7 +10,7 @@
 # redémarrerait en boucle.
 #
 # APK de l'application : si `gh` est disponible et authentifié, l'APK de la
-# release du dernier tag vX.Y.Z de la branche déployée est déposé dans <KAIROS_DIR>/apk sur
+# release fusionnée (PR « Release X.Y.Z » dont HEAD est le commit de fusion, sinon dernier tag), attendu au besoin, est déposé dans <KAIROS_DIR>/apk sur
 # l'hôte (servi par la tête). Sinon l'étape est sautée, le déploiement continue.
 set -euo pipefail
 
@@ -42,13 +42,30 @@ deploy_apk() {
     local version tmp apk
     # Créé ici par l'utilisateur ssh : sinon le compose le créerait en root au démarrage.
     ssh "$VPS_HOST" "mkdir -p '$KAIROS_DIR/apk'" || true
-    version="$(cd "$ROOT" && git describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null | sed 's/^v//')"
-    if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-        echo "    APK ignoré : aucun tag de version sur la branche déployée."; return 0
-    fi
     if ! command -v gh >/dev/null 2>&1; then
         echo "    APK ignoré : gh indisponible (l'application garde la version déjà déposée)."; return 0
     fi
+    # Version de la release fusionnée à l'instant : le tag et l'APK sont créés par la CI
+    # après la fusion, donc souvent absents au moment du déploiement. Le titre de la PR de
+    # release dont le commit de fusion est HEAD fait foi ; à défaut, le dernier tag connu.
+    local head
+    head="$(git -C "$ROOT" rev-parse HEAD)"
+    version="$(cd "$ROOT" && gh pr list --base main --state merged --limit 10 --json title,mergeCommit \
+        -q ".[] | select(.mergeCommit.oid == \"$head\") | .title" 2>/dev/null \
+        | sed -n 's/^Release \([0-9]*\.[0-9]*\.[0-9]*\)$/\1/p' | head -n1)"
+    if [ -z "$version" ]; then
+        version="$(cd "$ROOT" && git fetch -q --tags 2>/dev/null; git describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null | sed 's/^v//')"
+    fi
+    if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        echo "    APK ignoré : aucune version de release pour la branche déployée."; return 0
+    fi
+    # L'APK est construit par la CI après la fusion : attente bornée (20 min) de sa publication.
+    local i
+    for i in $(seq 1 40); do
+        if (cd "$ROOT" && gh release view "v$version" --json assets -q '.assets[].name' 2>/dev/null | grep -q '\.apk$'); then break; fi
+        [ "$i" = 1 ] && echo "    APK v$version pas encore publié : attente de la CI…"
+        sleep 30
+    done
     tmp="$(mktemp -d)"
     if ! (cd "$ROOT" && gh release download "v$version" -p '*.apk' -D "$tmp") >/dev/null 2>&1; then
         echo "    APK ignoré : release v$version sans APK, ou gh non authentifié."
