@@ -139,7 +139,7 @@ fun Mascot(
  * animations sont actives. Animations retirées dans les réglages du système :
  * [still] fige l'image, puis la boucle ne vérifie plus qu'une fois par seconde.
  */
-private suspend fun animate(still: () -> Unit, tick: (elapsed: Long, now: Long) -> Unit) {
+internal suspend fun animate(still: () -> Unit, tick: (elapsed: Long, now: Long) -> Unit) {
     val motion = coroutineContext[MotionDurationScale]
     while (true) {
         if (motion?.scaleFactor == 0f) {
