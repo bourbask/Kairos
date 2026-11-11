@@ -385,7 +385,7 @@ private fun MimirRow(configured: Boolean, onClick: () -> Unit, modifier: Modifie
         modifier,
         trailing = { if (!configured) StatePill("lien à coller", tone = Tone.Attention) },
     ) {
-        Status("Le Crible 2027")
+        Status("Site partagé")
     }
 }
 

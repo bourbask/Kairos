@@ -18,6 +18,7 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebStorage
 import android.webkit.WebViewClient
+import android.webkit.WebViewDatabase
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -53,6 +54,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -76,7 +78,8 @@ import app.kairos.mobile.ui.kit.Tone
 /**
  * Espace Mimir : un site web affiché dans une WebView, à partir d'un lien de partage collé
  * sur l'appareil (jamais dans le code). Sans lien, l'espace demande de le coller. Le lien
- * porte un jeton : il n'est ni journalisé, ni affiché, ni gardé dans l'état sauvegardé.
+ * porte un jeton : il n'est ni journalisé, ni affiché, ni gardé dans l'état sauvegardé, et
+ * il est remplacé par la seule origine du site dès que la session est ouverte.
  * Retour : page précédente du site s'il y en a une, sinon fermeture de l'espace.
  */
 @Composable
@@ -90,6 +93,9 @@ fun MimirScreen(
     var editing by rememberSaveable { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
     var confirmClear by remember { mutableStateOf(false) }
+    // Nouveau lien d'une autre origine, en attente de confirmation (jamais sauvegardé).
+    var pendingSwitch by remember { mutableStateOf<String?>(null) }
+    val context = LocalContext.current
     // Incrémenté par « Recharger » : la page repart du lien configuré.
     var reload by remember { mutableIntStateOf(0) }
     val showForm = link == null || editing
@@ -102,7 +108,7 @@ fun MimirScreen(
         "Mimir",
         onClose,
         padding,
-        subtitle = "Le Crible 2027",
+        subtitle = "Site partagé",
         actions = {
             if (!showForm) {
                 Box {
@@ -131,8 +137,12 @@ fun MimirScreen(
             LinkForm(
                 bottom = bottom,
                 onSave = {
-                    onSave(it)
-                    editing = false
+                    if (link != null && !sameOrigin(link, it)) {
+                        pendingSwitch = it
+                    } else {
+                        onSave(it)
+                        editing = false
+                    }
                 },
                 onCancel = if (link != null) {
                     { editing = false }
@@ -141,7 +151,7 @@ fun MimirScreen(
                 },
             )
         } else {
-            MimirWeb(link!!, reload, bottom)
+            MimirWeb(link!!, reload, bottom, onSettled = onSave)
         }
     }
 
@@ -153,11 +163,28 @@ fun MimirScreen(
             confirmButton = {
                 TextButton(onClick = {
                     confirmClear = false
-                    forgetSiteData()
+                    forgetSiteData(context)
                     onClear()
                 }) { Text("Effacer") }
             },
             dismissButton = { TextButton(onClick = { confirmClear = false }) { Text("Annuler") } },
+        )
+    }
+
+    pendingSwitch?.let { next ->
+        AlertDialog(
+            onDismissRequest = { pendingSwitch = null },
+            title = { Text("Changer de site ?") },
+            text = { Text("Ce lien mène à un autre site. La session, les cookies, le cache et l'historique du site actuel seront effacés.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    pendingSwitch = null
+                    forgetSiteData(context)
+                    onSave(next)
+                    editing = false
+                }) { Text("Changer") }
+            },
+            dismissButton = { TextButton(onClick = { pendingSwitch = null }) { Text("Annuler") } },
         )
     }
 }
@@ -212,25 +239,37 @@ private fun LinkForm(bottom: Dp, onSave: (String) -> Unit, onCancel: (() -> Unit
  * Le site, dans une WebView propre à l'espace (détruite à sa fermeture). Chargement : barre
  * de progression, et indicateur central tant que rien n'est affiché (pas d'écran blanc en
  * thème sombre). Erreur de la page principale : message et « Réessayer ».
+ * Session ouverte (cookie posé par le site) : [onSettled] reçoit l'origine, qui remplace le
+ * lien enregistré ; la même WebView continue, sans rechargement.
  */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
-private fun MimirWeb(link: String, reload: Int, bottom: Dp) {
+private fun MimirWeb(link: String, reload: Int, bottom: Dp, onSettled: (String) -> Unit) {
     val context = LocalContext.current
     val background = MaterialTheme.colorScheme.background
-    var progress by remember(link) { mutableIntStateOf(0) }
-    var loading by remember(link) { mutableStateOf(true) }
-    var shown by remember(link) { mutableStateOf(false) }
-    var failure by remember(link) { mutableStateOf<String?>(null) }
-    var canGoBack by remember(link) { mutableStateOf(false) }
+    val origin = mimirOrigin(link) ?: link
+    val current by rememberUpdatedState(link)
+    val settled by rememberUpdatedState(onSettled)
+    var progress by remember(origin) { mutableIntStateOf(0) }
+    var loading by remember(origin) { mutableStateOf(true) }
+    var shown by remember(origin) { mutableStateOf(false) }
+    var failure by remember(origin) { mutableStateOf<String?>(null) }
+    var canGoBack by remember(origin) { mutableStateOf(false) }
 
-    val web = remember(link) {
+    // Lien complet gardé tant qu'aucune session n'existe, pour pouvoir réessayer. Vérifié
+    // pendant la navigation seulement : à la fermeture, l'effacement des cookies est en cours.
+    fun settle() {
+        if (!sameOrigin(current, origin)) return
+        val next = mimirStoredLink(current, CookieManager.getInstance().getCookie(origin) != null)
+        if (next != current) settled(next)
+    }
+
+    val web = remember(origin) {
         WebView(context).apply {
             setBackgroundColor(background.toArgb())
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
-            settings.userAgentString = settings.userAgentString + MIMIR_USER_AGENT_SUFFIX
-            // Les liens « nouvelle fenêtre » passent par onCreateWindow, qui les envoie au navigateur.
+            // Les liens « nouvelle fenêtre » passent par onCreateWindow, qui les aiguille comme une navigation.
             settings.setSupportMultipleWindows(true)
             settings.javaScriptCanOpenWindowsAutomatically = false
             settings.allowFileAccess = false
@@ -243,12 +282,13 @@ private fun MimirWeb(link: String, reload: Int, bottom: Dp) {
             webViewClient = object : WebViewClient() {
                 override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                     if (!request.isForMainFrame) return false
-                    return when (mimirRoute(link, request.url.toString())) {
+                    return when (mimirRoute(origin, request.url.toString())) {
                         MimirRoute.InApp -> false
                         MimirRoute.External -> {
                             openExternally(view.context, request.url)
                             true
                         }
+                        MimirRoute.Blocked -> true
                     }
                 }
 
@@ -258,12 +298,16 @@ private fun MimirWeb(link: String, reload: Int, bottom: Dp) {
 
                 override fun onPageFinished(view: WebView, url: String?) {
                     loading = false
-                    if (failure == null) shown = true
+                    if (failure == null) {
+                        shown = true
+                        settle()
+                    }
                     CookieManager.getInstance().flush()
                 }
 
                 override fun doUpdateVisitedHistory(view: WebView, url: String?, isReload: Boolean) {
                     canGoBack = view.canGoBack()
+                    if (failure == null) settle()
                 }
 
                 override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
@@ -296,18 +340,22 @@ private fun MimirWeb(link: String, reload: Int, bottom: Dp) {
                     if (!isUserGesture) return false
                     // WebView jetable : elle ne sert qu'à connaître l'adresse demandée.
                     val probe = WebView(view.context)
-                    probe.webViewClient = object : WebViewClient() {
-                        private var handled = false
-
-                        private fun hand(v: WebView, uri: Uri) {
-                            if (handled) return
-                            handled = true
-                            openExternally(v.context, uri)
-                            v.post { v.destroy() }
+                    var handled = false
+                    fun hand(uri: Uri?) {
+                        if (handled) return
+                        handled = true
+                        if (uri != null) {
+                            when (mimirRoute(origin, uri.toString())) {
+                                MimirRoute.InApp -> view.loadUrl(uri.toString())
+                                MimirRoute.External -> openExternally(view.context, uri)
+                                MimirRoute.Blocked -> Unit
+                            }
                         }
-
+                        probe.post { probe.destroy() }
+                    }
+                    probe.webViewClient = object : WebViewClient() {
                         override fun shouldOverrideUrlLoading(v: WebView, request: WebResourceRequest): Boolean {
-                            hand(v, request.url)
+                            hand(request.url)
                             return true
                         }
 
@@ -315,9 +363,11 @@ private fun MimirWeb(link: String, reload: Int, bottom: Dp) {
                         override fun onPageStarted(v: WebView, url: String?, favicon: Bitmap?) {
                             if (url == null || url == "about:blank") return
                             v.stopLoading()
-                            hand(v, Uri.parse(url))
+                            hand(Uri.parse(url))
                         }
                     }
+                    // Aucune adresse dans le délai : la WebView jetable est détruite quand même.
+                    view.postDelayed({ hand(null) }, PROBE_TIMEOUT_MS)
                     (resultMsg.obj as WebView.WebViewTransport).webView = probe
                     resultMsg.sendToTarget()
                     return true
@@ -334,12 +384,12 @@ private fun MimirWeb(link: String, reload: Int, bottom: Dp) {
         }
     }
     // « Recharger » du menu : repart du lien configuré.
-    var lastReload by remember(link) { mutableIntStateOf(reload) }
+    var lastReload by remember(origin) { mutableIntStateOf(reload) }
     LaunchedEffect(web, reload) {
         if (reload == lastReload) return@LaunchedEffect
         lastReload = reload
         failure = null
-        web.loadUrl(link)
+        web.loadUrl(current)
     }
     LifecycleResumeEffect(web) {
         web.onResume()
@@ -416,11 +466,28 @@ private fun openExternally(context: Context, uri: Uri) {
     }
 }
 
-/** Lien effacé : cookies et stockage du site oubliés avec lui (seul Mimir utilise une WebView). */
-private fun forgetSiteData() {
+/** Délai laissé à une nouvelle fenêtre pour révéler son adresse. */
+private const val PROBE_TIMEOUT_MS = 3_000L
+
+/**
+ * Lien effacé ou site changé : session, cookies, stockage, cache, historique et formulaires
+ * oubliés. Seul Mimir utilise une WebView : tout effacer revient à effacer ce site.
+ */
+@Suppress("DEPRECATION")
+private fun forgetSiteData(context: Context) {
     CookieManager.getInstance().apply {
         removeAllCookies(null)
         flush()
     }
     WebStorage.getInstance().deleteAllData()
+    WebView(context).apply {
+        clearCache(true)
+        clearHistory()
+        clearFormData()
+        destroy()
+    }
+    WebViewDatabase.getInstance(context).apply {
+        clearFormData()
+        clearHttpAuthUsernamePassword()
+    }
 }

@@ -59,21 +59,30 @@ et un délai pour éviter le clignotement ; sans capteur il suit le thème du t�
 
 ## Espace Mimir
 
-Affiche dans l'application un site web (« Le Crible 2027 ») à partir d'un lien de
-partage personnel, sans navigateur à ouvrir. L'adresse n'est jamais dans le code :
-elle se colle sur l'appareil.
+Affiche dans l'application un site web partagé à partir d'un lien de partage
+personnel, sans navigateur à ouvrir. L'adresse n'est jamais dans le code : elle se
+colle sur l'appareil.
 
 1. Onglet Espaces → **Mimir** : au premier passage, coller le lien de partage
-   (`https://exemple.org/entrer#k=...`) puis **Enregistrer**. Seuls les liens `https://`
-   sont acceptés.
-2. Le lien porte un jeton : il est chiffré par la clé de l'appareil (comme le jeton
-   d'appairage) et n'apparaît dans aucun journal.
+   (`https://partage.example.org/entrer#k=...`) puis **Enregistrer**. Seuls les liens
+   `https://` sont acceptés ; le jeton se place après `#` (un lien qui porte des
+   paramètres après `?` est refusé).
+2. Le lien est chiffré par la clé de l'appareil (comme le jeton d'appairage) et
+   n'apparaît dans aucun journal. Dès que le site a ouvert sa session (cookie posé),
+   seule l'origine (`https://partage.example.org/`) reste enregistrée ; tant que ce
+   n'est pas le cas, le lien complet est gardé pour réessayer.
 3. L'icône ⚙ de l'espace permet de recharger la page, de modifier le lien ou de
-   l'effacer (cookies et stockage du site sont alors oubliés).
+   l'effacer. Effacer le lien, ou le remplacer par celui d'une autre origine (après
+   confirmation), oublie la session, les cookies, le stockage, le cache, l'historique
+   et les formulaires du site.
 
-Le site est chargé avec l'agent utilisateur suffixé de `KairosApp`. Le bouton retour
-revient à la page précédente du site, puis ferme l'espace. Les liens vers un autre
-domaine, les nouvelles fenêtres, `mailto:` et `tel:` s'ouvrent hors de l'application.
+Le bouton retour revient à la page précédente du site, puis ferme l'espace. Seules
+les pages de la même origine (schéma, hôte et port) restent dans l'application ; les
+autres pages web, les nouvelles fenêtres, `mailto:` et `tel:` s'ouvrent hors de
+l'application, et les autres schémas (`javascript:`, `data:`, `file:`…) sont bloqués.
+
+Contrat attendu du site : aucun cookie avant l'échange du jeton, et une session
+valide donne accès au contenu depuis l'origine, quel que soit le fragment.
 
 ## Limites connues
 

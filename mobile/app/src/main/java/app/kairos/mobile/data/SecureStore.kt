@@ -46,7 +46,7 @@ class SecureStore(private val context: Context) {
         context.dataStore.edit { it.remove(KEY) }
     }
 
-    /** Lien de partage Mimir (il porte un jeton) : chiffré à part, sous sa propre clé. */
+    /** Lien Mimir (avec jeton tant que la session n'est pas ouverte, puis origine seule) : chiffré à part, sous sa propre clé. */
     suspend fun saveMimir(link: String) {
         val cipher = Cipher.getInstance(TRANSFORMATION).apply { init(Cipher.ENCRYPT_MODE, keystoreKey(MIMIR_ALIAS)) }
         val sealed = cipher.iv + cipher.doFinal(link.toByteArray())
