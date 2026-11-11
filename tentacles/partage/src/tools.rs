@@ -33,6 +33,9 @@ pub struct ShareServer {
 struct CreateArgs {
     /// Libellé court du partage (qui le reçoit, ou pourquoi).
     libelle: String,
+    /// Lien d'accès du propriétaire : remplace ses liens précédents jamais ouverts.
+    #[serde(default)]
+    proprietaire: bool,
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
@@ -84,7 +87,8 @@ impl ShareServer {
     #[tool(description = "Créer un lien de partage à usage unique (application).")]
     fn app_partage_creer(&self, Parameters(a): Parameters<CreateArgs>) -> Out {
         let label = clean_label(&a.libelle)?;
-        let (_, token, expire) = self.store.create(&label, (self.now)(), self.link_ttl).map_err(|e| e.to_string())?;
+        let create = if a.proprietaire { Store::create_owner } else { Store::create };
+        let (_, token, expire) = create(&self.store, &label, (self.now)(), self.link_ttl).map_err(|e| e.to_string())?;
         // Jeton dans le fragment : jamais envoyé au serveur, donc absent des journaux.
         json_out(json!({"lien": format!("{}/entrer#k={token}", self.site), "expire_le": rfc(expire)}))
     }
@@ -93,7 +97,7 @@ impl ShareServer {
     fn app_partage_liste(&self) -> Out {
         let now = (self.now)();
         let list = self.store.list().map_err(|e| e.to_string())?;
-        json_out(Value::Array(list.iter().map(|s| share_json(s, now)).collect()))
+        json_out(Value::Array(list.iter().filter(|s| s.visible(now)).map(|s| share_json(s, now)).collect()))
     }
 
     #[tool(description = "Révoquer un partage et la session qui en est issue (application).")]
@@ -122,7 +126,7 @@ mod tests {
     }
 
     fn create(s: &ShareServer, label: &str) -> Value {
-        serde_json::from_str(&s.app_partage_creer(Parameters(CreateArgs { libelle: label.into() })).unwrap()).unwrap()
+        serde_json::from_str(&s.app_partage_creer(Parameters(CreateArgs { libelle: label.into(), proprietaire: false })).unwrap()).unwrap()
     }
 
     #[test]
@@ -148,6 +152,19 @@ mod tests {
         assert!(clean_label(" \t ").is_err());
         assert!(clean_label(&"x".repeat(LABEL_MAX + 1)).is_err());
         assert_eq!(clean_label(&"é".repeat(LABEL_MAX)).unwrap().chars().count(), LABEL_MAX);
+    }
+
+    #[test]
+    fn owner_flag_replaces_and_hides_previous_owner_link() {
+        let s = server();
+        let owner = |s: &ShareServer| s.app_partage_creer(Parameters(CreateArgs { libelle: "moi".into(), proprietaire: true })).unwrap();
+        owner(&s);
+        owner(&s);
+        create(&s, "moi");
+        let list: Value = serde_json::from_str(&s.app_partage_liste().unwrap()).unwrap();
+        // Le lien remplacé disparaît ; le dernier lien du propriétaire et le partage ordinaire restent.
+        assert_eq!(list.as_array().unwrap().len(), 2, "{list}");
+        assert!(list.as_array().unwrap().iter().all(|l| l["actif"] == true));
     }
 
     #[test]

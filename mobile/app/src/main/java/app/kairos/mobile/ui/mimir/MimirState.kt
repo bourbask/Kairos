@@ -3,6 +3,9 @@ package app.kairos.mobile.ui.mimir
 import app.kairos.mobile.data.ApiError
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import java.time.LocalDate
@@ -101,6 +104,12 @@ data class Share(
     @SerialName("ouvert_le") val openedAt: String? = null,
     val actif: Boolean = false,
 )
+
+/** Demande d'un lien ; [owner] : accès du propriétaire, qui remplace ses liens jamais ouverts. */
+fun shareRequest(label: String, owner: Boolean = false): JsonObject = buildJsonObject {
+    put("libelle", label)
+    if (owner) put("proprietaire", true)
+}
 
 /** Libellé proposé : « Partage du JJ/MM ». */
 fun defaultShareLabel(day: LocalDate): String = "Partage du %02d/%02d".format(day.dayOfMonth, day.monthValue)

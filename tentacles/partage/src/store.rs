@@ -14,6 +14,9 @@ pub type Ts = i64;
 /// Conservation des lignes après la fin de l'accès (expiration ou révocation).
 pub const KEEP_SECS: Ts = 30 * 24 * 3600;
 
+/// Au-delà, un lien du propriétaire jamais ouvert n'est plus listé.
+pub const OWNER_UNOPENED_SECS: Ts = 72 * 3600;
+
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
@@ -44,11 +47,18 @@ pub struct Share {
     pub expire_le: Ts,
     pub ouvert_le: Option<Ts>,
     pub revoque: bool,
+    /// Lien demandé par l'application pour l'accès de son propriétaire.
+    pub proprietaire: bool,
 }
 
 impl Share {
     pub fn actif(&self, now: Ts) -> bool {
         !self.revoque && now < self.expire_le
+    }
+
+    /// Un lien du propriétaire jamais ouvert, remplacé ou trop ancien, n'encombre pas la liste.
+    pub fn visible(&self, now: Ts) -> bool {
+        !(self.proprietaire && self.ouvert_le.is_none() && (self.revoque || now - self.cree_le > OWNER_UNOPENED_SECS))
     }
 }
 
@@ -78,9 +88,17 @@ impl Store {
                  expire_le INTEGER NOT NULL,
                  ouvert_le INTEGER,
                  session TEXT UNIQUE,
-                 revoque_le INTEGER
+                 revoque_le INTEGER,
+                 proprietaire INTEGER NOT NULL DEFAULT 0
              );",
         )?;
+        // Bases créées avant le marqueur : le lien du propriétaire portait ce libellé.
+        if !c.prepare("SELECT 1 FROM pragma_table_info('liens') WHERE name = 'proprietaire'")?.exists([])? {
+            c.execute_batch(
+                "ALTER TABLE liens ADD COLUMN proprietaire INTEGER NOT NULL DEFAULT 0;
+                 UPDATE liens SET proprietaire = 1 WHERE libelle = 'moi';",
+            )?;
+        }
         Ok(Store { db: Mutex::new(c) })
     }
 
@@ -90,14 +108,32 @@ impl Store {
 
     /// Crée un lien valable `ttl` secondes ; rend (id, jeton en clair, échéance).
     pub fn create(&self, libelle: &str, now: Ts, ttl: Ts) -> anyhow::Result<(i64, String, Ts)> {
+        self.insert(libelle, now, ttl, false)
+    }
+
+    /// Lien du propriétaire : remplace ses liens précédents jamais ouverts.
+    pub fn create_owner(&self, libelle: &str, now: Ts, ttl: Ts) -> anyhow::Result<(i64, String, Ts)> {
+        self.insert(libelle, now, ttl, true)
+    }
+
+    fn insert(&self, libelle: &str, now: Ts, ttl: Ts, owner: bool) -> anyhow::Result<(i64, String, Ts)> {
         let token = new_secret();
         let expire = now + ttl;
-        let db = self.db();
-        db.execute(
-            "INSERT INTO liens (libelle, jeton, cree_le, expire_le) VALUES (?1, ?2, ?3, ?4)",
-            params![libelle, hash(&token), now, expire],
+        let mut db = self.db();
+        let tx = db.transaction()?;
+        if owner {
+            tx.execute(
+                "UPDATE liens SET revoque_le = ?1 WHERE proprietaire = 1 AND ouvert_le IS NULL AND revoque_le IS NULL",
+                params![now],
+            )?;
+        }
+        tx.execute(
+            "INSERT INTO liens (libelle, jeton, cree_le, expire_le, proprietaire) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![libelle, hash(&token), now, expire, owner],
         )?;
-        Ok((db.last_insert_rowid(), token, expire))
+        let id = tx.last_insert_rowid();
+        tx.commit()?;
+        Ok((id, token, expire))
     }
 
     /// Échange atomique : un jeton valide, jamais utilisé, non révoqué et non expiré
@@ -148,10 +184,10 @@ impl Store {
     fn select(&self, tail: &str, p: impl rusqlite::Params) -> anyhow::Result<Vec<Share>> {
         let db = self.db();
         let mut st = db.prepare(&format!(
-            "SELECT id, libelle, cree_le, expire_le, ouvert_le, revoque_le IS NOT NULL FROM liens {tail}"
+            "SELECT id, libelle, cree_le, expire_le, ouvert_le, revoque_le IS NOT NULL, proprietaire FROM liens {tail}"
         ))?;
         let rows = st.query_map(p, |r| {
-            Ok(Share { id: r.get(0)?, libelle: r.get(1)?, cree_le: r.get(2)?, expire_le: r.get(3)?, ouvert_le: r.get(4)?, revoque: r.get(5)? })
+            Ok(Share { id: r.get(0)?, libelle: r.get(1)?, cree_le: r.get(2)?, expire_le: r.get(3)?, ouvert_le: r.get(4)?, revoque: r.get(5)?, proprietaire: r.get(6)? })
         })?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
@@ -242,6 +278,53 @@ mod tests {
         assert_eq!(first.expire_le, 10 + 100 * H);
         assert!(first.actif(11));
         assert!(!l[0].actif(5 + H));
+    }
+
+    #[test]
+    fn owner_link_replaces_unopened_owner_links() {
+        let s = Store::memory().unwrap();
+        let (vieux, _, _) = s.create_owner("moi", 0, 72 * H).unwrap();
+        let (ouvert, t, _) = s.create_owner("moi", 1, 72 * H).unwrap();
+        s.redeem(&t, 2, 100 * H).unwrap().unwrap();
+        let (manuel, _, _) = s.create("moi", 3, 72 * H).unwrap();
+        let (neuf, _, _) = s.create_owner("moi", 4, 72 * H).unwrap();
+        let get = |id| s.get(id).unwrap().unwrap();
+        assert!(get(vieux).revoque && get(vieux).proprietaire);
+        // Session ouverte et partage saisi à la main : intacts.
+        assert!(!get(ouvert).revoque && !get(manuel).revoque && !get(manuel).proprietaire);
+        assert!(get(neuf).actif(5));
+    }
+
+    #[test]
+    fn unopened_owner_links_hidden_after_72h_or_replaced() {
+        let s = Store::memory().unwrap();
+        let (a, _, _) = s.create_owner("moi", 0, 72 * H).unwrap();
+        let (m, _, _) = s.create("moi", 0, 72 * H).unwrap();
+        let get = |id| s.get(id).unwrap().unwrap();
+        assert!(get(a).visible(72 * H - 1));
+        assert!(!get(a).visible(72 * H + 1));
+        assert!(get(m).visible(72 * H + 1), "partage ordinaire toujours listé");
+        let (b, tb, _) = s.create_owner("moi", 10, 72 * H).unwrap();
+        assert!(!get(a).visible(11), "remplacé");
+        s.redeem(&tb, 12, 100 * H).unwrap().unwrap();
+        assert!(get(b).visible(100 * H), "ouvert : listé");
+    }
+
+    #[test]
+    fn migration_flags_existing_owner_links() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "CREATE TABLE liens (id INTEGER PRIMARY KEY, libelle TEXT NOT NULL, jeton TEXT NOT NULL UNIQUE,
+                 cree_le INTEGER NOT NULL, expire_le INTEGER NOT NULL, ouvert_le INTEGER, session TEXT UNIQUE, revoque_le INTEGER);
+             INSERT INTO liens (libelle, jeton, cree_le, expire_le) VALUES ('moi', 'j1', 0, 10), ('Exemple', 'j2', 0, 10);",
+        )
+        .unwrap();
+        let s = Store::init(c).unwrap();
+        assert!(s.get(1).unwrap().unwrap().proprietaire);
+        assert!(!s.get(2).unwrap().unwrap().proprietaire);
+        // Rouvrir ne refait rien.
+        let s = Store::init(s.db.into_inner().unwrap()).unwrap();
+        assert!(s.get(1).unwrap().unwrap().proprietaire);
     }
 
     #[test]
