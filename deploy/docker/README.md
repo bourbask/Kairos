@@ -112,6 +112,8 @@ Calendrier des repas (optionnel, les trois ou aucune) : `ALIMENTATION_CALDAV_URL
 
 Module marchés : veille de marchés de prédiction en lecture seule. Base SQLite dans le volume `marches-data`. Variables de `kairos.env` : `MARCHES_TOKEN` (obligatoire, `openssl rand -hex 32`), `MARCHES_API_URL` (obligatoire, adresse de la source), `MARCHES_KEYWORDS` (liste séparée par des virgules), `MARCHES_POLL_MINUTES` (optionnel, 30 par défaut). Port publié : `MARCHES_BIND_PORT` (8099).
 
+Partage du site : liens à usage unique créés depuis l'application. Base SQLite dans le volume `partage-data` (empreintes seulement). Le service lit son propre fichier `partage.env` (modèle `partage.env.example`), jamais `kairos.env` : `PARTAGE_TOKEN` (obligatoire, `openssl rand -hex 32`), `PARTAGE_PUBLIC_URL` (obligatoire, adresse https du site), `PARTAGE_LIEN_HEURES` (72) et `PARTAGE_SESSION_HEURES` (720) optionnelles. Le même `PARTAGE_TOKEN` figure aussi dans `kairos.env`, pour la tête. Port MCP 8101 jamais publié ; la tête le joint par `http://partage:8101/mcp` (entrée `[[tentacles]]` dans `tete.toml`). Port 8102 (`POST /cle`, `GET /verifier`) sur le réseau interne `partage-public`, que le compose du site rejoint en `external: true` : lancer ce compose d'abord. Sans l'application : `docker compose exec partage /app/kairos-partage creer "<libellé>"` ou `revoquer <id>`.
+
 Déclarer ensuite le tentacule dans `config/tete.toml` (modèle : `config/tete.example.toml`). L'image `kairos:local`
 doit exister :
 
