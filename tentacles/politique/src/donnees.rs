@@ -13,6 +13,14 @@ use serde_json::Value;
 pub const META: &str = "meta";
 pub const IDENTITES: &str = "identites";
 pub const COMPARAISONS: &str = "comparaisons";
+pub const PRESENTATION: &str = "presentation";
+
+/// Vues de l'application qu'une indication de présentation peut demander.
+const VUES: &[&str] = &["verifications", "rhetorique", "revirements", "votes", "bulle", "generique"];
+
+/// Rôles qu'une indication peut donner aux champs d'une entrée.
+const ROLES: &[&str] =
+    &["titre", "verdict", "faits", "source", "theme", "camp", "dit", "vote", "definition", "reperer", "exemple", "question", "date"];
 
 /// Taille au-delà de laquelle un fichier est ignoré (protège la mémoire du conteneur).
 const MAX_FICHIER: u64 = 4 * 1024 * 1024;
@@ -59,6 +67,9 @@ pub struct Etat {
     /// Alias replié → identités, dans l'ordre du fichier.
     index: HashMap<String, Vec<usize>>,
     pub avatars_invalides: usize,
+    /// Indications de présentation valides, dans l'ordre du fichier.
+    pub presentations: Vec<Value>,
+    pub presentations_invalides: usize,
 }
 
 /// Minuscules, sans accents ni ponctuation, espaces simples.
@@ -122,6 +133,21 @@ pub fn avatar_valide(a: &Value) -> bool {
     ms_ok && images_ok
 }
 
+/// Indication valide, réduite à ses quatre clés ; sinon `None`.
+fn presentation(p: &Value) -> Option<Value> {
+    let rubrique = p.get("rubrique")?.as_str().filter(|r| !r.is_empty())?;
+    let chemin = p.get("chemin")?.as_str()?;
+    let vue = p.get("vue")?.as_str().filter(|v| VUES.contains(v))?;
+    let champs = match p.get("champs") {
+        None => serde_json::Map::new(),
+        Some(c) => c.as_object()?.clone(),
+    };
+    if !champs.iter().all(|(role, champ)| ROLES.contains(&role.as_str()) && champ.as_str().is_some_and(|c| !c.is_empty())) {
+        return None;
+    }
+    Some(serde_json::json!({"rubrique": rubrique, "chemin": chemin, "vue": vue, "champs": champs}))
+}
+
 impl Etat {
     fn new(fichiers: BTreeMap<String, Arc<Value>>) -> Etat {
         let mut avatars_invalides = 0;
@@ -149,7 +175,11 @@ impl Etat {
                 }
             }
         }
-        Etat { fichiers, identites, index, avatars_invalides }
+        // Forme inattendue : aucune indication, l'application devine.
+        let brutes = fichiers.get(PRESENTATION).and_then(|v| v.as_array()).map(Vec::as_slice).unwrap_or_default();
+        let presentations: Vec<Value> = brutes.iter().filter_map(presentation).collect();
+        let presentations_invalides = brutes.len() - presentations.len();
+        Etat { fichiers, identites, index, avatars_invalides, presentations, presentations_invalides }
     }
 
     pub fn identite(&self, id: &str) -> Option<&Identite> {
@@ -158,7 +188,7 @@ impl Etat {
 
     /// Rubriques : tous les fichiers sauf ceux de service.
     pub fn rubriques(&self) -> impl Iterator<Item = (&String, &Arc<Value>)> {
-        self.fichiers.iter().filter(|(k, _)| ![META, IDENTITES, COMPARAISONS].contains(&k.as_str()))
+        self.fichiers.iter().filter(|(k, _)| ![META, IDENTITES, COMPARAISONS, PRESENTATION].contains(&k.as_str()))
     }
 
     /// Identités d'une entrée : toutes celles dont un alias égale une de ses valeurs texte.
@@ -231,11 +261,12 @@ impl Donnees {
         let etat = Etat::new(cache.iter().map(|(k, f)| (k.clone(), f.valeur.clone())).collect());
         if change {
             eprintln!(
-                "politique : {} fichiers, {} identités, {} alias inconnus, {} avatars invalides",
+                "politique : {} fichiers, {} identités, {} alias inconnus, {} avatars invalides, {} indications invalides",
                 etat.fichiers.len(),
                 etat.identites.len(),
                 etat.alias_inconnus(),
-                etat.avatars_invalides
+                etat.avatars_invalides,
+                etat.presentations_invalides
             );
         }
         etat

@@ -1,0 +1,39 @@
+{
+  "contenu": {
+    "RHET": [
+      {
+        "ask": "Est-ce vraiment ce qui a été dit ?",
+        "d": "Déformer la position adverse.",
+        "ex": [
+          [
+            "Exemple fictif",
+            "…"
+          ]
+        ],
+        "spot": "Reformulation caricaturale.",
+        "t": "Homme de paille"
+      }
+    ]
+  },
+  "id": "rhetorique",
+  "presentation": [
+    {
+      "champs": {
+        "definition": "d",
+        "exemple": "ex",
+        "question": "ask",
+        "reperer": "spot",
+        "titre": "t"
+      },
+      "chemin": "RHET",
+      "rubrique": "rhetorique",
+      "vue": "rhetorique"
+    }
+  ],
+  "rattachements": {
+    "RHET": [
+      []
+    ]
+  },
+  "titre": "Rhétorique"
+}

@@ -152,6 +152,7 @@ impl PolitiqueServer {
             "identites": etat.identites.iter().map(identite_json).collect::<Vec<_>>(),
             "rubriques": rubriques,
             "themes": themes,
+            "presentations": etat.presentations,
         }))
     }
 
@@ -162,7 +163,8 @@ impl PolitiqueServer {
         let (id, v) = etat.rubriques().find(|(k, _)| **k == a.id).ok_or("Rubrique inconnue.")?;
         let rattachements: serde_json::Map<String, Value> =
             listes(v).into_iter().map(|(chemin, l)| (chemin, l.iter().map(|e| json!(etat.rattachement(e))).collect())).collect();
-        json_out(json!({"id": id, "titre": titre(id).0, "contenu": v.as_ref(), "rattachements": rattachements}))
+        let presentation: Vec<&Value> = etat.presentations.iter().filter(|p| p["rubrique"] == **id).collect();
+        json_out(json!({"id": id, "titre": titre(id).0, "contenu": v.as_ref(), "rattachements": rattachements, "presentation": presentation}))
             .map_err(|_| "Rubrique trop volumineuse pour être affichée.".to_string())
     }
 
@@ -508,6 +510,96 @@ mod tests {
         assert!(s.app_politique_rubrique(Parameters(IdArgs { id: "gros".into() })).unwrap_err().contains("volumineuse"));
         assert!(chercher(&s, &"mot ".repeat(100)).is_err());
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn presentation_hints_exposed() {
+        let s = server();
+        let h = v(s.app_politique_accueil());
+        // Fichier de service, pas une rubrique.
+        assert!(!h["rubriques"].as_array().unwrap().iter().any(|r| r["id"] == "presentation"));
+        let p = h["presentations"].as_array().unwrap();
+        // Vue ou rôle inconnus : indication ignorée.
+        assert_eq!(p.len(), 6);
+        assert_eq!(
+            p[0],
+            json!({"rubrique": "affirmations", "chemin": "CLAIMS", "vue": "verifications",
+                   "champs": {"titre": "q", "verdict": "v", "faits": "facts", "source": "src", "theme": "theme", "camp": "camp"}})
+        );
+        let r = rubrique(&s, "affirmations");
+        let vues: Vec<&str> = r["presentation"].as_array().unwrap().iter().map(|x| x["vue"].as_str().unwrap()).collect();
+        assert_eq!(vues, ["verifications", "bulle"]);
+        assert_eq!(rubrique(&s, "budgets")["presentation"].as_array().unwrap().len(), 1);
+        assert_eq!(rubrique(&s, "argent")["presentation"], json!([]));
+        // Les entrées de fiche gardent rubrique et chemin pour appliquer l'indication.
+        let f = v(fiche(&s, "a"));
+        let votes = f["rubriques"].as_array().unwrap().iter().find(|r| r["id"] == "votes").unwrap();
+        assert!(votes["entrees"].as_array().unwrap().iter().any(|e| e["chemin"] == "DV" && e["entree"]["said"].is_string()));
+    }
+
+    #[test]
+    fn invalid_presentation_ignored() {
+        let dir = copie("presentation");
+        let s = server_sur(&dir);
+        let n = |s: &PolitiqueServer| v(s.app_politique_accueil())["presentations"].as_array().unwrap().len();
+        assert_eq!(n(&s), 6);
+        // Illisible : dernière version valide gardée.
+        ecrire(&dir.join("presentation.json"), "[{", 10);
+        assert_eq!(n(&s), 6);
+        // Forme inattendue : rien, l'application devine.
+        ecrire(&dir.join("presentation.json"), r#"{"rubrique": "votes"}"#, 20);
+        assert_eq!(n(&s), 0);
+        ecrire(
+            &dir.join("presentation.json"),
+            r#"[{"rubrique": "votes", "chemin": "AN_V", "vue": "votes", "champs": {"titre": 3}},
+                {"rubrique": "votes", "vue": "votes", "champs": {}},
+                {"rubrique": "votes", "chemin": "AN_V", "vue": "votes", "champs": {"titre": "t"}, "autre": 1},
+                {"rubrique": "votes", "chemin": "AN_G", "vue": "generique"}]"#,
+            30,
+        );
+        let p = v(s.app_politique_accueil())["presentations"].clone();
+        assert_eq!(
+            p,
+            json!([{"rubrique": "votes", "chemin": "AN_V", "vue": "votes", "champs": {"titre": "t"}},
+                   {"rubrique": "votes", "chemin": "AN_G", "vue": "generique", "champs": {}}])
+        );
+        std::fs::remove_file(dir.join("presentation.json")).unwrap();
+        assert_eq!(n(&s), 0);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Réponses réelles du module sur les fixtures, rangées dans les ressources de test de
+    /// l'application : le décodage de l'application suit le contrat, pas une supposition.
+    /// `POLITIQUE_ECHANTILLONS=1` les réécrit.
+    #[test]
+    fn contract_samples_match_app_resources() {
+        let s = server();
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../mobile/app/src/test/resources/politique");
+        let echantillons = [
+            ("accueil", v(s.app_politique_accueil())),
+            ("rubrique-affirmations", rubrique(&s, "affirmations")),
+            ("rubrique-argent", rubrique(&s, "argent")),
+            ("rubrique-budgets", rubrique(&s, "budgets")),
+            ("rubrique-rhetorique", rubrique(&s, "rhetorique")),
+            ("rubrique-votes", rubrique(&s, "votes")),
+            ("fiche-a", v(fiche(&s, "a"))),
+            ("fiche-c", v(fiche(&s, "c"))),
+            ("comparer-a-b-budget", v(comparer(&s, &["a", "b"], "budget"))),
+            ("comparer-a-c-niveau-de-vie", v(comparer(&s, &["a", "c"], "niveau-de-vie"))),
+            ("chercher-electricite", v(chercher(&s, "électricité"))),
+        ];
+        let ecrire = std::env::var("POLITIQUE_ECHANTILLONS").is_ok_and(|x| x == "1");
+        for (nom, rep) in echantillons {
+            let path = dir.join(format!("{nom}.json"));
+            if ecrire {
+                std::fs::create_dir_all(&dir).unwrap();
+                std::fs::write(&path, serde_json::to_string_pretty(&rep).unwrap() + "\n").unwrap();
+                continue;
+            }
+            let lu: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap_or_else(|_| panic!("{nom} absent : POLITIQUE_ECHANTILLONS=1")))
+                .unwrap();
+            assert_eq!(lu, rep, "{nom} périmé : POLITIQUE_ECHANTILLONS=1 cargo test -p kairos-politique");
+        }
     }
 
     #[test]

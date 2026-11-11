@@ -1,0 +1,79 @@
+{
+  "identites": [
+    {
+      "avatar": {
+        "images": [
+          [
+            "................",
+            ".....DDDDDD.....",
+            "....DFFFFFFD....",
+            "...DFFFFFFFFD...",
+            "...DFDFFFFDFD...",
+            "...DFFFFFFFFD...",
+            "...DFFFhhFFFD...",
+            "....DFFFFFFD....",
+            ".....DDDDDD.....",
+            "....DCCCCCCD....",
+            "...DCCCCCCCCD...",
+            "...DCCCAACCCD...",
+            "...DCCCCCCCCD...",
+            "....DDDDDDDD....",
+            "................",
+            "................"
+          ],
+          [
+            "................",
+            ".....DDDDDD.....",
+            "....DFFFFFFD....",
+            "...DFFFFFFFFD...",
+            "...DFFFFFFFFD...",
+            "...DFFFFFFFFD...",
+            "...DFFFhhFFFD...",
+            "....DFFFFFFD....",
+            ".....DDDDDD.....",
+            "....DCCCCCCD....",
+            "...DCCCCCCCCD...",
+            "...DCCCAACCCD...",
+            "...DCCCCCCCCD...",
+            "....DDDDDDDD....",
+            "................",
+            "................"
+          ]
+        ],
+        "ms": 400
+      },
+      "couleur": "#3366cc",
+      "id": "a",
+      "nom": "Candidat A",
+      "parti": "Parti Bleu"
+    },
+    {
+      "couleur": "#cc3333",
+      "id": "c",
+      "nom": "Candidat C",
+      "parti": "Parti Rouge"
+    }
+  ],
+  "lignes": [
+    {
+      "libelle": "Revenu des ménages",
+      "unite": "€/an",
+      "valeurs": [
+        {
+          "id": "a",
+          "source": "Évaluation fictive, example.org",
+          "valeur": 250
+        },
+        {
+          "id": "c",
+          "source": null,
+          "valeur": null
+        }
+      ]
+    }
+  ],
+  "theme": {
+    "id": "niveau-de-vie",
+    "titre": "Niveau de vie"
+  }
+}
