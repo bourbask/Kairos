@@ -70,6 +70,7 @@ import app.kairos.mobile.ui.kit.StatusBanner
 import app.kairos.mobile.data.ApiError
 import app.kairos.mobile.data.Decision
 import app.kairos.mobile.ui.mascot.Mascot
+import app.kairos.mobile.ui.mascot.onPageColors
 import app.kairos.mobile.ui.mascot.MascotState
 import app.kairos.mobile.ui.theme.Motion
 import java.util.Locale
@@ -502,7 +503,7 @@ private fun Done(any: Boolean) {
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Mascot(if (any) MascotState.Agit else MascotState.Repos, size = 120.dp, onBackground = MaterialTheme.colorScheme.background)
+        Mascot(if (any) MascotState.Agit else MascotState.Repos, size = 120.dp, colors = onPageColors())
         Spacer(Modifier.height(16.dp))
         Text(if (any) "C'est fait" else "Rien à décider", style = MaterialTheme.typography.headlineMedium)
     }

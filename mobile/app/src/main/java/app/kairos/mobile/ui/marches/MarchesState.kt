@@ -33,6 +33,12 @@ private const val MINUS = '−'
 /** Variation qui sert au tri et à la carte : 24 h, sinon 7 jours. */
 private fun recent(m: FollowedMarket): Double? = if (m.closed) null else m.d1 ?: m.d7
 
+/**
+ * Sens joué par la scène Marchés du bouton Kairos : en baisse seulement quand la somme
+ * des variations récentes des questions suivies est négative ; sans données, en hausse.
+ */
+fun marketsFalling(s: MarchesSnapshot): Boolean = s.markets?.followed.orEmpty().mapNotNull(::recent).sum() < 0
+
 /** Plus forte variation récente d'abord ; sans historique ensuite, dénouées en fin. */
 fun sortedByVariation(markets: List<FollowedMarket>): List<FollowedMarket> =
     markets.sortedWith(

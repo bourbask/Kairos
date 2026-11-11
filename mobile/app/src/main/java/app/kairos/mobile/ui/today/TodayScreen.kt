@@ -90,6 +90,7 @@ import app.kairos.mobile.ui.kit.StatusBanner
 import app.kairos.mobile.ui.kit.SwipeRow
 import app.kairos.mobile.ui.kit.Tone
 import app.kairos.mobile.ui.mascot.Mascot
+import app.kairos.mobile.ui.mascot.onPageColors
 import app.kairos.mobile.ui.mascot.MascotState
 import app.kairos.mobile.ui.theme.Motion
 import kotlinx.coroutines.CoroutineScope
@@ -527,7 +528,7 @@ private fun EmptyDay(loaded: Boolean, offline: Boolean) {
         Modifier.fillMaxWidth().padding(vertical = 36.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Mascot(MascotState.Repos, size = 56.dp, onBackground = MaterialTheme.colorScheme.background)
+        Mascot(MascotState.Repos, size = 56.dp, colors = onPageColors())
         Spacer(Modifier.height(12.dp))
         Text(
             when {

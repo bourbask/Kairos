@@ -37,6 +37,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
@@ -59,10 +60,12 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import app.kairos.mobile.ui.mascot.Mascot
+import app.kairos.mobile.ui.mascot.MascotScene
 import app.kairos.mobile.ui.mascot.MascotState
+import app.kairos.mobile.ui.mascot.SceneKind
 import app.kairos.mobile.ui.mascot.mascotDescription
 import app.kairos.mobile.ui.theme.Motion
-import app.kairos.mobile.ui.theme.Palette
+import app.kairos.mobile.ui.theme.KairosColors
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -85,6 +88,9 @@ internal val DockHeight = 104.dp
 @Composable
 fun Shell(
     mascotState: MascotState = MascotState.Repos,
+    /** Espace ouvert dont le bouton Kairos joue la scène ; [sceneDown] : variante en baisse. */
+    scene: SceneKind? = null,
+    sceneDown: Boolean = false,
     kairosState: String = mascotDescription(mascotState, 0),
     onTap: () -> Unit = {},
     onPressStart: () -> Unit = {},
@@ -113,6 +119,8 @@ fun Shell(
             tab = tab,
             onTab = onTab,
             mascotState = mascotState,
+            scene = scene,
+            sceneDown = sceneDown,
             kairosState = kairosState,
             onTap = onTap,
             onPressStart = onPressStart,
@@ -130,6 +138,8 @@ private fun Dock(
     tab: Tab,
     onTab: (Tab) -> Unit,
     mascotState: MascotState,
+    scene: SceneKind?,
+    sceneDown: Boolean,
     kairosState: String,
     onTap: () -> Unit,
     onPressStart: () -> Unit,
@@ -150,7 +160,7 @@ private fun Dock(
         verticalAlignment = Alignment.Bottom,
     ) {
         TabItem("Aujourd'hui", tab == Tab.Aujourdhui, { onTab(Tab.Aujourdhui) }) { TodayIcon(it) }
-        KairosButton(mascotState, onTap, onPressStart, onPressEnd, onDrag, onSpeak, kairosModifier, kairosState)
+        KairosButton(mascotState, onTap, onPressStart, onPressEnd, onDrag, onSpeak, kairosModifier, kairosState, scene, sceneDown)
         TabItem("Espaces", tab == Tab.Espaces, { onTab(Tab.Espaces) }) { SpacesIcon(it) }
     }
 }
@@ -207,6 +217,8 @@ fun KairosButton(
     modifier: Modifier = Modifier,
     /** État du personnage en mots, annoncé avec le bouton. */
     stateText: String = mascotDescription(state, 0),
+    scene: SceneKind? = null,
+    sceneDown: Boolean = false,
 ) {
     val speak by rememberUpdatedState(onSpeak)
     val tap by rememberUpdatedState(onTap)
@@ -217,14 +229,14 @@ fun KairosButton(
     var pressed by remember { mutableStateOf(false) }
     val scale by animateFloatAsState(if (pressed) 0.92f else 1f, Motion.settle(), label = "appui")
     val shape = RoundedCornerShape(KairosButtonCorner)
-    val primary = MaterialTheme.colorScheme.primary
+    val btn = KairosColors.current.btn
 
     Box(
         modifier
             .scale(scale)
-            .shadow(14.dp, shape, ambientColor = primary, spotColor = primary)
+            .shadow(14.dp, shape, ambientColor = btn, spotColor = btn)
             .size(68.dp)
-            .background(primary, shape)
+            .background(btn, shape)
             .semantics {
                 role = Role.Button
                 contentDescription = "Kairos"
@@ -270,7 +282,10 @@ fun KairosButton(
             },
         contentAlignment = Alignment.Center,
     ) {
-        Mascot(state, size = 46.dp, onBackground = Palette.CorpsKairos)
+        // La scène d'un espace cède la place quand on parle à Kairos : écoute, réflexion, réponse.
+        val conversing = state == MascotState.Ecoute || state == MascotState.Reflechit || state == MascotState.Agit
+        if (scene != null && !conversing) MascotScene(scene, sceneDown, Modifier.fillMaxSize().clip(shape))
+        else Mascot(state, size = 46.dp)
     }
 }
 
