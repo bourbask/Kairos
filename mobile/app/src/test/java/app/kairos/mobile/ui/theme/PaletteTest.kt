@@ -60,4 +60,14 @@ class PaletteTest {
             assertTrue("${p.label} $mode yeux/corps", contrast(c['D'], c['F']) >= 3.0)
         }
     }
+
+    /** Sur le bouton, le corps clair du personnage se détache à 3:1 au moins. */
+    @Test
+    fun mascot_reads_on_button() {
+        for (p in ThemePalette.entries) for (dark in listOf(false, true)) {
+            val c = SceneColors.of(p, dark)
+            val ratio = contrast(c['F'], c['B'])
+            assertTrue("${p.label} ${if (dark) "sombre" else "clair"} corps/bouton : $ratio", ratio >= 3.0)
+        }
+    }
 }

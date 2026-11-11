@@ -55,7 +55,8 @@ enum class ThemePalette(val label: String, val mood: String, val ink: Color, val
         ThemeRoles(
             c(0x7FAF6E), c(0x121712), c(0x243324), c(0xB9D8AA), c(0x121712), c(0x1B221B), c(0xE6EBE3),
             c(0xE8AE4E), c(0xE8AE4E), c(0xE07A6C), c(0x9AA597), c(0x404A40), c(0x2A3340), c(0xC9D8EA),
-            btn = c(0x7FAF6E), body = c(0xF7F5EF), surfaceHigh = c(0x222A22),
+            // Bouton un peu plus sombre que la couleur principale : corps clair à 3:1 au moins.
+            btn = c(0x6E9860), body = c(0xF7F5EF), surfaceHigh = c(0x222A22),
         ),
     ),
     Estampe(

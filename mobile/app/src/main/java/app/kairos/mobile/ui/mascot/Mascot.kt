@@ -5,10 +5,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.withFrameMillis
@@ -17,10 +17,13 @@ import androidx.compose.ui.MotionDurationScale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import app.kairos.mobile.ui.theme.KairosColors
 import app.kairos.mobile.ui.theme.SceneColors
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.delay
+import kotlin.coroutines.coroutineContext
 import kotlin.math.roundToInt
 
 /** Personnage choisi dans les réglages. */
@@ -30,21 +33,39 @@ val LocalMascot = staticCompositionLocalOf { MascotKind.Kairos }
 private const val PAD = 2
 
 /**
- * Images déjà calculées, par personnage, état ou scène, et image : une
- * recomposition ne reconstruit pas de grille. Chaque case est empaquetée en
- * x | y << 8 | rôle << 16.
+ * Images déjà calculées : une recomposition ne reconstruit pas de grille. Chaque
+ * case est empaquetée en x | y << 8 | rôle << 16. Personnages seuls : tous gardés
+ * (quelques centaines de petites images au plus). Scène : seule la scène en cours
+ * est gardée ; décor et premier plan par image, personnage par image et image de repos.
  */
 internal object SpriteCache {
     private val mascots = ConcurrentHashMap<Int, IntArray>()
-    private val scenes = ConcurrentHashMap<Long, Array<IntArray>>()
+
+    private var sceneKey = -1
+    private val sceneStatics = HashMap<Int, Array<IntArray>>()
+    private val sceneMascots = HashMap<Int, IntArray>()
 
     fun mascot(kind: MascotKind, state: MascotState, f: Int): IntArray =
         mascots.getOrPut((kind.ordinal * 8 + state.ordinal) * 64 + f) { pack(kind.frame(state, f, PAD)) }
 
+    /** Calques décor, personnage, premier plan de l'image [i] ; [t] = image de repos du personnage. */
+    @Synchronized
     fun scene(scene: SceneKind, down: Boolean, kind: MascotKind, i: Int, t: Int): Array<IntArray> {
-        val key = (((scene.ordinal * 2L + (if (down) 1 else 0)) * 8 + kind.ordinal) * 16 + i) * 128 + t
-        return scenes.getOrPut(key) { scene.frame(kind, i, t, down).let { arrayOf(pack(it.back), pack(it.mascot), pack(it.front)) } }
+        val key = (scene.ordinal * 2 + (if (down) 1 else 0)) * 8 + kind.ordinal
+        if (key != sceneKey) {
+            sceneKey = key
+            sceneStatics.clear()
+            sceneMascots.clear()
+        }
+        var fr: SceneFrame? = null
+        val statics = sceneStatics.getOrPut(i) { scene.frame(kind, i, t, down).also { fr = it }.let { arrayOf(pack(it.back), pack(it.front)) } }
+        val mascot = sceneMascots.getOrPut(i * 128 + t) { pack((fr ?: scene.frame(kind, i, t, down)).mascot) }
+        return arrayOf(statics[0], mascot, statics[1])
     }
+
+    /** Nombre de calques gardés pour la scène en cours (décor et premier plan, personnage). */
+    @Synchronized
+    internal fun sceneSizes(): Pair<Int, Int> = sceneStatics.size to sceneMascots.size
 
     private fun pack(g: Grid): IntArray {
         val out = ArrayList<Int>()
@@ -97,21 +118,37 @@ fun Mascot(
 ) {
     val timing = kind.timing(state)
     var frame by remember(kind, state) { mutableIntStateOf(0) }
-    var lift by remember { mutableFloatStateOf(0f) }
+    // Décalage du souffle en pixels entiers : redessin seulement quand il change.
+    var lift by remember { mutableIntStateOf(0) }
+    val cellPx = with(LocalDensity.current) { size.toPx() } / 16
+    val cell by rememberUpdatedState(cellPx)
     LaunchedEffect(kind, state) {
-        val motion = coroutineContext[MotionDurationScale]
-        val start = withFrameMillis { it }
-        while (true) withFrameMillis { now ->
-            // Animations retirées dans les réglages du système : le personnage reste immobile.
-            val still = motion?.scaleFactor == 0f
-            frame = if (still) 0 else (timing.countAt(now - start) % timing.n).toInt()
-            lift = if (still) 0f else kind.breath.at(now)
+        animate(still = { frame = 0; lift = 0 }) { elapsed, now ->
+            frame = (timing.countAt(elapsed) % timing.n).toInt()
+            lift = (kind.breath.at(now) * cell).roundToInt()
         }
     }
     val pixels = SpriteCache.mascot(kind, state, frame)
     Canvas(modifier.size(size)) {
-        val cell = this.size.minDimension / 16
-        cells(pixels, cell, PAD, -(lift * cell).roundToInt().toFloat(), colors)
+        cells(pixels, this.size.minDimension / 16, PAD, -lift.toFloat(), colors)
+    }
+}
+
+/**
+ * Boucle d'animation : [tick] à chaque image (temps écoulé, horloge) tant que les
+ * animations sont actives. Animations retirées dans les réglages du système :
+ * [still] fige l'image, puis la boucle ne vérifie plus qu'une fois par seconde.
+ */
+private suspend fun animate(still: () -> Unit, tick: (elapsed: Long, now: Long) -> Unit) {
+    val motion = coroutineContext[MotionDurationScale]
+    while (true) {
+        if (motion?.scaleFactor == 0f) {
+            still()
+            delay(1_000)
+            continue
+        }
+        val start = withFrameMillis { it }
+        while (motion?.scaleFactor != 0f) withFrameMillis { tick(it - start, it) }
     }
 }
 
@@ -130,26 +167,25 @@ fun MascotScene(
 ) {
     var frame by remember(scene, kind) { mutableIntStateOf(scene.key) }
     var rest by remember(scene, kind) { mutableLongStateOf(0) }
-    var lift by remember { mutableFloatStateOf(0f) }
+    var lift by remember { mutableIntStateOf(0) }
+    // Taille d'une case, connue au dessin : le souffle s'arrondit au pixel avant d'être écrit.
+    val cell = remember { FloatArray(1) }
     LaunchedEffect(scene, kind) {
-        val motion = coroutineContext[MotionDurationScale]
         val steps = Timing(scene.ms.size, scene.ms)
         val idle = kind.timing(MascotState.Repos)
-        val start = withFrameMillis { it }
-        while (true) withFrameMillis { now ->
-            val still = motion?.scaleFactor == 0f
-            val elapsed = now - start
-            frame = if (still) scene.key else (steps.countAt(elapsed, kind.tempo) % steps.n).toInt()
-            rest = if (still) 0 else restFrame(idle.countAt(elapsed), kind.restPeriod())
-            lift = if (still) 0f else kind.breath.at(now)
+        animate(still = { frame = scene.key; rest = 0; lift = 0 }) { elapsed, now ->
+            frame = (steps.countAt(elapsed, kind.tempo) % steps.n).toInt()
+            rest = restFrame(idle.countAt(elapsed), kind.restPeriod())
+            lift = (kind.breath.at(now) * cell[0]).roundToInt()
         }
     }
     val layers = SpriteCache.scene(scene, down, kind, frame, rest.toInt())
     Canvas(modifier) {
-        val cell = this.size.minDimension / SCENE_SIZE
-        cells(layers[0], cell, 0, 0f, colors)
-        cells(layers[1], cell, 0, -(lift * cell).roundToInt().toFloat(), colors)
-        cells(layers[2], cell, 0, 0f, colors)
+        val side = this.size.minDimension / SCENE_SIZE
+        cell[0] = side
+        cells(layers[0], side, 0, 0f, colors)
+        cells(layers[1], side, 0, -lift.toFloat(), colors)
+        cells(layers[2], side, 0, 0f, colors)
     }
 }
 

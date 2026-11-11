@@ -47,6 +47,25 @@ class MascotTest {
     }
 
     @Test
+    fun scene_cache_keeps_static_layers_once_per_frame() {
+        val scene = SceneKind.Finances
+        val kind = MascotKind.Kairos
+        for (i in scene.ms.indices) for (t in 0 until 2 * kind.restPeriod()) SpriteCache.scene(scene, false, kind, i, t)
+        val (statics, mascots) = SpriteCache.sceneSizes()
+        assertEquals(scene.ms.size, statics)
+        assertEquals(scene.ms.size * 2 * kind.restPeriod(), mascots)
+        // Une autre scène remplace la précédente.
+        SpriteCache.scene(SceneKind.Agenda, false, kind, 0, 0)
+        assertEquals(1 to 1, SpriteCache.sceneSizes())
+        // Mêmes calques qu'un calcul direct.
+        val direct = scene.frame(kind, 3, 5)
+        val cached = SpriteCache.scene(scene, false, kind, 3, 5)
+        assertEquals(direct.back.cells.count { it != Grid.EMPTY }, cached[0].size)
+        assertEquals(direct.mascot.cells.count { it != Grid.EMPTY }, cached[1].size)
+        assertEquals(direct.front.cells.count { it != Grid.EMPTY }, cached[2].size)
+    }
+
+    @Test
     fun every_frame_is_drawn() {
         for (kind in MascotKind.entries) for (state in MascotState.entries) for (f in 0 until kind.timing(state).n) {
             assertTrue("$kind $state $f", kind.frame(state, f).cells.any { it != Grid.EMPTY })

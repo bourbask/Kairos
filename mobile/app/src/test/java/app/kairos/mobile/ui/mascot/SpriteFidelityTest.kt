@@ -74,11 +74,15 @@ class SpriteFidelityTest {
 
     @Test
     fun scene_colors_match_prototype() {
-        for ((key, roles) in golden["colors"]!!.jsonObject) {
+        val all = golden["colors"]!!.jsonObject
+        assertEquals("chaque palette, en clair et en sombre", ThemePalette.entries.size * 2, all.size)
+        for ((key, roles) in all) {
             val (id, mode) = key.split('-')
             val palette = ThemePalette.entries.first { it.name.lowercase() == id.replace("è", "e") }
             val colors = SceneColors.of(palette, mode == "dark")
             for (role in SceneColors.ROLES) {
+                // Écart voulu : bouton de Fougère sombre assombri (corps à 3:1), et les teintes qui en dérivent.
+                if (key == "fougere-dark" && role in "Bhms") continue
                 val hex = roles.jsonObject[role.toString()]!!.jsonPrimitive.content
                 assertEquals("$key $role", hex.removePrefix("#").toLong(16).toInt() or 0xFF000000.toInt(), colors[role].toArgb())
             }
