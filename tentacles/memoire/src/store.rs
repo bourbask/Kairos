@@ -649,12 +649,11 @@ impl MemoryStore {
         )?;
         Self::migrate_souvenirs(&conn)?;
         Self::migrer_nuit(&conn)?;
-        // Bases créées avant l'annonce au briefing : une annonce de plus de 24 h a déjà été dite.
+        // Bases créées avant l'annonce au briefing : toute annonce passée a pu être dite.
         if !conn.prepare("SELECT 1 FROM pragma_table_info('habitudes') WHERE name = 'briefee_le'")?.exists([])? {
-            conn.execute_batch("ALTER TABLE habitudes ADD COLUMN briefee_le TEXT;")?;
-            conn.execute(
-                "UPDATE habitudes SET briefee_le = substr(annoncee_le, 1, 10) WHERE annoncee_le < ?",
-                [ts(now_local() - chrono::Duration::hours(24))],
+            conn.execute_batch(
+                "ALTER TABLE habitudes ADD COLUMN briefee_le TEXT;
+                 UPDATE habitudes SET briefee_le = substr(annoncee_le, 1, 10) WHERE annoncee_le IS NOT NULL;",
             )?;
         }
         Ok(MemoryStore { conn })

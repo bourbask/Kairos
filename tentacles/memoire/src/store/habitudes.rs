@@ -787,6 +787,23 @@ mod tests {
     }
 
     #[test]
+    fn migration_marks_every_past_announcement_as_said() {
+        let chemin = std::env::temp_dir().join(format!("memoire-annonce-{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&chemin);
+        let p = chemin.to_str().unwrap();
+        let s = MemoryStore::open(p).unwrap();
+        serie(&s, 0, 7, "maison");
+        // Base d'avant le marqueur, annonce toute récente : l'ancien briefing l'a peut-être déjà dite.
+        s.conn.execute("UPDATE habitudes SET annoncee_le = ? WHERE annoncee_le IS NOT NULL", [ts(now_local())]).unwrap();
+        s.conn.execute_batch("ALTER TABLE habitudes DROP COLUMN briefee_le;").unwrap();
+        drop(s);
+        let s = MemoryStore::open(p).unwrap();
+        assert!(s.habitudes_annoncees(now_local() + chrono::Duration::days(1)).unwrap().is_empty());
+        drop(s);
+        let _ = std::fs::remove_file(&chemin);
+    }
+
+    #[test]
     fn reopen_aligns_habit_memories() {
         let chemin = std::env::temp_dir().join(format!("memoire-habitudes-{}.db", std::process::id()));
         let _ = std::fs::remove_file(&chemin);
