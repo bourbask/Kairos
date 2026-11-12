@@ -84,6 +84,23 @@ l'application, et les autres schémas (`javascript:`, `data:`, `file:`…) sont 
 Contrat attendu du site : aucun cookie avant l'échange du jeton, et une session
 valide donne accès au contenu depuis l'origine, quel que soit le fragment.
 
+## Espace Politique
+
+Données publiques sourcées, en lecture seule, servies par le module `politique` de la
+tête (fichiers de données paginés, chargés en mémoire à l'ouverture, rien d'écrit sur
+l'appareil). Accueil (comparaison, jeu « Vrai ou faux ? », fiches d'identité, rubriques
+avec mini-graphiques), rubriques chiffrées, votes, phrases vérifiées, contexte et
+lecture critique ; chaque chiffre renvoie à sa source.
+
+- Mêmes règles pour tous : couleurs d'état neutres pour les verdicts et les votes, la
+  couleur d'une identité seulement pour la désigner ; aucun classement.
+- Sources : action nommée ; seules les adresses `https://` s'ouvrent, dans le
+  navigateur ; les textes reçus n'interprètent que le gras.
+- Retour : feuille ouverte, puis sous-étape locale (partie de jeu, carte zoomée), puis
+  vue précédente, puis fermeture de l'espace.
+- Le site complet et ses accès partagés restent ouvrables depuis le menu, même quand le
+  module ne répond pas.
+
 ## Limites connues
 
 - Pas encore testée sur un appareil réel : compilation et tests unitaires seulement.

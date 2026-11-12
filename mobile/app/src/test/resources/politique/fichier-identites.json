@@ -1,6 +1,11 @@
 {
-  "identites": [
+  "contenu": [
     {
+      "alias": [
+        "Candidat A",
+        "Cand. A",
+        "Liste commune"
+      ],
       "avatar": {
         "images": [
           [
@@ -45,51 +50,66 @@
       "couleur": "#3366cc",
       "id": "a",
       "nom": "Candidat A",
-      "parti": "Parti Bleu"
+      "parti": "Parti Bleu",
+      "type": "personne"
     },
     {
+      "alias": [
+        "Mme B",
+        "Liste commune"
+      ],
       "couleur": "#33aa55",
       "id": "b",
       "nom": "Candidate B",
-      "parti": "Parti Vert"
-    }
-  ],
-  "lignes": [
-    {
-      "libelle": "Déficit",
-      "unite": "Md€",
-      "valeurs": [
-        {
-          "id": "a",
-          "source": "https://example.org/budget-a",
-          "valeur": 3.1
-        },
-        {
-          "id": "b",
-          "source": "https://example.org/budget-b",
-          "valeur": 4.2
-        }
-      ]
+      "parti": "Parti Vert",
+      "type": "personne"
     },
     {
-      "libelle": "Effet par ménage",
-      "unite": "€/an",
-      "valeurs": [
-        {
-          "id": "a",
-          "source": "https://example.org/budget-a",
-          "valeur": 400
-        },
-        {
-          "id": "b",
-          "source": "https://example.org/budget-b",
-          "valeur": null
-        }
-      ]
+      "alias": [
+        "Candidat C"
+      ],
+      "avatar": {
+        "images": [
+          [
+            "................",
+            ".....DDDDDD.....",
+            "....DFFFFFFD....",
+            "...DFFFFFFFFD...",
+            "...DFDFFFFDFD...",
+            "...DFFFFFFFFD...",
+            "...DFFFhhFFFD...",
+            "....DFFFFFFD....",
+            ".....DDDDDD.....",
+            "....DCCCCCCD....",
+            "...DCCCCCCCCD...",
+            "...DCCCAACCCD...",
+            "...DCCCCCCCCD...",
+            "....DDDDDDDD....",
+            "................"
+          ]
+        ],
+        "ms": 400
+      },
+      "couleur": "#cc3333",
+      "id": "c",
+      "nom": "Candidat C",
+      "parti": "Parti Rouge",
+      "type": "personne"
+    },
+    {
+      "alias": [
+        "Parti Bleu",
+        "PB"
+      ],
+      "couleur": "#3366cc",
+      "id": "parti-bleu",
+      "nom": "Parti Bleu",
+      "parti": "Parti Bleu",
+      "type": "parti"
     }
   ],
-  "theme": {
-    "id": "budget",
-    "titre": "Budget des programmes"
-  }
+  "id": "identites",
+  "page": 0,
+  "pages": 1,
+  "version": "18fae27693b40000-629"
 }

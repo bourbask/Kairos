@@ -1,0 +1,100 @@
+{
+  "contenu": {
+    "EVALUATEURS": [
+      {
+        "dirigeants": [
+          {
+            "nom": "Dirigeant fictif",
+            "parcours": "Parcours inventé.",
+            "role": "Président"
+          }
+        ],
+        "financement": [
+          "Budget fictif"
+        ],
+        "historique": [
+          {
+            "annee": 2021,
+            "constat": "Constat inventé.",
+            "src": [
+              "Source fictive",
+              "https://example.org/src"
+            ],
+            "sujet": "Sujet fictif"
+          }
+        ],
+        "id": "institut-fictif-1",
+        "independance": 1,
+        "justification": "Justification inventée.",
+        "nom": "Institut fictif 1",
+        "orientation": "Aucune orientation revendiquée.",
+        "statut": "Organisme inventé pour les tests.",
+        "type": "public"
+      },
+      {
+        "dirigeants": [
+          {
+            "nom": "Dirigeant fictif",
+            "parcours": "Parcours inventé.",
+            "role": "Président"
+          }
+        ],
+        "financement": [
+          "Budget fictif"
+        ],
+        "historique": [
+          {
+            "annee": 2022,
+            "constat": "Constat inventé.",
+            "src": [
+              "Source fictive",
+              "https://example.org/src"
+            ],
+            "sujet": "Sujet fictif"
+          }
+        ],
+        "id": "institut-fictif-2",
+        "independance": 2,
+        "justification": "Justification inventée.",
+        "nom": "Institut fictif 2",
+        "orientation": "Aucune orientation revendiquée.",
+        "statut": "Organisme inventé pour les tests.",
+        "type": "prive"
+      },
+      {
+        "dirigeants": [
+          {
+            "nom": "Dirigeant fictif",
+            "parcours": "Parcours inventé.",
+            "role": "Président"
+          }
+        ],
+        "financement": [
+          "Budget fictif"
+        ],
+        "historique": [
+          {
+            "annee": 2023,
+            "constat": "Constat inventé.",
+            "src": [
+              "Source fictive",
+              "https://example.org/src"
+            ],
+            "sujet": "Sujet fictif"
+          }
+        ],
+        "id": "institut-fictif-3",
+        "independance": 3,
+        "justification": "Justification inventée.",
+        "nom": "Institut fictif 3",
+        "orientation": "Aucune orientation revendiquée.",
+        "statut": "Organisme inventé pour les tests.",
+        "type": "public"
+      }
+    ]
+  },
+  "id": "evaluateurs",
+  "page": 0,
+  "pages": 1,
+  "version": "18fae27693b40000-7a9"
+}

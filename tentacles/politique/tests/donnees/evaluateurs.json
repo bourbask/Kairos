@@ -1,0 +1,94 @@
+{
+ "EVALUATEURS": [
+  {
+   "id": "institut-fictif-1",
+   "nom": "Institut fictif 1",
+   "type": "public",
+   "statut": "Organisme inventé pour les tests.",
+   "financement": [
+    "Budget fictif"
+   ],
+   "dirigeants": [
+    {
+     "nom": "Dirigeant fictif",
+     "role": "Président",
+     "parcours": "Parcours inventé."
+    }
+   ],
+   "orientation": "Aucune orientation revendiquée.",
+   "independance": 1,
+   "justification": "Justification inventée.",
+   "historique": [
+    {
+     "annee": 2021,
+     "sujet": "Sujet fictif",
+     "constat": "Constat inventé.",
+     "src": [
+      "Source fictive",
+      "https://example.org/src"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "institut-fictif-2",
+   "nom": "Institut fictif 2",
+   "type": "prive",
+   "statut": "Organisme inventé pour les tests.",
+   "financement": [
+    "Budget fictif"
+   ],
+   "dirigeants": [
+    {
+     "nom": "Dirigeant fictif",
+     "role": "Président",
+     "parcours": "Parcours inventé."
+    }
+   ],
+   "orientation": "Aucune orientation revendiquée.",
+   "independance": 2,
+   "justification": "Justification inventée.",
+   "historique": [
+    {
+     "annee": 2022,
+     "sujet": "Sujet fictif",
+     "constat": "Constat inventé.",
+     "src": [
+      "Source fictive",
+      "https://example.org/src"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "institut-fictif-3",
+   "nom": "Institut fictif 3",
+   "type": "public",
+   "statut": "Organisme inventé pour les tests.",
+   "financement": [
+    "Budget fictif"
+   ],
+   "dirigeants": [
+    {
+     "nom": "Dirigeant fictif",
+     "role": "Président",
+     "parcours": "Parcours inventé."
+    }
+   ],
+   "orientation": "Aucune orientation revendiquée.",
+   "independance": 3,
+   "justification": "Justification inventée.",
+   "historique": [
+    {
+     "annee": 2023,
+     "sujet": "Sujet fictif",
+     "constat": "Constat inventé.",
+     "src": [
+      "Source fictive",
+      "https://example.org/src"
+     ]
+    }
+   ]
+  }
+ ]
+}

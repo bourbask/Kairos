@@ -90,6 +90,12 @@ aucun contenu dans les journaux.
 
 ## 4. Écran natif (maquette validée)
 
+> **Partie application remplacée par le lot 2** (`2026-11-12-politique-lot2-design.md`) :
+> l'application lit désormais les fichiers de données paginés (`app_politique_fichier`)
+> et ne passe plus par les outils d'accueil, de rubrique, de fiche, de comparaison et de
+> recherche décrits au §3.3, qui restent servis par le module. La section ci-dessous
+> décrit l'écran du lot 1, conservé pour l'historique.
+
 Espace « Politique » ouvert depuis sa carte, comme les autres espaces (flèche vers le
 bas pour fermer, mêmes motifs de chargement, d'erreur et de hors ligne).
 

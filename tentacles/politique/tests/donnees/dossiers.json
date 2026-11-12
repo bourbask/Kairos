@@ -1,0 +1,32 @@
+{
+ "DOSSIERS": [
+  {
+   "id": "dossier-fictif-1",
+   "titre": "Cinq réponses fictives à des critiques imaginaires",
+   "source": {
+    "nom": "Vidéo fictive d'un média imaginaire",
+    "ev": null,
+    "type": "militant",
+    "date": "2026-01",
+    "relaye_par": "personnage-fictif"
+   },
+   "contexte": "Contenu inventé pour les tests.",
+   "items": [
+    {
+     "dit": "« Un chiffre inventé. »",
+     "verdict": "non-documente",
+     "faits": [
+      "Rien ne permet de l'établir."
+     ]
+    },
+    {
+     "dit": "« Un autre chiffre inventé. »",
+     "verdict": "exact",
+     "faits": [
+      "Confirmé par une source fictive."
+     ]
+    }
+   ]
+  }
+ ]
+}

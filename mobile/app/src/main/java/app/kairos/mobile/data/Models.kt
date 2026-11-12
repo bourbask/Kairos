@@ -4,7 +4,6 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 
 /** Lecture tolérante : champs inconnus ignorés, valeurs inattendues ramenées au défaut. */
@@ -622,7 +621,7 @@ data class DocumentsSnapshot(
 )
 
 /**
- * Identité (candidat ou parti) de l'espace Politique. [avatar] : petit personnage facultatif,
+ * Identité (candidat, parti ou camp) de l'espace Politique. [avatar] : petit personnage facultatif,
  * gardé brut et validé à l'affichage : une forme inattendue ne fait jamais échouer la lecture.
  */
 @Serializable
@@ -632,83 +631,7 @@ data class PolIdentity(
     val parti: String? = null,
     val couleur: String? = null,
     val avatar: JsonElement? = null,
+    /** « personne », « parti » ou « camp » ; absent ou autre : déduit (voir `PolData.kindOf`). */
+    val type: String? = null,
 )
 
-@Serializable
-data class PolRubricSummary(val id: String, val titre: String = "", val resume: String? = null, val entrees: Int = 0)
-
-@Serializable
-data class PolTheme(val id: String, val titre: String = "")
-
-/** Accueil de l'espace Politique (`app_politique_accueil`). */
-@Serializable
-data class PolHome(
-    @SerialName("verifie_le") val checkedOn: String? = null,
-    val identites: List<PolIdentity> = emptyList(),
-    val rubriques: List<PolRubricSummary> = emptyList(),
-    val themes: List<PolTheme> = emptyList(),
-    val presentations: List<PolHint> = emptyList(),
-)
-
-/**
- * Indication de présentation d'une liste de rubrique ([chemin]) : la vue à employer et le
- * rôle de ses champs (`titre`, `verdict`, `source`…). Absente : l'application devine.
- */
-@Serializable
-data class PolHint(
-    val rubrique: String = "",
-    val chemin: String = "",
-    val vue: String = "generique",
-    val champs: Map<String, String> = emptyMap(),
-)
-
-/**
- * Rubrique telle que publiée (`app_politique_rubrique`) : [contenu] hétérogène ;
- * [rattachements] : par chemin de liste, les identités de chaque entrée, dans l'ordre.
- */
-@Serializable
-data class PolRubric(
-    val id: String = "",
-    val titre: String = "",
-    val contenu: JsonElement? = null,
-    val rattachements: JsonObject = JsonObject(emptyMap()),
-    val presentation: List<PolHint> = emptyList(),
-)
-
-/** Entrée d'une fiche ou d'une recherche : sa liste ([chemin]) et sa place dans la rubrique. */
-@Serializable
-data class PolEntry(val chemin: String = "", val index: Int = 0, val entree: JsonElement = JsonNull)
-
-/** Entrées d'une rubrique : fiche (`id`) ou recherche (`rubrique`). */
-@Serializable
-data class PolGroup(
-    val id: String = "",
-    val rubrique: String = "",
-    val titre: String = "",
-    val entrees: List<PolEntry> = emptyList(),
-) {
-    val key: String get() = id.ifEmpty { rubrique }
-}
-
-/** Fiche d'une identité (`app_politique_fiche`). */
-@Serializable
-data class PolFiche(val identite: PolIdentity, val rubriques: List<PolGroup> = emptyList(), val tronque: Boolean = false)
-
-/** Résultats de recherche (`app_politique_chercher`). */
-@Serializable
-data class PolSearch(val q: String = "", val resultats: List<PolGroup> = emptyList(), val tronque: Boolean = false)
-
-/** Valeur d'une identité ; [valeur] absente ou nulle : non renseignée. */
-@Serializable
-data class PolValue(val id: String = "", val valeur: JsonElement? = null, val source: JsonElement? = null)
-
-@Serializable
-data class PolLine(val libelle: String = "", val unite: String? = null, val valeurs: List<PolValue> = emptyList())
-
-/** Comparaison (`app_politique_comparer`) ; thème et identités en objet ou en identifiant. */
-@Serializable
-data class PolCompare(
-    val theme: JsonElement? = null,
-    val identites: List<JsonElement> = emptyList(),
-    val lignes: List<PolLine> = emptyList(),
-)

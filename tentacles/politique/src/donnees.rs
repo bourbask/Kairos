@@ -14,6 +14,7 @@ pub const META: &str = "meta";
 pub const IDENTITES: &str = "identites";
 pub const COMPARAISONS: &str = "comparaisons";
 pub const PRESENTATION: &str = "presentation";
+pub const CARTE: &str = "carte";
 
 /// Vues de l'application qu'une indication de présentation peut demander.
 const VUES: &[&str] = &["verifications", "rhetorique", "revirements", "votes", "bulle", "generique"];
@@ -28,6 +29,12 @@ const MAX_FICHIER: u64 = 4 * 1024 * 1024;
 /// Caractères permis dans une image d'avatar : rôles du thème, couleur de l'identité, puis teintes
 /// fixes de cheveux (`g` blancs ou gris, `b` bruns, `y` blonds).
 const AVATAR_CHARS: &[char] = &['.', 'F', 'h', 'D', 'A', 'C', 'g', 'b', 'y'];
+
+/// Empreinte stable d'un fichier lu : date de modification (ns) et taille, en hexadécimal.
+fn empreinte(stamp: (SystemTime, u64)) -> String {
+    let ns = stamp.0.duration_since(SystemTime::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+    format!("{ns:x}-{:x}", stamp.1)
+}
 
 struct Fichier {
     stamp: (SystemTime, u64),
@@ -52,6 +59,9 @@ pub struct Identite {
     pub alias: Vec<String>,
     #[serde(default)]
     pub avatar: Option<Value>,
+    /// « personne », « parti » ou « camp » ; absent : l'application le déduit.
+    #[serde(default, rename = "type")]
+    pub genre: Option<String>,
 }
 
 impl Identite {
@@ -64,6 +74,8 @@ impl Identite {
 /// Instantané cohérent des fichiers, pour la durée d'un appel.
 pub struct Etat {
     pub fichiers: BTreeMap<String, Arc<Value>>,
+    /// Empreinte de la version lue de chaque fichier.
+    pub versions: BTreeMap<String, String>,
     pub identites: Vec<Identite>,
     /// Alias replié → identités, dans l'ordre du fichier.
     index: HashMap<String, Vec<usize>>,
@@ -150,7 +162,7 @@ fn presentation(p: &Value) -> Option<Value> {
 }
 
 impl Etat {
-    fn new(fichiers: BTreeMap<String, Arc<Value>>) -> Etat {
+    fn new(fichiers: BTreeMap<String, Arc<Value>>, versions: BTreeMap<String, String>) -> Etat {
         let mut avatars_invalides = 0;
         let identites: Vec<Identite> = fichiers
             .get(IDENTITES)
@@ -180,7 +192,7 @@ impl Etat {
         let brutes = fichiers.get(PRESENTATION).and_then(|v| v.as_array()).map(Vec::as_slice).unwrap_or_default();
         let presentations: Vec<Value> = brutes.iter().filter_map(presentation).collect();
         let presentations_invalides = brutes.len() - presentations.len();
-        Etat { fichiers, identites, index, avatars_invalides, presentations, presentations_invalides }
+        Etat { fichiers, versions, identites, index, avatars_invalides, presentations, presentations_invalides }
     }
 
     pub fn identite(&self, id: &str) -> Option<&Identite> {
@@ -189,7 +201,7 @@ impl Etat {
 
     /// Rubriques : tous les fichiers sauf ceux de service.
     pub fn rubriques(&self) -> impl Iterator<Item = (&String, &Arc<Value>)> {
-        self.fichiers.iter().filter(|(k, _)| ![META, IDENTITES, COMPARAISONS, PRESENTATION].contains(&k.as_str()))
+        self.fichiers.iter().filter(|(k, _)| ![META, IDENTITES, COMPARAISONS, PRESENTATION, CARTE].contains(&k.as_str()))
     }
 
     /// Identités d'une entrée : toutes celles dont un alias égale une de ses valeurs texte.
@@ -259,7 +271,7 @@ impl Donnees {
                 change |= cache.len() != avant;
             }
         }
-        let etat = Etat::new(cache.iter().map(|(k, f)| (k.clone(), f.valeur.clone())).collect());
+        let etat = Etat::new(cache.iter().map(|(k, f)| (k.clone(), f.valeur.clone())).collect(), cache.iter().map(|(k, f)| (k.clone(), empreinte(f.stamp))).collect());
         if change {
             eprintln!(
                 "politique : {} fichiers, {} identités, {} alias inconnus, {} avatars invalides, {} indications invalides",

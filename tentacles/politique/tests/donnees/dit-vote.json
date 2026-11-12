@@ -1,0 +1,136 @@
+{
+ "SCRUTINS": [
+  {
+   "id": "as-2025-001",
+   "chambre": "AS",
+   "date": "2025-01-11",
+   "titre": "Loi fictive numéro 1 sur les saisons",
+   "objet": "Texte inventé pour les tests : il règle des choses imaginaires, sans lien avec un vrai scrutin. Texte inventé pour les tests : il règle des choses imaginaires, sans lien avec un vrai scrutin. ",
+   "resultat": "Adopté 301 pour, 201 contre",
+   "url": "https://example.org/scrutins/1",
+   "note": "Décompte fictif par groupe, établi pour les tests uniquement.",
+   "positions": {
+    "Groupe Bleu": [
+     "P",
+     "10 pour"
+    ],
+    "Groupe Vert": [
+     "C",
+     "8 contre"
+    ],
+    "Groupe Gris": [
+     "N",
+     "aucun votant"
+    ]
+   },
+   "paroles": [
+    {
+     "qui": "Personnage fictif",
+     "date": "2025-01-01",
+     "dit": "« Déclaration inventée numéro 1. »",
+     "url": "https://example.org/paroles/1",
+     "cadre": "seance"
+    }
+   ]
+  },
+  {
+   "id": "as-2025-002",
+   "chambre": "AS",
+   "date": "2025-02-12",
+   "titre": "Loi fictive numéro 2 sur les saisons",
+   "objet": "Texte inventé pour les tests : il règle des choses imaginaires, sans lien avec un vrai scrutin. Texte inventé pour les tests : il règle des choses imaginaires, sans lien avec un vrai scrutin. ",
+   "resultat": "Adopté 302 pour, 202 contre",
+   "url": "https://example.org/scrutins/2",
+   "note": "Décompte fictif par groupe, établi pour les tests uniquement.",
+   "positions": {
+    "Groupe Bleu": [
+     "P",
+     "10 pour"
+    ],
+    "Groupe Vert": [
+     "C",
+     "8 contre"
+    ],
+    "Groupe Gris": [
+     "N",
+     "aucun votant"
+    ]
+   },
+   "paroles": [
+    {
+     "qui": "Personnage fictif",
+     "date": "2025-02-01",
+     "dit": "« Déclaration inventée numéro 2. »",
+     "url": "https://example.org/paroles/2",
+     "cadre": "seance"
+    }
+   ]
+  },
+  {
+   "id": "as-2025-003",
+   "chambre": "AS",
+   "date": "2025-03-13",
+   "titre": "Loi fictive numéro 3 sur les saisons",
+   "objet": "Texte inventé pour les tests : il règle des choses imaginaires, sans lien avec un vrai scrutin. Texte inventé pour les tests : il règle des choses imaginaires, sans lien avec un vrai scrutin. ",
+   "resultat": "Adopté 303 pour, 203 contre",
+   "url": "https://example.org/scrutins/3",
+   "note": "Décompte fictif par groupe, établi pour les tests uniquement.",
+   "positions": {
+    "Groupe Bleu": [
+     "P",
+     "10 pour"
+    ],
+    "Groupe Vert": [
+     "C",
+     "8 contre"
+    ],
+    "Groupe Gris": [
+     "N",
+     "aucun votant"
+    ]
+   },
+   "paroles": [
+    {
+     "qui": "Personnage fictif",
+     "date": "2025-03-01",
+     "dit": "« Déclaration inventée numéro 3. »",
+     "url": "https://example.org/paroles/3",
+     "cadre": "seance"
+    }
+   ]
+  },
+  {
+   "id": "as-2025-004",
+   "chambre": "AS",
+   "date": "2025-04-14",
+   "titre": "Loi fictive numéro 4 sur les saisons",
+   "objet": "Texte inventé pour les tests : il règle des choses imaginaires, sans lien avec un vrai scrutin. Texte inventé pour les tests : il règle des choses imaginaires, sans lien avec un vrai scrutin. ",
+   "resultat": "Adopté 304 pour, 204 contre",
+   "url": "https://example.org/scrutins/4",
+   "note": "Décompte fictif par groupe, établi pour les tests uniquement.",
+   "positions": {
+    "Groupe Bleu": [
+     "P",
+     "10 pour"
+    ],
+    "Groupe Vert": [
+     "C",
+     "8 contre"
+    ],
+    "Groupe Gris": [
+     "N",
+     "aucun votant"
+    ]
+   },
+   "paroles": [
+    {
+     "qui": "Personnage fictif",
+     "date": "2025-04-01",
+     "dit": "« Déclaration inventée numéro 4. »",
+     "url": "https://example.org/paroles/4",
+     "cadre": "seance"
+    }
+   ]
+  }
+ ]
+}
