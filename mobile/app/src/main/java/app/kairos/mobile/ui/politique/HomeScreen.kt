@@ -333,7 +333,7 @@ private fun Tile(t: RubricTile, count: String, viz: TileViz?, onClick: () -> Uni
             viz?.let { VizCanvas(it, if (bubble) Modifier.size(104.dp, 64.dp) else Modifier.size(92.dp, 84.dp)) }
             Column(Modifier.weight(1f)) { texts(); cnt() }
         } else Column(Modifier.padding(14.dp)) {
-            viz?.let { VizCanvas(it, Modifier.fillMaxWidth().height(54.dp).padding(bottom = 0.dp)) }
+            viz?.let { VizCanvas(it, Modifier.fillMaxWidth().height(54.dp)) }
             Spacer(Modifier.height(if (viz != null) 10.dp else 0.dp))
             texts()
             Spacer(Modifier.weight(1f, fill = false))
