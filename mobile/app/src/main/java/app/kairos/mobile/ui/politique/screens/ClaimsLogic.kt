@@ -67,10 +67,10 @@ fun verdictTally(claims: List<Claim>, camp: String = ""): Map<String, Int> {
 
 // ---------- Hors de ma bulle ----------
 
-/** Rangs des phrases d'un autre camp sur le même thème. */
+/** Rangs des phrases d'un autre camp sur le même thème ; camp ou thème vide : jamais comparable (aucune colonne ne les affiche). */
 fun facing(claims: List<Claim>, i: Int): List<Int> {
-    val c = claims.getOrNull(i) ?: return emptyList()
-    return claims.indices.filter { claims[it].theme == c.theme && claims[it].camp != c.camp }
+    val c = claims.getOrNull(i)?.takeIf { it.camp.isNotBlank() && it.theme.isNotBlank() } ?: return emptyList()
+    return claims.indices.filter { claims[it].theme == c.theme && claims[it].camp.isNotBlank() && claims[it].camp != c.camp }
 }
 
 /** Étape 1 : seules les phrases qui ont au moins une réponse d'un autre camp ([camp] vide : tous) ; l'étape 2 n'est jamais vide. */

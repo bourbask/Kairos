@@ -18,13 +18,21 @@ class ClaimsTest {
         {"theme":"Santé","camp":"Camp A","q":"Q3","v":"faux"},
         {"theme":"École","camp":"Camp B","q":"Q4","v":"solide"},
         {"theme":"Énergie","camp":"Camp C","q":"Q5","v":"bizarre"},
+        {"theme":"Énergie","camp":"","q":"Q6","v":"faux"},
+        {"theme":"","camp":"Camp A","q":"Q7","v":"faux"},
+        {"theme":"","camp":"Camp B","q":"Q8","v":"faux"},
         42]}""")))
 
     @Test fun bulle_only_offers_claims_with_facing() {
         val c = claimsOf(data)
-        assertEquals(6, c.size)
+        assertEquals(9, c.size)
         // Q4 est seule sur son thème, Q2 et Q3 ne se répondent qu'entre elles : jamais proposées.
         assertEquals(listOf(0, 1, 5), bubbleOffers(c, ""))
+        // Camp ou thème vide : ni proposée, ni comptée en face ; l'étape 2 contient toujours une phrase.
+        val camps = campsOf(data, c)
+        bubbleOffers(c, "").forEach { i -> assertTrue(facingColumns(c, i, camps).any { it.second.isNotEmpty() }) }
+        assertTrue(facing(c, 6).isEmpty() && facing(c, 7).isEmpty() && facing(c, 8).isEmpty())
+        assertFalse(6 in facing(c, 0))
         assertEquals(listOf(0), bubbleOffers(c, "Camp A"))
         assertTrue(bubbleOffers(c, "Camp C").isNotEmpty())
         assertEquals(emptyList<Int>(), bubbleOffers(c, "Inconnu"))
@@ -40,9 +48,9 @@ class ClaimsTest {
         assertEquals(listOf("solide", "fragile", "faux"), st.verdicts)
         assertEquals(listOf("École", "Énergie", "Santé"), st.themes)
         assertEquals(listOf("Camp A", "Camp B", "Camp C"), st.camps)
-        assertEquals(6, phrasesView(st, PhraseFilter()).total)
-        assertEquals(listOf(3), phrasesView(st, PhraseFilter(v = "faux", camp = "Camp A")).items)
-        assertEquals(listOf(1), phrasesView(st, PhraseFilter(v = "faux", theme = "Énergie")).items)
+        assertEquals(9, phrasesView(st, PhraseFilter()).total)
+        assertEquals(listOf(3, 7), phrasesView(st, PhraseFilter(v = "faux", camp = "Camp A")).items)
+        assertEquals(listOf(1, 6), phrasesView(st, PhraseFilter(v = "faux", theme = "Énergie")).items)
         assertEquals(0, phrasesView(st, PhraseFilter(v = "solide", camp = "Camp B", theme = "Santé")).total)
         // Pagination : 25 phrases, 20 affichées, puis 5 de plus.
         val many = PolData(mapOf("affirmations" to file("""{"CLAIMS":[${(0 until 25).joinToString(",") { """{"theme":"T","camp":"A","q":"q$it","v":"solide"}""" }}]}""")))
@@ -55,8 +63,8 @@ class ClaimsTest {
 
     @Test fun verdict_tally_by_camp() {
         val c = claimsOf(data)
-        assertEquals(linkedMapOf("solide" to 1, "fragile" to 1, "faux" to 1), verdictTally(c, "Camp A").filterValues { it > 0 })
-        assertEquals(mapOf("solide" to 2, "fragile" to 1, "faux" to 2), verdictTally(c).filterValues { it > 0 })
+        assertEquals(linkedMapOf("solide" to 1, "fragile" to 1, "faux" to 2), verdictTally(c, "Camp A").filterValues { it > 0 })
+        assertEquals(mapOf("solide" to 2, "fragile" to 1, "faux" to 5), verdictTally(c).filterValues { it > 0 })
         assertEquals(emptyMap<String, Int>(), verdictTally(c, "Inconnu").filterValues { it > 0 })
     }
 

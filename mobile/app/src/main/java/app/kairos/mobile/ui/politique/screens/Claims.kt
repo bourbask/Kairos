@@ -1,5 +1,6 @@
 package app.kairos.mobile.ui.politique.screens
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -234,6 +235,8 @@ fun BulleScreen(data: PolData, nav: PolNavigator) {
     LaunchedEffect(pick) { state.scrollToItem(0) }
     val scheme = MaterialTheme.colorScheme
     val picked = claims.getOrNull(pick)
+    // Déclaré après celui de la coque : passe en premier.
+    BackHandler(enabled = mode == 0 && picked != null) { pick = -1 }
 
     LazyColumn(Modifier.fillMaxSize(), state = state, contentPadding = ScreenPad, verticalArrangement = Arrangement.spacedBy(10.dp)) {
         part {
