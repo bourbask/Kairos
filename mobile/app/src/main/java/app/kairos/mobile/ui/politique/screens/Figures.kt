@@ -338,9 +338,7 @@ private fun DetailTable(data: PolData, programs: List<Program>) {
 private fun GapCard(data: PolData, g: Gap, nav: PolNavigator, onTable: () -> Unit) {
     val pc = PolColors.current
     val scheme = MaterialTheme.colorScheme
-    val claimed = g.claimed!!
-    val credited = g.credited!!
-    val max = maxOf(claimed, credited)
+    val max = listOfNotNull(g.claimed, g.credited).maxOrNull() ?: 0.0
     val (la, lb) = gapLabels(g)
     val id = data.idFor(g.who)
     FigCard {
@@ -349,16 +347,19 @@ private fun GapCard(data: PolData, g: Gap, nav: PolNavigator, onTable: () -> Uni
             Text(gapRatioLabel(g), Modifier.semantics { contentDescription = "Écart : ${if (g.inverse) "multiplié" else "divisé"} par ${gapRatio(g)?.let { fmtNum(it, if (it < 3) 1 else 0) } ?: "une valeur indéfinie"}" }, color = pc.fragile, fontWeight = FontWeight.ExtraBold, fontSize = 26.sp, fontFamily = Mono)
         }
         Text(g.what, Modifier.padding(top = 8.dp), fontWeight = FontWeight.SemiBold, fontSize = 14.5.sp)
-        @Composable fun PBar(label: String, v: Double, bg: Color) {
+        @Composable fun PBar(label: String, v: Double?, bg: Color) {
             Kicker(label, Modifier.padding(top = 8.dp, bottom = 3.dp))
-            Box(Modifier.fillMaxWidth().height(30.dp).clip(RoundedCornerShape(8.dp)).background(scheme.surfaceVariant)) {
+            // Valeur absente : piste vide et « non trouvé », jamais une barre à zéro.
+            if (v == null) Box(Modifier.fillMaxWidth().height(30.dp).clip(RoundedCornerShape(8.dp)).background(scheme.surfaceVariant).padding(horizontal = 10.dp), contentAlignment = Alignment.CenterStart) {
+                Text(NO_VALUE, color = scheme.onSurfaceVariant, fontFamily = Mono, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, softWrap = false)
+            } else Box(Modifier.fillMaxWidth().height(30.dp).clip(RoundedCornerShape(8.dp)).background(scheme.surfaceVariant)) {
                 Box(Modifier.fillMaxWidth(if (max > 0) (v / max).toFloat().coerceIn(0f, 1f) else 0f).defaultMinSize(minWidth = 96.dp).fillMaxHeight().clip(RoundedCornerShape(8.dp)).background(bg).padding(horizontal = 10.dp), contentAlignment = Alignment.CenterStart) {
                     Text("${fmtNum(v, 1)} ${g.unit}".trim(), color = textOn(bg), fontFamily = Mono, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, softWrap = false)
                 }
             }
         }
-        PBar(la, claimed, scheme.onSurface)
-        PBar(lb, credited, pc.pour)
+        PBar(la, g.claimed, scheme.onSurface)
+        PBar(lb, g.credited, pc.pour)
         g.lecture?.let { Bal(it, g.what, g.who, nav) }
         Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             if (!g.src.isNullOrBlank()) SourceButton(SourceRef(g.src, g.url, g.ev), data, { nav.sheet(PolSheetState.Evaluator(it)) }, Modifier.weight(1f, fill = false))
@@ -382,8 +383,8 @@ fun LivingScreen(data: PolData, nav: PolNavigator) {
     LazyColumn(Modifier.fillMaxSize(), contentPadding = ScreenPad) {
         part {
             Section("Salaires", "Les salaires face à l'inflation", "Évolution du salaire net moyen réel dans le privé, après inflation.") {
-                if (salaires.isEmpty()) EmptyState("Aucune série de salaires", "La série des salaires réels n'est pas disponible pour l'instant.")
-                else FigCard { HBars(salaires, sScale, 60.dp) { if (it.v!! < 0) pc.high else pc.low } }
+                if (st.salaireBars.isEmpty()) EmptyState("Aucune série de salaires", "La série des salaires réels n'est pas disponible pour l'instant.")
+                else FigCard { HBars(st.salaireBars, sScale, 60.dp) { if (it.v!! < 0) pc.high else pc.low } }
             }
         }
         if (salaires.any { it.lecture != null }) part {
@@ -515,17 +516,17 @@ fun BilanScreen(data: PolData, nav: PolNavigator) {
     LazyColumn(Modifier.fillMaxSize(), contentPadding = ScreenPad) {
         part {
             Section("Dette", "D'où vient la hausse de la dette ?", "Décomposition de la hausse de la dette du mandat sortant, par grande cause, selon un évaluateur extérieur.") {
-                if (ofce.isEmpty()) EmptyState("Aucune décomposition", "La décomposition de la dette n'est pas disponible pour l'instant.")
+                if (st.ofceBars.isEmpty()) EmptyState("Aucune décomposition", "La décomposition de la dette n'est pas disponible pour l'instant.")
                 else FigCard {
                     Legend(modifier = Modifier.padding(bottom = 8.dp), items = listOf(pc.high to "Fait monter la dette", pc.low to "La fait baisser"))
-                    HBars(ofce, ofceScale, 118.dp) { if (it.total) ink else if (it.v!! >= 0) pc.high else pc.low }
+                    HBars(st.ofceBars, ofceScale, 118.dp) { if (it.total) ink else if (it.v!! >= 0) pc.high else pc.low }
                 }
             }
         }
         part {
             Section("Niveau de vie", "Qui a gagné quoi ?", "Effet des mesures fiscales et sociales du mandat sortant, selon un institut de recherche indépendant.", "Ces études ne couvrent pas les années suivantes.") {
-                if (ipp.isEmpty()) EmptyState("Aucune étude de répartition", "Aucun chiffrage de l'effet sur le niveau de vie n'est disponible pour l'instant.")
-                else FigCard { HBars(ipp, ippScale, 118.dp) { pc.pour } }
+                if (st.ippBars.isEmpty()) EmptyState("Aucune étude de répartition", "Aucun chiffrage de l'effet sur le niveau de vie n'est disponible pour l'instant.")
+                else FigCard { HBars(st.ippBars, ippScale, 118.dp) { pc.pour } }
             }
         }
         if ((ofce + ipp).any { it.lecture != null }) part {

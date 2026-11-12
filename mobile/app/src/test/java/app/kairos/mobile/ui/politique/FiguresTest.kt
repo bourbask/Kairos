@@ -101,13 +101,13 @@ class FiguresTest {
             "bilan" to file("""{"OFCE":{"rows":[{"l":"Choc","v":2.5},{"l":"Inconnu"}]},"IPP":{"rows":[{"l":"D1","v":"?"}]}}"""),
         ))
         val b = budgetsState(d)
-        assertEquals(listOf("Complet"), b.gaps.map { it.what }); assertEquals(1, b.gapCards.size)
+        assertEquals(listOf("Sans crédit", "Complet"), b.gaps.map { it.what }.filter { it != "Mal typé" })
         val l = livingState(d)
         assertNull(l.measures.single().hh)
         assertTrue(l.cards.single().lines.first().contains(NO_VALUE)); assertFalse(l.cards.single().lines.any { it.startsWith("0") || it.startsWith("+0") })
-        assertEquals(listOf("2021"), l.salaires.map { it.l })
+        assertEquals(listOf("2021"), l.salaireBars.map { it.l })
         val bi = bilanState(d)
-        assertEquals(listOf("Choc"), bi.ofce.map { it.l }); assertTrue(bi.ipp.isEmpty())
+        assertEquals(listOf("Choc"), bi.ofceBars.map { it.l }); assertTrue(bi.ippBars.isEmpty())
         assertNull(tileViz(d, "niveau-de-vie"))
     }
 
@@ -124,5 +124,27 @@ class FiguresTest {
         assertEquals(-5.0, s.min, eps); assertEquals(0.0, s.max, eps)
         // Publiée : respectée.
         assertEquals(-3.0, bilanState(PolData(mapOf("bilan" to file("""{"OFCE":{"scale":{"min":-3,"max":3},"rows":[]}}""")))).ofceScale.min, eps)
+    }
+
+    @Test fun balance_kept_when_value_missing() {
+        // Sans valeur : hors des barres, mais sa balance reste lisible.
+        val d = PolData(mapOf(
+            "bilan" to file("""{"OFCE":{"rows":[{"l":"Choc","v":2.5},{"l":"Sans chiffre","lecture":{"contrepartie_courte":"Coupes"}}]}}"""),
+            "niveau-de-vie" to file("""{"SALAIRES":{"rows":[{"l":"2020","lecture":{"contrepartie_courte":"Gel"}},{"l":"2021","v":-1.2}]}}"""),
+        ))
+        val b = bilanState(d)
+        assertEquals(listOf("Choc"), b.ofceBars.map { it.l })
+        assertEquals(listOf("Sans chiffre"), b.ofce.filter { it.lecture != null }.map { it.l })
+        val l = livingState(d)
+        assertEquals(listOf("2021"), l.salaireBars.map { it.l })
+        assertEquals(listOf("2020"), l.salaires.filter { it.lecture != null }.map { it.l })
+    }
+
+    @Test fun incomplete_gap_kept_with_no_value() {
+        val d = PolData(mapOf("budgets" to file("""{"GAPS":[{"who":"A","what":"Sans crédit","claimed":10,"unit":"Md€","lecture":{"contrepartie_courte":"Coupes"}}]}""")))
+        val b = budgetsState(d)
+        assertEquals("Coupes", b.gaps.single().lecture!!.contrepartie_courte)
+        assertEquals("A : 10,0 → $NO_VALUE Md€", b.gapCards.single().lines.first())
+        assertEquals("—", gapRatioLabel(b.gaps.single()))
     }
 }

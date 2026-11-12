@@ -121,9 +121,6 @@ internal fun <T> PolData.one(file: String, path: String, s: KSerializer<T>): T? 
     return cur?.let { try { PolJson.decodeFromJsonElement(s, it) } catch (_: Exception) { null } }
 }
 
-/** Lignes de barres chiffrées : sans valeur, la ligne est écartée plutôt que dessinée à zéro. */
-private fun PolData.bars(file: String, path: String) = decode<BilanRow>(file, path).filter { it.v != null }
-
 /** Échelle de repli, sans échelle publiée : celle des valeurs, zéro compris. */
 private fun fallbackScale(rows: List<BilanRow>, unit: String): Scale =
     axisBounds(null, rows.mapNotNull { it.v } + 0.0).let { (lo, hi) -> Scale(lo, hi, unit) }
@@ -146,11 +143,11 @@ data class BudgetsState(val programs: List<Program>, val gaps: List<Gap>, val re
 
 fun budgetsState(data: PolData): BudgetsState {
     val programs = data.decode<Program>("budgets", "PROGRAMS")
-    // Écart sans ses deux valeurs : écarté plutôt que dessiné à zéro.
-    val gaps = data.decode<Gap>("budgets", "GAPS").filter { it.claimed != null && it.credited != null }
+    // Écart incomplet gardé (sa balance compte) : la valeur manquante s'affiche « non trouvé », jamais zéro.
+    val gaps = data.decode<Gap>("budgets", "GAPS")
     val cards = gaps.map { g ->
         val (a, b) = gapLabels(g)
-        TableCard("Annoncé contre crédité", g.what, lines = listOf("${nameOf(g.who)} : ${fmtNum(g.claimed!!, 1)} → ${fmtNum(g.credited!!, 1)} ${g.unit}".trim(), "$a / $b"), source = g.src)
+        TableCard("Annoncé contre crédité", g.what, lines = listOf("${nameOf(g.who)} : ${g.claimed?.let { fmtNum(it, 1) } ?: NO_VALUE} → ${g.credited?.let { fmtNum(it, 1) } ?: NO_VALUE} ${g.unit}".trim(), "$a / $b"), source = g.src)
     }
     return BudgetsState(programs, gaps, data.refDebt(programs), data.one("budgets", "AXIS", Scale.serializer()), programs.filter { !it.ref && it.debt != null }, cards)
 }
@@ -158,6 +155,8 @@ fun budgetsState(data: PolData): BudgetsState {
 data class LivingState(val salaires: List<BilanRow>, val scale: Scale, val programs: List<Program>, val ref: Double?, val measures: List<Measure>, val cards: List<TableCard>) {
     val maxAbs get() = programs.maxOfOrNull { abs(it.hh!!) } ?: 0.0
     val empty get() = salaires.isEmpty() && programs.isEmpty() && measures.isEmpty()
+    /** Lignes dessinées : sans valeur, hors des barres (jamais un zéro) ; la balance garde toutes les lignes. */
+    val salaireBars get() = salaires.filter { it.v != null }
 }
 
 fun livingState(data: PolData): LivingState {
@@ -166,7 +165,7 @@ fun livingState(data: PolData): LivingState {
     val cards = measures.map { m ->
         TableCard("Pouvoir d'achat", nameOf(m.who), lines = listOf(m.hh?.let { "${fmtSigned(it)} € par an" } ?: "Par ménage : $NO_VALUE") + m.m.split(" ; ").filter { it.isNotBlank() } + listOf("Pour qui : ${m.b}", "Financé par : ${m.f}"))
     }
-    val salaires = data.bars("niveau-de-vie", "SALAIRES.rows")
+    val salaires = data.decode<BilanRow>("niveau-de-vie", "SALAIRES.rows")
     return LivingState(
         salaires, data.one("niveau-de-vie", "SALAIRES.scale", Scale.serializer()) ?: fallbackScale(salaires, " %"),
         all.filter { !it.ref && it.hh != null }.sortedByDescending { it.hh }, data.refDebt(all), measures, cards,
@@ -177,6 +176,8 @@ val MARK_LABEL = mapOf("keep" to "Poursuit", "flip" to "Inverse", "mix" to "Modi
 
 data class BilanState(val ofce: List<BilanRow>, val ipp: List<BilanRow>, val ofceScale: Scale, val ippScale: Scale, val cands: List<String>, val matrix: List<MatrixRow>, val cards: List<TableCard>) {
     val empty get() = ofce.isEmpty() && ipp.isEmpty() && matrix.isEmpty()
+    val ofceBars get() = ofce.filter { it.v != null }
+    val ippBars get() = ipp.filter { it.v != null }
 }
 
 fun bilanState(data: PolData): BilanState {
@@ -185,8 +186,8 @@ fun bilanState(data: PolData): BilanState {
     val cards = matrix.map { r ->
         TableCard("Face au bilan sortant · ${r.s}", r.o, lines = cands.map { c -> r.c[c]?.let { x -> "$c — ${MARK_LABEL[x.firstOrNull()] ?: "Position"} : ${x.getOrNull(1).orEmpty()}" } ?: "$c : non trouvé" })
     }
-    val ofce = data.bars("bilan", "OFCE.rows")
-    val ipp = data.bars("bilan", "IPP.rows")
+    val ofce = data.decode<BilanRow>("bilan", "OFCE.rows")
+    val ipp = data.decode<BilanRow>("bilan", "IPP.rows")
     return BilanState(
         ofce, ipp,
         data.one("bilan", "OFCE.scale", Scale.serializer()) ?: fallbackScale(ofce, " pt"), data.one("bilan", "IPP.scale", Scale.serializer()) ?: fallbackScale(ipp, " %"),

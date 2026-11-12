@@ -82,7 +82,7 @@ fun tileViz(data: PolData, id: String): TileViz? = when (id) {
         )
     }
     "bilan" -> {
-        val rows = bilanState(data).ofce.filter { !it.total }.take(6).map { it.v!! }
+        val rows = bilanState(data).ofceBars.filter { !it.total }.take(6).map { it.v!! }
         val mx = rows.maxOfOrNull { abs(it) }?.takeIf { it > 0 } ?: 1.0
         viz(
             rows.mapIndexed { i, v ->
