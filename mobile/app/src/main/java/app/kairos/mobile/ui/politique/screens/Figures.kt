@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -71,32 +72,18 @@ import app.kairos.mobile.ui.politique.kit.PolColors
 import app.kairos.mobile.ui.politique.kit.RichText
 import app.kairos.mobile.ui.politique.kit.SectionHeader
 import app.kairos.mobile.ui.politique.kit.SourceButton
-import app.kairos.mobile.ui.politique.kit.TableCard
 import app.kairos.mobile.ui.politique.kit.frTypo
 import app.kairos.mobile.ui.politique.kit.textOn
 import app.kairos.mobile.ui.politique.model.Lecture
 import app.kairos.mobile.ui.politique.model.PolData
-import app.kairos.mobile.ui.politique.model.PolJson
 import app.kairos.mobile.ui.politique.model.SourceRef
-import kotlinx.serialization.KSerializer
-import kotlinx.serialization.builtins.serializer
-import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonObject
 
 private val Mono = FontFamily.Monospace
+private const val BALANCE_LEAD = "Pour chaque chiffre : ce qu'il sacrifie, ce qu'il ne montre pas, et l'avis signé des évaluateurs."
 private val ScreenPad = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 24.dp)
-
-/** Un élément (objet ou nombre) d'un fichier, à un chemin pointé ; absent ou illisible : null. */
-private fun <T> PolData.one(file: String, path: String, s: KSerializer<T>): T? {
-    var cur: JsonElement? = file(file)
-    for (k in path.split('.')) cur = (cur as? JsonObject)?.get(k)
-    return cur?.let { try { PolJson.decodeFromJsonElement(s, it) } catch (_: Exception) { null } }
-}
 
 /** Identité d'un libellé nominatif (« Nom · Parti » ou « Nom »). */
 private fun PolData.idFor(who: String): String? = idOf(who) ?: idOf(who.substringBefore(" · "))
-
-private fun nameOf(who: String) = who.substringBefore(" · ")
 
 private fun PolData.partyLabel(who: String): String =
     who.substringAfter(" · ", "").ifEmpty { idFor(who)?.let { partyOf(it) }.orEmpty() }
@@ -203,7 +190,7 @@ private fun <T> Rail(items: List<T>, cardWidth: Dp, content: @Composable (Int, T
     val scheme = MaterialTheme.colorScheme
     Column {
         LazyRow(state = state, flingBehavior = rememberSnapFlingBehavior(state), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            items.size.let { n -> items(n) { i -> Box(Modifier.width(cardWidth)) { content(i, items[i]) } } }
+            itemsIndexed(items) { i, it -> Box(Modifier.width(cardWidth)) { content(i, it) } }
         }
         if (items.size > 1) Row(Modifier.fillMaxWidth().padding(top = 10.dp), horizontalArrangement = Arrangement.Center) {
             items.indices.forEach { i ->
@@ -228,41 +215,30 @@ private fun LazyListScope.part(content: @Composable () -> Unit) = item { content
 
 @Composable
 fun BudgetsScreen(data: PolData, nav: PolNavigator) {
-    val programs = remember(data) { data.decode<Program>("budgets", "PROGRAMS") }
-    val gaps = remember(data) { data.decode<Gap>("budgets", "GAPS") }
-    val ref = remember(data) { data.one("budgets", "REF", Double.serializer()) ?: programs.firstOrNull { it.ref }?.debt }
-    val axis = remember(data) { data.one("budgets", "AXIS", Scale.serializer()) }
-    val cands = remember(programs) { programs.filter { !it.ref && it.debt != null } }
-    if (cands.isEmpty() || ref == null) {
-        EmptyState("Budgets pas encore publiés", "Les projections de dette par programme ne sont pas disponibles pour l'instant. Les autres rubriques restent ouvertes depuis l'accueil.", Modifier.padding(16.dp))
-        return
-    }
+    val st = remember(data) { budgetsState(data) }
     val pc = PolColors.current
-    val (lo, hi) = remember(axis, cands, ref) { axisBounds(axis, cands.mapNotNull { it.debt } + ref) }
+    val ref = st.ref
+    val (lo, hi) = remember(st) { axisBounds(st.axis, st.cands.mapNotNull { it.debt } + listOfNotNull(ref)) }
     val ticks = remember(lo, hi) { axisTicks(lo, hi) }
-    val below = cands.count { it.debt!! < ref }
-    val gapCards = remember(gaps) {
-        gaps.map { g ->
-            val (a, b) = gapLabels(g)
-            TableCard("Annoncé contre crédité", g.what, lines = listOf("${nameOf(g.who)} : ${fmtNum(g.claimed, 1)} → ${fmtNum(g.credited, 1)} ${g.unit}".trim(), "$a / $b"), source = g.src)
-        }
-    }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = ScreenPad) {
-        part {
-            Column {
-                RichText("Dette publique projetée à l'horizon du programme, comparée à ce qui se passerait <b>sans aucune mesure nouvelle : ${fmtNum(ref, 1)} % du PIB</b>. Mêmes hypothèses de croissance, d'inflation et de taux pour tous.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Row(Modifier.padding(top = 12.dp).height(IntrinsicSize.Max), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Stat("Référence", "${fmtNum(ref, 1)} %", "sans mesure", MaterialTheme.colorScheme.onSurface, Modifier.weight(1f).fillMaxHeight())
-                    Stat("En dessous", "$below sur ${cands.size}", "moins de dette", pc.low, Modifier.weight(1f).fillMaxHeight())
-                    Stat("Au-dessus", "${cands.size - below} sur ${cands.size}", "plus de dette", pc.high, Modifier.weight(1f).fillMaxHeight())
+        if (st.stem && ref != null) {
+            part {
+                Column {
+                    RichText("Dette publique projetée à l'horizon du programme, comparée à ce qui se passerait <b>sans aucune mesure nouvelle : ${fmtNum(ref, 1)} % du PIB</b>. Mêmes hypothèses de croissance, d'inflation et de taux pour tous.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Row(Modifier.padding(top = 12.dp).height(IntrinsicSize.Max), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Stat("Référence", "${fmtNum(ref, 1)} %", "sans mesure", MaterialTheme.colorScheme.onSurface, Modifier.weight(1f).fillMaxHeight())
+                        Stat("En dessous", "${st.below} sur ${st.cands.size}", "moins de dette", pc.low, Modifier.weight(1f).fillMaxHeight())
+                        Stat("Au-dessus", "${st.above} sur ${st.cands.size}", "plus de dette", pc.high, Modifier.weight(1f).fillMaxHeight())
+                    }
                 }
             }
         }
         part {
-            Section("Dette publique à l'horizon", "Chaque programme face à la référence", null, "Touchez une ligne pour la fiche du candidat. Une économie annoncée sans mesure détaillée n'est comptée qu'à 20 %.") {
-                FigCard {
+            Section("Dette publique à l'horizon", "Chaque programme face à la référence", null, if (st.stem) "Touchez une ligne pour la fiche du candidat." else null) {
+                if (!st.stem || ref == null) EmptyState("Projections de dette pas encore publiées", "La dette projetée par programme ou la référence « sans mesure » manque pour l'instant. Les écarts chiffrés et la balance restent affichés plus bas quand ils existent.")
+                else FigCard {
                     Legend(listOf(pc.low to "Moins de dette que sans mesure", pc.high to "Plus de dette"))
-                    programs.filter { it.debt != null }.forEachIndexed { i, p -> DebtRow(data, p, ref, lo, hi, ticks, nav, divider = i > 0) }
+                    st.withDebt.forEachIndexed { i, p -> DebtRow(data, p, ref, lo, hi, ticks, nav, divider = i > 0) }
                     Row(Modifier.fillMaxWidth().padding(top = 4.dp).clearAndSetSemantics { }, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("% du PIB", Modifier.width(134.dp), fontFamily = Mono, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         BoxWithConstraints(Modifier.weight(1f).height(18.dp)) {
@@ -273,19 +249,19 @@ fun BudgetsScreen(data: PolData, nav: PolNavigator) {
             }
         }
         part {
-            Section("La balance", "Ce que chaque programme sacrifie", "Pour chaque chiffre : ce qu'il sacrifie, ce qu'il ne montre pas, et l'avis signé des évaluateurs.") {
-                BalanceRows(cands, { it.who }, { it.lecture }, { it.who }, data, nav)
+            Section("La balance", "Ce que chaque programme sacrifie", BALANCE_LEAD) {
+                BalanceRows(st.cands, { it.who }, { it.lecture }, { it.who }, data, nav)
             }
         }
-        part {
+        if (st.withDebt.isNotEmpty()) part {
             Section("Le détail", "Dette, déficit et effet net", "Effet net : ce que les mesures rapportent (+) ou coûtent (−) aux finances publiques chaque année.") {
-                FigCard { DetailTable(data, programs.filter { it.debt != null }) }
+                FigCard { DetailTable(data, st.withDebt) }
             }
         }
         part {
-            Section("Annoncé contre crédité", "La promesse face au chiffrage", "Ce que le candidat met en avant, face à ce qu'un chiffrage extérieur retient. Barre sombre : l'annonce. Barre bleue : ce qui tient.") {
-                if (gaps.isEmpty()) EmptyState("Aucun écart chiffré", "Aucun chiffrage extérieur ne contredit encore une annonce.")
-                else Column(verticalArrangement = Arrangement.spacedBy(12.dp)) { gaps.forEachIndexed { i, g -> GapCard(data, g, nav) { nav.table(gapCards, i) } } }
+            Section("Annoncé contre crédité", "La promesse face au chiffrage", "Ce que le candidat met en avant, face à ce qu'un chiffrage extérieur retient. Barre sombre : l'annonce. Barre colorée : ce qui tient.") {
+                if (st.gaps.isEmpty()) EmptyState("Aucun écart chiffré", "Aucun chiffrage extérieur ne contredit encore une annonce.")
+                else Column(verticalArrangement = Arrangement.spacedBy(12.dp)) { st.gaps.forEachIndexed { i, g -> GapCard(data, g, nav) { nav.table(st.gapCards, i) } } }
             }
         }
     }
@@ -297,7 +273,7 @@ private fun DebtRow(data: PolData, p: Program, ref: Double, lo: Double, hi: Doub
     val scheme = MaterialTheme.colorScheme
     val debt = p.debt!!
     val id = if (p.ref) null else data.idFor(p.who)
-    val side = if (debt < ref) pc.low else pc.high
+    val side = when { debt < ref -> pc.low; debt > ref -> pc.high; else -> scheme.onSurfaceVariant }
     if (divider) Box(Modifier.fillMaxWidth().height(1.dp).background(scheme.outlineVariant))
     val dotColor = data.identityColorOf(p.who) ?: scheme.primary
     Row(
@@ -398,18 +374,9 @@ private fun GapCard(data: PolData, g: Gap, nav: PolNavigator, onTable: () -> Uni
 fun LivingScreen(data: PolData, nav: PolNavigator) {
     val pc = PolColors.current
     val scheme = MaterialTheme.colorScheme
-    val salaires = remember(data) { data.decode<BilanRow>("niveau-de-vie", "SALAIRES.rows") }
-    val sScale = remember(data) { data.one("niveau-de-vie", "SALAIRES.scale", Scale.serializer()) ?: Scale(-2.0, 2.0, " %") }
-    val programs = remember(data) { data.decode<Program>("budgets", "PROGRAMS").filter { !it.ref && it.hh != null }.sortedByDescending { it.hh } }
-    val ref = remember(data) { data.one("budgets", "REF", Double.serializer()) }
-    val measures = remember(data) { data.decode<Measure>("niveau-de-vie", "MEASURES") }
-    val maxAbs = remember(programs) { programs.maxOfOrNull { kotlin.math.abs(it.hh!!) } ?: 0.0 }
-    val cards = remember(measures) {
-        measures.map { m ->
-            TableCard("Pouvoir d'achat", nameOf(m.who), lines = listOf("${fmtSigned(m.hh)} € par an") + m.m.split(" ; ").filter { it.isNotBlank() } + listOf("Pour qui : ${m.b}", "Financé par : ${m.f}"))
-        }
-    }
-    if (salaires.isEmpty() && programs.isEmpty() && measures.isEmpty()) {
+    val st = remember(data) { livingState(data) }
+    val salaires = st.salaires; val sScale = st.scale; val programs = st.programs; val ref = st.ref; val measures = st.measures; val maxAbs = st.maxAbs
+    if (st.empty) {
         EmptyState("Niveau de vie pas encore publié", "Ni les salaires réels, ni les gains par ménage ne sont disponibles pour l'instant.", Modifier.padding(16.dp))
         return
     }
@@ -421,7 +388,7 @@ fun LivingScreen(data: PolData, nav: PolNavigator) {
             }
         }
         if (salaires.any { it.lecture != null }) part {
-            Section("La balance", "Ce que ces moyennes laissent dehors", "Pour chaque chiffre : ce qu'il sacrifie, ce qu'il ne montre pas, et l'avis signé des évaluateurs.") {
+            Section("La balance", "Ce que ces moyennes laissent dehors", BALANCE_LEAD) {
                 BalanceRows(salaires, { it.l }, { it.lecture }, { null }, data, nav)
             }
         }
@@ -439,7 +406,7 @@ fun LivingScreen(data: PolData, nav: PolNavigator) {
         part {
             Section("Mesure par mesure", "Ce que chacun promet", "Faites défiler. Mêmes rubriques pour tous : mesures, bénéficiaires, financement.") {
                 if (measures.isEmpty()) EmptyState("Aucune mesure détaillée", "Aucun programme n'a encore ses mesures de pouvoir d'achat publiées.")
-                else Rail(measures, 300.dp) { i, m -> MeasureCard(data, m, nav) { nav.table(cards, i) } }
+                else Rail(measures, 300.dp) { i, m -> MeasureCard(data, m, nav) { nav.table(st.cards, i) } }
             }
         }
     }
@@ -453,8 +420,8 @@ private fun HouseholdRow(data: PolData, p: Program, ref: Double?, maxAbs: Double
     val bar = householdBar(hh, maxAbs)
     val id = data.idFor(p.who)
     val color = data.identityColorOf(p.who) ?: scheme.primary
-    val below = p.debt?.let { d -> ref?.let { d < it } }
-    val debtLine = p.debt?.let { d -> ref?.let { "dette : ${fmtNum(d, 1)} % · ${if (d < it) "sous" else "au-dessus de"} la référence" } }
+    val side = p.debt?.let { d -> ref?.let { sideOf(d, it) } }
+    val debtLine = p.debt?.let { d -> ref?.let { "dette : ${fmtNum(d, 1)} % · ${when { sideOf(d, it) < 0 -> "sous la"; sideOf(d, it) > 0 -> "au-dessus de la"; else -> "égale à la" }} référence" } }
     Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
         Row(
             Modifier.fillMaxWidth().heightIn(min = 48.dp).let { m -> if (id != null) m.clickable(role = Role.Button, onClickLabel = "Ouvrir la fiche") { nav.sheet(PolSheetState.Identity(id)) } else m }
@@ -473,7 +440,7 @@ private fun HouseholdRow(data: PolData, p: Program, ref: Double?, maxAbs: Double
                     drawLine(scheme.onSurface.copy(alpha = 0.5f), Offset(size.width / 2, -3.dp.toPx()), Offset(size.width / 2, size.height + 3.dp.toPx()), 2.dp.toPx())
                 }
                 if (debtLine != null) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Box(Modifier.size(8.dp).clip(CircleShape).background(if (below == true) pc.low else pc.high))
+                    Box(Modifier.size(8.dp).clip(CircleShape).background(when { side == null || side == 0 -> scheme.onSurfaceVariant; side < 0 -> pc.low; else -> pc.high }))
                     Text(debtLine, fontSize = 12.sp, color = scheme.onSurfaceVariant)
                 }
             }
@@ -535,24 +502,13 @@ private fun MarkPill(code: String?) {
     Text(m.label.uppercase(), Modifier.clip(CircleShape).background(m.bg).let { if (m.bg == Color.Transparent) it.border(BorderStroke(1.dp, m.fg.copy(alpha = 0.4f)), CircleShape) else it }.padding(horizontal = 8.dp, vertical = 5.dp), color = m.fg, fontFamily = Mono, fontWeight = FontWeight.SemiBold, fontSize = 11.sp, softWrap = false)
 }
 
-private val MARK_LABEL = mapOf("keep" to "Poursuit", "flip" to "Inverse", "mix" to "Modifie")
-
 @Composable
 fun BilanScreen(data: PolData, nav: PolNavigator) {
     val pc = PolColors.current
     val ink = MaterialTheme.colorScheme.onSurface
-    val ofce = remember(data) { data.decode<BilanRow>("bilan", "OFCE.rows") }
-    val ipp = remember(data) { data.decode<BilanRow>("bilan", "IPP.rows") }
-    val ofceScale = remember(data) { data.one("bilan", "OFCE.scale", Scale.serializer()) ?: Scale(-3.0, 14.0, " pt") }
-    val ippScale = remember(data) { data.one("bilan", "IPP.scale", Scale.serializer()) ?: Scale(0.0, 4.0, " %") }
-    val cands = remember(data) { data.decode("bilan", "CANDS", String.serializer()) }
-    val matrix = remember(data) { data.decode<MatrixRow>("bilan", "MATRIX") }
-    val cards = remember(matrix, cands) {
-        matrix.map { r ->
-            TableCard("Face au bilan sortant · ${r.s}", r.o, lines = cands.map { c -> r.c[c]?.let { x -> "$c — ${MARK_LABEL[x.firstOrNull()] ?: "Position"} : ${x.getOrNull(1).orEmpty()}" } ?: "$c : non trouvé" })
-        }
-    }
-    if (ofce.isEmpty() && ipp.isEmpty() && matrix.isEmpty()) {
+    val st = remember(data) { bilanState(data) }
+    val ofce = st.ofce; val ipp = st.ipp; val ofceScale = st.ofceScale; val ippScale = st.ippScale; val cands = st.cands; val matrix = st.matrix
+    if (st.empty) {
         EmptyState("Bilan pas encore publié", "Ni la décomposition de la dette, ni les positions face au bilan sortant ne sont disponibles pour l'instant.", Modifier.padding(16.dp))
         return
     }
@@ -573,7 +529,7 @@ fun BilanScreen(data: PolData, nav: PolNavigator) {
             }
         }
         if ((ofce + ipp).any { it.lecture != null }) part {
-            Section("La balance", "Ce que ces chiffres laissent dehors", "Pour chaque chiffre : ce qu'il sacrifie, ce qu'il ne montre pas, et l'avis signé des évaluateurs.") {
+            Section("La balance", "Ce que ces chiffres laissent dehors", BALANCE_LEAD) {
                 BalanceRows(ofce + ipp, { it.l }, { it.lecture }, { null }, data, nav)
             }
         }
@@ -582,7 +538,7 @@ fun BilanScreen(data: PolData, nav: PolNavigator) {
                 if (matrix.isEmpty()) EmptyState("Aucune orientation suivie", "Les positions des candidats face au bilan sortant ne sont pas encore publiées.")
                 else Column {
                     Legend(listOf("keep", "flip", "mix", "none").map { c -> mark(c).let { it.fg to it.label } })
-                    Rail(matrix, 318.dp) { i, r -> MatrixCard(data, r, cands, i, matrix.size, nav) { nav.table(cards, i) } }
+                    Rail(matrix, 318.dp) { i, r -> MatrixCard(data, r, cands, i, matrix.size, nav) { nav.table(st.cards, i) } }
                 }
             }
         }

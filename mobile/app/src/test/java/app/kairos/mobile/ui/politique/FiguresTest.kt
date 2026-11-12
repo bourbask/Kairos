@@ -48,12 +48,6 @@ class FiguresTest {
         assertEquals(0.0, signedBar(1.0, 2.0, 2.0).width, eps)
     }
 
-    @Test fun source_parsing_splits_label_url_rest() {
-        val s = parseSource("Institut X, mise à jour (https://exemple.org/a) ; note")
-        assertEquals("Institut X, mise à jour", s.ref.label); assertEquals("https://exemple.org/a", s.ref.url); assertEquals("note", s.rest)
-        assertNull(parseSource("Sans lien").ref.url)
-    }
-
     @Test fun numbers_use_french_format() {
         assertEquals("139,8", fmtNum(139.8, 1)); assertEquals("−2\u00A0078", fmtSigned(-2078.0)); assertEquals("+1\u00A0146", fmtSigned(1146.0))
     }
@@ -68,5 +62,35 @@ class FiguresTest {
         assertEquals(2, p.size)
         assertEquals("Coupes", p[0].lecture!!.contrepartie_courte); assertEquals(-800.0, p[0].hh!!, eps); assertTrue(p[1].ref)
         assertEquals("keep", data.decode<MatrixRow>("bilan", "MATRIX")[0].c["Candidat A"]!![0])
+    }
+
+    private fun file(s: String) = PolJson.parseToJsonElement(s).jsonObject
+
+    @Test fun figures_state_empty_data() {
+        val d = PolData(emptyMap())
+        val b = budgetsState(d)
+        assertFalse(b.stem); assertTrue(b.gaps.isEmpty()); assertTrue(b.gapCards.isEmpty())
+        assertTrue(livingState(d).empty); assertTrue(bilanState(d).empty)
+    }
+
+    @Test fun figures_state_malformed() {
+        val d = PolData(mapOf("budgets" to file("""{"PROGRAMS":"x","REF":"y","GAPS":{"a":1}}"""), "niveau-de-vie" to file("""{"SALAIRES":3,"MEASURES":[1,"a"]}"""), "bilan" to file("""{"MATRIX":[{"o":5}],"CANDS":7}""")))
+        assertFalse(budgetsState(d).stem); assertNull(budgetsState(d).ref)
+        assertTrue(livingState(d).empty)
+        assertTrue(bilanState(d).matrix.size <= 1)
+    }
+
+    @Test fun budgets_gaps_survive_missing_stem() {
+        val d = PolData(mapOf("budgets" to file("""{"GAPS":[{"who":"Candidat A · Parti Bleu","what":"Économies","claimed":10,"credited":0,"unit":"Md€"}]}""")))
+        val b = budgetsState(d)
+        assertFalse(b.stem); assertEquals(1, b.gaps.size); assertEquals(1, b.gapCards.size)
+        assertEquals("—", gapRatioLabel(b.gaps[0]))
+    }
+
+    @Test fun living_ref_falls_back_and_equal_is_neither_side() {
+        val d = PolData(mapOf("budgets" to file("""{"PROGRAMS":[{"who":"Sans mesure","ref":true,"debt":140.0},{"who":"A","debt":140.0,"hh":10},{"who":"B","debt":130.0,"hh":-5}]}""")))
+        assertEquals(140.0, livingState(d).ref!!, eps)
+        val b = budgetsState(d)
+        assertEquals(1, b.below); assertEquals(0, b.above)
     }
 }

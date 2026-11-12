@@ -1,7 +1,13 @@
 package app.kairos.mobile.ui.politique.screens
 
 import app.kairos.mobile.ui.politique.model.Lecture
-import app.kairos.mobile.ui.politique.model.SourceRef
+import app.kairos.mobile.ui.politique.kit.TableCard
+import app.kairos.mobile.ui.politique.model.PolData
+import app.kairos.mobile.ui.politique.model.PolJson
+import kotlinx.serialization.KSerializer
+import kotlinx.serialization.builtins.serializer
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.Serializable
 import kotlin.math.abs
 import kotlin.math.ceil
@@ -108,11 +114,71 @@ fun fmtNum(v: Double, dec: Int = 0): String {
 
 fun fmtSigned(v: Double, dec: Int = 0): String = (if (v > 0) "+" else "") + fmtNum(v, dec)
 
-/** « Libellé (https://…) ; complément » : source lisible, lien et complément éventuel. */
-class ParsedSource(val ref: SourceRef, val rest: String)
+/** Un élément (objet ou nombre) d'un fichier, à un chemin pointé ; absent ou illisible : null. */
+internal fun <T> PolData.one(file: String, path: String, s: KSerializer<T>): T? {
+    var cur: JsonElement? = file(file)
+    for (k in path.split('.')) cur = (cur as? JsonObject)?.get(k)
+    return cur?.let { try { PolJson.decodeFromJsonElement(s, it) } catch (_: Exception) { null } }
+}
 
-fun parseSource(s: String?): ParsedSource {
-    val text = s.orEmpty().trim()
-    val m = Regex("""^(.*?)\s*\((https://[^)\s]+)\)\s*(.*)$""").find(text) ?: return ParsedSource(SourceRef(text), "")
-    return ParsedSource(SourceRef(m.groupValues[1].trim().ifEmpty { m.groupValues[2] }, m.groupValues[2]), m.groupValues[3].trimStart(';', ',', ' '))
+fun nameOf(who: String) = who.substringBefore(" · ")
+
+/** Dette de référence : valeur publiée, sinon celle de la ligne de référence des programmes. */
+private fun PolData.refDebt(programs: List<Program>): Double? = one("budgets", "REF", Double.serializer()) ?: programs.firstOrNull { it.ref }?.debt
+
+/** Position d'une dette face à la référence : -1 dessous, 0 égale, 1 dessus. */
+fun sideOf(debt: Double, ref: Double): Int = debt.compareTo(ref)
+
+/** Budgets : [stem] faux = la section « tige » est vide ; écarts et balance ne dépendent pas d'elle. */
+data class BudgetsState(val programs: List<Program>, val gaps: List<Gap>, val ref: Double?, val axis: Scale?, val cands: List<Program>, val gapCards: List<TableCard>) {
+    val stem get() = cands.isNotEmpty() && ref != null
+    val below get() = cands.count { ref != null && sideOf(it.debt!!, ref) < 0 }
+    val above get() = cands.count { ref != null && sideOf(it.debt!!, ref) > 0 }
+    val withDebt get() = programs.filter { it.debt != null }
+}
+
+fun budgetsState(data: PolData): BudgetsState {
+    val programs = data.decode<Program>("budgets", "PROGRAMS")
+    val gaps = data.decode<Gap>("budgets", "GAPS")
+    val cards = gaps.map { g ->
+        val (a, b) = gapLabels(g)
+        TableCard("Annoncé contre crédité", g.what, lines = listOf("${nameOf(g.who)} : ${fmtNum(g.claimed, 1)} → ${fmtNum(g.credited, 1)} ${g.unit}".trim(), "$a / $b"), source = g.src)
+    }
+    return BudgetsState(programs, gaps, data.refDebt(programs), data.one("budgets", "AXIS", Scale.serializer()), programs.filter { !it.ref && it.debt != null }, cards)
+}
+
+data class LivingState(val salaires: List<BilanRow>, val scale: Scale, val programs: List<Program>, val ref: Double?, val measures: List<Measure>, val cards: List<TableCard>) {
+    val maxAbs get() = programs.maxOfOrNull { abs(it.hh!!) } ?: 0.0
+    val empty get() = salaires.isEmpty() && programs.isEmpty() && measures.isEmpty()
+}
+
+fun livingState(data: PolData): LivingState {
+    val all = data.decode<Program>("budgets", "PROGRAMS")
+    val measures = data.decode<Measure>("niveau-de-vie", "MEASURES")
+    val cards = measures.map { m ->
+        TableCard("Pouvoir d'achat", nameOf(m.who), lines = listOf("${fmtSigned(m.hh)} € par an") + m.m.split(" ; ").filter { it.isNotBlank() } + listOf("Pour qui : ${m.b}", "Financé par : ${m.f}"))
+    }
+    return LivingState(
+        data.decode("niveau-de-vie", "SALAIRES.rows"), data.one("niveau-de-vie", "SALAIRES.scale", Scale.serializer()) ?: Scale(-2.0, 2.0, " %"),
+        all.filter { !it.ref && it.hh != null }.sortedByDescending { it.hh }, data.refDebt(all), measures, cards,
+    )
+}
+
+val MARK_LABEL = mapOf("keep" to "Poursuit", "flip" to "Inverse", "mix" to "Modifie")
+
+data class BilanState(val ofce: List<BilanRow>, val ipp: List<BilanRow>, val ofceScale: Scale, val ippScale: Scale, val cands: List<String>, val matrix: List<MatrixRow>, val cards: List<TableCard>) {
+    val empty get() = ofce.isEmpty() && ipp.isEmpty() && matrix.isEmpty()
+}
+
+fun bilanState(data: PolData): BilanState {
+    val cands = data.decode("bilan", "CANDS", String.serializer())
+    val matrix = data.decode<MatrixRow>("bilan", "MATRIX")
+    val cards = matrix.map { r ->
+        TableCard("Face au bilan sortant · ${r.s}", r.o, lines = cands.map { c -> r.c[c]?.let { x -> "$c — ${MARK_LABEL[x.firstOrNull()] ?: "Position"} : ${x.getOrNull(1).orEmpty()}" } ?: "$c : non trouvé" })
+    }
+    return BilanState(
+        data.decode("bilan", "OFCE.rows"), data.decode("bilan", "IPP.rows"),
+        data.one("bilan", "OFCE.scale", Scale.serializer()) ?: Scale(-3.0, 14.0, " pt"), data.one("bilan", "IPP.scale", Scale.serializer()) ?: Scale(0.0, 4.0, " %"),
+        cands, matrix, cards,
+    )
 }
