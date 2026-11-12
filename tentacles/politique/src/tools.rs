@@ -44,6 +44,18 @@ struct ChercherArgs {
     q: String,
 }
 
+#[derive(Deserialize, schemars::JsonSchema)]
+struct FichierArgs {
+    /// Nom du fichier (sans extension).
+    id: String,
+    /// Numéro de page, à partir de 0.
+    #[serde(default)]
+    page: u32,
+}
+
+/// Taille visée d'une page de fichier, en caractères (marge sous `MAX_REPONSE` pour l'enveloppe).
+pub const BUDGET_PAGE: usize = 60_000;
+
 /// Longueur maximale d'une recherche, en caractères.
 const MAX_RECHERCHE: usize = 200;
 
@@ -53,6 +65,9 @@ const RUBRIQUES: &[(&str, &str, &str)] = &[
     ("argent", "Argent", "Financement des partis et de la vie politique."),
     ("bilan", "Bilans", "Évaluations chiffrées des mesures passées."),
     ("budgets", "Budgets", "Coût des programmes, chiffres annoncés et évalués."),
+    ("dit-vote", "Dit / voté", "Votes croisés avec les déclarations publiques."),
+    ("dossiers", "Dossiers", "Contenus qui circulent, vérifiés affirmation par affirmation."),
+    ("evaluateurs", "Qui chiffre ?", "Les producteurs des chiffres et leur indépendance."),
     ("medias", "Médias", "Propriété, audiences et encadrement des médias."),
     ("niveau-de-vie", "Niveau de vie", "Effet des mesures proposées sur le revenu des ménages."),
     ("probite", "Probité", "Affaires, influence et transparence."),
@@ -74,10 +89,76 @@ fn json_out(v: Value) -> Out {
     Ok(s)
 }
 
+fn taille(v: &Value) -> usize {
+    v.to_string().chars().count()
+}
+
+/// Découpe un fichier en pages de `budget` caractères au plus. La plus grande liste (premier niveau,
+/// ou second niveau d'un objet) est découpée en tranches consécutives : la page 0 garde toutes les
+/// autres clés, les suivantes ne portent que la clé découpée. Un élément trop gros fait sa page seul.
+fn paginer(v: &Value, budget: usize) -> Vec<Value> {
+    if taille(v) <= budget {
+        return vec![v.clone()];
+    }
+    let Value::Object(o) = v else { return vec![v.clone()] };
+    // Chemin (1 ou 2 clés) de la liste la plus lourde.
+    let mut candidats: Vec<(Vec<&str>, &Vec<Value>)> = Vec::new();
+    for (k, x) in o {
+        match x {
+            Value::Array(a) => candidats.push((vec![k], a)),
+            Value::Object(sub) => candidats.extend(sub.iter().filter_map(|(s, y)| y.as_array().map(|a| (vec![k.as_str(), s.as_str()], a)))),
+            _ => {}
+        }
+    }
+    let Some((chemin, liste)) = candidats.into_iter().max_by_key(|(_, a)| a.iter().map(taille).sum::<usize>()) else { return vec![v.clone()] };
+    // Enveloppe portant une tranche donnée à la place de la liste.
+    let avec = |base: Value, tranche: &[Value]| {
+        let mut b = base;
+        let mut cur = &mut b;
+        for k in &chemin {
+            cur = &mut cur[*k];
+        }
+        *cur = Value::Array(tranche.to_vec());
+        b
+    };
+    let squelette_page0 = avec(v.clone(), &[]);
+    let squelette_suite = {
+        let mut m = json!({});
+        let mut cur = &mut m;
+        for k in &chemin[..chemin.len() - 1] {
+            cur[*k] = json!({});
+            cur = &mut cur[*k];
+        }
+        cur[chemin[chemin.len() - 1]] = json!([]);
+        m
+    };
+    let mut pages = Vec::new();
+    let mut debut = 0;
+    while debut < liste.len() || pages.is_empty() {
+        let (base, ouverture) = if pages.is_empty() { (&squelette_page0, taille(&squelette_page0)) } else { (&squelette_suite, taille(&squelette_suite)) };
+        let mut fin = debut;
+        let mut total = ouverture;
+        while fin < liste.len() && total + taille(&liste[fin]) + 1 <= budget {
+            total += taille(&liste[fin]) + 1;
+            fin += 1;
+        }
+        // Élément seul trop gros : sa page à lui (seule la page 0 peut rester sans élément).
+        if fin == debut && !pages.is_empty() {
+            fin += 1;
+        }
+        pages.push(avec(base.clone(), &liste[debut..fin]));
+        debut = fin;
+    }
+    pages
+}
+
 fn identite_json(i: &Identite) -> Value {
     let mut v = json!({"id": i.id, "nom": i.nom, "parti": i.parti, "couleur": i.couleur});
     if let Some(a) = &i.avatar {
         v["avatar"] = a.clone();
+    }
+    if let Some(t) = &i.genre {
+        v["type"] = json!(t);
     }
     v
 }
@@ -154,6 +235,16 @@ impl PolitiqueServer {
             "themes": themes,
             "presentations": etat.presentations,
         }))
+    }
+
+    #[tool(description = "Un fichier de données, par pages : { id, page, pages, version, contenu } (application).")]
+    fn app_politique_fichier(&self, Parameters(a): Parameters<FichierArgs>) -> Out {
+        let etat = self.donnees.etat();
+        // Recherche parmi les fichiers chargés : l'identifiant ne sert jamais de chemin.
+        let (id, v) = etat.fichiers.get_key_value(&a.id).ok_or("Fichier inconnu.")?;
+        let pages = paginer(v, BUDGET_PAGE);
+        let contenu = pages.get(a.page as usize).ok_or_else(|| format!("Page hors bornes : le fichier compte {} page(s), numérotées à partir de 0.", pages.len()))?;
+        json_out(json!({"id": id, "page": a.page, "pages": pages.len(), "version": etat.versions.get(id), "contenu": contenu}))
     }
 
     #[tool(description = "Une rubrique telle quelle, avec l'identité rattachée à chaque entrée (application).")]
@@ -317,6 +408,120 @@ mod tests {
         f.set_modified(SystemTime::now() + Duration::from_secs(decalage)).unwrap();
     }
 
+    fn fichier(s: &PolitiqueServer, id: &str, page: u32) -> Out {
+        s.app_politique_fichier(Parameters(FichierArgs { id: id.into(), page }))
+    }
+    /// Fichier `dit-vote` fictif de plus de `BUDGET_PAGE` caractères, avec une clé annexe.
+    fn gros_dit_vote() -> String {
+        let scrutins: Vec<Value> = (0..120)
+            .map(|i| json!({"id": format!("s-{i}"), "titre": format!("Loi fictive {i}"), "objet": "Texte inventé pour les tests. ".repeat(25)}))
+            .collect();
+        json!({"SCRUTINS": scrutins, "ANNEXE": {"note": "Annexe fictive."}}).to_string()
+    }
+    /// Date de modification fixe, pour des échantillons identiques d'une machine à l'autre.
+    fn date_fixe(path: &Path) {
+        let f = std::fs::File::options().write(true).open(path).unwrap();
+        f.set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(1_800_000_000)).unwrap();
+    }
+
+    #[test]
+    fn fichier_petit_en_une_page() {
+        let r = v(fichier(&server(), "evaluateurs", 0));
+        assert_eq!((r["id"].as_str(), r["page"].as_u64(), r["pages"].as_u64()), (Some("evaluateurs"), Some(0), Some(1)));
+        let brut: Value = serde_json::from_str(&std::fs::read_to_string(Path::new(FIXTURES).join("evaluateurs.json")).unwrap()).unwrap();
+        assert_eq!(r["contenu"], brut);
+        assert!(r["version"].as_str().is_some_and(|x| !x.is_empty() && x.chars().all(|c| c.is_ascii_hexdigit() || c == '-')));
+    }
+
+    #[test]
+    fn paginer_decoupe_la_plus_grande_liste() {
+        let brut: Value = serde_json::from_str(&std::fs::read_to_string(Path::new(FIXTURES).join("dit-vote.json")).unwrap()).unwrap();
+        let pages = paginer(&brut, 1_000);
+        assert!(pages.len() >= 3, "{}", pages.len());
+        let tout: Vec<Value> = pages.iter().flat_map(|p| p["SCRUTINS"].as_array().unwrap().clone()).collect();
+        assert_eq!(Value::Array(tout), brut["SCRUTINS"]);
+        // Élément seul plus gros que le budget : sa page à lui.
+        let seul = paginer(&brut, 10);
+        assert_eq!(seul.len(), 5);
+        assert!(seul[1..].iter().all(|p| p["SCRUTINS"].as_array().unwrap().len() == 1));
+        // Liste au second niveau : `clé.sous_clé`, les pages suivantes gardent le chemin.
+        let imbrique = json!({"AUTRE": "x", "G": {"rows": vec!["aaaa"; 6], "titre": "t"}});
+        let p = paginer(&imbrique, 60);
+        assert!(p.len() > 1);
+        assert_eq!(p[0]["AUTRE"], "x");
+        assert_eq!(p[0]["G"]["titre"], "t");
+        assert!(p[1].get("AUTRE").is_none() && p[1]["G"]["rows"].is_array());
+        assert_eq!(p.iter().map(|x| x["G"]["rows"].as_array().unwrap().len()).sum::<usize>(), 6);
+    }
+
+    #[test]
+    fn fichier_gros_decoupe_sans_perte() {
+        let dir = copie("gros-fichier");
+        ecrire(&dir.join("dit-vote.json"), &gros_dit_vote(), 10);
+        let s = server_sur(&dir);
+        let p0 = v(fichier(&s, "dit-vote", 0));
+        let n = p0["pages"].as_u64().unwrap() as u32;
+        assert!(n >= 2);
+        let brut: Value = serde_json::from_str(&gros_dit_vote()).unwrap();
+        assert_eq!(p0["contenu"]["ANNEXE"], brut["ANNEXE"]);
+        let mut tout = Vec::new();
+        for page in 0..n {
+            let txt = fichier(&s, "dit-vote", page).unwrap();
+            assert!(txt.chars().count() <= MAX_REPONSE);
+            let r: Value = serde_json::from_str(&txt).unwrap();
+            assert!(taille(&r["contenu"]) <= BUDGET_PAGE);
+            if page > 0 {
+                assert!(r["contenu"].get("ANNEXE").is_none());
+            }
+            tout.extend(r["contenu"]["SCRUTINS"].as_array().unwrap().clone());
+        }
+        assert_eq!(Value::Array(tout), brut["SCRUTINS"]);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn fichier_pages_portent_la_version() {
+        let dir = copie("version");
+        ecrire(&dir.join("dit-vote.json"), &gros_dit_vote(), 10);
+        let s = server_sur(&dir);
+        let version = |page| v(fichier(&s, "dit-vote", page))["version"].clone();
+        assert_eq!(version(0), version(1));
+        let avant = version(0);
+        ecrire(&dir.join("dit-vote.json"), &gros_dit_vote(), 20);
+        assert_ne!(version(0), avant);
+        assert_eq!(version(0), version(1));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn fichier_inconnu_ou_page_hors_bornes_erreur_claire() {
+        let s = server();
+        assert_eq!(fichier(&s, "inexistant", 0).unwrap_err(), "Fichier inconnu.");
+        assert_eq!(fichier(&s, "../meta", 0).unwrap_err(), "Fichier inconnu.");
+        assert!(fichier(&s, "evaluateurs", 1).unwrap_err().contains("hors bornes"));
+    }
+
+    #[test]
+    fn carte_est_un_fichier_de_service() {
+        let s = server();
+        assert!(!v(s.app_politique_accueil())["rubriques"].as_array().unwrap().iter().any(|r| r["id"] == "carte"));
+        assert!(s.app_politique_rubrique(Parameters(IdArgs { id: "carte".into() })).is_err());
+        assert!(v(fichier(&s, "carte", 0))["contenu"]["regions"].is_array());
+        // Les autres fichiers de service sont servis aussi.
+        assert!(v(fichier(&s, "meta", 0))["contenu"]["verifie_le"].is_string());
+        assert!(v(fichier(&s, "identites", 0))["contenu"].is_array());
+    }
+
+    #[test]
+    fn nouvelles_rubriques_titrees() {
+        let h = v(server().app_politique_accueil());
+        for (id, titre) in [("dit-vote", "Dit / voté"), ("dossiers", "Dossiers"), ("evaluateurs", "Qui chiffre ?")] {
+            let r = h["rubriques"].as_array().unwrap().iter().find(|r| r["id"] == id).unwrap_or_else(|| panic!("{id} absente"));
+            assert_eq!(r["titre"], titre);
+            assert!(!r["resume"].as_str().unwrap().is_empty());
+        }
+    }
+
     #[test]
     fn home_lists_identities_rubrics_themes() {
         let h = v(server().app_politique_accueil());
@@ -329,7 +534,7 @@ mod tests {
         assert!(h["identites"][0].get("alias").is_none());
         let rub = h["rubriques"].as_array().unwrap();
         let noms: Vec<&str> = rub.iter().map(|r| r["id"].as_str().unwrap()).collect();
-        assert_eq!(noms, ["affirmations", "argent", "budgets", "divers", "niveau-de-vie", "rhetorique", "votes"]);
+        assert_eq!(noms, ["affirmations", "argent", "budgets", "dit-vote", "divers", "dossiers", "evaluateurs", "niveau-de-vie", "rhetorique", "votes"]);
         let budgets = rub.iter().find(|r| r["id"] == "budgets").unwrap();
         assert_eq!(budgets["titre"], "Budgets");
         assert!(!budgets["resume"].as_str().unwrap().is_empty());
@@ -490,7 +695,8 @@ mod tests {
     #[test]
     fn all_tools_are_app_prefixed() {
         let names: Vec<String> = server().tool_router.list_all().into_iter().map(|t| t.name.to_string()).collect();
-        assert_eq!(names.len(), 5);
+        assert_eq!(names.len(), 6);
+        assert!(names.contains(&"app_politique_fichier".to_string()));
         assert!(names.iter().all(|n| n.starts_with("app_politique_")), "{names:?}");
     }
 
@@ -573,21 +779,23 @@ mod tests {
     /// `POLITIQUE_ECHANTILLONS=1` les réécrit.
     #[test]
     fn contract_samples_match_app_resources() {
-        let s = server();
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../mobile/app/src/test/resources/politique");
+        // L'application ne lit que des fichiers paginés. Dossier à dates fixes, avec un dit-vote généré
+        // qui dépasse le budget d'une page.
+        let tmp = copie("echantillons");
+        std::fs::write(tmp.join("dit-vote.json"), gros_dit_vote()).unwrap();
+        for f in ["dit-vote", "evaluateurs", "carte", "identites"] {
+            date_fixe(&tmp.join(format!("{f}.json")));
+        }
+        let sp = server_sur(&tmp);
         let echantillons = [
-            ("accueil", v(s.app_politique_accueil())),
-            ("rubrique-affirmations", rubrique(&s, "affirmations")),
-            ("rubrique-argent", rubrique(&s, "argent")),
-            ("rubrique-budgets", rubrique(&s, "budgets")),
-            ("rubrique-rhetorique", rubrique(&s, "rhetorique")),
-            ("rubrique-votes", rubrique(&s, "votes")),
-            ("fiche-a", v(fiche(&s, "a"))),
-            ("fiche-c", v(fiche(&s, "c"))),
-            ("comparer-a-b-budget", v(comparer(&s, &["a", "b"], "budget"))),
-            ("comparer-a-c-niveau-de-vie", v(comparer(&s, &["a", "c"], "niveau-de-vie"))),
-            ("chercher-electricite", v(chercher(&s, "électricité"))),
+            ("fichier-identites", v(fichier(&sp, "identites", 0))),
+            ("fichier-dit-vote-p0", v(fichier(&sp, "dit-vote", 0))),
+            ("fichier-dit-vote-p1", v(fichier(&sp, "dit-vote", 1))),
+            ("fichier-evaluateurs", v(fichier(&sp, "evaluateurs", 0))),
+            ("fichier-carte", v(fichier(&sp, "carte", 0))),
         ];
+        let _ = std::fs::remove_dir_all(&tmp);
         let ecrire = std::env::var("POLITIQUE_ECHANTILLONS").is_ok_and(|x| x == "1");
         for (nom, rep) in echantillons {
             let path = dir.join(format!("{nom}.json"));

@@ -1,0 +1,26 @@
+{
+ "viewBox": "0 0 100 100",
+ "projection": {
+  "lat0": 46.5,
+  "k": 0.7,
+  "minx": -3.5,
+  "maxy": 51.0,
+  "s": 99.0
+ },
+ "regions": [
+  {
+   "code": "01",
+   "nom": "Région fictive A",
+   "d": "M10 10L50 10L50 50L10 50Z"
+  },
+  {
+   "code": "02",
+   "nom": "Région fictive B",
+   "d": "M50 50L90 50L90 90L50 90Z"
+  }
+ ],
+ "source": [
+  "Fond de carte fictif",
+  "https://example.org/carte"
+ ]
+}
