@@ -90,6 +90,14 @@ fun splitWhen(s: String): Pair<String, String> = WHEN.matchEntire(s)?.let { it.g
 
 /** Message de la liste d'écarts vide : sans verdict hors séance, rien ne se juge ; ce n'est jamais une cohérence. */
 fun noGapsMessage(k: DvCount, seance: DvCount): String =
-    if (k.t == 0) "Aucune déclaration publique trouvée hors séance : impossible de juger." +
+    if (k.t == 0) NO_PUBLIC_STATEMENT +
         (if (seance.t > 0) " Seule la ligne annoncée en séance est documentée, signalée plus haut comme moins probante." else "")
     else "Sur les ${k.t} scrutins où une déclaration publique a été trouvée, le vote suit la parole. Les ${k.sp} autres restent sans déclaration : ce n'est pas une preuve de cohérence."
+
+const val NO_PUBLIC_STATEMENT = "Aucune déclaration publique trouvée hors séance : impossible de juger."
+
+class RateLabel(val figure: String, val text: String)
+
+/** Taux hors séance à afficher ; `null` quand rien n'est comptable (afficher [NO_PUBLIC_STATEMENT], jamais « 0 / 0 »). */
+fun publicRateLabel(k: DvCount): RateLabel? =
+    if (k.t == 0) null else RateLabel("${k.c} / ${k.t}", "scrutins où le vote suit ce que le parti dit en public")

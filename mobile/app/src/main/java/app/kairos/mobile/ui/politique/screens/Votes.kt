@@ -421,9 +421,11 @@ private fun DvRate(data: PolData, items: List<DvItem>) {
     val s = dvCount(items, "seance")
     Column {
         Kicker("Parole publique, hors séance", Modifier.padding(top = 12.dp))
-        Row(Modifier.padding(top = 2.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Bottom) {
-            Text("${k.c} / ${k.t}", fontSize = 34.sp, fontWeight = FontWeight.ExtraBold)
-            Text("scrutins où le vote suit ce que le parti dit en public" + if (k.t == 0) " (aucune déclaration publique trouvée)" else "", Modifier.weight(1f).padding(bottom = 4.dp), fontSize = 13.5.sp, color = scheme.onSurfaceVariant)
+        val rate = publicRateLabel(k)
+        if (rate == null) Text(NO_PUBLIC_STATEMENT, Modifier.padding(top = 4.dp), fontSize = 14.sp, color = scheme.onSurfaceVariant)
+        else Row(Modifier.padding(top = 2.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Bottom) {
+            Text(rate.figure, fontSize = 34.sp, fontWeight = FontWeight.ExtraBold)
+            Text(rate.text, Modifier.weight(1f).padding(bottom = 4.dp), fontSize = 13.5.sp, color = scheme.onSurfaceVariant)
         }
         if (k.t > 0) Row(
             Modifier.fillMaxWidth().padding(top = 10.dp).height(12.dp).clip(RoundedCornerShape(6.dp)).background(scheme.surfaceVariant)

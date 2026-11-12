@@ -62,6 +62,9 @@ import app.kairos.mobile.ui.politique.screens.DvItem
 import app.kairos.mobile.ui.politique.screens.claimsOf
 import app.kairos.mobile.ui.politique.screens.dvCount
 import app.kairos.mobile.ui.politique.screens.dvFor
+import app.kairos.mobile.ui.politique.screens.NO_PUBLIC_STATEMENT
+import app.kairos.mobile.ui.politique.screens.noGapsMessage
+import app.kairos.mobile.ui.politique.screens.publicRateLabel
 import app.kairos.mobile.ui.politique.model.IdKind
 import app.kairos.mobile.ui.politique.model.Lecture
 import app.kairos.mobile.ui.politique.model.PolData
@@ -494,15 +497,16 @@ private fun sections(data: PolData, id: String, l: IdentityLinks, nav: PolNaviga
         }
         val k = dvCount(l.dv)
         Kicker("Parole publique, hors séance")
-        Text("${k.c} / ${k.t}", fontSize = 26.sp, fontWeight = FontWeight.ExtraBold)
-        Text(
-            "scrutins où le vote suit ce que le parti dit en public" + if (k.t == 0) " (aucune déclaration publique trouvée)" else "",
-            color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp,
-        )
+        val rate = publicRateLabel(k)
+        if (rate == null) Text(NO_PUBLIC_STATEMENT, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp)
+        else {
+            Text(rate.figure, fontSize = 26.sp, fontWeight = FontWeight.ExtraBold)
+            Text(rate.text, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp)
+        }
         Kicker("Écarts et votes ambigus", Modifier.padding(top = 12.dp))
         val gaps = l.dv.filter { it.verdict.v == "ecart" || it.verdict.v == "ambigu" }
             .sortedWith(compareBy<DvItem> { if (it.verdict.v == "ecart") 0 else 1 }.thenByDescending { it.scrutin.date })
-        if (gaps.isEmpty()) Body("Aucun écart relevé sur les scrutins où une déclaration a été trouvée.")
+        if (gaps.isEmpty()) Body(noGapsMessage(k, dvCount(l.dv, "seance")))
         gaps.forEach { d ->
             Card {
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { StateTag(DV_LABEL[d.verdict.v].orEmpty(), if (d.verdict.v == "ecart") "fragile" else "partiel") }

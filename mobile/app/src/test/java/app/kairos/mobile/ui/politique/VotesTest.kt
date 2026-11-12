@@ -76,4 +76,9 @@ class VotesTest {
         assertFalse(noGapsMessage(none, DvCount(0, 0, 0, 0, 0)).contains("en séance"))
         assertTrue(noGapsMessage(DvCount(2, 0, 0, 1, 2), none).contains("suit la parole"))
     }
+
+    @Test fun public_rate_label_null_when_nothing_countable() {
+        assertNull(publicRateLabel(DvCount(0, 0, 0, 4, 0)))
+        assertEquals("1 / 3", publicRateLabel(DvCount(1, 1, 1, 0, 3))!!.figure)
+    }
 }
