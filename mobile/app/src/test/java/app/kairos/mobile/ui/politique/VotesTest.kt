@@ -67,4 +67,13 @@ class VotesTest {
         assertEquals(listOf("P" to 2), voteCounts(rows, 0))
         assertEquals(listOf("P" to 1, "C" to 1), voteCounts(rows, 1))
     }
+
+    @Test fun no_public_statement_is_not_coherence() {
+        val none = DvCount(0, 0, 0, 3, 0)
+        val m = noGapsMessage(none, DvCount(1, 0, 0, 0, 1))
+        assertTrue(m.startsWith("Aucune déclaration publique trouvée hors séance"))
+        assertFalse(m.contains("suit la parole")); assertTrue(m.contains("en séance"))
+        assertFalse(noGapsMessage(none, DvCount(0, 0, 0, 0, 0)).contains("en séance"))
+        assertTrue(noGapsMessage(DvCount(2, 0, 0, 1, 2), none).contains("suit la parole"))
+    }
 }

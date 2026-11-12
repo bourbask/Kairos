@@ -473,7 +473,7 @@ private fun DvRow(data: PolData, d: DvItem, onClick: () -> Unit) {
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp), itemVerticalAlignment = Alignment.CenterVertically) {
             DvChip(d.verdict.v)
             p?.let { VoteTag(it.second) }
-            NeutralChip(BASE_LABELS[if (d.verdict.base == "seance") "seance" else "hors-seance"].orEmpty())
+            NeutralChip(BASE_LABELS[d.verdict.baseOf()].orEmpty())
             Kicker("${fmtChamber(d.scrutin.chambre)} · ${fmtDate(d.scrutin.date)}")
         }
         Text(frTypo(d.scrutin.titre), Modifier.padding(top = 6.dp), fontSize = 14.5.sp, fontWeight = FontWeight.Bold)
@@ -492,6 +492,9 @@ fun DitVoteScreen(data: PolData, nav: PolNavigator) {
     val key = CHAMBERS[ch].first
     val scheme = MaterialTheme.colorScheme
     val inCh = remember(all, key) { scrutinsFor(all, key, "") }
+    val partiesIn = remember(inCh) { dvParties(inCh) }
+    val curParty = party.takeIf { it in partiesIn } ?: partiesIn.firstOrNull()
+    val partyItems = remember(all, key, curParty) { dvFor(data, curParty).filter { it.scrutin.chambre == key } }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = ScreenPad, verticalArrangement = Arrangement.spacedBy(10.dp)) {
         part {
             Column {
@@ -513,14 +516,13 @@ fun DitVoteScreen(data: PolData, nav: PolNavigator) {
             if (list.isEmpty()) part { EmptyState("Aucun scrutin pour ce filtre", if (f.isNotEmpty()) "Aucun scrutin de cette assemblée ne présente ce cas. Revenez à « Tous »." else "Aucun scrutin croisé pour cette assemblée.") }
             items(list, key = { it.id }) { s -> ScrutinCard(data, s) { nav.sheet(PolSheetState.Scrutin(s.id)) } }
         } else {
-            val parties = dvParties(inCh)
-            val p = party.takeIf { it in parties } ?: parties.firstOrNull()
+            val p = curParty
             if (p == null) {
                 part { EmptyState("Aucun parti", "Aucun verdict pour cette assemblée. Essayez l'autre assemblée.") }
                 return@LazyColumn
             }
-            part { Pills(parties.map { PillOption(it, data.byId(it)?.nom ?: it) }, p, onSelect = { party = it }) }
-            val items = dvFor(data, p).filter { it.scrutin.chambre == key }
+            part { Pills(partiesIn.map { PillOption(it, data.byId(it)?.nom ?: it) }, p, onSelect = { party = it }) }
+            val items = partyItems
             part {
                 Card {
                     if (data.byId(p) != null) IdentityChip(data, p, large = true) else Text(p, fontWeight = FontWeight.Bold)
@@ -530,8 +532,7 @@ fun DitVoteScreen(data: PolData, nav: PolNavigator) {
             part { SectionHeader("Les écarts", "Là où le vote ne suit pas la parole", "Écarts d'abord, puis votes ambigus ; chaque ligne ouvre le scrutin et les déclarations.", Modifier.padding(top = 8.dp)) }
             val gaps = dvGaps(items)
             if (gaps.isEmpty()) {
-                val k = dvCount(items)
-                part { EmptyState("Aucun écart relevé", "Sur les ${k.t} scrutins où une déclaration publique a été trouvée, le vote suit la parole. Les ${k.sp} autres restent sans déclaration : ce n'est pas une preuve de cohérence.") }
+                part { EmptyState("Aucun écart relevé", noGapsMessage(dvCount(items), dvCount(items, "seance"))) }
             } else part {
                 Card(Modifier) { gaps.forEachIndexed { i, d -> if (i > 0) Box(Modifier.fillMaxWidth().height(1.dp).background(scheme.outlineVariant)); DvRow(data, d) { nav.sheet(PolSheetState.Scrutin(d.scrutin.id)) } } }
             }

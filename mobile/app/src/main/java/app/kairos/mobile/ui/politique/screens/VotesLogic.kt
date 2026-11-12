@@ -39,7 +39,7 @@ fun scrutinsOf(data: PolData): List<Scrutin> = data.decode<Scrutin>("dit-vote", 
 fun dvFor(data: PolData, partyId: String?): List<DvItem> =
     if (partyId.isNullOrEmpty()) emptyList() else scrutinsOf(data).flatMap { s -> s.verdicts.filter { it.qui == partyId }.map { DvItem(s, it) } }
 
-private fun Verdict.baseOf() = if (base == "seance") "seance" else "hors-seance"
+internal fun Verdict.baseOf() = if (base == "seance") "seance" else "hors-seance"
 
 /** Un verdict « sans déclaration » n'est jamais compté ; [base] : le taux principal est « hors-seance » (absence de base comprise). */
 fun dvCount(items: List<DvItem>, base: String = "hors-seance"): DvCount {
@@ -87,3 +87,9 @@ private val WHEN = Regex("""^([^:]{2,48}?) : (.+)$""")
 
 /** « 2017 : texte » → (« 2017 », « texte ») ; sans date, ("", texte). */
 fun splitWhen(s: String): Pair<String, String> = WHEN.matchEntire(s)?.let { it.groupValues[1] to it.groupValues[2] } ?: ("" to s)
+
+/** Message de la liste d'écarts vide : sans verdict hors séance, rien ne se juge ; ce n'est jamais une cohérence. */
+fun noGapsMessage(k: DvCount, seance: DvCount): String =
+    if (k.t == 0) "Aucune déclaration publique trouvée hors séance : impossible de juger." +
+        (if (seance.t > 0) " Seule la ligne annoncée en séance est documentée, signalée plus haut comme moins probante." else "")
+    else "Sur les ${k.t} scrutins où une déclaration publique a été trouvée, le vote suit la parole. Les ${k.sp} autres restent sans déclaration : ce n'est pas une preuve de cohérence."
