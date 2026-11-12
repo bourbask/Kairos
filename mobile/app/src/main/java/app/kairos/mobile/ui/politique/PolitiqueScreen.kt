@@ -40,6 +40,7 @@ import app.kairos.mobile.ui.politique.screens.BilanScreen
 import app.kairos.mobile.ui.politique.screens.BulleScreen
 import app.kairos.mobile.ui.politique.screens.ClaimSheetAt
 import app.kairos.mobile.ui.politique.screens.PhrasesScreen
+import app.kairos.mobile.ui.politique.screens.QuizScreen
 import app.kairos.mobile.ui.politique.screens.BudgetsScreen
 import app.kairos.mobile.ui.politique.screens.LivingScreen
 import kotlinx.coroutines.CancellationException
@@ -168,6 +169,7 @@ fun PolitiqueScreen(
                 else -> Box(Modifier.fillMaxSize().padding(bottom = bottom)) {
                     when (route) {
                         is PolRoute.Rubric -> RubricHost(route.id, l.data, navigator)
+                        PolRoute.Quiz -> QuizScreen(l.data, navigator)
                         else -> Soon()
                     }
                 }

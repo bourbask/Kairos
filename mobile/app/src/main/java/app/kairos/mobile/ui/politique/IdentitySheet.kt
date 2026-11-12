@@ -372,7 +372,7 @@ private fun SectionPager(sections: List<Section>) {
 
 /** Animations système coupées : les défilements sautent directement. */
 @Composable
-private fun reducedMotion(): Boolean {
+internal fun reducedMotion(): Boolean {
     val context = LocalContext.current
     return remember { android.provider.Settings.Global.getFloat(context.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f }
 }

@@ -80,7 +80,7 @@ import app.kairos.mobile.ui.theme.mix
 
 private val ScreenPad = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 24.dp)
 
-private fun PolData.campColor(camp: String): Color? = idOf(camp)?.let { byId(it)?.couleur }?.let { identityColor(it) }
+internal fun PolData.campColor(camp: String): Color? = idOf(camp)?.let { byId(it)?.couleur }?.let { identityColor(it) }
 
 // ---------- Briques ----------
 
@@ -158,7 +158,7 @@ private fun Label(text: String, top: Int = 12) = Kicker(text, Modifier.padding(t
 
 private fun LazyListScope.part(content: @Composable () -> Unit) = item { content() }
 
-private fun frCount(n: Int, one: String, many: String) = "$n ${if (n > 1) many else one}"
+internal fun frCount(n: Int, one: String, many: String) = "$n ${if (n > 1) many else one}"
 
 // ---------- Phrases ----------
 
