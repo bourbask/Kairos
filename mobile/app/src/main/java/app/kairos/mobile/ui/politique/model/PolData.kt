@@ -9,11 +9,18 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.serializer
+import java.text.Collator
 import java.text.Normalizer
+import java.util.Locale
 
 /** Texte sans accents ni casse, espaces resserrés : comparaison des clés et libellés. */
 fun fold(s: String): String =
     Normalizer.normalize(s, Normalizer.Form.NFD).replace(Regex("\\p{M}+"), "").lowercase().trim().replace(Regex("\\s+"), " ")
+
+private val FR_PRIMARY: Collator = Collator.getInstance(Locale.FRENCH).apply { strength = Collator.PRIMARY }
+
+/** Ordre alphabétique, le plus neutre pour présenter des identités : casse et accents ignorés. */
+fun <T> Iterable<T>.alphabetical(name: (T) -> String): List<T> = sortedWith(compareBy(FR_PRIMARY, name))
 
 enum class IdKind { Personne, Parti, Camp }
 
@@ -50,7 +57,7 @@ class PolData(private val files: Map<String, JsonObject>) {
 
     inline fun <reified T> decode(file: String, path: String): List<T> = decode(file, path, PolJson.serializersModule.serializer<T>())
 
-    val identities: List<PolIdentity> = decode("identites", "", PolIdentity.serializer())
+    val identities: List<PolIdentity> = decode("identites", "", PolIdentity.serializer()).alphabetical { it.nom }
     private val aliases: Map<String, List<String>> = decode("identites", "", Aliases.serializer()).associate { it.id to it.alias }
     private val byIdMap = identities.associateBy { it.id }
     private val keyIndex: Map<String, List<String>> = identities

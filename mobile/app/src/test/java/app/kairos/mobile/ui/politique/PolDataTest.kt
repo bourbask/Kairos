@@ -30,6 +30,15 @@ class PolDataTest {
     private val data = PolData(mapOf("identites" to obj(identities), "evaluateurs" to obj(evaluateurs), "meta" to obj("""{"verifie_le":"2026-01-01"}""")))
 
     @Test
+    fun identities_sorted_alphabetically() {
+        val d = PolData(mapOf("identites" to obj("""{"$LIST_KEY": [
+            {"id":"z","nom":"Zoé"}, {"id":"e2","nom":"Exemple"}, {"id":"e1","nom":"Écart"}, {"id":"a","nom":"alpha"}, {"id":"b","nom":"Bravo"}
+        ]}""")))
+        assertEquals(listOf("a", "b", "e1", "e2", "z"), d.identities.map { it.id })
+        assertEquals(listOf("a", "Écart", "x"), listOf("x", "Écart", "a").alphabetical { it })
+    }
+
+    @Test
     fun merge_pages_restores_split_list() {
         val p0 = page("fichier-dit-vote-p0")
         val p1 = page("fichier-dit-vote-p1")

@@ -14,25 +14,35 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.PlainTooltip
+import androidx.compose.material3.TooltipAnchorPosition
+import androidx.compose.material3.TooltipBox
+import androidx.compose.material3.TooltipDefaults
+import androidx.compose.material3.rememberTooltipState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -51,11 +61,13 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
+import app.kairos.mobile.ui.kit.KairosIcons
 import app.kairos.mobile.ui.politique.avatarOf
 import app.kairos.mobile.ui.politique.IdentityBadge
 import app.kairos.mobile.ui.politique.identityColor
@@ -64,7 +76,7 @@ import app.kairos.mobile.ui.politique.model.Lecture
 import app.kairos.mobile.ui.politique.model.PolData
 import app.kairos.mobile.ui.politique.model.Poste
 import app.kairos.mobile.ui.politique.model.SourceRef
-import app.kairos.mobile.ui.theme.mix
+import kotlinx.coroutines.launch
 
 // ---------------------------------------------------------------- logique pure (testée)
 
@@ -106,6 +118,29 @@ fun balanceSummary(l: Lecture): BalanceSummary {
     val cp = l.contrepartie.trim().ifEmpty { short.orEmpty() }
     val am = l.angle_mort_court.trim().ifEmpty { l.angle_mort.trim() }
     return if (cp.isEmpty() && short == null) BalanceSummary(null, emptyList(), am, true) else BalanceSummary(short, postes, cp, false)
+}
+
+private val ZERO_AMOUNT = Regex("""^[-−]?\s*0+(?:[.,]0+)?(?![\d.,])""")
+/** Un nombre, séparateurs de milliers (espaces) et décimales compris. */
+private val NUMBER = Regex("""\d+(?:[\s\u00A0\u202F]\d{3})*(?:[.,]\d+)?""")
+
+/** Montant d'une perte : signe moins devant un chiffre ; montant nul, fourchette (« 2 à 4 »), déjà signé ou rédigé (« plus de… ») laissé tel quel. */
+fun lossAmount(m: String): String {
+    val t = m.trim()
+    return when {
+        ZERO_AMOUNT.containsMatchIn(t) -> t.trimStart('-', '−').trimStart()
+        NUMBER.findAll(t).count() > 1 -> t
+        t.startsWith("-") -> "−" + t.drop(1).trimStart()
+        t.firstOrNull()?.isDigit() == true -> "−$t"
+        else -> t
+    }
+}
+
+/** Ligne d'un poste de balance : ce qui est retiré, qui y perd, le montant signé comme une perte. */
+data class BalanceRow(val quoi: String, val qui: String?, val montant: String?)
+
+fun balanceRows(postes: List<Poste>): List<BalanceRow> = postes.map { p ->
+    BalanceRow(p.quoi.trim(), p.qui?.trim()?.takeIf { it.isNotEmpty() }, p.montant?.takeIf { it.isNotBlank() }?.let(::lossAmount))
 }
 
 private val IND_LABELS = mapOf(
@@ -163,6 +198,9 @@ fun openUrl(context: Context, url: String?) {
 // ---------------------------------------------------------------- composants
 
 private val Mono = FontFamily.Monospace
+
+/** Interligne rogné des deux côtés : le glyphe se centre optiquement dans sa boîte. */
+private val Tight = TextStyle(lineHeightStyle = LineHeightStyle(LineHeightStyle.Alignment.Center, LineHeightStyle.Trim.Both))
 private fun Modifier.outline(color: Color, width: Float = 1f, shape: Shape = CircleShape) = border(BorderStroke(width.dp, color), shape)
 
 @Composable
@@ -170,12 +208,25 @@ fun Kicker(text: String, modifier: Modifier = Modifier, color: Color = MaterialT
     Text(text.uppercase(), modifier, color = color, fontFamily = Mono, fontWeight = FontWeight.SemiBold, fontSize = 11.sp, letterSpacing = 0.09.em)
 }
 
+/** Titre (heading) suivi de son aide en infobulle ([info] nul : titre seul). */
 @Composable
-fun SectionHeader(kicker: String, title: String, lead: String? = null, modifier: Modifier = Modifier) {
+fun TitleInfo(title: String, info: String?, modifier: Modifier = Modifier, style: TextStyle = MaterialTheme.typography.titleLarge) {
+    Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(title, Modifier.weight(1f, fill = false).semantics { heading() }, style = style, fontWeight = FontWeight.Bold)
+        if (info != null) InfoIcon(info, "À propos : $title")
+    }
+}
+
+/**
+ * En-tête de section : sur-titre, titre. [info] : mode d'emploi, en infobulle. [note] : ce qui doit rester lu
+ * (unité, définition, convention de signe, légende, provenance, limite de portée), une ligne discrète.
+ */
+@Composable
+fun SectionHeader(kicker: String, title: String, info: String? = null, modifier: Modifier = Modifier, note: String? = null) {
     Column(modifier.fillMaxWidth()) {
         Kicker(kicker)
-        Text(title, Modifier.padding(top = 4.dp).semantics { heading() }, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-        if (lead != null) RichText(lead, Modifier.padding(top = 6.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+        TitleInfo(title, info, Modifier.padding(top = 4.dp).heightIn(min = 32.dp))
+        if (note != null) Text(frTypo(note), Modifier.padding(top = 2.dp), fontSize = 13.sp, lineHeight = 18.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -230,25 +281,23 @@ private fun IndTag(n: Int, text: String, modifier: Modifier, shape: Shape) {
     }
     Row(
         modifier.clip(shape).background(look[0]!!).let { m -> look[4]?.let { m.outline(it, if (n == 4) 1.5f else 1f, shape) } ?: m }
-            .heightIn(min = 28.dp).padding(start = 6.dp, end = 9.dp, top = 5.dp, bottom = 5.dp),
+            .heightIn(min = 28.dp).padding(horizontal = 7.dp, vertical = 5.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Box(Modifier.size(17.dp).clip(CircleShape).background(look[2]!!), contentAlignment = Alignment.Center) {
-            Text(if (n > 0) n.toString() else "?", color = look[3]!!, fontFamily = Mono, fontWeight = FontWeight.Bold, fontSize = 10.sp)
+            Text(if (n > 0) n.toString() else "?", color = look[3]!!, style = Tight, fontFamily = Mono, fontWeight = FontWeight.Bold, fontSize = 10.sp, lineHeight = 10.sp)
         }
-        Text(text, color = look[1]!!, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(text, color = look[1]!!, fontSize = 12.sp, lineHeight = 16.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
 /** Étiquette d'évaluateur : pastille du niveau d'indépendance (1 à 4) et nom court ; ouvre sa fiche. */
 @Composable
-fun EvaluatorTag(ev: Evaluator, onOpen: (String) -> Unit, modifier: Modifier = Modifier, shape: Shape = RoundedCornerShape(8.dp)) {
-    IndTag(
-        indLevel(ev), evShortName(ev),
-        modifier.minimumInteractiveComponentSize().clickable(role = Role.Button) { onOpen(ev.id) }.semantics(mergeDescendants = true) { contentDescription = evA11yLabel(ev) },
-        shape,
-    )
-}
+fun EvaluatorTag(ev: Evaluator, onOpen: (String) -> Unit, modifier: Modifier = Modifier, shape: Shape = RoundedCornerShape(8.dp)) =
+    IndTag(indLevel(ev), evShortName(ev), modifier.minimumInteractiveComponentSize().opensEvaluator(ev, onOpen), shape)
+
+private fun Modifier.opensEvaluator(ev: Evaluator, onOpen: (String) -> Unit) =
+    clickable(role = Role.Button) { onOpen(ev.id) }.semantics(mergeDescendants = true) { contentDescription = evA11yLabel(ev) }
 
 /** Légende : l'étiquette d'un niveau, sans action. */
 @Composable
@@ -266,10 +315,11 @@ fun SourceButton(src: SourceRef, data: PolData, onOpenEv: (String) -> Unit, modi
     val url = safeHttps(src.url)
     val name = sourceName(src)
     val shape = if (ev != null) RoundedCornerShape(0.dp, 8.dp, 8.dp, 0.dp) else RoundedCornerShape(8.dp)
-    Row(modifier) {
-        if (ev != null) EvaluatorTag(ev, onOpenEv, Modifier, RoundedCornerShape(8.dp, 0.dp, 0.dp, 8.dp))
+    // Les deux parties partagent la hauteur de la plus haute ; la cible tactile de 48 dp est réservée autour de l'ensemble.
+    Row(modifier.minimumInteractiveComponentSize().height(IntrinsicSize.Min)) {
+        if (ev != null) IndTag(indLevel(ev), evShortName(ev), Modifier.fillMaxHeight().opensEvaluator(ev, onOpenEv), RoundedCornerShape(8.dp, 0.dp, 0.dp, 8.dp))
         Row(
-            Modifier.let { if (url != null) it.minimumInteractiveComponentSize() else it }.clip(shape).background(scheme.surface).outline(scheme.outlineVariant, 1f, shape)
+            Modifier.fillMaxHeight().clip(shape).background(scheme.surface).outline(scheme.outlineVariant, 1f, shape)
                 .let { if (url != null) it.clickable(role = Role.Button) { openUrl(context, url) } else it }
                 .semantics { if (url != null) contentDescription = "Voir la source : $name (s'ouvre dans le navigateur)" }
                 .heightIn(min = 28.dp).padding(horizontal = 9.dp, vertical = 5.dp),
@@ -361,51 +411,53 @@ fun PromiseChip(v: String, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun PostesList(postes: List<Poste>, color: Color) {
-    val scheme = MaterialTheme.colorScheme
-    Column(Modifier.padding(top = 8.dp)) {
-        postes.forEach { p ->
-            Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+private fun PostesList(postes: List<Poste>) {
+    val loss = PolColors.current.fragile
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    Column(Modifier.padding(top = 4.dp)) {
+        balanceRows(postes).forEach { r ->
+            Row(Modifier.fillMaxWidth().padding(vertical = 5.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Column(Modifier.weight(1f)) {
-                    Text(p.quoi, fontSize = 13.sp, lineHeight = 17.sp)
-                    if (!p.qui.isNullOrBlank()) Text("Y perd : ${p.qui}", fontSize = 12.sp, color = scheme.onSurfaceVariant, lineHeight = 16.sp)
+                    Text(frTypo(r.quoi), fontSize = 13.5.sp, lineHeight = 18.sp)
+                    if (r.qui != null) Text("Y perd : ${r.qui}", fontSize = 12.sp, color = muted, lineHeight = 16.sp)
                 }
-                if (!p.montant.isNullOrBlank()) Text(p.montant, Modifier.widthIn(max = 160.dp), color = color, fontFamily = Mono, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                if (r.montant != null) Text(r.montant, Modifier.widthIn(max = 150.dp), color = loss, fontFamily = Mono, fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp, lineHeight = 17.sp)
             }
         }
     }
 }
 
+/** Ce que montre une balance, dit une fois par section (infobulle). */
+const val BALANCE_INFO = "Pour chaque chiffre : ce qu'il coûte et qui paie, ou à défaut ce qu'il laisse dehors. Touchez la carte pour le détail et l'avis signé des évaluateurs."
+
+/** En-tête de section des balances : dit une seule fois ce qu'elles montrent ; [info] précise en infobulle. */
+@Composable
+fun BalanceHeader(title: String, info: String = BALANCE_INFO, modifier: Modifier = Modifier) =
+    TitleInfo(title, info, modifier, MaterialTheme.typography.titleSmall)
+
+/** Rend tout un bloc (la carte qui porte une balance) ouvrable vers le détail [BalanceSheet]. */
+fun Modifier.opensBalance(title: String, onOpen: () -> Unit) =
+    clickable(onClickLabel = "Voir toute la balance : $title", role = Role.Button, onClick = onOpen)
+
 /**
- * Balance d'un chiffre, visible sans toucher : verdict, puis contrepartie dans un encadré à liseré
- * (phrase courte et postes si publiés, sinon texte long coupé à cinq lignes). [onOpen] ouvre [BalanceSheet].
+ * Balance d'un chiffre, à plat dans sa carte : verdict, phrase courte et postes (sinon texte long coupé
+ * à cinq lignes). Le libellé de ce que montre la balance vient une fois, en tête de section ([BalanceHeader]).
+ * Le détail s'ouvre en touchant la carte : [opensBalance] sur la carte parente ; [onOpen] rend ce bloc
+ * seul touchable, faute de carte (feuille, liste).
  */
 @Composable
-fun BalanceBlock(lecture: Lecture, title: String, who: String?, onOpen: () -> Unit, modifier: Modifier = Modifier) {
-    val pc = PolColors.current
-    val scheme = MaterialTheme.colorScheme
+fun BalanceBlock(lecture: Lecture, title: String, onOpen: (() -> Unit)?, modifier: Modifier = Modifier) {
     val s = balanceSummary(lecture)
-    Column(modifier.fillMaxWidth().padding(top = 12.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            Kicker("La balance")
-            if (lecture.verdict in PROMISES) PromiseChip(lecture.verdict)
+    Column(modifier.fillMaxWidth().let { if (onOpen != null) it.opensBalance(title, onOpen) else it }.padding(top = 10.dp)) {
+        if (lecture.verdict in PROMISES) PromiseChip(lecture.verdict, Modifier.padding(bottom = 6.dp))
+        // Sans contrepartie publiée, le texte est l'angle mort : le dire, pour ne pas le lire comme un sacrifice.
+        if (s.angleMort && s.long.isNotEmpty()) Kicker("Ce que le chiffre laisse dehors", Modifier.padding(bottom = 2.dp))
+        if (s.short != null) {
+            Text(frTypo(s.short), fontSize = 15.sp, lineHeight = 21.sp, fontWeight = FontWeight.SemiBold)
+            if (s.postes.isNotEmpty()) PostesList(s.postes)
+        } else if (s.long.isNotEmpty()) {
+            Text(frTypo(s.long), maxLines = 5, overflow = TextOverflow.Ellipsis, fontSize = 14.sp, lineHeight = 20.sp)
         }
-        if (s.short != null || s.long.isNotEmpty()) {
-            Column(
-                Modifier.padding(top = 8.dp).fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(mix(scheme.surface, pc.high, 0.10f))
-                    .padding(start = 16.dp, end = 12.dp, top = 10.dp, bottom = 10.dp),
-            ) {
-                Kicker(if (s.angleMort) "Ce que le chiffre laisse dehors" else "Ce que ça coûte, qui paie", color = pc.high)
-                Spacer(Modifier.height(4.dp))
-                if (s.short != null) {
-                    Text(frTypo(s.short), fontSize = 16.5.sp, lineHeight = 22.sp, fontWeight = FontWeight.SemiBold)
-                    if (s.postes.isNotEmpty()) PostesList(s.postes, pc.high)
-                } else {
-                    Text(frTypo(s.long), maxLines = 5, overflow = TextOverflow.Ellipsis, fontSize = 14.sp, lineHeight = 20.sp)
-                }
-            }
-        }
-        TextButton(onOpen, Modifier.padding(top = 4.dp).semantics { contentDescription = "Toute la balance : $title" }) { Text("Toute la balance") }
     }
 }
 
@@ -421,7 +473,6 @@ private fun Labeled(label: String, text: String) {
 /** Feuille complète d'une balance : verdict et sa définition, contrepartie entière, mesure, angle mort, ordre de grandeur, avis signés. */
 @Composable
 fun BalanceSheet(lecture: Lecture, title: String, who: String?, data: PolData, onOpenEv: (String) -> Unit, onDismiss: () -> Unit) {
-    val pc = PolColors.current
     val context = LocalContext.current
     val scheme = MaterialTheme.colorScheme
     PolSheet(full = true, onDismiss = onDismiss) {
@@ -435,7 +486,7 @@ fun BalanceSheet(lecture: Lecture, title: String, who: String?, data: PolData, o
             }
             val s = balanceSummary(lecture)
             if (!s.angleMort) Labeled("Ce que ça coûte, qui paie", s.long.ifEmpty { s.short.orEmpty() })
-            if (s.short != null && s.postes.isNotEmpty()) PostesList(s.postes, pc.high)
+            if (s.short != null && s.postes.isNotEmpty()) PostesList(s.postes)
             Labeled("Ce que le chiffre mesure", lecture.mesure)
             Labeled("Ce qu'il laisse dehors", lecture.angle_mort.ifBlank { lecture.angle_mort_court })
             Labeled("Ordre de grandeur", lecture.ordre_grandeur)
@@ -452,6 +503,38 @@ fun BalanceSheet(lecture: Lecture, title: String, who: String?, data: PolData, o
                     }
                 }
             }
+        }
+    }
+}
+
+/** Bouton icône « plein écran » : ouvre la carte en mode « À table » ; son libellé en infobulle à l'appui long. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun FullscreenButton(onClick: () -> Unit, modifier: Modifier = Modifier, contentDescription: String = "Afficher en grand, à table") {
+    TooltipBox(
+        positionProvider = TooltipDefaults.rememberTooltipPositionProvider(TooltipAnchorPosition.Above),
+        tooltip = { PlainTooltip { Text(contentDescription) } },
+        state = rememberTooltipState(),
+        modifier = modifier,
+    ) {
+        IconButton(onClick) { Icon(KairosIcons.Fullscreen, contentDescription, tint = MaterialTheme.colorScheme.onSurfaceVariant) }
+    }
+}
+
+/** Petite icône « i » : [text] en infobulle, au toucher comme à l'appui long ; cible de 48 dp. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun InfoIcon(text: String, contentDescription: String, modifier: Modifier = Modifier) {
+    val state = rememberTooltipState(isPersistent = true)
+    val scope = rememberCoroutineScope()
+    TooltipBox(
+        positionProvider = TooltipDefaults.rememberTooltipPositionProvider(TooltipAnchorPosition.Above),
+        tooltip = { PlainTooltip { Text(frTypo(text)) } },
+        state = state,
+        modifier = modifier,
+    ) {
+        IconButton({ scope.launch { state.show() } }) {
+            Icon(KairosIcons.Info, contentDescription, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

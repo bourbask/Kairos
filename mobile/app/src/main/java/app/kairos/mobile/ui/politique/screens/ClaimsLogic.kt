@@ -5,6 +5,7 @@ import app.kairos.mobile.ui.politique.kit.TableCard
 import app.kairos.mobile.ui.politique.model.Claim
 import app.kairos.mobile.ui.politique.model.PolData
 import app.kairos.mobile.ui.politique.model.sourcesOf
+import app.kairos.mobile.ui.politique.model.alphabetical
 import java.text.Collator
 import java.util.Locale
 
@@ -42,7 +43,7 @@ fun phrasesState(data: PolData): PhrasesState {
     val claims = claimsOf(data)
     val fr = Collator.getInstance(Locale.FRENCH)
     return PhrasesState(
-        claims, campsOf(data, claims),
+        claims, campsOf(data, claims).alphabetical { it },
         claims.map { it.theme }.filter { it.isNotBlank() }.distinct().sortedWith(fr),
         VERDICT_ORDER.filter { v -> claims.any { it.v == v } },
     )
