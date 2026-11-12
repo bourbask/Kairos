@@ -3,7 +3,8 @@ package app.kairos.mobile.ui.politique.model
 import app.kairos.mobile.data.ApiError
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -85,11 +86,11 @@ private suspend fun loadFile(id: String, fetch: suspend (String, Int) -> PolPage
     throw PolLoadException("Fichier modifié pendant la lecture : $id")
 }
 
-/** Charge les fichiers en parallèle ; un fichier inconnu du module est simplement absent. */
+/** Charge les fichiers en parallèle ; un fichier inconnu du module est simplement absent. Assemblage et décodage hors du fil principal. */
 suspend fun loadPolData(
     fetch: suspend (id: String, page: Int) -> PolPage,
     files: List<String> = POL_FILES,
-): PolData = coroutineScope {
+): PolData = withContext(Dispatchers.Default) {
     val loaded = files.map { id -> async { loadFile(id, fetch)?.let { id to it } } }.awaitAll()
     PolData(loaded.filterNotNull().toMap())
 }
