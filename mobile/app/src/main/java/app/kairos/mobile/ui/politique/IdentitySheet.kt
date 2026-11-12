@@ -99,6 +99,11 @@ import app.kairos.mobile.ui.politique.screens.procedureStage
 import app.kairos.mobile.ui.politique.screens.stageTone
 import app.kairos.mobile.ui.politique.screens.DvItem
 import app.kairos.mobile.ui.politique.screens.claimsOf
+import app.kairos.mobile.ui.politique.screens.NO_VALUE
+import app.kairos.mobile.ui.politique.screens.fmtNum
+import app.kairos.mobile.ui.politique.screens.fmtSigned
+import app.kairos.mobile.ui.politique.screens.refDebt
+import app.kairos.mobile.ui.politique.screens.sideOf
 import app.kairos.mobile.ui.politique.screens.dvCount
 import app.kairos.mobile.ui.politique.screens.dvFor
 import app.kairos.mobile.ui.politique.screens.NO_PUBLIC_STATEMENT
@@ -110,9 +115,6 @@ import app.kairos.mobile.ui.politique.model.PolData
 import app.kairos.mobile.ui.politique.model.SourceRef
 import app.kairos.mobile.ui.politique.model.sourcesOf
 import kotlinx.coroutines.launch
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.doubleOrNull
-import java.util.Locale
 
 data class Stance(val pos: String, val text: String)
 
@@ -181,17 +183,6 @@ fun ownPartis(l: IdentityLinks, data: PolData, id: String) = l.partis.own(data, 
 
 data class Stat(val label: String, val value: String, val sub: String)
 
-private const val MINUS = "−"
-
-fun fmt(v: Double, d: Int = 1): String = String.format(Locale.FRENCH, "%.${d}f", v).replace('-', '−')
-
-/** Signe explicite ; [d] null : entier groupé. */
-fun signed(v: Double, d: Int? = null): String {
-    val sign = if (v > 0) "+" else if (v < 0) MINUS else ""
-    val abs = kotlin.math.abs(v)
-    return sign + if (d == null) String.format(Locale.FRENCH, "%,d", Math.round(abs)) else fmt(abs, d)
-}
-
 private val FRAGILE = setOf("fragile", "faux", "non-documente")
 
 /** Jusqu'à quatre chiffres clés, chacun seulement si la donnée existe. */
@@ -199,9 +190,18 @@ fun identityStats(data: PolData, id: String, l: IdentityLinks = identityLinks(da
     val x = data.byId(id) ?: return emptyList()
     val out = mutableListOf<Stat>()
     ownProgram(l, data, id)?.let { p ->
-        val ref = data.file("budgets")?.get("REF")?.let { (it as? JsonPrimitive)?.doubleOrNull }
-        p.debt?.let { out += Stat("Dette à l'horizon", fmt(it) + " %", if (ref == null) "part du PIB" else if (it < ref) "sous la référence" else "au-dessus de la référence") }
-        p.hh?.let { out += Stat("Par ménage", signed(it) + " €", "par an, en moyenne") }
+        // Même référence et même comparaison que l'écran Budgets.
+        val ref = data.refDebt(data.decode<Program>("budgets", "PROGRAMS"))
+        p.debt?.let {
+            val side = ref?.let { r -> sideOf(it, r) }
+            out += Stat("Dette à l'horizon", fmtNum(it, 1) + " %", when {
+                side == null -> "part du PIB"
+                side < 0 -> "sous la référence"
+                side > 0 -> "au-dessus de la référence"
+                else -> "au niveau de la référence"
+            })
+        }
+        p.hh?.let { out += Stat("Par ménage", fmtSigned(it) + " €", "par an, en moyenne") }
     }
     ownAide(l, data, id)?.let { a ->
         a.v?.let { out += Stat("Aide publique", moneyLabel(it), if (data.idsIn(a.l).any { o -> o != id }) "bloc « ${shortLabel(a.l)} »" else "aide annuelle") }
@@ -394,7 +394,7 @@ private fun Body(text: String, modifier: Modifier = Modifier) = RichText(text, m
 @Composable
 private fun Title(text: String) = Text(frTypo(text), Modifier.padding(top = 6.dp), fontWeight = FontWeight.Bold, fontSize = 15.5.sp)
 
-private fun Double?.or(d: Int = 1, unit: String): String = this?.let { fmt(it, d) + unit } ?: "non trouvé"
+private fun Double?.or(d: Int = 1, unit: String): String = this?.let { fmtNum(it, d) + unit } ?: NO_VALUE
 
 /** Sections non vides, dans l'ordre de la fiche. */
 @Composable
@@ -412,8 +412,8 @@ private fun sections(data: PolData, id: String, l: IdentityLinks, nav: PolNaviga
                 KeyValue(
                     listOf(
                         "Dette publique" to it.debt.or(unit = " %"), "Déficit public" to it.deficit.or(unit = " %"),
-                        "Effet net par an" to (it.net?.let { v -> signed(v, 1) + " Md€" } ?: "non trouvé"),
-                        "Par ménage et par an" to (it.hh?.let { v -> signed(v) + " €" } ?: "non trouvé"),
+                        "Effet net par an" to (it.net?.let { v -> fmtSigned(v, 1) + " Md€" } ?: NO_VALUE),
+                        "Par ménage et par an" to (it.hh?.let { v -> fmtSigned(v) + " €" } ?: NO_VALUE),
                     ),
                 )
                 balance(it.lecture, "${it.who} : programme", it.who)?.invoke()

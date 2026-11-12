@@ -78,6 +78,18 @@ class PolNavTest {
     }
 
     @Test
+    fun identity_debt_uses_shared_reference() {
+        val ids = obj("""{"$LIST_KEY": [{"id":"a","nom":"Candidat A","parti":"Parti Bleu"}]}""")
+        fun sub(budgets: String) = identityStats(PolData(mapOf("identites" to ids, "budgets" to obj(budgets))), "a").single { it.label == "Dette à l'horizon" }.sub
+        // Sans référence publiée : la ligne de référence des programmes, comme l'écran Budgets.
+        assertEquals("sous la référence", sub("""{"PROGRAMS":[{"who":"Candidat A","debt":98},{"who":"Réf.","ref":true,"debt":100}]}"""))
+        // Égalité : ni dessus ni dessous.
+        assertEquals("au niveau de la référence", sub("""{"REF":98,"PROGRAMS":[{"who":"Candidat A","debt":98}]}"""))
+        assertEquals("au-dessus de la référence", sub("""{"REF":90,"PROGRAMS":[{"who":"Candidat A","debt":98}]}"""))
+        assertEquals("part du PIB", sub("""{"PROGRAMS":[{"who":"Candidat A","debt":98}]}"""))
+    }
+
+    @Test
     fun aide_says_bloc_only_when_label_is_shared() {
         val ids = obj(
             """{"$LIST_KEY": [

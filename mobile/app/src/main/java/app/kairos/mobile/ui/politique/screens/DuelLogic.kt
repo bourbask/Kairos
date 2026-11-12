@@ -1,7 +1,6 @@
 package app.kairos.mobile.ui.politique.screens
 
 import app.kairos.mobile.ui.politique.kit.sourceName
-import app.kairos.mobile.ui.politique.fmt
 import app.kairos.mobile.ui.politique.kit.TableCard
 import app.kairos.mobile.ui.politique.model.IdKind
 import app.kairos.mobile.ui.politique.model.Lecture
@@ -10,7 +9,6 @@ import app.kairos.mobile.ui.politique.model.PolJson
 import app.kairos.mobile.ui.politique.model.SourceRef
 import app.kairos.mobile.ui.politique.model.sourcesOf
 import app.kairos.mobile.ui.politique.own
-import app.kairos.mobile.ui.politique.signed
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -234,10 +232,10 @@ private val IND_HELP = mapOf(
 
 /** Valeur dans son unité : pourcentage, montant signé, ou nombre suivi de l'unité. */
 fun fmtUnit(v: Double, unit: String): String = when {
-    "%" in unit -> fmt(v, 1)
-    "Md€" in unit -> signed(v, 1)
-    "€" in unit -> signed(v)
-    else -> fmt(v, 1)
+    "%" in unit -> fmtNum(v, 1)
+    "Md€" in unit -> fmtSigned(v, 1)
+    "€" in unit -> fmtSigned(v)
+    else -> fmtNum(v, 1)
 } + if (unit.isBlank()) "" else " " + unit.trim()
 
 private fun PolData.indicatorRounds(a: String, b: String): List<BarRound> {

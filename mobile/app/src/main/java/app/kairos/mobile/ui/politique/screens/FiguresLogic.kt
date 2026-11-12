@@ -127,7 +127,7 @@ private fun PolData.bars(file: String, path: String) = decode<BilanRow>(file, pa
 fun nameOf(who: String) = who.substringBefore(" · ")
 
 /** Dette de référence : valeur publiée, sinon celle de la ligne de référence des programmes. */
-private fun PolData.refDebt(programs: List<Program>): Double? = one("budgets", "REF", Double.serializer()) ?: programs.firstOrNull { it.ref }?.debt
+fun PolData.refDebt(programs: List<Program>): Double? = one("budgets", "REF", Double.serializer()) ?: programs.firstOrNull { it.ref }?.debt
 
 /** Position d'une dette face à la référence : -1 dessous, 0 égale, 1 dessus. */
 fun sideOf(debt: Double, ref: Double): Int = debt.compareTo(ref)
