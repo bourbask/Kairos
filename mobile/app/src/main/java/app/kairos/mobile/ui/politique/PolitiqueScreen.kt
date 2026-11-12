@@ -89,6 +89,9 @@ fun PolitiqueScreen(
     }
 
     LaunchedEffect(reload) {
+        // Les feuilles ouvertes portent des données qui vont être remplacées.
+        nav = PolBackStack(nav.routes)
+        table = null
         load = PolLoad.Loading
         load = try {
             PolLoad.Ready(

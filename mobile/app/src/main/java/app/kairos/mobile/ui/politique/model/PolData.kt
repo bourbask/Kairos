@@ -33,7 +33,14 @@ class PolData(private val files: Map<String, JsonObject>) {
     fun file(id: String): JsonObject? = files[id]
 
     /** Éléments d'une liste (`path` : clés séparées par des points, `""` pour un fichier-liste) ; invalides ignorés un à un. */
-    fun <T> decode(file: String, path: String, s: KSerializer<T>): List<T> {
+    private val decoded = java.util.concurrent.ConcurrentHashMap<Triple<String, String, KSerializer<*>>, List<*>>()
+
+    /** Décodé une fois par (fichier, chemin, sérialiseur) : les écrans relisent les mêmes listes à chaque affichage. */
+    @Suppress("UNCHECKED_CAST")
+    fun <T> decode(file: String, path: String, s: KSerializer<T>): List<T> =
+        decoded.computeIfAbsent(Triple(file, path, s)) { decodeNow(file, path, s) } as List<T>
+
+    private fun <T> decodeNow(file: String, path: String, s: KSerializer<T>): List<T> {
         var cur: Any? = files[file]?.let { if (path.isEmpty()) it[LIST_KEY] else it }
         if (path.isNotEmpty()) for (k in path.split('.')) cur = (cur as? JsonObject)?.get(k)
         return (cur as? JsonArray).orEmpty().mapNotNull { e ->

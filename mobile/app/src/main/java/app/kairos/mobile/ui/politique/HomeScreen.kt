@@ -92,10 +92,12 @@ private fun quizQuote(claims: List<Claim>): String? = claims.firstOrNull { it.q.
 fun HomeScreen(data: PolData, nav: PolNavigator, bottom: Dp) {
     var kind by rememberSaveable { mutableStateOf(IdKind.Personne) }
     // Comptes par identité : calcul complet des rattachements, hors du fil d'affichage.
-    val counts by produceState(emptyMap<String, Int>(), data) {
+    val linked by produceState(emptyMap<String, Int>(), data) {
         value = withContext(Dispatchers.Default) { data.identities.associate { it.id to identityLinks(data, it.id).size } }
     }
     val claims = remember(data) { data.decode<Claim>("affirmations", "CLAIMS") }
+    val bubble = remember(data) { bubbleLine(data) }
+    val counts = remember(data) { RUBRICS.associate { it.id to it.count(data) } }
     LazyVerticalGrid(
         GridCells.Fixed(2),
         Modifier.fillMaxSize(),
@@ -120,7 +122,7 @@ fun HomeScreen(data: PolData, nav: PolNavigator, bottom: Dp) {
             }
         }
         full { DuelHero(data) { nav.go(PolRoute.Duel()) } }
-        full { QuizHero(claims, bubbleLine(data)) { nav.go(PolRoute.Quiz) } }
+        full { QuizHero(claims, bubble) { nav.go(PolRoute.Quiz) } }
 
         full { HeaderRow("Les visages", plural(data.identities.size, "fiche", "fiches")) }
         full {
@@ -136,7 +138,7 @@ fun HomeScreen(data: PolData, nav: PolNavigator, bottom: Dp) {
             } else {
                 val state = rememberLazyListState()
                 LazyRow(state = state, flingBehavior = rememberSnapFlingBehavior(state), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    items(list, key = { it.id }) { x -> IdCard(data, x.id, counts[x.id]) { nav.sheet(PolSheetState.Identity(x.id)) } }
+                    items(list, key = { it.id }) { x -> IdCard(data, x.id, linked[x.id]) { nav.sheet(PolSheetState.Identity(x.id)) } }
                 }
             }
         }
@@ -144,11 +146,11 @@ fun HomeScreen(data: PolData, nav: PolNavigator, bottom: Dp) {
         val tiles = RUBRICS.filter { it.kind != TileKind.Link }
         full { HeaderRow("Rubriques", plural(tiles.size, "entrée", "entrées")) }
         tiles.forEach { t ->
-            item(span = { GridItemSpan(if (t.kind == TileKind.Wide) maxLineSpan else 1) }) { Tile(t, data) { nav.go(PolRoute.Rubric(t.id)) } }
+            item(span = { GridItemSpan(if (t.kind == TileKind.Wide) maxLineSpan else 1) }) { Tile(t, counts[t.id].orEmpty()) { nav.go(PolRoute.Rubric(t.id)) } }
         }
         val links = RUBRICS.filter { it.kind == TileKind.Link }
         full { HeaderRow("Lire entre les lignes", plural(links.size, "entrée", "entrées")) }
-        items(links, span = { GridItemSpan(maxLineSpan) }) { t -> LinkRow(t, data) { nav.go(PolRoute.Rubric(t.id)) } }
+        items(links, span = { GridItemSpan(maxLineSpan) }) { t -> LinkRow(t, counts[t.id].orEmpty()) { nav.go(PolRoute.Rubric(t.id)) } }
         full {
             Text(
                 "Chaque verdict juge l'état des preuves, pas les personnes. Les chiffres provisoires peuvent être révisés.",
@@ -268,13 +270,12 @@ private fun IdCard(data: PolData, id: String, count: Int?, onClick: () -> Unit) 
 }
 
 @Composable
-private fun Tile(t: RubricTile, data: PolData, onClick: () -> Unit) {
+private fun Tile(t: RubricTile, count: String, onClick: () -> Unit) {
     val wide = t.kind == TileKind.Wide
     val bubble = t.id == "bulle"
     val bg = if (bubble) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface
     val ink = if (bubble) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurface
     val muted = if (bubble) ink.copy(alpha = 0.8f) else MaterialTheme.colorScheme.onSurfaceVariant
-    val count = t.count(data)
     Surface(
         onClick,
         Modifier.fillMaxWidth().heightIn(min = if (wide) 0.dp else 132.dp).semantics { contentDescription = "${t.title}. ${t.hook}. $count" },
@@ -290,8 +291,7 @@ private fun Tile(t: RubricTile, data: PolData, onClick: () -> Unit) {
 }
 
 @Composable
-private fun LinkRow(t: RubricTile, data: PolData, onClick: () -> Unit) {
-    val count = t.count(data)
+private fun LinkRow(t: RubricTile, count: String, onClick: () -> Unit) {
     Surface(
         onClick,
         Modifier.fillMaxWidth().semantics { contentDescription = "${t.title}. ${t.hook}. $count" },

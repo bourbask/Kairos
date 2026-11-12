@@ -1,12 +1,15 @@
 package app.kairos.mobile.ui.politique
 
+import app.kairos.mobile.ui.politique.model.Claim
 import app.kairos.mobile.ui.politique.model.LIST_KEY
 import app.kairos.mobile.ui.politique.model.PolData
 import app.kairos.mobile.ui.politique.model.PolJson
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -62,11 +65,11 @@ class PolNavTest {
         assertEquals(listOf("Dette en 2032", "Phrases vérifiées"), a.map { it.label })
         assertEquals("98,5 %", a[0].value)
         assertEquals("sous la référence", a[0].sub)
-        assertEquals("1 solides · 0 fragiles ou faux", a[1].sub)
+        assertEquals("1 solide · 0 fragile ou faux", a[1].sub)
         // Situation nette absente (null) : pas de chiffre ; le parti a sa phrase.
         val p = identityStats(data, "parti-bleu")
         assertEquals(listOf("Phrases vérifiées"), p.map { it.label })
-        assertEquals("0 solides · 1 fragiles ou faux", p[0].sub)
+        assertEquals("0 solide · 1 fragile ou faux", p[0].sub)
         assertTrue(identityStats(data, "inconnu").isEmpty())
         assertTrue(identityStats(PolData(emptyMap()), "a").isEmpty())
         // Rattachements : programme + phrase pour la personne.
@@ -90,6 +93,21 @@ class PolNavTest {
         val fromSheet = PolBackStack().open(PolSheetState.Identity("a")).go(PolRoute.Rubric("dit-vote"))
         assertTrue(fromSheet.sheets.isEmpty())
         assertEquals(PolBackStack(), fromSheet.back())
+    }
+
+    @Test
+    fun same_route_twice_is_not_stacked() {
+        val s = PolBackStack().go(PolRoute.Rubric("votes")).go(PolRoute.Rubric("votes"))
+        assertEquals(listOf<PolRoute>(PolRoute.Rubric("votes")), s.routes)
+        assertEquals(PolRoute.Home, s.back()!!.top)
+    }
+
+    @Test
+    fun decode_is_memoized() {
+        val a = data.decode<Claim>("affirmations", "CLAIMS")
+        assertSame(a, data.decode<Claim>("affirmations", "CLAIMS"))
+        assertEquals(3, a.size)
+        assertEquals("autre sérialiseur, autre liste", 3, data.decode("affirmations", "CLAIMS", JsonObject.serializer()).size)
     }
 
     @Test

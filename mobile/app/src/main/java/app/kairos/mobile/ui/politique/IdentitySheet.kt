@@ -28,7 +28,12 @@ import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.produceState
+import androidx.compose.material3.CircularProgressIndicator
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -205,8 +210,7 @@ fun dvCount(items: List<DvItem>): Pair<Int, Int> {
 }
 
 /** Jusqu'à quatre chiffres clés, chacun seulement si la donnée existe. */
-fun identityStats(data: PolData, id: String): List<Stat> {
-    val l = identityLinks(data, id)
+fun identityStats(data: PolData, id: String, l: IdentityLinks = identityLinks(data, id)): List<Stat> {
     val x = data.byId(id) ?: return emptyList()
     val out = mutableListOf<Stat>()
     ownProgram(l, data, id)?.let { p ->
@@ -219,14 +223,14 @@ fun identityStats(data: PolData, id: String): List<Stat> {
     }
     ownPartis(l, data, id)?.d(3)?.let { out += Stat("Situation nette", signed(it, 1) + " M€", "derniers comptes publiés") }
     if (l.claims.isNotEmpty()) {
-        out += Stat("Phrases vérifiées", l.claims.size.toString(), "${l.claims.count { it.v == "solide" }} solides · ${l.claims.count { it.v in FRAGILE }} fragiles ou faux")
+        out += Stat("Phrases vérifiées", l.claims.size.toString(), plural(l.claims.count { it.v == "solide" }, "solide", "solides") + " · " + plural(l.claims.count { it.v in FRAGILE }, "fragile ou faux", "fragiles ou faux"))
     }
     val (c, t) = dvCount(l.dv)
     if (t > 0) out += Stat("Dit / voté", "$c / $t", "votes conformes à la parole publique")
     if (l.coh.isNotEmpty()) out += Stat("Votes à rebours", l.coh.sumOf { g -> g.items.count { it.firstOrNull() != "coherent" } }.toString(), "écarts relevés")
     if (l.turns.isNotEmpty()) {
         val r = l.turns.count { it.k == "R" }
-        out += Stat("Positions suivies", l.turns.size.toString(), "$r revirement" + if (r > 1) "s" else "")
+        out += Stat("Positions suivies", l.turns.size.toString(), plural(r, "revirement", "revirements"))
     }
     if (l.cases.isNotEmpty()) out += Stat("Procédures", l.cases.size.toString(), "voir l'onglet Justice")
     if (l.matrix.isNotEmpty() && out.size < 4) out += Stat("Bilan sortant", "${l.matrix.count { it.second.pos == "keep" }} / ${l.matrix.size}", "orientations poursuivies")
@@ -261,8 +265,16 @@ fun IdentitySheet(data: PolData, id: String, nav: PolNavigator, onDismiss: () ->
             EmptyState("Fiche introuvable", "Cette identité n'existe plus dans les données. Revenez à l'accueil.", Modifier.padding(16.dp), "Fermer" to onDismiss)
             return@PolSheet
         }
-        val links = remember(data, id) { identityLinks(data, id) }
-        val stats = remember(data, id) { identityStats(data, id) }
+        // Rattachements : parcours de tous les fichiers, hors du fil d'affichage.
+        val computed by produceState<Pair<IdentityLinks, List<Stat>>?>(null, data, id) {
+            value = withContext(Dispatchers.Default) { identityLinks(data, id).let { it to identityStats(data, id, it) } }
+        }
+        val (links, stats) = computed ?: run {
+            Box(Modifier.fillMaxWidth().padding(vertical = 48.dp), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(Modifier.semantics { contentDescription = "Chargement de la fiche" })
+            }
+            return@PolSheet
+        }
         val sections = sections(data, id, links, nav)
         val kind = data.kindOf(id)
         val members = data.identities.filter { it.id != id && data.kindOf(it.id) == IdKind.Personne && data.partyOf(it.id) == id }
@@ -298,7 +310,7 @@ fun IdentitySheet(data: PolData, id: String, nav: PolNavigator, onDismiss: () ->
                         (if (members.isNotEmpty()) " ; les données sont rattachées à la fiche de sa personnalité ci-dessus" else "") +
                         ". La fiche se remplira dès qu'un programme, un vote ou une affaire y sera rattaché.",
                     Modifier.padding(16.dp),
-                    "Revenir aux rubriques" to onDismiss,
+                    "Fermer" to onDismiss,
                 )
                 return@Column
             }

@@ -38,7 +38,12 @@ interface PolNavigator {
 data class PolBackStack(val routes: List<PolRoute> = emptyList(), val sheets: List<PolSheetState> = emptyList()) {
     val top: PolRoute get() = routes.lastOrNull() ?: PolRoute.Home
 
-    fun go(r: PolRoute): PolBackStack = if (r == PolRoute.Home) PolBackStack() else PolBackStack(routes + r)
+    /** Même vue qu'au sommet (double appui) : rien n'est empilé. */
+    fun go(r: PolRoute): PolBackStack = when (r) {
+        PolRoute.Home -> PolBackStack()
+        top -> PolBackStack(routes)
+        else -> PolBackStack(routes + r)
+    }
 
     fun open(s: PolSheetState): PolBackStack = copy(sheets = sheets + s)
 
@@ -66,16 +71,13 @@ enum class TileKind { Tile, Wide, Link }
 /** Entrée de l'accueil vers une rubrique ; [count] : compte lisible tiré des données. */
 class RubricTile(val id: String, val title: String, val hook: String, val kind: TileKind = TileKind.Tile, val count: (PolData) -> String)
 
-/** « 1 scrutin », « 3 scrutins » ; zéro : rien de publié. */
-fun plural(n: Int, one: String, many: String): String = when (n) {
-    0 -> "aucune donnée"
-    1 -> "1 $one"
-    else -> "$n $many"
-}
+/** « 0 scrutin », « 1 scrutin », « 3 scrutins ». */
+fun plural(n: Int, one: String, many: String): String = "$n ${if (n > 1) many else one}"
 
 private fun PolData.size(file: String, path: String): Int = decode(file, path, JsonObject.serializer()).size
 
-private fun Int.or(one: String, many: String) = plural(this, one, many)
+/** Compte d'une tuile ; zéro : rien de publié. */
+private fun Int.or(one: String, many: String) = if (this == 0) "aucune donnée" else plural(this, one, many)
 
 /** Thèmes et camps des phrases vérifiées, pour « Hors de ma bulle » et le quiz. */
 fun bubbleLine(data: PolData): String {
