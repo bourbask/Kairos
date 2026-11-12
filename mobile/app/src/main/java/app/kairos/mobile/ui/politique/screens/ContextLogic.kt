@@ -81,16 +81,20 @@ fun parseDay(s: String): LocalDate? = DAY.find(s)?.destructured?.let { (d, m, y)
 
 private val KEY_EVENT = Regex("\\btour\\b", RegexOption.IGNORE_CASE)
 
-/** Chronologique ; sans jour exact, la date reste telle quelle et l'élément passe après les datés. « Dans N jours » seulement à venir. */
-fun agendaOf(data: PolData): List<AgendaItem> {
-    val today = data.verifiedOn?.let { runCatching { LocalDate.parse(it.trim()) }.getOrNull() }
-    return data.rows("probite", "AGENDA").filter { it.s(1).isNotBlank() }
+/** Chronologique ; sans jour exact, la date reste telle quelle et l'élément passe après les datés. Écart compté depuis [today]. */
+fun agendaOf(data: PolData, today: LocalDate): List<AgendaItem> =
+    data.rows("probite", "AGENDA").filter { it.s(1).isNotBlank() }
         .map { r -> Triple(r, parseDay(r.s(0)), r.s(1)) }
         .sortedBy { it.second ?: LocalDate.MAX }
         .map { (r, day, text) ->
-            val days = if (today != null && day != null) ChronoUnit.DAYS.between(today, day).toInt().takeIf { it >= 0 } else null
-            AgendaItem(r.s(0), text, days, KEY_EVENT.containsMatchIn(text))
+            AgendaItem(r.s(0), text, day?.let { ChronoUnit.DAYS.between(today, it).toInt() }, KEY_EVENT.containsMatchIn(text))
         }
+
+/** Écart en jours lu à la française : à venir, aujourd'hui ou passé. */
+fun agendaWhen(days: Int): String = when {
+    days > 0 -> "dans ${frCount(days, "jour", "jours")}"
+    days < 0 -> "il y a ${frCount(-days, "jour", "jours")}"
+    else -> "aujourd'hui"
 }
 
 // ---------- Argent ----------

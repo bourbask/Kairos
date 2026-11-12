@@ -6,6 +6,7 @@ import app.kairos.mobile.ui.politique.screens.*
 import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.*
 import org.junit.Test
+import java.time.LocalDate
 
 class ContextTest {
     private fun file(s: String) = PolJson.parseToJsonElement(s).jsonObject
@@ -42,7 +43,7 @@ class ContextTest {
 
     @Test fun context_states_survive_empty_and_wrong_types() {
         val empty = PolData(emptyMap())
-        assertTrue(affairesOf(empty).isEmpty() && agendaOf(empty).isEmpty() && lobbyOf(empty).isEmpty() && financingOf(empty).isEmpty())
+        assertTrue(affairesOf(empty).isEmpty() && agendaOf(empty, LocalDate.now()).isEmpty() && lobbyOf(empty).isEmpty() && financingOf(empty).isEmpty())
         assertTrue(partisOf(empty).isEmpty() && campagnesOf(empty).isEmpty() && aideOf(empty).rows.isEmpty())
         val m = mediasState(empty)
         assertTrue(m.owners.isEmpty() && m.unsellable.isEmpty() && m.audience.rows.isEmpty() && m.reg.isEmpty() && m.studies.isEmpty() && m.polls.isEmpty())
@@ -52,7 +53,7 @@ class ContextTest {
             "argent" to """{"AIDE":3,"PARTIS":7,"C22":{"a":1},"FIN":[null]}""",
             "medias" to """{"OWNERS":"x","PROTECTED":[1],"AUD":{"rows":"x","max":"y"},"REG":[1,["d"]],"STUDIES":3,"POLLS":[[null,2,3],{"a":1}]}""",
         )
-        assertTrue(affairesOf(bad).isEmpty() && agendaOf(bad).isEmpty() && lobbyOf(bad).isEmpty() && financingOf(bad).isEmpty())
+        assertTrue(affairesOf(bad).isEmpty() && agendaOf(bad, LocalDate.now()).isEmpty() && lobbyOf(bad).isEmpty() && financingOf(bad).isEmpty())
         assertTrue(partisOf(bad).isEmpty() && campagnesOf(bad).isEmpty() && aideOf(bad).rows.isEmpty())
         val mb = mediasState(bad)
         assertTrue(mb.owners.isEmpty() && mb.unsellable.isEmpty() && mb.audience.rows.isEmpty() && mb.reg.isEmpty() && mb.studies.isEmpty() && mb.polls.isEmpty())
@@ -71,11 +72,14 @@ class ContextTest {
             "meta" to """{"verifie_le":"2026-11-12"}""",
             "probite" to """{"AGENDA":[["18/04/2027","Premier tour de l'élection."],["Avant avril 2027","Décision attendue."],["30/11/2026","Arrêt d'appel."],["01/11/2026","Passé."],["x",""]]}""",
         )
-        val a = agendaOf(d)
+        val a = agendaOf(d, LocalDate.of(2026, 11, 12))
         assertEquals(listOf("01/11/2026", "30/11/2026", "18/04/2027", "Avant avril 2027"), a.map { it.date })
-        assertNull(a[0].inDays); assertEquals(18, a[1].inDays); assertNull(a[3].inDays)
+        assertEquals(-11, a[0].inDays); assertEquals(18, a[1].inDays); assertNull(a[3].inDays)
         assertTrue(a[2].key); assertFalse(a[1].key)
-        assertNull(agendaOf(data("probite" to """{"AGENDA":[["30/11/2026","Arrêt."]]}""")).single().inDays)
+        // Compté depuis le jour même, pas depuis la date de vérification : un événement passé ne revient jamais « à venir ».
+        val later = agendaOf(data("probite" to """{"AGENDA":[["30/11/2026","Arrêt."]]}"""), LocalDate.of(2026, 12, 3)).single()
+        assertEquals(-3, later.inDays); assertEquals("il y a 3 jours", agendaWhen(later.inDays!!))
+        assertEquals("aujourd'hui", agendaWhen(0)); assertEquals("dans 1 jour", agendaWhen(1)); assertEquals("il y a 1 jour", agendaWhen(-1))
         assertNull(parseDay("31/02/2026"))
     }
 

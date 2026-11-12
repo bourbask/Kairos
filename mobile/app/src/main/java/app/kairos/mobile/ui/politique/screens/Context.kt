@@ -55,6 +55,7 @@ import app.kairos.mobile.ui.politique.kit.frTypo
 import app.kairos.mobile.ui.politique.model.PolData
 import app.kairos.mobile.ui.politique.model.SourceRef
 import app.kairos.mobile.ui.politique.model.sourcesOf
+import java.time.LocalDate
 
 private val Mono = FontFamily.Monospace
 
@@ -89,7 +90,7 @@ private fun DossierCard(data: PolData, d: Dossier, onTable: () -> Unit, nav: Pol
 
 @Composable
 fun ProbiteScreen(data: PolData, nav: PolNavigator) {
-    val agenda = remember(data) { agendaOf(data) }
+    val agenda = remember(data) { agendaOf(data, LocalDate.now()) }
     val affaires = remember(data) { affairesOf(data) }
     val lobby = remember(data) { lobbyOf(data) }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = ScreenPad) {
@@ -135,7 +136,7 @@ private fun AgendaRow(a: AgendaItem) {
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(a.date, fontFamily = Mono, fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                a.inDays?.let { Muted(if (it == 0) "aujourd'hui" else "dans ${frCount(it, "jour", "jours")}") }
+                a.inDays?.let { Muted(agendaWhen(it)) }
             }
             Text(frTypo(a.text), Modifier.padding(top = 2.dp), fontSize = 14.5.sp)
         }
