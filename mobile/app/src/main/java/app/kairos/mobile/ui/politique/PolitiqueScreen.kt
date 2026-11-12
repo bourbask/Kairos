@@ -105,6 +105,7 @@ fun PolitiqueScreen(
     val navigator = remember {
         object : PolNavigator {
             override fun go(r: PolRoute) { nav = nav.go(r) }
+            override fun replace(r: PolRoute) { nav = nav.replace(r) }
             override fun sheet(s: PolSheetState) { nav = nav.open(s) }
             override fun table(cards: List<TableCard>, start: Int) { table = cards to start }
         }

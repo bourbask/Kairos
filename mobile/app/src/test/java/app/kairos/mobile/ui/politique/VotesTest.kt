@@ -53,7 +53,7 @@ class VotesTest {
     }
 
     @Test fun revirement_counts_by_kind() {
-        val rv = listOf(IdTurn(camp = "A", k = "R"), IdTurn(camp = "A", k = "R"), IdTurn(camp = "A", k = "I"), IdTurn(camp = "B", k = "C"))
+        val rv = listOf(Turn(camp = "A", k = "R"), Turn(camp = "A", k = "R"), Turn(camp = "A", k = "I"), Turn(camp = "B", k = "C"))
         assertEquals(listOf("A", "B"), revirementCamps(rv))
         assertEquals(mapOf("R" to 2, "I" to 1, "C" to 0), revirementCounts(rv, "A"))
         assertEquals(mapOf("R" to 0, "I" to 0, "C" to 1), revirementCounts(rv, "B"))

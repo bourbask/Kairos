@@ -41,6 +41,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -103,6 +104,8 @@ fun QuizScreen(data: PolData, nav: PolNavigator) {
     val claims = remember(data) { claimsOf(data) }
     val camps = remember(data, claims) { campsOf(data, claims) }
     var theme by rememberSaveable { mutableStateOf<String?>(null) }
+    // Partie en cours : le retour ramène au choix des paquets avant de quitter le jeu.
+    BackHandler(enabled = theme != null) { theme = null }
     val t = theme
     if (t == null) QuizStart(claims, camps) { theme = it }
     else QuizGame(data, nav, claims, camps, t) { theme = null }

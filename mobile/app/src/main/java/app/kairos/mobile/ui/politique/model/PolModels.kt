@@ -6,6 +6,7 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.doubleOrNull
 
 /** Modèles typés des fichiers de données : tout est facultatif, un champ absent ou mal typé n'invalide pas le reste. */
 
@@ -91,4 +92,10 @@ fun sourcesOf(e: JsonElement?): List<SourceRef> = when (e) {
             e.flatMap { sourcesOf(it) }
         }
     else -> emptyList()
+}
+
+/** Ligne-tableau des données (`["libellé", 1.5, null…]`) : lecture par position, tolérante. */
+class Row(private val a: List<JsonElement>) {
+    fun s(i: Int): String = (a.getOrNull(i) as? JsonPrimitive)?.contentOrNull.orEmpty()
+    fun d(i: Int): Double? = (a.getOrNull(i) as? JsonPrimitive)?.doubleOrNull
 }

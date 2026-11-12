@@ -1,6 +1,5 @@
 package app.kairos.mobile.ui.politique.screens
 
-import app.kairos.mobile.ui.politique.IdTurn
 import app.kairos.mobile.ui.politique.fmt
 import app.kairos.mobile.ui.politique.kit.TableCard
 import app.kairos.mobile.ui.politique.model.IdKind
@@ -121,6 +120,10 @@ fun parseSrc(s: String): SourceRef = SRC.matchEntire(s.trim())?.let { m ->
 private fun sourcesOfComp(e: JsonElement?): List<SourceRef> =
     (e as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() }?.let { listOf(parseSrc(it)) } ?: sourcesOf(e)
 
+/** Sources d'une rubrique chiffrée : celles des comparaisons qui la lisent, sans doublon. */
+fun rubricSources(data: PolData, rubrique: String): List<SourceRef> =
+    comparaisonsOf(data).filter { it.rubrique == rubrique }.flatMap { sourcesOfComp(it.source) }.distinct()
+
 // ---------- Rounds ----------
 
 /** Un round : [avail] dit si chaque côté a une donnée (couverture, jamais un score) ; [rubric] : rubrique du détail. */
@@ -200,7 +203,7 @@ class DvRound(val partyA: String?, val partyB: String?, val a: List<DvItem>, val
     override val rubric = "dit-vote"
 }
 
-class TurnRound(val a: List<IdTurn>, val b: List<IdTurn>) : DuelRound {
+class TurnRound(val a: List<Turn>, val b: List<Turn>) : DuelRound {
     override val title = "Revirements suivis"
     override val help = "Changer d'avis n'est pas un défaut : regardez ce qui change et pourquoi."
     override val avail get() = a.isNotEmpty() to b.isNotEmpty()

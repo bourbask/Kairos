@@ -35,6 +35,8 @@ sealed interface PolSheetState {
 /** Ce qu'un écran peut demander à la coque. */
 interface PolNavigator {
     fun go(r: PolRoute)
+    /** Remplace la vue courante : le retour ne repasse pas par elle. */
+    fun replace(r: PolRoute)
     fun sheet(s: PolSheetState)
     fun table(cards: List<TableCard>, start: Int)
 }
@@ -52,6 +54,8 @@ data class PolBackStack(val routes: List<PolRoute> = emptyList(), val sheets: Li
         top -> PolBackStack(routes)
         else -> PolBackStack(routes + r)
     }
+
+    fun replace(r: PolRoute): PolBackStack = PolBackStack(routes.dropLast(1)).go(r)
 
     fun open(s: PolSheetState): PolBackStack = copy(sheets = sheets + s)
 
@@ -95,7 +99,7 @@ fun bubbleLine(data: PolData): String {
 }
 
 val RUBRICS: List<RubricTile> = listOf(
-    RubricTile("budgets", "Budgets 2032", "Où mène chaque programme, face à « ne rien faire »") { d ->
+    RubricTile("budgets", "Budgets", "Où mène chaque programme, face à « ne rien faire »") { d ->
         d.decode("budgets", "PROGRAMS", JsonObject.serializer()).count { it["ref"]?.jsonPrimitive?.booleanOrNull != true }.or("programme", "programmes")
     },
     RubricTile("niveau-de-vie", "Niveau de vie", "Ce qu'on vous donne, ce que ça coûte") { it.size("niveau-de-vie", "MEASURES").or("programme", "programmes") },

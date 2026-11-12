@@ -62,7 +62,7 @@ class PolNavTest {
     @Test
     fun identity_stats_skip_missing() {
         val a = identityStats(data, "a")
-        assertEquals(listOf("Dette en 2032", "Phrases vérifiées"), a.map { it.label })
+        assertEquals(listOf("Dette à l'horizon", "Phrases vérifiées"), a.map { it.label })
         assertEquals("98,5 %", a[0].value)
         assertEquals("sous la référence", a[0].sub)
         assertEquals("1 solide · 0 fragile ou faux", a[1].sub)
@@ -75,6 +75,23 @@ class PolNavTest {
         // Rattachements : programme + phrase pour la personne.
         assertEquals(2, identityLinks(data, "a").size)
         assertEquals(2, identityLinks(data, "parti-bleu").size)
+    }
+
+    @Test
+    fun aide_says_bloc_only_when_label_is_shared() {
+        val ids = obj(
+            """{"$LIST_KEY": [
+            {"id":"b","nom":"Parti Bleu","parti":"Bleu","type":"parti","alias":["Liste Bleue","Union (commune)"]},
+            {"id":"v","nom":"Parti Vert","parti":"Vert","type":"parti","alias":["Union (commune)"]}
+        ]}""",
+        )
+        val d = PolData(mapOf("identites" to ids, "argent" to obj("""{"AIDE":{"rows":[{"l":"Liste Bleue","v":3},{"l":"Union (commune)","v":9}]}}""")))
+        // b : deux lignes le citent, aucune à son nom → pas de chiffre ; v : une seule ligne, partagée → bloc.
+        assertTrue(identityStats(d, "b").none { it.label == "Aide publique" })
+        assertEquals("bloc « Union »", identityStats(d, "v").single { it.label == "Aide publique" }.sub)
+        // Libellé propre à b (aucune autre identité) : aide annuelle, même s'il ne porte pas son nom.
+        val own = PolData(mapOf("identites" to ids, "argent" to obj("""{"AIDE":{"rows":[{"l":"Liste Bleue","v":3}]}}""")))
+        assertEquals("aide annuelle", identityStats(own, "b").single { it.label == "Aide publique" }.sub)
     }
 
     @Test
@@ -100,6 +117,18 @@ class PolNavTest {
         val s = PolBackStack().go(PolRoute.Rubric("votes")).go(PolRoute.Rubric("votes"))
         assertEquals(listOf<PolRoute>(PolRoute.Rubric("votes")), s.routes)
         assertEquals(PolRoute.Home, s.back()!!.top)
+    }
+
+    @Test
+    fun replace_swaps_top_route() {
+        val s = PolBackStack().go(PolRoute.Rubric("votes")).go(PolRoute.Duel("a", "b")).open(PolSheetState.Identity("a"))
+        val r = s.replace(PolRoute.Duel())
+        assertEquals(listOf(PolRoute.Rubric("votes"), PolRoute.Duel()), r.routes)
+        assertTrue("les feuilles sont couvertes par la nouvelle vue", r.sheets.isEmpty())
+        assertEquals("le retour ne repasse pas par l'ancien duel", PolRoute.Rubric("votes"), r.back()!!.top)
+        // Depuis l'accueil nu : simple ouverture.
+        assertEquals(listOf<PolRoute>(PolRoute.Duel()), PolBackStack().replace(PolRoute.Duel()).routes)
+        assertEquals(PolBackStack(), PolBackStack().go(PolRoute.Quiz).replace(PolRoute.Home))
     }
 
     @Test

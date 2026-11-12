@@ -1,6 +1,6 @@
 package app.kairos.mobile.ui.politique.screens
 
-import app.kairos.mobile.ui.politique.Row
+import app.kairos.mobile.ui.politique.model.Row
 import app.kairos.mobile.ui.politique.kit.TableCard
 import app.kairos.mobile.ui.politique.model.PolData
 import app.kairos.mobile.ui.politique.model.sourcesOf

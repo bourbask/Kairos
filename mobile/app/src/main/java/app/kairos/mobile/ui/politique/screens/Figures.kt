@@ -63,6 +63,9 @@ import app.kairos.mobile.ui.politique.IdentityBadge
 import app.kairos.mobile.ui.politique.PolNavigator
 import app.kairos.mobile.ui.politique.PolSheetState
 import app.kairos.mobile.ui.politique.identityColor
+import app.kairos.mobile.ui.politique.kit.Divider
+import app.kairos.mobile.ui.politique.kit.Legend
+import app.kairos.mobile.ui.politique.kit.SourceFoot
 import app.kairos.mobile.ui.politique.kit.BalanceBlock
 import app.kairos.mobile.ui.politique.kit.EmptyState
 import app.kairos.mobile.ui.politique.kit.IdentityChip
@@ -115,22 +118,6 @@ private fun Stat(label: String, value: String, note: String, color: Color, modif
         Kicker(label)
         Text(value, color = color, fontFamily = Mono, fontWeight = FontWeight.Bold, fontSize = 18.sp, modifier = Modifier.padding(top = 4.dp))
         Text(note, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-}
-
-@Composable
-private fun LegendDot(color: Color, text: String) {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        Box(Modifier.size(10.dp).clip(RoundedCornerShape(3.dp)).background(color))
-        Text(text, fontSize = 12.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-}
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun Legend(items: List<Pair<Color, String>>) {
-    FlowRow(Modifier.padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        items.forEach { (c, t) -> LegendDot(c, t) }
     }
 }
 
@@ -211,6 +198,13 @@ internal fun TableLink(onClick: () -> Unit) {
 
 internal fun LazyListScope.part(content: @Composable () -> Unit) = item { content() }
 
+/** Pied de rubrique : sources des chiffres comparés (lien https seulement). */
+@Composable
+private fun RubricSources(data: PolData, rubrique: String, nav: PolNavigator) {
+    val src = remember(data, rubrique) { rubricSources(data, rubrique) }
+    SourceFoot("Chiffres", src, data, { nav.sheet(PolSheetState.Evaluator(it)) }, Modifier.padding(top = 16.dp))
+}
+
 // ---------- Budgets ----------
 
 @Composable
@@ -237,7 +231,7 @@ fun BudgetsScreen(data: PolData, nav: PolNavigator) {
             Section("Dette publique à l'horizon", "Chaque programme face à la référence", null, if (st.stem) "Touchez une ligne pour la fiche du candidat." else null) {
                 if (!st.stem || ref == null) EmptyState("Projections de dette pas encore publiées", "La dette projetée par programme ou la référence « sans mesure » manque pour l'instant. Les écarts chiffrés et la balance restent affichés plus bas quand ils existent.")
                 else FigCard {
-                    Legend(listOf(pc.low to "Moins de dette que sans mesure", pc.high to "Plus de dette"))
+                    Legend(modifier = Modifier.padding(bottom = 8.dp), items = listOf(pc.low to "Moins de dette que sans mesure", pc.high to "Plus de dette"))
                     st.withDebt.forEachIndexed { i, p -> DebtRow(data, p, ref, lo, hi, ticks, nav, divider = i > 0) }
                     Row(Modifier.fillMaxWidth().padding(top = 4.dp).clearAndSetSemantics { }, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("% du PIB", Modifier.width(134.dp), fontFamily = Mono, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -264,6 +258,7 @@ fun BudgetsScreen(data: PolData, nav: PolNavigator) {
                 else Column(verticalArrangement = Arrangement.spacedBy(12.dp)) { st.gaps.forEachIndexed { i, g -> GapCard(data, g, nav) { nav.table(st.gapCards, i) } } }
             }
         }
+        part { RubricSources(data, "budgets", nav) }
     }
 }
 
@@ -397,7 +392,7 @@ fun LivingScreen(data: PolData, nav: PolNavigator) {
                 if (programs.isEmpty()) EmptyState("Aucun gain chiffré", "Aucun programme n'a encore de gain par ménage publié.")
                 else FigCard {
                     programs.forEachIndexed { i, p ->
-                        if (i > 0) Box(Modifier.fillMaxWidth().height(1.dp).background(scheme.outlineVariant))
+                        if (i > 0) Divider()
                         HouseholdRow(data, p, ref, maxAbs, nav)
                     }
                 }
@@ -409,6 +404,7 @@ fun LivingScreen(data: PolData, nav: PolNavigator) {
                 else Rail(measures, 300.dp) { i, m -> MeasureCard(data, m, nav) { nav.table(st.cards, i) } }
             }
         }
+        part { RubricSources(data, "niveau-de-vie", nav) }
     }
 }
 
@@ -517,7 +513,7 @@ fun BilanScreen(data: PolData, nav: PolNavigator) {
             Section("Dette", "D'où vient la hausse de la dette ?", "Décomposition de la hausse de la dette du mandat sortant, par grande cause, selon un évaluateur extérieur.") {
                 if (ofce.isEmpty()) EmptyState("Aucune décomposition", "La décomposition de la dette n'est pas disponible pour l'instant.")
                 else FigCard {
-                    Legend(listOf(pc.high to "Fait monter la dette", pc.low to "La fait baisser"))
+                    Legend(modifier = Modifier.padding(bottom = 8.dp), items = listOf(pc.high to "Fait monter la dette", pc.low to "La fait baisser"))
                     HBars(ofce, ofceScale, 118.dp) { if (it.total) ink else if (it.v >= 0) pc.high else pc.low }
                 }
             }
@@ -537,7 +533,7 @@ fun BilanScreen(data: PolData, nav: PolNavigator) {
             Section("Et après ?", "Qui continue la ligne, qui la renverse", "Une carte par grande orientation du mandat sortant. Mêmes candidats, même ordre, à chaque carte.", "« Non trouvé » : aucune position dans une source fiable, ce qui ne veut pas dire aucune position.") {
                 if (matrix.isEmpty()) EmptyState("Aucune orientation suivie", "Les positions des candidats face au bilan sortant ne sont pas encore publiées.")
                 else Column {
-                    Legend(listOf("keep", "flip", "mix", "none").map { c -> mark(c).let { it.fg to it.label } })
+                    Legend(modifier = Modifier.padding(bottom = 8.dp), items = listOf("keep", "flip", "mix", "none").map { c -> mark(c).let { it.fg to it.label } })
                     Rail(matrix, 318.dp) { i, r -> MatrixCard(data, r, cands, i, matrix.size, nav) { nav.table(st.cards, i) } }
                 }
             }

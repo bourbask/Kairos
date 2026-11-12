@@ -1,8 +1,8 @@
 package app.kairos.mobile.ui.politique.screens
 
-import app.kairos.mobile.ui.politique.IdTurn
 import app.kairos.mobile.ui.politique.model.PolData
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
 
 /** Logique pure des votes, revirements et « dit / voté ». Tout champ est facultatif : une ligne mal formée reste lisible. */
 
@@ -77,15 +77,23 @@ fun groupIndex(data: PolData, groups: List<String>, id: String): Int = groups.in
 
 // ---------- Revirements ----------
 
+/** Position suivie : [p] personne citée, [a] avant, [b] après, [k] `R` revirement, `I` inflexion, `C` constance. */
+@Serializable
+data class Turn(val camp: String = "", val p: String = "", val s: String = "", val a: String = "", val b: String = "", val k: String = "", val src: JsonElement? = null)
+
+/** Votes à rebours d'un camp : `[code, texte]` avec code `coherent`, `explique` ou `ecart`. */
+@Serializable
+data class CohGroup(val camp: String = "", val items: List<List<String>> = emptyList())
+
 /** Positions suivies d'une identité : par personne citée, sinon par camp. */
-fun turnsOf(data: PolData, id: String): List<IdTurn> =
-    data.decode<IdTurn>("revirements", "RV").filter { r -> id in data.idsIn(r.p.takeIf { data.idsIn(it).isNotEmpty() } ?: r.camp) }
+fun turnsOf(data: PolData, id: String): List<Turn> =
+    data.decode<Turn>("revirements", "RV").filter { r -> id in data.idsIn(r.p.takeIf { data.idsIn(it).isNotEmpty() } ?: r.camp) }
 
 val TURN_KINDS = listOf("R" to "Revirement", "I" to "Inflexion", "C" to "Constance")
 
-fun revirementCamps(rv: List<IdTurn>): List<String> = rv.map { it.camp }.distinct()
+fun revirementCamps(rv: List<Turn>): List<String> = rv.map { it.camp }.distinct()
 
-fun revirementCounts(rv: List<IdTurn>, camp: String): Map<String, Int> = TURN_KINDS.associate { (k, _) -> k to rv.count { it.camp == camp && it.k == k } }
+fun revirementCounts(rv: List<Turn>, camp: String): Map<String, Int> = TURN_KINDS.associate { (k, _) -> k to rv.count { it.camp == camp && it.k == k } }
 
 fun revirementLine(counts: Map<String, Int>): String =
     TURN_KINDS.joinToString(" · ") { (k, l) -> val n = counts[k] ?: 0; "$n ${l.lowercase()}${if (n > 1) "s" else ""}" }

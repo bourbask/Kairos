@@ -137,6 +137,17 @@ class DuelTest {
         assertNull(parseSrc("Sans lien").url)
     }
 
+    @Test fun rubric_sources_from_comparisons() {
+        assertEquals(listOf(app.kairos.mobile.ui.politique.model.SourceRef("Évaluateur fictif", "https://example.com/a")), rubricSources(full, "budgets"))
+        assertEquals(listOf("Autre"), rubricSources(full, "niveau-de-vie").map { it.label })
+        assertNull(rubricSources(full, "niveau-de-vie").single().url)
+        assertTrue(rubricSources(full, "votes").isEmpty())
+        assertTrue(rubricSources(data(), "budgets").isEmpty())
+        // Lien non https : libellé seul, jamais ouvrable.
+        val http = data("comparaisons" to """[{"id":"x","rubrique":"budgets","chemin":"PROGRAMS","cle_identite":"who","indicateurs":[{"champ":"debt"}],"source":"Site (http://example.com/b)"}]""")
+        assertNull(rubricSources(http, "budgets").single().url)
+    }
+
     @Test fun pick_toggle_keeps_two() {
         assertEquals(listOf("a"), pickToggle(emptyList(), "a"))
         assertEquals(listOf("a", "b"), pickToggle(listOf("a"), "b"))

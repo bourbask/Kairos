@@ -38,6 +38,13 @@ import app.kairos.mobile.ui.politique.StageLadder
 import app.kairos.mobile.ui.politique.StageTag
 import app.kairos.mobile.ui.politique.StateTag
 import app.kairos.mobile.ui.politique.identityColor
+import app.kairos.mobile.ui.politique.kit.Bar
+import app.kairos.mobile.ui.politique.kit.Divider
+import app.kairos.mobile.ui.politique.kit.KeyRow
+import app.kairos.mobile.ui.politique.kit.LegendDot
+import app.kairos.mobile.ui.politique.kit.Muted
+import app.kairos.mobile.ui.politique.kit.Note
+import app.kairos.mobile.ui.politique.kit.Tags
 import app.kairos.mobile.ui.politique.kit.EmptyState
 import app.kairos.mobile.ui.politique.kit.IdentityChip
 import app.kairos.mobile.ui.politique.kit.Kicker
@@ -55,40 +62,7 @@ private val Mono = FontFamily.Monospace
 private fun Empty(title: String, body: String) = EmptyState(title, body)
 
 @Composable
-private fun Divider() = Box(Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)))
-
-@Composable
 private fun CardTitle(text: String, modifier: Modifier = Modifier) = Text(frTypo(text), modifier, fontWeight = FontWeight.Bold, fontSize = 17.sp, lineHeight = 22.sp)
-
-@Composable
-private fun Note(text: String, modifier: Modifier = Modifier) {
-    if (text.isNotBlank()) RichText(text, modifier.padding(top = 6.dp), style = MaterialTheme.typography.bodyMedium)
-}
-
-@Composable
-private fun Muted(text: String, modifier: Modifier = Modifier) =
-    Text(frTypo(text), modifier, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
-
-/** Barre horizontale à la part [fraction] de la piste, avec son chiffre. */
-@Composable
-private fun Bar(fraction: Float, color: Color, label: String, modifier: Modifier = Modifier) {
-    Row(modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Box(Modifier.weight(1f).height(14.dp).clip(RoundedCornerShape(4.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))) {
-            if (fraction > 0f) Box(Modifier.fillMaxWidth(fraction).height(14.dp).clip(RoundedCornerShape(4.dp)).background(color))
-        }
-        Text(label, Modifier.width(92.dp), fontFamily = Mono, fontWeight = FontWeight.SemiBold, fontSize = 12.sp, softWrap = false)
-    }
-}
-
-@Composable
-private fun Tags(items: List<String>) {
-    @OptIn(ExperimentalLayoutApi::class)
-    FlowRow(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(5.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-        items.forEach { t ->
-            Text(t, Modifier.clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.surfaceVariant).padding(horizontal = 9.dp, vertical = 4.dp), fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold)
-        }
-    }
-}
 
 /** Dossier sourcé (lobbying, financement) : titre, étape, texte, sources. */
 @Composable
@@ -274,14 +248,6 @@ fun ArgentScreen(data: PolData, nav: PolNavigator) {
     }
 }
 
-@Composable
-private fun KeyRow(k: String, v: String, color: Color?) {
-    Row(Modifier.fillMaxWidth().padding(vertical = 3.dp).semantics(mergeDescendants = true) { }) {
-        Text(k, Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp)
-        Text(v, fontFamily = Mono, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = color ?: Color.Unspecified)
-    }
-}
-
 // ---------- Médias ----------
 
 @Composable
@@ -329,8 +295,8 @@ fun MediasScreen(data: PolData, nav: PolNavigator) {
                         }
                     }
                     Row(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                        Legend(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f), "Moyenne précédente")
-                        Legend(pc.low, "Dernière mesure")
+                        LegendDot(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f), "Moyenne précédente")
+                        LegendDot(pc.low, "Dernière mesure")
                     }
                 }
             }
@@ -388,10 +354,3 @@ fun MediasScreen(data: PolData, nav: PolNavigator) {
     }
 }
 
-@Composable
-private fun Legend(color: Color, text: String) {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        Box(Modifier.size(10.dp).clip(RoundedCornerShape(3.dp)).background(color))
-        Text(text, fontSize = 12.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-}

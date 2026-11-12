@@ -55,13 +55,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import app.kairos.mobile.ui.politique.IdCoh
-import app.kairos.mobile.ui.politique.IdTurn
 import app.kairos.mobile.ui.politique.IdentityBadge
 import app.kairos.mobile.ui.politique.PolNavigator
 import app.kairos.mobile.ui.politique.PolRoute
 import app.kairos.mobile.ui.politique.PolSheetState
 import app.kairos.mobile.ui.politique.identityColor
+import app.kairos.mobile.ui.politique.kit.Legend
+import app.kairos.mobile.ui.politique.kit.LegendDot
 import app.kairos.mobile.ui.politique.kit.EmptyState
 import app.kairos.mobile.ui.politique.kit.IdentityChip
 import app.kairos.mobile.ui.politique.kit.Kicker
@@ -193,18 +193,6 @@ private fun Title(text: String) = Text(text, Modifier.semantics { heading() }, s
 @Composable
 private fun Lead(text: String) = Text(text, Modifier.padding(top = 6.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
 
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun Legend(content: @Composable () -> Unit) = FlowRow(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) { content() }
-
-@Composable
-private fun LegendDot(color: Color, label: String) {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-        Box(Modifier.size(10.dp).clip(CircleShape).background(color))
-        Text(label, fontSize = 12.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-}
-
 private fun officialSource(chambre: String, url: String?) = listOf(SourceRef(if (chambre == "AN") "Scrutin officiel" else "Source du scrutin", url))
 
 // ---------- Votes ----------
@@ -217,7 +205,7 @@ fun VotesScreen(data: PolData, nav: PolNavigator) {
     val key = CHAMBERS[ch].first
     val groups = remember(data, key) { data.decode<String>("votes", "${key}_G") }
     val rows = remember(data, key) { data.decode<VoteRow>("votes", "${key}_V") }
-    val coh = remember(data) { data.decode<IdCoh>("votes", "COH") }
+    val coh = remember(data) { data.decode<CohGroup>("votes", "COH") }
     val pc = PolColors.current
     val gi = g.coerceIn(0, (groups.size - 1).coerceAtLeast(0))
     LazyColumn(Modifier.fillMaxSize(), contentPadding = ScreenPad, verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -226,7 +214,7 @@ fun VotesScreen(data: PolData, nav: PolNavigator) {
                 Title("Ce qu'ils votent, pas ce qu'ils disent")
                 Segmented(CHAMBERS.map { it.second }, ch, { ch = it; g = 0 }, Modifier.padding(top = 12.dp))
                 Segmented(listOf("Par scrutin", "Par groupe"), mode, { mode = it }, Modifier.padding(top = 8.dp))
-                Legend {
+                Legend(Modifier.padding(top = 12.dp)) {
                     LegendDot(pc.pour, "Pour"); LegendDot(pc.contre, "Contre"); LegendDot(pc.partiel, "Abstention"); LegendDot(MaterialTheme.colorScheme.onSurfaceVariant, "Divisé")
                 }
             }
@@ -314,7 +302,7 @@ internal fun turnColors(k: String): Pair<Color, Color> {
 
 @Composable
 fun RevirementsScreen(data: PolData, nav: PolNavigator) {
-    val rv = remember(data) { data.decode<IdTurn>("revirements", "RV") }
+    val rv = remember(data) { data.decode<Turn>("revirements", "RV") }
     val camps = remember(rv) { revirementCamps(rv) }
     var camp by rememberSaveable { mutableStateOf("") }
     val cur = camp.takeIf { it in camps } ?: camps.firstOrNull().orEmpty()
@@ -324,7 +312,7 @@ fun RevirementsScreen(data: PolData, nav: PolNavigator) {
             Column {
                 Title("Qui a changé d'avis")
                 Lead("Changer d'avis n'est pas un défaut en soi. Ce qui compte : le parti l'assume-t-il, et le changement touche-t-il le fond ou le calendrier ?")
-                Legend { TURN_KINDS.forEach { (k, l) -> val (fg, bg) = turnColors(k); Chip(l, fg, bg) } }
+                Legend(Modifier.padding(top = 12.dp)) { TURN_KINDS.forEach { (k, l) -> val (fg, bg) = turnColors(k); Chip(l, fg, bg) } }
             }
         }
         if (rv.isEmpty()) {
@@ -361,7 +349,7 @@ fun RevirementsScreen(data: PolData, nav: PolNavigator) {
 }
 
 @Composable
-private fun TurnCard(data: PolData, r: IdTurn) {
+private fun TurnCard(data: PolData, r: Turn) {
     val scheme = MaterialTheme.colorScheme
     val (fg, bg) = turnColors(r.k)
     val label = TURN_KINDS.firstOrNull { it.first == r.k }?.second ?: "Position"
@@ -502,7 +490,7 @@ fun DitVoteScreen(data: PolData, nav: PolNavigator) {
                 Lead("Chaque scrutin croisé avec ce que les partis en ont dit publiquement dans les six mois autour du vote. Un écart n'est pas forcément une trahison : lisez l'explication.")
                 Segmented(CHAMBERS.map { it.second }, ch, { ch = it; f = "" }, Modifier.padding(top = 12.dp))
                 Segmented(listOf("Par scrutin", "Par parti"), mode, { mode = it }, Modifier.padding(top = 8.dp))
-                Legend { DV_ORDER.forEach { DvChip(it) } }
+                Legend(Modifier.padding(top = 12.dp)) { DV_ORDER.forEach { DvChip(it) } }
             }
         }
         if (mode == 0) {

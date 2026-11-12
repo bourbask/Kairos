@@ -76,6 +76,9 @@ import app.kairos.mobile.ui.politique.PolSheetState
 import app.kairos.mobile.ui.politique.StageTag
 import app.kairos.mobile.ui.politique.StateTag
 import app.kairos.mobile.ui.politique.identityColor
+import app.kairos.mobile.ui.politique.kit.Divider
+import app.kairos.mobile.ui.politique.kit.Muted
+import app.kairos.mobile.ui.politique.kit.SourceFoot
 import app.kairos.mobile.ui.politique.kit.EmptyState
 import app.kairos.mobile.ui.politique.kit.IdentityChip
 import app.kairos.mobile.ui.politique.kit.Kicker
@@ -184,6 +187,10 @@ fun VillesScreen(data: PolData, nav: PolNavigator) {
     val facts = remember(data) { cityFactsOf(data) }
     val sections = remember(data) { factSections(data) }
     val muni = remember(data) { muniOf(data) }
+    // Région zoomée : gardée ici, hors des éléments de la liste, pour que le retour revienne à la vue France même carte hors écran.
+    var qui by rememberSaveable { mutableStateOf("") }
+    var reg by rememberSaveable { mutableStateOf<String?>(null) }
+    BackHandler(enabled = reg != null) { reg = null }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = ScreenPad) {
         part {
             Text(
@@ -197,7 +204,7 @@ fun VillesScreen(data: PolData, nav: PolNavigator) {
                 when {
                     m == null -> Box(Modifier.fillMaxWidth().height(240.dp))
                     m.communes.isEmpty() -> EmptyState("Aucune ville suivie", "Aucun résultat municipal sourcé n'est publié pour l'instant. La carte se remplira dès que les premières villes seront documentées.")
-                    else -> VillesMap(data, m, facts, nav)
+                    else -> VillesMap(data, m, facts, nav, qui, { qui = it }, reg, { reg = it })
                 }
             }
         }
@@ -260,9 +267,6 @@ private fun FactBlock(data: PolData, f: CityFact, nav: PolNavigator, withMaire: 
 }
 
 @Composable
-private fun RowDivider(top: Dp = 12.dp) = Box(Modifier.padding(top = top).fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outlineVariant))
-
-@Composable
 private fun CityFactsCard(data: PolData, ville: String, l: List<CityFact>, nav: PolNavigator) {
     FigCard {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -275,7 +279,7 @@ private fun CityFactsCard(data: PolData, ville: String, l: List<CityFact>, nav: 
             else Text(m, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         l.forEach { f ->
-            RowDivider()
+            Divider(12.dp)
             Column(Modifier.padding(top = 12.dp)) { FactBlock(data, f, nav, withMaire = false) }
         }
     }
@@ -284,10 +288,10 @@ private fun CityFactsCard(data: PolData, ville: String, l: List<CityFact>, nav: 
 // ---------- Carte ----------
 
 @Composable
-private fun VillesMap(data: PolData, m: VillesModel, facts: List<CityFact>, nav: PolNavigator) {
-    var qui by rememberSaveable { mutableStateOf("") }
-    var reg by rememberSaveable { mutableStateOf<String?>(null) }
-    BackHandler(enabled = reg != null) { reg = null }
+private fun VillesMap(
+    data: PolData, m: VillesModel, facts: List<CityFact>, nav: PolNavigator,
+    qui: String, setQui: (String) -> Unit, reg: String?, setReg: (String?) -> Unit,
+) {
     val shown = remember(m, qui) { m.communes.filter { qui.isEmpty() || it.qui == qui } }
     val options = remember(m) {
         listOf(PillOption("", "Tous les partis", m.communes.size)) +
@@ -296,17 +300,14 @@ private fun VillesMap(data: PolData, m: VillesModel, facts: List<CityFact>, nav:
     }
     val openCity = { name: String -> nav.sheet(PolSheetState.City(name)) }
     Column {
-        Pills(options, qui, { qui = it }, Modifier.padding(top = 4.dp))
+        Pills(options, qui, setQui, Modifier.padding(top = 4.dp))
         if (m.hasMap) FigCard(Modifier.padding(top = 10.dp)) {
-            MapCanvas(data, m, shown, reg, onRegion = { reg = it }, onCity = openCity, onCluster = { nav.sheet(PolSheetState.Cluster(it)) })
+            MapCanvas(data, m, shown, reg, onRegion = setReg, onCity = openCity, onCluster = { nav.sheet(PolSheetState.Cluster(it)) })
             MapLegend()
         }
-        MapList(data, m, shown, reg, qui.isNotEmpty(), facts, onRegion = { reg = it }, onCity = openCity)
+        MapList(data, m, shown, reg, qui.isNotEmpty(), facts, onRegion = setReg, onCity = openCity)
         val src = remember(m) { sourcesOf(m.source) }
-        if (src.isNotEmpty()) Row(Modifier.padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("Fond de carte", Modifier.padding(top = 12.dp, end = 8.dp), fontSize = 12.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            SourceList(src, data, { nav.sheet(PolSheetState.Evaluator(it)) })
-        }
+        SourceFoot("Fond de carte", src, data, { nav.sheet(PolSheetState.Evaluator(it)) })
     }
 }
 
@@ -430,7 +431,7 @@ private fun MapList(data: PolData, m: VillesModel, shown: List<Commune>, reg: St
     val metro = shown.filter { it in mapped }
     val others = shown.filter { it in off }
     val dom = outreMer(shown)
-    val row: @Composable (Int, Commune) -> Unit = { i, c -> if (i > 0) RowDivider(0.dp); CityRow(data, c, factsFor(facts, c.ville).size) { onCity(c.key) } }
+    val row: @Composable (Int, Commune) -> Unit = { i, c -> if (i > 0) Divider(); CityRow(data, c, factsFor(facts, c.ville).size) { onCity(c.key) } }
     if (m.hasMap && reg != null) {
         val nom = m.regions.firstOrNull { it.code == reg }?.nom.orEmpty()
         val l = metro.filter { it.region == reg }.sortedWith(compareBy(FR) { it.ville })
@@ -439,7 +440,7 @@ private fun MapList(data: PolData, m: VillesModel, shown: List<Commune>, reg: St
             TextButton({ onRegion(null) }, Modifier.heightIn(min = 48.dp)) { Text("← Toute la France") }
         }
         FigCard(Modifier.padding(top = 8.dp)) {
-            if (l.isEmpty()) Note("Aucune ville suivie dans cette région${if (filtered) " pour ce parti" else ""}.")
+            if (l.isEmpty()) Muted("Aucune ville suivie dans cette région${if (filtered) " pour ce parti" else ""}.", Modifier.padding(vertical = 6.dp))
             l.forEachIndexed { i, c -> row(i, c) }
         }
     } else if (m.hasMap) {
@@ -455,10 +456,10 @@ private fun MapList(data: PolData, m: VillesModel, shown: List<Commune>, reg: St
             }
         }
         val regs = m.regions.map { r -> r to metro.count { it.region == r.code } }.filter { it.second > 0 }.sortedByDescending { it.second }
-        if (regs.isEmpty() && shown.isEmpty()) Note(if (filtered) "Aucune ville pour ce parti." else "Aucune ville suivie.")
+        if (regs.isEmpty() && shown.isEmpty()) Muted(if (filtered) "Aucune ville pour ce parti." else "Aucune ville suivie.", Modifier.padding(vertical = 6.dp))
         if (regs.isNotEmpty()) FigCard(Modifier.padding(top = 10.dp)) {
             regs.forEachIndexed { i, (r, n) ->
-                if (i > 0) RowDivider(0.dp)
+                if (i > 0) Divider()
                 Row(
                     Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(role = Role.Button, onClickLabel = "Zoomer sur la région") { onRegion(r.code) }.padding(vertical = 11.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -471,16 +472,13 @@ private fun MapList(data: PolData, m: VillesModel, shown: List<Commune>, reg: St
     }
     if (others.isNotEmpty()) {
         Kicker("Autres villes", Modifier.padding(top = 18.dp))
-        Note(if (m.hasMap) "Sans place sur la carte : région inconnue du fond de carte ou coordonnées manquantes." else "Fond de carte indisponible : les villes sont listées ici.")
+        Muted(if (m.hasMap) "Sans place sur la carte : région inconnue du fond de carte ou coordonnées manquantes." else "Fond de carte indisponible : les villes sont listées ici.", Modifier.padding(vertical = 6.dp))
         FigCard(Modifier.padding(top = 6.dp)) { others.sortedWith(compareBy(FR) { it.ville }).forEachIndexed { i, c -> row(i, c) } }
     }
     Kicker("Outre-mer", Modifier.padding(top = 18.dp))
-    if (dom.isEmpty()) Note("Aucune ville d'outre-mer suivie${if (filtered) " pour ce parti" else ""}.")
+    if (dom.isEmpty()) Muted("Aucune ville d'outre-mer suivie${if (filtered) " pour ce parti" else ""}.", Modifier.padding(vertical = 6.dp))
     else FigCard(Modifier.padding(top = 6.dp)) { dom.forEachIndexed { i, c -> row(i, c) } }
 }
-
-@Composable
-private fun Note(text: String) = Text(text, Modifier.padding(vertical = 6.dp), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
 @Composable
 private fun CityRow(data: PolData, c: Commune, nFacts: Int, onClick: () -> Unit) {
@@ -540,12 +538,12 @@ fun CitySheet(data: PolData, key: String, nav: PolNavigator, onDismiss: () -> Un
                 if (c.detail.isNotBlank()) Text(frTypo(c.detail), Modifier.padding(top = 12.dp), fontSize = 15.sp, lineHeight = 21.sp)
                 SourceList(communeSources(c), data, onEv)
             }
-            if (facts.isEmpty()) Note("Aucun fait de gestion locale documenté pour cette ville.")
+            if (facts.isEmpty()) Muted("Aucun fait de gestion locale documenté pour cette ville.", Modifier.padding(vertical = 6.dp))
             else {
                 SectionHeader("Bilan local", "Faits documentés", modifier = Modifier.padding(top = 20.dp))
                 FigCard(Modifier.padding(top = 10.dp)) {
                     facts.forEachIndexed { i, f ->
-                        if (i > 0) RowDivider()
+                        if (i > 0) Divider(12.dp)
                         Column(Modifier.padding(top = if (i > 0) 12.dp else 0.dp)) { FactBlock(data, f, nav, withMaire = true) }
                     }
                 }
@@ -568,7 +566,7 @@ fun ClusterSheet(data: PolData, keys: List<String>, nav: PolNavigator, onDismiss
             Kicker(listOf(regs, "même point de la carte").filter { it.isNotBlank() }.joinToString(" · "))
             Text("${plural(l.size, "ville", "villes")} à cet endroit", Modifier.padding(top = 6.dp).semantics { heading() }, fontSize = 22.sp, fontWeight = FontWeight.Bold)
             FigCard(Modifier.padding(top = 12.dp)) {
-                l.forEachIndexed { i, c -> if (i > 0) RowDivider(0.dp); CityRow(data, c, factsFor(facts, c.ville).size) { nav.sheet(PolSheetState.City(c.key)) } }
+                l.forEachIndexed { i, c -> if (i > 0) Divider(); CityRow(data, c, factsFor(facts, c.ville).size) { nav.sheet(PolSheetState.City(c.key)) } }
             }
         }
     }

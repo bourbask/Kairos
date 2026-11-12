@@ -258,14 +258,14 @@ private fun DuelHud(data: PolData, nav: PolNavigator, a: String, b: String) {
         Column(Modifier.fillMaxSize()) {
             Hud(data, s, r, still)
             if (r.isEmpty()) {
-                EmptyState("Rien à comparer", "Ces deux adversaires n'ont aucune donnée commune pour l'instant.", Modifier.padding(16.dp), "Changer d'adversaires" to { nav.go(PolRoute.Duel()) })
+                EmptyState("Rien à comparer", "Ces deux adversaires n'ont aucune donnée commune pour l'instant.", Modifier.padding(16.dp), "Changer d'adversaires" to { nav.replace(PolRoute.Duel()) })
                 return@Column
             }
             LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(16.dp, 14.dp, 16.dp, 24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 item {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("${r.size} rounds · aucun vainqueur désigné", Modifier.weight(1f), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        TextButton({ nav.go(PolRoute.Duel()) }) { Text("Changer d'adversaires") }
+                        TextButton({ nav.replace(PolRoute.Duel()) }) { Text("Changer d'adversaires") }
                     }
                     Legend(s)
                 }

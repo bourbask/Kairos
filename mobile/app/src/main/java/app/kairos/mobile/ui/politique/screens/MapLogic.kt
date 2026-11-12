@@ -2,7 +2,7 @@ package app.kairos.mobile.ui.politique.screens
 
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
-import app.kairos.mobile.ui.politique.Row
+import app.kairos.mobile.ui.politique.model.Row
 import app.kairos.mobile.ui.politique.model.PolData
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.serializer
