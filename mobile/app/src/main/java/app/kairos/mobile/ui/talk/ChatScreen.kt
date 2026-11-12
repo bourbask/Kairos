@@ -85,6 +85,7 @@ import app.kairos.mobile.ui.kit.KairosIcons
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.unit.coerceAtMost
 import androidx.compose.ui.unit.dp
 import app.kairos.mobile.data.ChatEntry
 import app.kairos.mobile.ui.DockHeight
@@ -256,9 +257,11 @@ private fun caption(entry: ChatEntry): String {
     return if (entry.role == "user" && entry.source == "salon") "$time · depuis le salon" else time
 }
 
-/** Largeur max d'une bulle : 80 % de l'écran. */
+/** Largeur max d'une bulle : 80 % de l'écran, plafonnée pour le paysage et les tablettes. */
 @Composable
-private fun bubbleMaxWidth() = (LocalConfiguration.current.screenWidthDp * 0.8f).dp
+private fun bubbleMaxWidth() = (LocalConfiguration.current.screenWidthDp * 0.8f).dp.coerceAtMost(BUBBLE_MAX)
+
+private val BUBBLE_MAX = 480.dp
 
 @Composable
 private fun Bubble(text: String, mine: Boolean, caption: String, modifier: Modifier = Modifier) {

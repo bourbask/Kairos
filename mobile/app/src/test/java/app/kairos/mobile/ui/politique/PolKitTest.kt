@@ -68,6 +68,8 @@ class PolKitTest {
         assertEquals("0 €", lossAmount("0 €"))
         assertEquals("2 à 4 Md€", lossAmount("2 à 4 Md€"))
         assertEquals("2-4 Md€", lossAmount("2-4 Md€"))
+        assertEquals("1 200 € à 3 000 €", lossAmount("1 200 € à 3 000 €"))
+        assertEquals("2 Md€/an – 4 Md€/an", lossAmount("2 Md€/an – 4 Md€/an"))
         assertEquals("−12,5 Md€/an (20 selon le candidat)", lossAmount("12,5 Md€/an (20 selon le candidat)"))
         assertEquals("−1 200 €", lossAmount("1 200 €"))
         assertEquals("0,0 Md€", lossAmount("-0,0 Md€"))

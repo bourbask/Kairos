@@ -34,6 +34,9 @@
 - [ ] Commit `fix(mobile): progression du vrai ou faux jusqu'au bout`.
 
 ### Task 3: Finances — catégories de classement (point 6)
+
+> **Retirée** : le système de budget refuse un poste sans enveloppe (422) ; décision de l'utilisateur attendue.
+
 - [ ] Vérifier dans le module finances et l'API du système de budget (projet séparé, seulement lire son contrat d'API dans le dépôt Kairos : `tentacles/finances/src/api.rs`) qu'un classement vers une catégorie sans enveloppe est accepté ; sinon le dire et s'arrêter là (BLOCKED).
 - [ ] Liste de catégories courantes génériques (logement, énergie, transports, carburant, santé, assurances, abonnements, vêtements, maison, cadeaux, enfants, animaux, voyages, impôts, épargne, divers…) ajoutée aux alternatives de `decisions`, fusionnée sans doublon avec les enveloppes, triée ; surchargeable par configuration ; test.
 - [ ] Commit `feat(finances): catégories courantes proposées au classement`.

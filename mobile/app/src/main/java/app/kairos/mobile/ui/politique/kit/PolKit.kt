@@ -132,8 +132,8 @@ private val ZERO_AMOUNT = Regex("""^[-−]?\s*0+(?:[.,]0+)?(?![\d.,])""")
 /** Un nombre, séparateurs de milliers (espaces) et décimales compris. */
 private val NUMBER = Regex("""\d+(?:[\s\u00A0\u202F]\d{3})*(?:[.,]\d+)?""")
 
-/** Fourchette en tête (« 2 à 4 », « 2-4 ») : son signe serait ambigu. */
-private val RANGE = Regex("""^${NUMBER.pattern}\s*(?:à|-|–)\s*\d""")
+/** Fourchette en tête (« 2 à 4 », « 2-4 », « 1 200 € à 3 000 € ») : son signe serait ambigu. */
+private val RANGE = Regex("""^${NUMBER.pattern}\s*[^\d\s(]*\s*(?:à|-|–)\s*\d""")
 
 /**
  * Montant d'une perte : signe moins devant un chiffre, précision entre parenthèses comprise ; montant nul,

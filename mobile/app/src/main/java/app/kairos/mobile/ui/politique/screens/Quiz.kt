@@ -244,7 +244,8 @@ private fun QuizBar(p: QuizProgress, modifier: Modifier = Modifier) {
         }
         Icon(
             if (p.resultReached) KairosIcons.FlagFilled else KairosIcons.Flag,
-            if (p.resultReached) "Résultat atteint" else "Résultat",
+            // Pendant le jeu, seule la barre parle ; la page de résultat l'annonce.
+            if (p.resultReached) "Résultat atteint" else null,
             Modifier.size(20.dp), tint = if (p.resultReached) scheme.onSurface else scheme.outline,
         )
     }
