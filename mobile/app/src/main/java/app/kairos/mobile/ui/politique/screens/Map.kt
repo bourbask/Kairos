@@ -194,7 +194,7 @@ fun VillesScreen(data: PolData, nav: PolNavigator) {
     BackHandler(enabled = reg != null) { reg = null }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = ScreenPad) {
         part {
-            Lead("Un indice imparfait, mais concret.", "Un maire ne gère ni l'armée ni la protection sociale. Faits vérifiables séparés des avis.")
+            Lead("Un indice imparfait (un maire ne gère ni l'armée ni la protection sociale), mais concret. Faits vérifiables séparés des avis.")
         }
         part {
             Section("Municipales", "La carte des villes suivies", "Filtrez par parti, touchez une région pour zoomer, puis une ville pour sa fiche. La couleur dit le parti, le repère dit le résultat ; un nombre regroupe les villes trop proches.") {

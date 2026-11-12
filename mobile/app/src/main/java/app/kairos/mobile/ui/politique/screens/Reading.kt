@@ -62,7 +62,6 @@ import app.kairos.mobile.ui.politique.kit.EmptyState
 import app.kairos.mobile.ui.politique.kit.EvaluatorTag
 import app.kairos.mobile.ui.politique.kit.IdentityChip
 import app.kairos.mobile.ui.politique.kit.Kicker
-import app.kairos.mobile.ui.politique.kit.InfoIcon
 import app.kairos.mobile.ui.politique.kit.opensBalance
 import app.kairos.mobile.ui.politique.kit.LevelTag
 import app.kairos.mobile.ui.politique.kit.PillOption
@@ -296,21 +295,24 @@ private fun DossierBlock(data: PolData, d: ContentDossier, startOpen: Boolean, n
 @Composable
 private fun ItemCard(data: PolData, x: ContentItem, j: Int, n: Int, nav: PolNavigator) {
     val onEv: (String) -> Unit = { nav.sheet(PolSheetState.Evaluator(it)) }
-    FigCard(inner = x.lecture?.let { l -> Modifier.opensBalance(x.dit, nav.balance(l, x.dit, null)) } ?: Modifier) {
-        Text("Affirmation ${j + 1} sur $n", fontFamily = Mono, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Muted)
-        Text(frTypo(x.dit), Modifier.padding(top = 8.dp), fontSize = 18.sp, lineHeight = 23.sp, fontWeight = FontWeight.Bold)
-        Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-            VerdictMeter(x.verdict)
-            VerdictChip(x.verdict, large = true)
-        }
-        x.faits.filter { it.isNotBlank() }.forEach { f ->
-            Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Box(Modifier.padding(top = 8.dp).size(6.dp).clip(CircleShape).background(Muted))
-                Text(frTypo(f), fontSize = 14.5.sp, lineHeight = 21.sp)
+    FigCard {
+        // Ouverture de la balance sur le corps seul : procédé et sources restent des boutons distincts.
+        Column(Modifier.fillMaxWidth().let { m -> x.lecture?.let { l -> m.opensBalance(x.dit, nav.balance(l, x.dit, null)) } ?: m }) {
+            Text("Affirmation ${j + 1} sur $n", fontFamily = Mono, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Muted)
+            Text(frTypo(x.dit), Modifier.padding(top = 8.dp), fontSize = 18.sp, lineHeight = 23.sp, fontWeight = FontWeight.Bold)
+            Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                VerdictMeter(x.verdict)
+                VerdictChip(x.verdict, large = true)
             }
+            x.faits.filter { it.isNotBlank() }.forEach { f ->
+                Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Box(Modifier.padding(top = 8.dp).size(6.dp).clip(CircleShape).background(Muted))
+                    Text(frTypo(f), fontSize = 14.5.sp, lineHeight = 21.sp)
+                }
+            }
+            CacheBox(x.cache)
+            x.lecture?.let { l -> BalanceBlock(l, x.dit, onOpen = null) }
         }
-        CacheBox(x.cache)
-        x.lecture?.let { l -> BalanceBlock(l, x.dit, onOpen = null) }
         x.procede?.takeIf { it.isNotBlank() }?.let { p ->
             val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
             Text(
@@ -344,11 +346,8 @@ fun EvaluatorsScreen(data: PolData, nav: PolNavigator) {
             Column {
                 Lead("Chaque chiffre porte l'étiquette de son producteur.", "Un chiffre est toujours produit par quelqu'un. Touchez une étiquette pour la fiche de son producteur : statut, financement, dirigeants, historique.")
                 FigCard(Modifier.padding(top = 12.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Kicker("Lire l'étiquette", Modifier.weight(1f))
-                        InfoIcon("Le niveau décrit les liens (statut, financement, dirigeants), pas la qualité d'un chiffrage. Chaque fiche justifie le sien.", "À propos du niveau")
-                    }
-                    Column(Modifier.padding(top = 2.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Kicker("Lire l'étiquette")
+                    Column(Modifier.padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         (1..4).forEach { n ->
                             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                                 LevelTag(n, Modifier.width(104.dp))
@@ -356,6 +355,7 @@ fun EvaluatorsScreen(data: PolData, nav: PolNavigator) {
                             }
                         }
                     }
+                    Text("Le niveau décrit les liens (statut, financement, dirigeants), pas la qualité d'un chiffrage. Chaque fiche justifie le sien.", Modifier.padding(top = 10.dp), fontSize = 12.5.sp, color = Muted)
                 }
             }
         }

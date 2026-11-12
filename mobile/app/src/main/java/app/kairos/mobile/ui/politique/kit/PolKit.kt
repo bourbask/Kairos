@@ -214,12 +214,16 @@ fun TitleInfo(title: String, info: String?, modifier: Modifier = Modifier, style
     }
 }
 
-/** En-tête de section : sur-titre, titre ; [info] (comment lire, portée des chiffres) en infobulle. */
+/**
+ * En-tête de section : sur-titre, titre. [info] : mode d'emploi, en infobulle. [note] : ce qui doit rester lu
+ * (unité, définition, convention de signe, légende, provenance, limite de portée), une ligne discrète.
+ */
 @Composable
-fun SectionHeader(kicker: String, title: String, info: String? = null, modifier: Modifier = Modifier) {
+fun SectionHeader(kicker: String, title: String, info: String? = null, modifier: Modifier = Modifier, note: String? = null) {
     Column(modifier.fillMaxWidth()) {
         Kicker(kicker)
         TitleInfo(title, info, Modifier.padding(top = 4.dp).heightIn(min = 32.dp))
+        if (note != null) Text(frTypo(note), Modifier.padding(top = 2.dp), fontSize = 13.sp, lineHeight = 18.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 

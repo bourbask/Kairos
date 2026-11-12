@@ -253,7 +253,7 @@ fun VotesScreen(data: PolData, nav: PolNavigator) {
         }
         if (coh.isNotEmpty()) {
             part {
-                SectionHeader("Cohérence", "Ce que ces votes disent du discours", "Chaque camp a voté au moins une fois à rebours de son affichage. Certains écarts sont expliqués par le parti, d'autres non.", Modifier.padding(top = 12.dp))
+                SectionHeader("Cohérence", "Ce que ces votes disent du discours", null, Modifier.padding(top = 12.dp), note = "Chaque camp a voté au moins une fois à rebours de son affichage ; certains écarts sont expliqués, d'autres non.")
             }
             part {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.Top) {
@@ -421,15 +421,13 @@ private fun DvRate(data: PolData, items: List<DvItem>) {
             if (k.c > 0) Chip(plural(k.c, "cohérent", "cohérents"), pc.solide, pc.solideBg)
         }
         if (s.t > 0) Column(Modifier.padding(top = 12.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Kicker("Ligne annoncée en séance", Modifier.weight(1f, fill = false))
-                InfoIcon("Moins probant : annoncer son vote puis le suivre est attendu. Les écarts y restent parlants (élus qui votent contre la ligne de leur groupe).", "À propos de la ligne annoncée en séance")
-            }
+            Kicker("Ligne annoncée en séance")
             Text(
                 "${s.c} / ${s.t} votes conformes à l'explication donnée dans l'hémicycle juste avant" +
                     (if (s.e > 0) ", ${plural(s.e, "écart", "écarts")}" else "") + (if (s.a > 0) ", ${plural(s.a, "vote divisé ou ambigu", "votes divisés ou ambigus")}" else "") + ".",
-                fontSize = 14.sp,
+                Modifier.padding(top = 4.dp), fontSize = 14.sp,
             )
+            Text("Moins probant : suivre son vote annoncé est attendu ; les écarts restent parlants.", Modifier.padding(top = 4.dp), fontSize = 12.5.sp, color = scheme.onSurfaceVariant)
         }
         if (k.sp > 0) Honest("${plural(k.sp, "scrutin", "scrutins")} sans déclaration trouvée", "Aucune déclaration dans les six mois autour du vote : ni cohérents ni incohérents, donc hors des deux taux.")
     }
@@ -478,7 +476,7 @@ fun DitVoteScreen(data: PolData, nav: PolNavigator) {
         part {
             Column {
                 Title("Ce qu'ils disent, ce qu'ils votent")
-                Lead("Chaque scrutin croisé avec la parole publique des partis.", "Ce que les partis en ont dit publiquement dans les six mois autour du vote. Un écart n'est pas forcément une trahison : lisez l'explication.")
+                Lead("Chaque scrutin croisé avec la parole publique des partis, six mois autour du vote.", "Un écart n'est pas forcément une trahison : lisez l'explication.")
                 Segmented(CHAMBERS.map { it.second }, ch, { ch = it; f = "" }, Modifier.padding(top = 12.dp))
                 Segmented(listOf("Par scrutin", "Par parti"), mode, { mode = it }, Modifier.padding(top = 8.dp))
                 Legend(Modifier.padding(top = 12.dp)) { DV_ORDER.forEach { DvChip(it) } }

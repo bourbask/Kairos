@@ -420,11 +420,14 @@ private fun sections(data: PolData, id: String, l: IdentityLinks, nav: PolNaviga
             }
         }
         l.gaps.forEach { g ->
-            FigCard(inner = opens(g.lecture, g.what, g.who)) {
-                Kicker("Annoncé contre crédité")
-                Title(g.what)
-                Body("Annoncé ${g.claimed.or(unit = " ${g.unit}")} · ${if (g.inverse) "estimé" else "crédité"} ${g.credited.or(unit = " ${g.unit}")}")
-                balance(g.lecture, g.what)
+            FigCard {
+                // Corps seul ouvrable : la source reste un bouton distinct.
+                Column(Modifier.fillMaxWidth().then(opens(g.lecture, g.what, g.who))) {
+                    Kicker("Annoncé contre crédité")
+                    Title(g.what)
+                    Body("Annoncé ${g.claimed.or(unit = " ${g.unit}")} · ${if (g.inverse) "estimé" else "crédité"} ${g.credited.or(unit = " ${g.unit}")}")
+                    balance(g.lecture, g.what)
+                }
                 g.src?.takeIf { it.isNotBlank() }?.let { SourceList(listOf(SourceRef(it, g.url, g.ev)), data, onEv) }
             }
         }

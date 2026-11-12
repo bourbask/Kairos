@@ -127,7 +127,7 @@ private fun QuizStart(claims: List<Claim>, camps: List<String>, onPlay: (String)
                 TitleInfo(
                     "Devinez le verdict des données",
                     "Des phrases entendues à table, de tous bords. Pour chacune, devinez ce que disent les données publiques, puis découvrez les faits et la source. " +
-                        "Vrai mais… : la phrase est exacte, mais elle trompe (chiffre sorti de son contexte, comparaison bancale). « Fragile » et « Faux » se jouent tous deux à gauche. " +
+                        "Vrai mais… : la phrase est exacte, mais elle trompe (chiffre sorti de son contexte, comparaison bancale). " +
                         "Le score compte vos bonnes réponses, jamais celles d'un camp. Chaque paquet alterne les camps.",
                 )
             }
@@ -143,6 +143,7 @@ private fun QuizStart(claims: List<Claim>, camps: List<String>, onPlay: (String)
                 }
             }
         }
+        item { Text("Vrai mais… : exacte, mais trompeuse. « Fragile » et « Faux » se jouent à gauche.", fontSize = 13.sp, color = scheme.onSurfaceVariant) }
         if (out > 0) item { Text("${frCount(out, "phrase non documentée", "phrases non documentées")} hors jeu.", fontSize = 13.sp, color = scheme.onSurfaceVariant) }
         if (themes.isEmpty()) {
             item { EmptyState("Aucune phrase jouable", "Il faut des phrases vérifiées avec un verdict pour jouer. Elles apparaîtront ici dès leur publication.") }

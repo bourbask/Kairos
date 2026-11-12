@@ -106,9 +106,9 @@ internal fun FigCard(modifier: Modifier = Modifier, inner: Modifier = Modifier, 
 }
 
 @Composable
-internal fun Section(kicker: String, title: String, info: String?, foot: String? = null, content: @Composable () -> Unit) {
+internal fun Section(kicker: String, title: String, info: String?, foot: String? = null, note: String? = null, content: @Composable () -> Unit) {
     Column(Modifier.fillMaxWidth().padding(top = 24.dp)) {
-        SectionHeader(kicker, title, info)
+        SectionHeader(kicker, title, info, note = note)
         Spacer(Modifier.height(10.dp))
         content()
         if (foot != null) RichText(foot, Modifier.padding(top = 8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -256,12 +256,12 @@ fun BudgetsScreen(data: PolData, nav: PolNavigator) {
             }
         }
         if (st.withDebt.isNotEmpty()) part {
-            Section("Le détail", "Dette, déficit et effet net", "Effet net : ce que les mesures rapportent (+) ou coûtent (−) aux finances publiques chaque année.") {
+            Section("Le détail", "Dette, déficit et effet net", null, note = "Effet net par an : rapporte (+) ou coûte (−) aux finances publiques.") {
                 FigCard { DetailTable(data, st.withDebt) }
             }
         }
         part {
-            Section("Annoncé contre crédité", "La promesse face au chiffrage", "Ce que le candidat met en avant, face à ce qu'un chiffrage extérieur retient. Barre sombre : l'annonce. Barre colorée : ce qui tient. Touchez une carte pour sa balance.") {
+            Section("Annoncé contre crédité", "La promesse face au chiffrage", "Ce que le candidat met en avant, face à ce qu'un chiffrage extérieur retient. Touchez une carte pour sa balance.", note = "Barre sombre : l'annonce. Barre colorée : ce qui tient.") {
                 if (st.gaps.isEmpty()) EmptyState("Aucun écart chiffré", "Aucun chiffrage extérieur ne contredit encore une annonce.")
                 else Column(verticalArrangement = Arrangement.spacedBy(12.dp)) { st.gaps.forEachIndexed { i, g -> GapCard(data, g, nav) { nav.table(st.gapCards, i) } } }
             }
@@ -347,26 +347,29 @@ private fun GapCard(data: PolData, g: Gap, nav: PolNavigator, onTable: () -> Uni
     val max = listOfNotNull(g.claimed, g.credited).maxOrNull() ?: 0.0
     val (la, lb) = gapLabels(g)
     val id = data.idFor(g.who)
-    FigCard(inner = Modifier.opensBalanceOf(g.lecture, g.what, g.who, nav)) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            if (id != null) IdentityChip(data, id, text = nameOf(g.who)) else Text(nameOf(g.who), fontWeight = FontWeight.Bold)
-            Text(gapRatioLabel(g), Modifier.semantics { contentDescription = "Écart : ${if (g.inverse) "multiplié" else "divisé"} par ${gapRatio(g)?.let { fmtNum(it, if (it < 3) 1 else 0) } ?: "une valeur indéfinie"}" }, color = pc.fragile, fontWeight = FontWeight.ExtraBold, fontSize = 26.sp, fontFamily = Mono)
-        }
-        Text(g.what, Modifier.padding(top = 8.dp), fontWeight = FontWeight.SemiBold, fontSize = 14.5.sp)
-        @Composable fun PBar(label: String, v: Double?, bg: Color) {
-            Kicker(label, Modifier.padding(top = 8.dp, bottom = 3.dp))
-            // Valeur absente : piste vide et « non trouvé », jamais une barre à zéro.
-            if (v == null) Box(Modifier.fillMaxWidth().height(30.dp).clip(RoundedCornerShape(8.dp)).background(scheme.surfaceVariant).padding(horizontal = 10.dp), contentAlignment = Alignment.CenterStart) {
-                Text(NO_VALUE, color = scheme.onSurfaceVariant, fontFamily = Mono, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, softWrap = false)
-            } else Box(Modifier.fillMaxWidth().height(30.dp).clip(RoundedCornerShape(8.dp)).background(scheme.surfaceVariant)) {
-                Box(Modifier.fillMaxWidth(if (max > 0) (v / max).toFloat().coerceIn(0f, 1f) else 0f).defaultMinSize(minWidth = 96.dp).fillMaxHeight().clip(RoundedCornerShape(8.dp)).background(bg).padding(horizontal = 10.dp), contentAlignment = Alignment.CenterStart) {
-                    Text("${fmtNum(v, 1)} ${g.unit}".trim(), color = textOn(bg), fontFamily = Mono, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, softWrap = false)
+    FigCard {
+        // Ouverture du détail sur le corps seul : les boutons du pied (source, plein écran) restent des cibles distinctes.
+        Column(Modifier.fillMaxWidth().opensBalanceOf(g.lecture, g.what, g.who, nav)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                if (id != null) IdentityChip(data, id, text = nameOf(g.who)) else Text(nameOf(g.who), fontWeight = FontWeight.Bold)
+                Text(gapRatioLabel(g), Modifier.semantics { contentDescription = "Écart : ${if (g.inverse) "multiplié" else "divisé"} par ${gapRatio(g)?.let { fmtNum(it, if (it < 3) 1 else 0) } ?: "une valeur indéfinie"}" }, color = pc.fragile, fontWeight = FontWeight.ExtraBold, fontSize = 26.sp, fontFamily = Mono)
+            }
+            Text(g.what, Modifier.padding(top = 8.dp), fontWeight = FontWeight.SemiBold, fontSize = 14.5.sp)
+            @Composable fun PBar(label: String, v: Double?, bg: Color) {
+                Kicker(label, Modifier.padding(top = 8.dp, bottom = 3.dp))
+                // Valeur absente : piste vide et « non trouvé », jamais une barre à zéro.
+                if (v == null) Box(Modifier.fillMaxWidth().height(30.dp).clip(RoundedCornerShape(8.dp)).background(scheme.surfaceVariant).padding(horizontal = 10.dp), contentAlignment = Alignment.CenterStart) {
+                    Text(NO_VALUE, color = scheme.onSurfaceVariant, fontFamily = Mono, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, softWrap = false)
+                } else Box(Modifier.fillMaxWidth().height(30.dp).clip(RoundedCornerShape(8.dp)).background(scheme.surfaceVariant)) {
+                    Box(Modifier.fillMaxWidth(if (max > 0) (v / max).toFloat().coerceIn(0f, 1f) else 0f).defaultMinSize(minWidth = 96.dp).fillMaxHeight().clip(RoundedCornerShape(8.dp)).background(bg).padding(horizontal = 10.dp), contentAlignment = Alignment.CenterStart) {
+                        Text("${fmtNum(v, 1)} ${g.unit}".trim(), color = textOn(bg), fontFamily = Mono, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, softWrap = false)
+                    }
                 }
             }
+            PBar(la, g.claimed, scheme.onSurface)
+            PBar(lb, g.credited, pc.pour)
+            g.lecture?.let { BalanceBlock(it, g.what, onOpen = null) }
         }
-        PBar(la, g.claimed, scheme.onSurface)
-        PBar(lb, g.credited, pc.pour)
-        g.lecture?.let { BalanceBlock(it, g.what, onOpen = null) }
         Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             if (!g.src.isNullOrBlank()) SourceButton(SourceRef(g.src, g.url, g.ev), data, { nav.sheet(PolSheetState.Evaluator(it)) }, Modifier.weight(1f, fill = false))
             Spacer(Modifier.weight(1f)); TableLink(onTable)
@@ -388,7 +391,7 @@ fun LivingScreen(data: PolData, nav: PolNavigator) {
     }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = ScreenPad) {
         part {
-            Section("Salaires", "Les salaires face à l'inflation", "Évolution du salaire net moyen réel dans le privé, après inflation.") {
+            Section("Salaires", "Les salaires face à l'inflation", null, note = "Salaire net moyen réel dans le privé, après inflation.") {
                 if (st.salaireBars.isEmpty()) EmptyState("Aucune série de salaires", "La série des salaires réels n'est pas disponible pour l'instant.")
                 else FigCard { HBars(st.salaireBars, sScale, 60.dp) { if (it.v!! < 0) pc.high else pc.low } }
             }
@@ -399,7 +402,7 @@ fun LivingScreen(data: PolData, nav: PolNavigator) {
             }
         }
         part {
-            Section("Programmes", "Gain par ménage, et dette à l'horizon", "Gain ou perte moyenne par ménage et par an, puis la dette que le programme laisse à l'horizon. Une moyenne peut cacher des gagnants et des perdants très différents.") {
+            Section("Programmes", "Gain par ménage, et dette à l'horizon", null, note = "Moyenne par ménage et par an : elle peut cacher des gagnants et des perdants.") {
                 if (programs.isEmpty()) EmptyState("Aucun gain chiffré", "Aucun programme n'a encore de gain par ménage publié.")
                 else FigCard {
                     programs.forEachIndexed { i, p ->
@@ -464,24 +467,26 @@ private fun MeasureCard(data: PolData, m: Measure, nav: PolNavigator, onTable: (
     val accent = data.identityColorOf(m.who) ?: scheme.primary
     val pill = m.hh?.let { if (it >= 0) pc.low else pc.high } ?: scheme.onSurfaceVariant
     Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), color = scheme.surface, tonalElevation = 1.dp, border = BorderStroke(1.dp, scheme.outlineVariant)) {
-        Row(Modifier.height(IntrinsicSize.Min).opensBalanceOf(m.lecture, "${nameOf(m.who)} : mesures de pouvoir d'achat", m.who, nav)) {
+        Row(Modifier.height(IntrinsicSize.Min)) {
             Box(Modifier.width(5.dp).fillMaxHeight().background(accent))
             Column(Modifier.padding(14.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    if (id != null) data.byId(id)?.let { IdentityBadge(it, 40.dp) }
-                    Column {
-                        Text(nameOf(m.who), fontWeight = FontWeight.Bold, fontSize = 17.sp, lineHeight = 19.sp)
-                        data.partyLabel(m.who).takeIf { it.isNotBlank() }?.let { Text(it, fontSize = 12.5.sp, color = scheme.onSurfaceVariant) }
+                Column(Modifier.fillMaxWidth().opensBalanceOf(m.lecture, "${nameOf(m.who)} : mesures de pouvoir d'achat", m.who, nav)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        if (id != null) data.byId(id)?.let { IdentityBadge(it, 40.dp) }
+                        Column {
+                            Text(nameOf(m.who), fontWeight = FontWeight.Bold, fontSize = 17.sp, lineHeight = 19.sp)
+                            data.partyLabel(m.who).takeIf { it.isNotBlank() }?.let { Text(it, fontSize = 12.5.sp, color = scheme.onSurfaceVariant) }
+                        }
                     }
+                    Text(m.hh?.let { "${fmtSigned(it)} €/an par ménage" } ?: "Par ménage : $NO_VALUE", Modifier.padding(top = 12.dp).clip(RoundedCornerShape(10.dp)).background(pill.copy(alpha = 0.13f)).padding(horizontal = 10.dp, vertical = 6.dp), color = pill, fontFamily = Mono, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                    Column(Modifier.padding(top = 14.dp)) {
+                        Kicker("Mesures")
+                        m.m.split(" ; ").filter { it.isNotBlank() }.forEach { Text("• ${frTypo(it)}", Modifier.padding(top = 3.dp), fontSize = 14.sp, lineHeight = 19.sp) }
+                    }
+                    Column(Modifier.padding(top = 14.dp)) { Kicker("Pour qui"); Text(frTypo(m.b), Modifier.padding(top = 3.dp), fontSize = 14.sp, lineHeight = 19.sp) }
+                    Column(Modifier.padding(top = 14.dp)) { Kicker("Financé par"); Text(frTypo(m.f), Modifier.padding(top = 3.dp), fontSize = 14.sp, lineHeight = 19.sp) }
+                    m.lecture?.let { lec -> BalanceBlock(lec, "${nameOf(m.who)} : mesures de pouvoir d'achat", onOpen = null) }
                 }
-                Text(m.hh?.let { "${fmtSigned(it)} €/an par ménage" } ?: "Par ménage : $NO_VALUE", Modifier.padding(top = 12.dp).clip(RoundedCornerShape(10.dp)).background(pill.copy(alpha = 0.13f)).padding(horizontal = 10.dp, vertical = 6.dp), color = pill, fontFamily = Mono, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                Column(Modifier.padding(top = 14.dp)) {
-                    Kicker("Mesures")
-                    m.m.split(" ; ").filter { it.isNotBlank() }.forEach { Text("• ${frTypo(it)}", Modifier.padding(top = 3.dp), fontSize = 14.sp, lineHeight = 19.sp) }
-                }
-                Column(Modifier.padding(top = 14.dp)) { Kicker("Pour qui"); Text(frTypo(m.b), Modifier.padding(top = 3.dp), fontSize = 14.sp, lineHeight = 19.sp) }
-                Column(Modifier.padding(top = 14.dp)) { Kicker("Financé par"); Text(frTypo(m.f), Modifier.padding(top = 3.dp), fontSize = 14.sp, lineHeight = 19.sp) }
-                m.lecture?.let { lec -> BalanceBlock(lec, "${nameOf(m.who)} : mesures de pouvoir d'achat", onOpen = null) }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { TableLink(onTable) }
             }
         }
@@ -521,7 +526,7 @@ fun BilanScreen(data: PolData, nav: PolNavigator) {
     }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = ScreenPad) {
         part {
-            Section("Dette", "D'où vient la hausse de la dette ?", "Décomposition de la hausse de la dette du mandat sortant, par grande cause, selon un évaluateur extérieur.") {
+            Section("Dette", "D'où vient la hausse de la dette ?", null, note = "Hausse du mandat sortant par grande cause, selon un évaluateur extérieur.") {
                 if (st.ofceBars.isEmpty()) EmptyState("Aucune décomposition", "La décomposition de la dette n'est pas disponible pour l'instant.")
                 else FigCard {
                     Legend(modifier = Modifier.padding(bottom = 8.dp), items = listOf(pc.high to "Fait monter la dette", pc.low to "La fait baisser"))
@@ -530,7 +535,7 @@ fun BilanScreen(data: PolData, nav: PolNavigator) {
             }
         }
         part {
-            Section("Niveau de vie", "Qui a gagné quoi ?", "Effet des mesures fiscales et sociales du mandat sortant, selon un institut de recherche indépendant.", "Ces études ne couvrent pas les années suivantes.") {
+            Section("Niveau de vie", "Qui a gagné quoi ?", null, "Ces études ne couvrent pas les années suivantes.", note = "Mesures fiscales et sociales du mandat sortant, selon un institut de recherche indépendant.") {
                 if (st.ippBars.isEmpty()) EmptyState("Aucune étude de répartition", "Aucun chiffrage de l'effet sur le niveau de vie n'est disponible pour l'instant.")
                 else FigCard { HBars(st.ippBars, ippScale, 118.dp) { pc.pour } }
             }
@@ -541,7 +546,7 @@ fun BilanScreen(data: PolData, nav: PolNavigator) {
             }
         }
         part {
-            Section("Et après ?", "Qui continue la ligne, qui la renverse", "Une carte par grande orientation du mandat sortant. Mêmes candidats, même ordre, à chaque carte. « Non trouvé » : aucune position dans une source fiable, ce qui ne veut pas dire aucune position.") {
+            Section("Et après ?", "Qui continue la ligne, qui la renverse", "Une carte par grande orientation du mandat sortant. Mêmes candidats, même ordre, à chaque carte.", "« Non trouvé » : aucune position dans une source fiable, ce qui ne veut pas dire aucune position.") {
                 if (matrix.isEmpty()) EmptyState("Aucune orientation suivie", "Les positions des candidats face au bilan sortant ne sont pas encore publiées.")
                 else Column {
                     Legend(modifier = Modifier.padding(bottom = 8.dp), items = listOf("keep", "flip", "mix", "none").map { c -> mark(c).let { it.fg to it.label } })
@@ -555,22 +560,24 @@ fun BilanScreen(data: PolData, nav: PolNavigator) {
 @Composable
 private fun MatrixCard(data: PolData, r: MatrixRow, cands: List<String>, i: Int, n: Int, nav: PolNavigator, onTable: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
-    FigCard(inner = Modifier.opensBalanceOf(r.lecture, r.o, null, nav)) {
-        Kicker("${i + 1} / $n")
-        Text(frTypo(r.o), Modifier.padding(top = 4.dp), fontWeight = FontWeight.Bold, fontSize = 19.sp, lineHeight = 23.sp)
-        if (r.s.isNotBlank()) Text(r.s, fontSize = 12.5.sp, color = scheme.onSurfaceVariant)
-        cands.forEach { c ->
-            val x = r.c[c]
-            val id = data.idFor(c)
-            Box(Modifier.padding(top = 10.dp).fillMaxWidth().height(1.dp).background(scheme.outlineVariant))
-            Row(Modifier.padding(top = 9.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                if (id != null) data.byId(id)?.let { IdentityBadge(it, 30.dp) }
-                Text(c, Modifier.weight(1f), fontWeight = if (x != null) FontWeight.Bold else FontWeight.Normal, fontSize = 14.sp, color = if (x != null) Color.Unspecified else scheme.onSurfaceVariant)
-                MarkPill(x?.firstOrNull())
+    FigCard {
+        Column(Modifier.fillMaxWidth().opensBalanceOf(r.lecture, r.o, null, nav)) {
+            Kicker("${i + 1} / $n")
+            Text(frTypo(r.o), Modifier.padding(top = 4.dp), fontWeight = FontWeight.Bold, fontSize = 19.sp, lineHeight = 23.sp)
+            if (r.s.isNotBlank()) Text(r.s, fontSize = 12.5.sp, color = scheme.onSurfaceVariant)
+            cands.forEach { c ->
+                val x = r.c[c]
+                val id = data.idFor(c)
+                Box(Modifier.padding(top = 10.dp).fillMaxWidth().height(1.dp).background(scheme.outlineVariant))
+                Row(Modifier.padding(top = 9.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    if (id != null) data.byId(id)?.let { IdentityBadge(it, 30.dp) }
+                    Text(c, Modifier.weight(1f), fontWeight = if (x != null) FontWeight.Bold else FontWeight.Normal, fontSize = 14.sp, color = if (x != null) Color.Unspecified else scheme.onSurfaceVariant)
+                    MarkPill(x?.firstOrNull())
+                }
+                if (x != null && x.getOrNull(1)?.isNotBlank() == true) Text(frTypo(x[1]), Modifier.padding(top = 4.dp), fontSize = 13.sp, lineHeight = 18.sp, color = scheme.onSurfaceVariant)
             }
-            if (x != null && x.getOrNull(1)?.isNotBlank() == true) Text(frTypo(x[1]), Modifier.padding(top = 4.dp), fontSize = 13.sp, lineHeight = 18.sp, color = scheme.onSurfaceVariant)
+            r.lecture?.let { lec -> BalanceBlock(lec, r.o, onOpen = null) }
         }
-        r.lecture?.let { lec -> BalanceBlock(lec, r.o, onOpen = null) }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { TableLink(onTable) }
     }
 }
