@@ -12,6 +12,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -31,6 +32,7 @@ import app.kairos.mobile.ui.mimir.SharesPanel
 import app.kairos.mobile.ui.politique.kit.AtTable
 import app.kairos.mobile.ui.politique.kit.BalanceSheet
 import app.kairos.mobile.ui.politique.kit.EmptyState
+import app.kairos.mobile.ui.politique.kit.LocalPolBottom
 import app.kairos.mobile.ui.politique.kit.TableCard
 import app.kairos.mobile.ui.politique.model.PolData
 import app.kairos.mobile.ui.politique.model.PolPage
@@ -183,12 +185,15 @@ fun PolitiqueScreen(
             is PolLoad.Down -> HomeDown(l, onRetry = { reload++ }, onSite = { navigator.go(PolRoute.Site) })
             is PolLoad.Ready -> when (route) {
                 PolRoute.Home -> HomeScreen(l.data, navigator, bottom)
-                else -> Box(Modifier.fillMaxSize().padding(bottom = bottom)) {
-                    when (route) {
-                        is PolRoute.Rubric -> RubricHost(route.id, l.data, navigator)
-                        PolRoute.Quiz -> QuizScreen(l.data, navigator)
-                        is PolRoute.Duel -> DuelScreen(l.data, navigator, route.a, route.b)
-                        else -> Soon()
+                // Pas de marge basse sur la page : le contenu défile sous le dégradé du dock, comme sur l'accueil.
+                else -> CompositionLocalProvider(LocalPolBottom provides bottom) {
+                    Box(Modifier.fillMaxSize()) {
+                        when (route) {
+                            is PolRoute.Rubric -> RubricHost(route.id, l.data, navigator)
+                            PolRoute.Quiz -> QuizScreen(l.data, navigator)
+                            is PolRoute.Duel -> DuelScreen(l.data, navigator, route.a, route.b)
+                            else -> Soon()
+                        }
                     }
                 }
             }

@@ -85,6 +85,7 @@ import app.kairos.mobile.ui.politique.PolSheetState
 import app.kairos.mobile.ui.politique.duelNight
 import app.kairos.mobile.ui.politique.identityColor
 import app.kairos.mobile.ui.politique.kit.BalanceBlock
+import app.kairos.mobile.ui.politique.kit.LocalPolBottom
 import app.kairos.mobile.ui.politique.kit.EmptyState
 import app.kairos.mobile.ui.politique.kit.Kicker
 import app.kairos.mobile.ui.politique.kit.SourceList
@@ -164,7 +165,7 @@ private fun DuelPick(data: PolData, nav: PolNavigator) {
                 }
             }
         }
-        Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.background).padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.fillMaxWidth().padding(bottom = LocalPolBottom.current).padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton({
                 val k = kind ?: if (r.people.size >= 2) IdKind.Personne else IdKind.Parti
                 val pool = (if (k == IdKind.Personne) r.people else r.parties).shuffled()
@@ -261,7 +262,7 @@ private fun DuelHud(data: PolData, nav: PolNavigator, a: String, b: String) {
                 EmptyState("Rien à comparer", "Ces deux adversaires n'ont aucune donnée commune pour l'instant.", Modifier.padding(16.dp), "Changer d'adversaires" to { nav.replace(PolRoute.Duel()) })
                 return@Column
             }
-            LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(16.dp, 14.dp, 16.dp, 24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(16.dp, 14.dp, 16.dp, LocalPolBottom.current), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 item {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("${r.size} rounds · aucun vainqueur désigné", Modifier.weight(1f), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)

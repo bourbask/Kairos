@@ -56,6 +56,18 @@ class PolKitTest {
         assertEquals("Angle.", balanceSummary(Lecture(angle_mort = "Angle.")).long)
     }
 
+    @Test fun balance_row_signs_losses() {
+        assertEquals("−1,4 Md€/an", lossAmount("1,4 Md€/an"))
+        assertEquals("−14,1 Md€", lossAmount("−14,1 Md€"))
+        assertEquals("−3 Md€", lossAmount("- 3 Md€"))
+        assertEquals("plus de 4 Md€", lossAmount(" plus de 4 Md€ "))
+        val rows = balanceRows(listOf(Poste("Poste B", "2 Md€", " Les Y "), Poste("Poste A", " ", ""), Poste("Poste C", null, null)))
+        assertEquals(listOf("Poste B", "Poste A", "Poste C"), rows.map { it.quoi })
+        assertEquals(BalanceRow("Poste B", "Les Y", "−2 Md€"), rows[0])
+        assertEquals(BalanceRow("Poste A", null, null), rows[1])
+        assertEquals(BalanceRow("Poste C", null, null), rows[2])
+    }
+
     @Test fun evaluator_tag_texts() {
         val ev = Evaluator(id = "x", nom = "Institut Exemple pour la recherche économique et sociale", alias = listOf("IEX 2024", "IEX"), independance = 2)
         assertEquals("IEX", evShortName(ev))

@@ -15,6 +15,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -29,6 +30,12 @@ import app.kairos.mobile.ui.politique.model.PolData
 import app.kairos.mobile.ui.politique.model.SourceRef
 
 /** Petites briques de mise en page partagées par les écrans de l'espace. */
+
+/**
+ * Marge basse que le contenu défilant d'une page laisse libre (dock et actions du bas) : le contenu
+ * passe sous le dégradé de la coque au lieu de s'arrêter au-dessus.
+ */
+val LocalPolBottom = compositionLocalOf { 24.dp }
 
 /** Filet entre deux lignes d'une carte. */
 @Composable

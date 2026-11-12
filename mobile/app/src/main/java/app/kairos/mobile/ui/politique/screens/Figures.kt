@@ -68,6 +68,7 @@ import app.kairos.mobile.ui.politique.kit.Divider
 import app.kairos.mobile.ui.politique.kit.Legend
 import app.kairos.mobile.ui.politique.kit.SourceFoot
 import app.kairos.mobile.ui.politique.kit.BalanceBlock
+import app.kairos.mobile.ui.politique.kit.LocalPolBottom
 import app.kairos.mobile.ui.politique.kit.EmptyState
 import app.kairos.mobile.ui.politique.kit.IdentityChip
 import app.kairos.mobile.ui.politique.kit.IdentityDot
@@ -84,7 +85,7 @@ import app.kairos.mobile.ui.politique.model.SourceRef
 
 private val Mono = FontFamily.Monospace
 private const val BALANCE_LEAD = "Pour chaque chiffre : ce qu'il sacrifie, ce qu'il ne montre pas, et l'avis signé des évaluateurs."
-internal val ScreenPad = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 24.dp)
+internal val ScreenPad: PaddingValues @Composable get() = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = LocalPolBottom.current)
 
 /** Identité d'un libellé nominatif (« Nom · Parti » ou « Nom »). */
 private fun PolData.idFor(who: String): String? = idOf(who) ?: idOf(who.substringBefore(" · "))

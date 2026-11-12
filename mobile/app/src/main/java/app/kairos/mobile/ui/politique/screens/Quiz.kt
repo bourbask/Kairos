@@ -67,6 +67,7 @@ import androidx.compose.ui.unit.sp
 import app.kairos.mobile.ui.politique.PolNavigator
 import app.kairos.mobile.ui.politique.PolSheetState
 import app.kairos.mobile.ui.politique.kit.EmptyState
+import app.kairos.mobile.ui.politique.kit.LocalPolBottom
 import app.kairos.mobile.ui.politique.kit.IdentityChip
 import app.kairos.mobile.ui.politique.kit.Kicker
 import app.kairos.mobile.ui.politique.kit.PolColors
@@ -81,7 +82,7 @@ import app.kairos.mobile.ui.politique.model.sourcesOf
 import app.kairos.mobile.ui.politique.reducedMotion
 import kotlinx.coroutines.launch
 
-private val Pad = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 24.dp)
+private val Pad: PaddingValues @Composable get() = ScreenPad
 
 private class GuessLook(val arrow: String, val fg: Color, val bg: Color)
 
@@ -189,7 +190,7 @@ private fun QuizGame(data: PolData, nav: PolNavigator, claims: List<Claim>, camp
     val scheme = MaterialTheme.colorScheme
     val revealed = ans.size > i
     var exit by remember(i) { mutableIntStateOf(0) }
-    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp).padding(top = 4.dp)) {
+    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp).padding(top = 4.dp, bottom = LocalPolBottom.current)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Box(Modifier.weight(1f).height(6.dp).clip(CircleShape).background(scheme.outlineVariant)) {
                 Box(Modifier.fillMaxHeight().fillMaxWidth(i.toFloat() / n).background(scheme.onSurface))
