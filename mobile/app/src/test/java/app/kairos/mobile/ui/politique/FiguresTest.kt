@@ -110,4 +110,19 @@ class FiguresTest {
         assertEquals(listOf("Choc"), bi.ofce.map { it.l }); assertTrue(bi.ipp.isEmpty())
         assertNull(tileViz(d, "niveau-de-vie"))
     }
+
+    @Test fun fallback_scales_follow_the_values() {
+        // Sans échelle publiée : bornes tirées des valeurs (zéro inclus), jamais d'un jeu de données particulier.
+        val d = PolData(mapOf(
+            "bilan" to file("""{"OFCE":{"rows":[{"l":"A","v":-7.5},{"l":"B","v":21}]},"IPP":{"rows":[{"l":"C","v":0.4}]}}"""),
+            "niveau-de-vie" to file("""{"SALAIRES":{"rows":[{"l":"2020","v":-3.2}]}}"""),
+        ))
+        val b = bilanState(d)
+        assertEquals(-10.0, b.ofceScale.min, eps); assertEquals(25.0, b.ofceScale.max, eps)
+        assertEquals(0.0, b.ippScale.min, eps); assertEquals(5.0, b.ippScale.max, eps)
+        val s = livingState(d).scale
+        assertEquals(-5.0, s.min, eps); assertEquals(0.0, s.max, eps)
+        // Publiée : respectée.
+        assertEquals(-3.0, bilanState(PolData(mapOf("bilan" to file("""{"OFCE":{"scale":{"min":-3,"max":3},"rows":[]}}""")))).ofceScale.min, eps)
+    }
 }

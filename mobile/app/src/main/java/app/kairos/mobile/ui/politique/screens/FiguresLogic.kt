@@ -124,6 +124,10 @@ internal fun <T> PolData.one(file: String, path: String, s: KSerializer<T>): T? 
 /** Lignes de barres chiffrées : sans valeur, la ligne est écartée plutôt que dessinée à zéro. */
 private fun PolData.bars(file: String, path: String) = decode<BilanRow>(file, path).filter { it.v != null }
 
+/** Échelle de repli, sans échelle publiée : celle des valeurs, zéro compris. */
+private fun fallbackScale(rows: List<BilanRow>, unit: String): Scale =
+    axisBounds(null, rows.mapNotNull { it.v } + 0.0).let { (lo, hi) -> Scale(lo, hi, unit) }
+
 fun nameOf(who: String) = who.substringBefore(" · ")
 
 /** Dette de référence : valeur publiée, sinon celle de la ligne de référence des programmes. */
@@ -162,8 +166,9 @@ fun livingState(data: PolData): LivingState {
     val cards = measures.map { m ->
         TableCard("Pouvoir d'achat", nameOf(m.who), lines = listOf(m.hh?.let { "${fmtSigned(it)} € par an" } ?: "Par ménage : $NO_VALUE") + m.m.split(" ; ").filter { it.isNotBlank() } + listOf("Pour qui : ${m.b}", "Financé par : ${m.f}"))
     }
+    val salaires = data.bars("niveau-de-vie", "SALAIRES.rows")
     return LivingState(
-        data.bars("niveau-de-vie", "SALAIRES.rows"), data.one("niveau-de-vie", "SALAIRES.scale", Scale.serializer()) ?: Scale(-2.0, 2.0, " %"),
+        salaires, data.one("niveau-de-vie", "SALAIRES.scale", Scale.serializer()) ?: fallbackScale(salaires, " %"),
         all.filter { !it.ref && it.hh != null }.sortedByDescending { it.hh }, data.refDebt(all), measures, cards,
     )
 }
@@ -180,9 +185,11 @@ fun bilanState(data: PolData): BilanState {
     val cards = matrix.map { r ->
         TableCard("Face au bilan sortant · ${r.s}", r.o, lines = cands.map { c -> r.c[c]?.let { x -> "$c — ${MARK_LABEL[x.firstOrNull()] ?: "Position"} : ${x.getOrNull(1).orEmpty()}" } ?: "$c : non trouvé" })
     }
+    val ofce = data.bars("bilan", "OFCE.rows")
+    val ipp = data.bars("bilan", "IPP.rows")
     return BilanState(
-        data.bars("bilan", "OFCE.rows"), data.bars("bilan", "IPP.rows"),
-        data.one("bilan", "OFCE.scale", Scale.serializer()) ?: Scale(-3.0, 14.0, " pt"), data.one("bilan", "IPP.scale", Scale.serializer()) ?: Scale(0.0, 4.0, " %"),
+        ofce, ipp,
+        data.one("bilan", "OFCE.scale", Scale.serializer()) ?: fallbackScale(ofce, " pt"), data.one("bilan", "IPP.scale", Scale.serializer()) ?: fallbackScale(ipp, " %"),
         cands, matrix, cards,
     )
 }
