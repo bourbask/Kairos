@@ -1,7 +1,6 @@
 package app.kairos.mobile.ui.politique.model
 
 import app.kairos.mobile.data.PolIdentity
-import app.kairos.mobile.ui.politique.fold
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
@@ -10,6 +9,11 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.serializer
+import java.text.Normalizer
+
+/** Texte sans accents ni casse, espaces resserrés : comparaison des clés et libellés. */
+fun fold(s: String): String =
+    Normalizer.normalize(s, Normalizer.Form.NFD).replace(Regex("\\p{M}+"), "").lowercase().trim().replace(Regex("\\s+"), " ")
 
 enum class IdKind { Personne, Parti, Camp }
 
