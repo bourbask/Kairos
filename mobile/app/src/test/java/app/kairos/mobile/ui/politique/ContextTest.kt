@@ -92,10 +92,10 @@ class ContextTest {
         assertEquals("Institut A", m.polls.single().institute)
     }
 
-    @Test fun unique_id_refuses_shared_alias() {
+    @Test fun id_of_refuses_shared_alias() {
         val ids = """[{"id":"a","nom":"Candidat A","alias":["Nom partagé"]},{"id":"b","nom":"Candidat B","alias":["Nom partagé"]}]"""
         val d = PolData(mapOf("identites" to file("""{"_liste":$ids}""")))
-        assertEquals("a", d.uniqueId("Candidat A")); assertNull(d.uniqueId("Nom partagé")); assertNull(d.uniqueId("Inconnu"))
+        assertEquals("a", d.idOf("Candidat A")); assertNull(d.idOf("Nom partagé")); assertNull(d.idOf("Inconnu"))
         assertEquals("CA", initials("Candidat Alpha")); assertEquals("", initials("x y"))
     }
 

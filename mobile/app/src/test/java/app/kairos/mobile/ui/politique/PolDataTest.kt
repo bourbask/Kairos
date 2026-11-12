@@ -82,6 +82,7 @@ class PolDataTest {
         assertEquals("a", data.idOf("CANDIDAT  Á"))
         assertEquals("a", data.idOf("candidat a"))
         assertEquals(listOf("a", "b"), data.idsIn("liste commune"))
+        assertNull(data.idOf("liste commune"))
         assertNull(data.idOf("inconnu"))
         assertNull(data.idOf(null))
         assertNull(data.idOf(""))

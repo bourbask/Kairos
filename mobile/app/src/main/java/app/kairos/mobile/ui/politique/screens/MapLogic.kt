@@ -209,9 +209,9 @@ data class FactSection(val id: String?, val cities: List<Pair<String, List<CityF
 /** Faits groupés par identité du maire, puis identités des municipales sans aucun fait. */
 fun factSections(data: PolData): List<FactSection> {
     val facts = cityFactsOf(data)
-    val byId = facts.groupBy { data.uniqueId(it.maire) }
+    val byId = facts.groupBy { data.idOf(it.maire) }
     val done = byId.keys.filterNotNull().toSet()
     val withFacts = byId.entries.sortedBy { it.key == null }.map { (id, l) -> FactSection(id, l.groupBy { it.ville }.toList()) }
-    val pending = muniOf(data).mapNotNull { data.uniqueId(it.t) }.distinct().filter { it !in done }.map { FactSection(it, emptyList()) }
+    val pending = muniOf(data).mapNotNull { data.idOf(it.t) }.distinct().filter { it !in done }.map { FactSection(it, emptyList()) }
     return withFacts + pending
 }

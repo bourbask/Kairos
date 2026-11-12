@@ -55,9 +55,6 @@ fun lobbyOf(data: PolData): List<Dossier> = data.decode<Dossier>("probite", "LOB
 
 fun financingOf(data: PolData): List<Dossier> = data.decode<Dossier>("argent", "FIN").filter { it.t.isNotBlank() }
 
-/** Identité d'un libellé seulement s'il n'en désigne qu'une : jamais l'une au hasard. */
-fun PolData.uniqueId(label: String?): String? = idsIn(label).singleOrNull()
-
 /** Initiales (3 au plus) des mots à majuscule. */
 fun initials(name: String): String = name.split(Regex("[\\s-]+")).filter { it.firstOrNull()?.isUpperCase() == true }.map { it.first() }.joinToString("").take(3)
 

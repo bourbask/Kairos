@@ -71,7 +71,8 @@ class PolData(private val files: Map<String, JsonObject>) {
     /** Toutes les identités dont un alias (ou le nom) égale [label], accents et casse ignorés. */
     fun idsIn(label: String?): List<String> = label?.takeIf { it.isNotBlank() }?.let { keyIndex[fold(it)] }.orEmpty()
 
-    fun idOf(label: String?): String? = idsIn(label).firstOrNull()
+    /** Identité d'un libellé seulement s'il n'en désigne qu'une : jamais l'une au hasard. */
+    fun idOf(label: String?): String? = idsIn(label).singleOrNull()
 
     /** Libellés des candidats (bilan, programmes hors référence), repliés. */
     private val candidates: Set<String> by lazy {

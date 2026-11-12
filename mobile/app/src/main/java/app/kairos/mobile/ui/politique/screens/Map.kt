@@ -240,7 +240,7 @@ fun VillesScreen(data: PolData, nav: PolNavigator) {
 
 @Composable
 private fun MuniCard(data: PolData, d: Dossier) {
-    val id = data.uniqueId(d.t)
+    val id = data.idOf(d.t)
     val bar = id?.let { identityColor(data.byId(it)?.couleur) }
     FigCard(Modifier.clip(RoundedCornerShape(16.dp)).drawWithContent { drawContent(); if (bar != null) drawRect(bar, size = Size(size.width, 4.dp.toPx())) }) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -258,7 +258,7 @@ private fun FactBlock(data: PolData, f: CityFact, nav: PolNavigator, withMaire: 
     val (label, tone) = factKind(f.kind)
     StateTag(label, tone)
     if (withMaire && f.maire.isNotBlank()) {
-        val id = data.uniqueId(f.maire)
+        val id = data.idOf(f.maire)
         if (id != null) IdentityChip(data, id, text = f.maire, onClick = { nav.sheet(PolSheetState.Identity(id)) }, modifier = Modifier.padding(top = 6.dp))
         else Text(f.maire, Modifier.padding(top = 6.dp), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
@@ -274,7 +274,7 @@ private fun CityFactsCard(data: PolData, ville: String, l: List<CityFact>, nav: 
             TextButton({ nav.sheet(PolSheetState.City(ville)) }, Modifier.semantics { contentDescription = "Fiche de $ville" }) { Text("Fiche") }
         }
         l.firstOrNull()?.maire?.takeIf { it.isNotBlank() }?.let { m ->
-            val id = data.uniqueId(m)
+            val id = data.idOf(m)
             if (id != null) IdentityChip(data, id, text = m, onClick = { nav.sheet(PolSheetState.Identity(id)) })
             else Text(m, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }

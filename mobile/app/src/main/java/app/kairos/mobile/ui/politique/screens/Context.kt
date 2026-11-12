@@ -67,7 +67,7 @@ private fun CardTitle(text: String, modifier: Modifier = Modifier) = Text(frTypo
 /** Dossier sourcé (lobbying, financement) : titre, étape, texte, sources. */
 @Composable
 private fun DossierCard(data: PolData, d: Dossier, onTable: () -> Unit, nav: PolNavigator) {
-    val id = data.uniqueId(d.t)
+    val id = data.idOf(d.t)
     FigCard {
         Row(verticalAlignment = Alignment.Top) {
             CardTitle(d.t, Modifier.weight(1f))
@@ -144,8 +144,8 @@ private fun AgendaRow(a: AgendaItem) {
 
 @Composable
 private fun AffaireCard(data: PolData, a: Affaire, onTable: () -> Unit, nav: PolNavigator) {
-    val whoId = data.uniqueId(a.who)
-    val partyId = data.uniqueId(a.party)
+    val whoId = data.idOf(a.who)
+    val partyId = data.idOf(a.party)
     FigCard {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             val identity = whoId?.let { data.byId(it) }
@@ -184,7 +184,7 @@ fun ArgentScreen(data: PolData, nav: PolNavigator) {
                 else FigCard {
                     aide.rows.forEachIndexed { i, r ->
                         if (i > 0) Divider()
-                        val id = data.uniqueId(r.l)
+                        val id = data.idOf(r.l)
                         val label = moneyLabel(r.v)
                         Column(Modifier.padding(vertical = 6.dp).semantics(mergeDescendants = true) { contentDescription = "${shortLabel(r.l)} : $label" }) {
                             Text(shortLabel(r.l), fontWeight = FontWeight.SemiBold, fontSize = 13.5.sp)
@@ -199,7 +199,7 @@ fun ArgentScreen(data: PolData, nav: PolNavigator) {
                 if (partis.isEmpty()) Empty("Comptes pas encore publiés", "Les comptes des partis (dons, dette, situation nette) apparaîtront ici dès qu'ils seront publiés.")
                 else Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     partis.forEach { p ->
-                        val id = data.uniqueId(p.parti)
+                        val id = data.idOf(p.parti)
                         FigCard {
                             if (id != null) IdentityChip(data, id) else Text(p.parti, fontWeight = FontWeight.Bold)
                             Column(Modifier.padding(top = 8.dp)) {
@@ -219,7 +219,7 @@ fun ArgentScreen(data: PolData, nav: PolNavigator) {
                     val max = campagnesMax(camps)
                     camps.forEachIndexed { i, c ->
                         if (i > 0) Divider()
-                        val id = data.uniqueId(c.cand)
+                        val id = data.idOf(c.cand)
                         Column(Modifier.padding(vertical = 10.dp)) {
                             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                                 if (id != null) IdentityChip(data, id, modifier = Modifier.weight(1f, fill = false)) else Text(c.cand, fontWeight = FontWeight.Bold)
