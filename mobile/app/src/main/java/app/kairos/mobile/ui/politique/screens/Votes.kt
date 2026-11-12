@@ -429,7 +429,7 @@ private fun DvRate(data: PolData, items: List<DvItem>) {
             )
             Text("Moins probant : suivre son vote annoncé est attendu ; les écarts restent parlants.", Modifier.padding(top = 4.dp), fontSize = 12.5.sp, color = scheme.onSurfaceVariant)
         }
-        if (k.sp > 0) Honest("${plural(k.sp, "scrutin", "scrutins")} sans déclaration trouvée", "Aucune déclaration dans les six mois autour du vote : ni cohérents ni incohérents, donc hors des deux taux.")
+        if (k.sp > 0) Honest("${plural(k.sp, "scrutin", "scrutins")} sans déclaration trouvée : hors des deux taux.", "Aucune déclaration dans les six mois autour du vote : ni cohérents ni incohérents, donc hors des deux taux.")
     }
 }
 

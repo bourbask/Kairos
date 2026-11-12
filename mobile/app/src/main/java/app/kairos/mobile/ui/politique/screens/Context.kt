@@ -49,7 +49,6 @@ import app.kairos.mobile.ui.politique.kit.EmptyState
 import app.kairos.mobile.ui.politique.kit.IdentityChip
 import app.kairos.mobile.ui.politique.kit.Kicker
 import app.kairos.mobile.ui.politique.kit.PolColors
-import app.kairos.mobile.ui.politique.kit.InfoIcon
 import app.kairos.mobile.ui.politique.kit.SourceList
 import app.kairos.mobile.ui.politique.kit.frTypo
 import app.kairos.mobile.ui.politique.model.PolData
@@ -96,10 +95,10 @@ fun ProbiteScreen(data: PolData, nav: PolNavigator) {
     val lobby = remember(data) { lobbyOf(data) }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = ScreenPad) {
         part {
-            Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("Présomption d'innocence : une enquête ne vaut pas culpabilité.", Modifier.weight(1f, fill = false), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                InfoIcon("Une enquête ou une mise en examen ne vaut pas culpabilité. Les étapes ne se valent pas : comparez-les, pas les noms.", "À propos de la présomption d'innocence")
-            }
+            Text(
+                "Présomption d'innocence : une enquête ou une mise en examen ne vaut pas culpabilité. Les étapes ne se valent pas : comparez-les, pas les noms.",
+                Modifier.padding(top = 6.dp), fontSize = 13.sp, lineHeight = 18.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
         part {
             Section("Agenda", "Décisions attendues avant l'élection", null) {
