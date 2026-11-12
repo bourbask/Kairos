@@ -7,8 +7,9 @@
 # Services (re)démarrés : KAIROS_SERVICES s'il est fourni (liste séparée par des
 # espaces) ; sinon ollama, scheduler et les tentacules, plus la tête seulement
 # si sa configuration (config/tete.toml) existe sur l'hôte et le partage seulement
-# si son fichier (deploy/docker/partage.env) y existe — sans eux, ils
-# redémarreraient en boucle.
+# si son fichier (deploy/docker/partage.env) y existe, le module politique seulement
+# si son dossier de données (POLITIQUE_DONNEES_HOTE dans deploy/docker/.env) y est
+# déclaré — sans eux, ils redémarreraient en boucle.
 #
 # APK de l'application : si `gh` est disponible et authentifié, l'APK de la
 # release fusionnée (PR « Release X.Y.Z » dont HEAD est le commit de fusion, sinon dernier tag), attendu au besoin, est déposé dans <KAIROS_DIR>/apk sur
@@ -107,6 +108,11 @@ else
         SERVICES="$SERVICES partage"
     else
         echo "    Partage non démarré : deploy/docker/partage.env absent sur l'hôte."
+    fi
+    if ssh "$VPS_HOST" "grep -qs '^POLITIQUE_DONNEES_HOTE=.' '$KAIROS_DIR/deploy/docker/.env'"; then
+        SERVICES="$SERVICES politique"
+    else
+        echo "    Politique non démarré : POLITIQUE_DONNEES_HOTE absent de deploy/docker/.env sur l'hôte."
     fi
 fi
 echo "    Services : $SERVICES"

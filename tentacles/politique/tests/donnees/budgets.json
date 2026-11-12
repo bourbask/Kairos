@@ -1,0 +1,11 @@
+{
+  "REF": 1.5,
+  "PROGRAMS": [
+    {"who": "Candidat A", "party": "Parti Bleu", "deficit": 3.1, "hh": 400, "src": "https://example.org/budget-a"},
+    {"who": "Mme B", "party": "Parti Vert", "deficit": 4.2, "src": "https://example.org/budget-b"},
+    {"who": "Candidat C", "party": "Parti Rouge", "deficit": 0, "hh": -120, "src": "https://example.org/budget-c"}
+  ],
+  "GAPS": [
+    {"who": "Cand. A", "what": "Mesure fictive", "claimed": 10, "credited": 4.5, "src": "Institut fictif"}
+  ]
+}

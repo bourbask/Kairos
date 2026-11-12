@@ -210,6 +210,36 @@ services:
       - default
       - partage-public
 
+  # Données publiques d'information politique, en lecture seule. Port MCP (8103) jamais publié :
+  # la tête le joint sur un réseau interne, sans sortie vers l'extérieur.
+  politique:
+    logging: *logging
+    <<: *hardening
+    image: kairos:local
+    restart: unless-stopped
+    user: "1001:1001"
+    mem_limit: 64m
+    pids_limit: 32
+    read_only: true
+    entrypoint: ["/app/kairos-politique"]
+    environment:
+      POLITIQUE_BIND: 0.0.0.0:8103
+      POLITIQUE_DONNEES: /app/politique
+    # Fichier dédié : ce module ne reçoit aucun autre secret de Kairos.
+    env_file:   # POLITIQUE_TOKEN (obligatoire) — cf. politique.env.example
+      - path: politique.env
+        required: false
+    volumes:
+      # Dossier des fichiers JSON sur l'hôte (POLITIQUE_DONNEES_HOTE, dans .env) ; jamais créé à vide.
+      - type: bind
+        source: ${POLITIQUE_DONNEES_HOTE:-./politique-absent}
+        target: /app/politique
+        read_only: true
+        bind:
+          create_host_path: false
+    networks:
+      - politique-interne
+
   # Tête : boucle principale (conversation, briefs, suggestions) ; joint les tentacules par nom de service.
   tete:
     logging: *logging
@@ -234,6 +264,9 @@ services:
       - "${TENTACLES_BIND_ADDR:-127.0.0.1}:${TETE_BIND_PORT:-8093}:8090"
       # API de l'application (active si TETE_APP_BIND=0.0.0.0:8091) : réseau privé uniquement.
       - "${TETE_APP_BIND_ADDR:-127.0.0.1}:${TETE_APP_PORT:-8100}:8091"
+    networks:
+      - default
+      - politique-interne
 
   # Exécutions manuelles : `docker compose run --rm kairos <scrape|briefing|status|prompt ...>`
   kairos:
@@ -306,4 +339,7 @@ networks:
   # Sans sortie vers l'extérieur ; nom fixe pour que le compose du site puisse le rejoindre.
   partage-public:
     name: partage-public
+    internal: true
+  # Tête ↔ module politique uniquement, sans sortie vers l'extérieur.
+  politique-interne:
     internal: true

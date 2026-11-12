@@ -1,0 +1,7 @@
+{
+  "SALAIRES": {"rows": [{"l": "Médian fictif", "v": 2000}], "scale": {"min": 0, "max": 5000, "unit": "€"}},
+  "MEASURES": [
+    {"who": "Candidat A", "hh": 250, "m": "Mesure fictive une"},
+    {"who": "Mme B", "hh": -80, "m": "Mesure fictive deux"}
+  ]
+}

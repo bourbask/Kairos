@@ -1,0 +1,28 @@
+{
+  "identite": {
+    "couleur": "#cc3333",
+    "id": "c",
+    "nom": "Candidat C",
+    "parti": "Parti Rouge"
+  },
+  "rubriques": [
+    {
+      "entrees": [
+        {
+          "chemin": "PROGRAMS",
+          "entree": {
+            "deficit": 0,
+            "hh": -120,
+            "party": "Parti Rouge",
+            "src": "https://example.org/budget-c",
+            "who": "Candidat C"
+          },
+          "index": 2
+        }
+      ],
+      "id": "budgets",
+      "titre": "Budgets"
+    }
+  ],
+  "tronque": false
+}

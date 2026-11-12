@@ -1,0 +1,149 @@
+{
+  "identite": {
+    "avatar": {
+      "images": [
+        [
+          "................",
+          ".....gggggg.....",
+          "....DFFFFFFD....",
+          "...DFFFFFFFFD...",
+          "...DFDFFFFDFD...",
+          "...DFFFFFFFFD...",
+          "...DFFFhhFFFD...",
+          "....DFFFFFFD....",
+          ".....DDDDDD.....",
+          "....DCCCCCCD....",
+          "...DCCCCCCCCD...",
+          "...DCCCAACCCD...",
+          "...DCCCCCCCCD...",
+          "....DDDDDDDD....",
+          "................",
+          "................"
+        ],
+        [
+          "................",
+          ".....bbbyyy.....",
+          "....DFFFFFFD....",
+          "...DFFFFFFFFD...",
+          "...DFFFFFFFFD...",
+          "...DFFFFFFFFD...",
+          "...DFFFhhFFFD...",
+          "....DFFFFFFD....",
+          ".....DDDDDD.....",
+          "....DCCCCCCD....",
+          "...DCCCCCCCCD...",
+          "...DCCCAACCCD...",
+          "...DCCCCCCCCD...",
+          "....DDDDDDDD....",
+          "................",
+          "................"
+        ]
+      ],
+      "ms": 400
+    },
+    "couleur": "#3366cc",
+    "id": "a",
+    "nom": "Candidat A",
+    "parti": "Parti Bleu"
+  },
+  "rubriques": [
+    {
+      "entrees": [
+        {
+          "chemin": "CLAIMS",
+          "entree": {
+            "camp": "Candidat A",
+            "facts": [
+              "Hausse fictive de 40 % en trois ans."
+            ],
+            "q": "Le prix de l'électricité a doublé.",
+            "src": [
+              [
+                "Source fictive",
+                "https://example.org/elec"
+              ]
+            ],
+            "theme": "Énergie",
+            "v": "Exagéré"
+          },
+          "index": 0
+        }
+      ],
+      "id": "affirmations",
+      "titre": "Déclarations vérifiées"
+    },
+    {
+      "entrees": [
+        {
+          "chemin": "GAPS",
+          "entree": {
+            "claimed": 10,
+            "credited": 4.5,
+            "src": "Institut fictif",
+            "what": "Mesure fictive",
+            "who": "Cand. A"
+          },
+          "index": 0
+        },
+        {
+          "chemin": "PROGRAMS",
+          "entree": {
+            "deficit": 3.1,
+            "hh": 400,
+            "party": "Parti Bleu",
+            "src": "https://example.org/budget-a",
+            "who": "Candidat A"
+          },
+          "index": 0
+        }
+      ],
+      "id": "budgets",
+      "titre": "Budgets"
+    },
+    {
+      "entrees": [
+        {
+          "chemin": "MEASURES",
+          "entree": {
+            "hh": 250,
+            "m": "Mesure fictive une",
+            "who": "Candidat A"
+          },
+          "index": 0
+        }
+      ],
+      "id": "niveau-de-vie",
+      "titre": "Niveau de vie"
+    },
+    {
+      "entrees": [
+        {
+          "chemin": "COH",
+          "entree": {
+            "camp": "Liste commune",
+            "items": [
+              [
+                "Vote fictif",
+                "cohérent"
+              ]
+            ]
+          },
+          "index": 0
+        },
+        {
+          "chemin": "DV",
+          "entree": {
+            "said": "Nous protégerons les étés.",
+            "src": "https://example.org/dv-a",
+            "voted": "Contre la loi fictive sur les étés",
+            "who": "Candidat A"
+          },
+          "index": 0
+        }
+      ],
+      "id": "votes",
+      "titre": "Votes"
+    }
+  ],
+  "tronque": false
+}

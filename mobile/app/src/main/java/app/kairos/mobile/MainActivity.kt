@@ -93,6 +93,7 @@ import app.kairos.mobile.ui.memoire.MemoireScreen
 import app.kairos.mobile.ui.medias.MediasScreen
 import app.kairos.mobile.ui.documents.DocumentsScreen
 import app.kairos.mobile.ui.mimir.MimirScreen
+import app.kairos.mobile.ui.politique.PolitiqueScreen
 import app.kairos.mobile.ui.kit.LocalAmountsMasked
 import app.kairos.mobile.ui.kit.LocalNotifier
 import app.kairos.mobile.ui.kit.NotifierHost
@@ -572,7 +573,7 @@ private fun KairosRoot(model: AppModel, dark: Boolean) {
     var memoireOpen by rememberSaveable { mutableStateOf(false) }
     var mediasOpen by rememberSaveable { mutableStateOf(false) }
     var documentsOpen by rememberSaveable { mutableStateOf(false) }
-    var mimirOpen by rememberSaveable { mutableStateOf(false) }
+    var politiqueOpen by rememberSaveable { mutableStateOf(false) }
     var unpackOrder by rememberSaveable { mutableStateOf<Long?>(null) }
     var adding by rememberSaveable { mutableStateOf(false) }
     var focusInput by remember { mutableStateOf(false) }
@@ -635,7 +636,7 @@ private fun KairosRoot(model: AppModel, dark: Boolean) {
     }
 
     val mascot = mascotFor(talk.mode, conversation.busy || conversation.awaiting, conversation.decisions, conversation.unread)
-    // Espace ouvert : le bouton Kairos joue sa scène (Mimir n'en a pas).
+    // Espace ouvert : le bouton Kairos joue sa scène.
     val scene = when {
         tab != Tab.Espaces -> null
         maisonOpen -> SceneKind.Inventaire
@@ -645,6 +646,7 @@ private fun KairosRoot(model: AppModel, dark: Boolean) {
         memoireOpen -> SceneKind.Memoire
         mediasOpen -> SceneKind.Medias
         documentsOpen -> SceneKind.Documents
+        politiqueOpen -> SceneKind.Urne
         else -> null
     }
     val marchesFalling by remember(session) { session.repository.marches.map(::marketsFalling).distinctUntilChanged() }.collectAsState(false)
@@ -829,21 +831,29 @@ private fun KairosRoot(model: AppModel, dark: Boolean) {
                             onUnauthorized = model::unauthorized,
                         )
                     },
-                    // Site externe : lien enregistré sur l'appareil ; la tête n'émet que les liens de partage.
-                    mimirConfigured = model.mimirLink != null,
-                    mimirOpen = mimirOpen,
-                    onOpenMimir = { mimirOpen = true },
-                    onCloseMimir = { mimirOpen = false },
-                    mimirContent = {
-                        MimirScreen(
-                            link = model.mimirLink,
-                            padding = padding,
-                            onSave = model::saveMimirLink,
-                            onClear = model::clearMimirLink,
-                            onClose = { mimirOpen = false },
+                    politiqueOpen = politiqueOpen,
+                    onOpenPolitique = { politiqueOpen = true },
+                    onClosePolitique = { politiqueOpen = false },
+                    politiqueContent = {
+                        PolitiqueScreen(
                             repository = session.repository,
+                            padding = padding,
                             appScope = model.viewModelScope,
+                            onClose = { politiqueOpen = false },
                             onUnauthorized = model::unauthorized,
+                            // Site complet : lien enregistré sur l'appareil ; la tête n'émet que les liens de partage.
+                            site = { back ->
+                                MimirScreen(
+                                    link = model.mimirLink,
+                                    padding = padding,
+                                    onSave = model::saveMimirLink,
+                                    onClear = model::clearMimirLink,
+                                    onClose = back,
+                                    repository = session.repository,
+                                    appScope = model.viewModelScope,
+                                    onUnauthorized = model::unauthorized,
+                                )
+                            },
                         )
                     },
                 ) {
