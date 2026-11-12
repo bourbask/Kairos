@@ -24,6 +24,8 @@ sealed interface PolSheetState {
     data class Claim(val index: Int) : PolSheetState
     data class Scrutin(val id: String) : PolSheetState
     data class Balance(val lecture: Lecture, val title: String, val who: String?) : PolSheetState
+    data class City(val name: String) : PolSheetState
+    data class Cluster(val villes: List<String>) : PolSheetState
 }
 
 /** Ce qu'un écran peut demander à la coque. */

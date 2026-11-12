@@ -50,6 +50,9 @@ import app.kairos.mobile.ui.politique.screens.BudgetsScreen
 import app.kairos.mobile.ui.politique.screens.MediasScreen
 import app.kairos.mobile.ui.politique.screens.ProbiteScreen
 import app.kairos.mobile.ui.politique.screens.LivingScreen
+import app.kairos.mobile.ui.politique.screens.VillesScreen
+import app.kairos.mobile.ui.politique.screens.CitySheet
+import app.kairos.mobile.ui.politique.screens.ClusterSheet
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.serialization.json.buildJsonObject
@@ -206,6 +209,7 @@ fun RubricHost(id: String, data: PolData, nav: PolNavigator) {
         "probite" -> ProbiteScreen(data, nav)
         "argent" -> ArgentScreen(data, nav)
         "medias" -> MediasScreen(data, nav)
+        "villes" -> VillesScreen(data, nav)
         else -> Soon()
     }
 }
@@ -218,6 +222,8 @@ fun SheetHost(s: PolSheetState, data: PolData, nav: PolNavigator, onDismiss: () 
         is PolSheetState.Claim -> ClaimSheetAt(data, s.index, nav, onDismiss)
         is PolSheetState.Scrutin -> ScrutinSheetAt(data, s.id, nav, onDismiss)
         is PolSheetState.Balance -> BalanceSheet(s.lecture, s.title, s.who, data, { nav.sheet(PolSheetState.Evaluator(it)) }, onDismiss)
+        is PolSheetState.City -> CitySheet(data, s.name, nav, onDismiss)
+        is PolSheetState.Cluster -> ClusterSheet(data, s.villes, nav, onDismiss)
         is PolSheetState.Evaluator -> PolSheet(full = false, onDismiss = onDismiss) { Soon() }
     }
 }

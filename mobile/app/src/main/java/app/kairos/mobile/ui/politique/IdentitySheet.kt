@@ -58,6 +58,7 @@ import app.kairos.mobile.ui.politique.kit.SourceList
 import app.kairos.mobile.ui.politique.kit.VerdictChip
 import app.kairos.mobile.ui.politique.kit.frTypo
 import app.kairos.mobile.ui.politique.model.Claim
+import app.kairos.mobile.ui.politique.screens.factKind
 import app.kairos.mobile.ui.politique.screens.AideRow
 import app.kairos.mobile.ui.politique.screens.Affaire
 import app.kairos.mobile.ui.politique.screens.Campagne
@@ -248,7 +249,6 @@ private val TURN_LABEL = mapOf("R" to "Revirement", "I" to "Inflexion", "C" to "
 private val STANCE_LABEL = mapOf("keep" to "Poursuit", "flip" to "Inverse", "mix" to "Modifie")
 private val DV_LABEL = mapOf("coherent" to "Cohérent", "ambigu" to "Ambigu", "ecart" to "Écart")
 private val COMMUNE_STATUS = mapOf("gagnee" to "Gagnée en 2026", "conservee" to "Conservée", "ralliee" to "Maire rallié", "perdue" to "Perdue", "echec" to "Échec")
-private val CITY_KIND = mapOf("cont" to "Fait vérifiable", "causal" to "Décision de justice", "desc" to "Avis ou chiffre contesté")
 
 /** Section de la fiche : titre d'onglet et contenu. */
 private class Section(val title: String, val content: @Composable () -> Unit)
@@ -598,7 +598,7 @@ private fun sections(data: PolData, id: String, l: IdentityLinks, nav: PolNaviga
         l.muni.forEach { mu -> Card { StageTag(mu.stg); Body(mu.p, Modifier.padding(top = 6.dp)) } }
         l.villes.forEach { r ->
             Card {
-                Row { Tag(CITY_KIND[r.s(3)] ?: "Fait") }
+                Row { Tag(factKind(r.s(3)).first) }
                 Title("${r.s(0)} · ${r.s(1)}")
                 Body(r.s(2))
                 if (r.s(4).isNotBlank() || r.s(5).isNotBlank()) SourceList(listOf(SourceRef(r.s(4), r.s(5))), data, onEv)

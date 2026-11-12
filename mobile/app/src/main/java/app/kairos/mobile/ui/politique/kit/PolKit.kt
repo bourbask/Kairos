@@ -461,7 +461,8 @@ fun EmptyState(title: String, body: String, modifier: Modifier = Modifier, actio
     }
 }
 
-data class PillOption(val key: String, val label: String, val count: Int? = null)
+/** [dot] : couleur d'identité affichée en pastille devant le libellé. */
+data class PillOption(val key: String, val label: String, val count: Int? = null, val dot: Color? = null)
 
 /** Rangée de puces de choix : défile, une seule sélectionnée. */
 @Composable
@@ -477,6 +478,7 @@ fun Pills(options: List<PillOption>, selected: String, onSelect: (String) -> Uni
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp),
             ) {
                 val fg = if (on) scheme.background else scheme.onSurface
+                if (o.dot != null) Box(Modifier.size(10.dp).clip(CircleShape).background(o.dot).outline(fg.copy(alpha = 0.4f)))
                 Text(o.label, color = fg, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, maxLines = 1)
                 if (o.count != null) Text(o.count.toString(), color = fg.copy(alpha = 0.7f), fontFamily = Mono, fontWeight = FontWeight.SemiBold, fontSize = 11.sp)
             }
