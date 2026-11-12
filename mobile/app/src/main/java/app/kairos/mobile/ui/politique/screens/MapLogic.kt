@@ -170,7 +170,9 @@ fun regionWindow(b: Rect): Rect = b.inflate(max(b.width, b.height) * 0.12f)
 // ---------- Libellés ----------
 
 val STATUSES: List<Pair<String, String>> = listOf("gagnee" to "Gagnée", "conservee" to "Conservée", "ralliee" to "Maire rallié", "perdue" to "Perdue", "echec" to "Échec")
-fun statusLabel(st: String): String = STATUSES.firstOrNull { it.first == st }?.second ?: st
+/** Statut non reconnu : libellé neutre, jamais le code brut. */
+const val STATUS_UNKNOWN = "Issue non précisée"
+fun statusLabel(st: String): String = STATUSES.firstOrNull { it.first == st }?.second ?: STATUS_UNKNOWN
 
 private val QUI = mapOf("divers-droite" to "Divers droite", "divers-gauche" to "Divers gauche", "divers-centre" to "Divers centre")
 

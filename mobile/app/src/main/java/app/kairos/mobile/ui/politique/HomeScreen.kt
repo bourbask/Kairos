@@ -62,6 +62,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
@@ -365,7 +366,8 @@ private fun VizCanvas(v: TileViz, modifier: Modifier) {
         Ink.High -> pc.high
         Ink.Night -> night
     }
-    Canvas(modifier.clearAndSetSemantics { }) {
+    // Une marque hors du repère ne déborde jamais sur la tuile voisine.
+    Canvas(modifier.clipToBounds().clearAndSetSemantics { }) {
         val s = min(size.width / v.w, size.height / v.h)
         val unit = v.w / 140f
         translate((size.width - v.w * s) / 2, size.height - v.h * s) {

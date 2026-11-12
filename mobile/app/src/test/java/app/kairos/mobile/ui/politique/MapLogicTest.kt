@@ -147,7 +147,7 @@ class MapLogicTest {
         assertEquals("Candidat A", quiLabel(d, "cand"))
         assertEquals("Divers droite", quiLabel(d, "divers-droite"))
         assertEquals("Liste locale", quiLabel(d, "Liste locale"))
-        assertEquals("Gagnée", statusLabel("gagnee")); assertEquals("inconnu", statusLabel("inconnu"))
+        assertEquals("Gagnée", statusLabel("gagnee")); assertEquals(STATUS_UNKNOWN, statusLabel("code-brut")); assertEquals(STATUS_UNKNOWN, statusLabel(""))
         val win = regionWindow(Rect(0f, 0f, 100f, 50f))
         assertEquals(Rect(-12f, -12f, 112f, 62f), win)
     }
