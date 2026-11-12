@@ -385,11 +385,11 @@ private fun DayTitle(day: LocalDate, work: String?) {
             modifier = Modifier.weight(1f),
         )
         workLabel(work)?.let {
-            Surface(shape = CircleShape, color = MaterialTheme.colorScheme.secondaryContainer) {
+            Surface(shape = CircleShape, color = KairosColors.current.ciel) {
                 Text(
                     it,
                     style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    color = KairosColors.current.nuit,
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
                 )
             }

@@ -46,6 +46,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import app.kairos.mobile.ui.theme.KairosColors
 import app.kairos.mobile.ui.theme.Motion
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -195,11 +196,11 @@ fun Timeline(
 private fun Modifier.spanSemantics(s: TimeSpan) =
     clearAndSetSemantics { contentDescription = "${s.label}, de ${clockText(s.start)} à ${clockText(s.end)}" }
 
-/** Fond, texte et liseré d'une famille de blocs : fougère pour la première, ardoise pour la seconde. */
+/** Fond, texte et liseré d'une famille de blocs : conteneur principal pour la première, ciel pour la seconde. */
 @Composable
 fun BlockKind.colors(): Triple<Color, Color, Color> = when (this) {
     BlockKind.Primary -> MaterialTheme.colorScheme.let { Triple(it.primaryContainer, it.onPrimaryContainer, it.primary) }
-    BlockKind.Secondary -> MaterialTheme.colorScheme.let { Triple(it.secondaryContainer, it.onSecondaryContainer, it.onSecondaryContainer) }
+    BlockKind.Secondary -> KairosColors.current.let { Triple(it.ciel, it.nuit, it.nuit) }
 }
 
 /**
