@@ -170,13 +170,16 @@ private fun HeaderRow(title: String, kicker: String) {
     }
 }
 
-private val Attn = Color(0xFFE8A33A)
-private val AttnInk = Color(0xFF1F2620)
+internal val Attn = Color(0xFFE8A33A)
+internal val AttnInk = Color(0xFF1F2620)
+
+/** Fond « nuit » des bandeaux de duel. */
+@Composable
+internal fun duelNight(): Color = if (MaterialTheme.colorScheme.background.luminance() < 0.5f) Color(0xFF1F2A36) else Color(0xFF23384A)
 
 @Composable
 private fun DuelHero(data: PolData, onClick: () -> Unit) {
-    val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
-    val bg = if (dark) Color(0xFF1F2A36) else Color(0xFF23384A)
+    val bg = duelNight()
     val ink = Color(0xFFF7F5EF)
     // Deux visages publiés : les premiers candidats qui en ont un.
     val duo = data.identities.filter { data.kindOf(it.id) == IdKind.Personne && it.avatar != null }.take(2)

@@ -497,7 +497,7 @@ private fun mark(code: String?): Mark {
 }
 
 @Composable
-private fun MarkPill(code: String?) {
+internal fun MarkPill(code: String?) {
     val m = mark(code)
     Text(m.label.uppercase(), Modifier.clip(CircleShape).background(m.bg).let { if (m.bg == Color.Transparent) it.border(BorderStroke(1.dp, m.fg.copy(alpha = 0.4f)), CircleShape) else it }.padding(horizontal = 8.dp, vertical = 5.dp), color = m.fg, fontFamily = Mono, fontWeight = FontWeight.SemiBold, fontSize = 11.sp, softWrap = false)
 }

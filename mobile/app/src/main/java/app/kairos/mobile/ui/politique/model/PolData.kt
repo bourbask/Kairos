@@ -66,6 +66,8 @@ class PolData(private val files: Map<String, JsonObject>) {
 
     fun byId(id: String): PolIdentity? = byIdMap[id]
 
+    fun aliasesOf(id: String): List<String> = aliases[id].orEmpty()
+
     /** Toutes les identités dont un alias (ou le nom) égale [label], accents et casse ignorés. */
     fun idsIn(label: String?): List<String> = label?.takeIf { it.isNotBlank() }?.let { keyIndex[fold(it)] }.orEmpty()
 

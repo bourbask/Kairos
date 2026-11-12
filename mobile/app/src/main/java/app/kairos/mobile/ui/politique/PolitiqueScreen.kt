@@ -41,6 +41,7 @@ import app.kairos.mobile.ui.politique.screens.ClaimSheetAt
 import app.kairos.mobile.ui.politique.screens.PhrasesScreen
 import app.kairos.mobile.ui.politique.screens.QuizScreen
 import app.kairos.mobile.ui.politique.screens.DitVoteScreen
+import app.kairos.mobile.ui.politique.screens.DuelScreen
 import app.kairos.mobile.ui.politique.screens.RevirementsScreen
 import app.kairos.mobile.ui.politique.screens.ScrutinSheetAt
 import app.kairos.mobile.ui.politique.screens.VotesScreen
@@ -184,6 +185,7 @@ fun PolitiqueScreen(
                     when (route) {
                         is PolRoute.Rubric -> RubricHost(route.id, l.data, navigator)
                         PolRoute.Quiz -> QuizScreen(l.data, navigator)
+                        is PolRoute.Duel -> DuelScreen(l.data, navigator, route.a, route.b)
                         else -> Soon()
                     }
                 }

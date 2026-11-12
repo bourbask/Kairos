@@ -87,7 +87,7 @@ private val Mono = FontFamily.Monospace
 // ---------- Briques ----------
 
 @Composable
-private fun Chip(text: String, fg: Color, bg: Color, dashed: Boolean = false, modifier: Modifier = Modifier) {
+internal fun Chip(text: String, fg: Color, bg: Color, dashed: Boolean = false, modifier: Modifier = Modifier) {
     val line = MaterialTheme.colorScheme.outline
     Text(
         text.uppercase(), modifier.clip(CircleShape).background(bg).let { if (dashed) it.border(1.dp, line, CircleShape) else it }.padding(horizontal = 9.dp, vertical = 5.dp),
@@ -118,7 +118,7 @@ private fun voteFg(code: String): Color {
 }
 
 @Composable
-private fun VoteTag(code: String) {
+internal fun VoteTag(code: String) {
     val pc = PolColors.current
     val label = VOTE_WORDS[code] ?: code
     when (code) {
@@ -307,7 +307,7 @@ fun VotesScreen(data: PolData, nav: PolNavigator) {
 // ---------- Revirements ----------
 
 @Composable
-private fun turnColors(k: String): Pair<Color, Color> {
+internal fun turnColors(k: String): Pair<Color, Color> {
     val pc = PolColors.current
     return when (k) { "R" -> pc.contre to pc.contreBg; "I" -> pc.partiel to pc.partielBg; else -> pc.pour to pc.pourBg }
 }
