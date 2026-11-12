@@ -54,6 +54,27 @@ class PolKitTest {
         assertNull(fallback.short)
         assertEquals("Texte long.", fallback.long)
         assertEquals("Angle.", balanceSummary(Lecture(angle_mort = "Angle.")).long)
+        // Drapeau qui fait afficher « Ce que le chiffre laisse dehors » : seulement sans contrepartie.
+        assertTrue(balanceSummary(Lecture(angle_mort = "Angle.")).angleMort)
+        assertFalse(balanceSummary(Lecture(contrepartie = "Coût.", angle_mort = "Angle.")).angleMort)
+    }
+
+    @Test fun balance_row_signs_losses() {
+        assertEquals("−1,4 Md€/an", lossAmount("1,4 Md€/an"))
+        assertEquals("−14,1 Md€", lossAmount("−14,1 Md€"))
+        assertEquals("−3 Md€", lossAmount("- 3 Md€"))
+        assertEquals("plus de 4 Md€", lossAmount(" plus de 4 Md€ "))
+        assertEquals("0", lossAmount("0"))
+        assertEquals("0 €", lossAmount("0 €"))
+        assertEquals("2 à 4 Md€", lossAmount("2 à 4 Md€"))
+        assertEquals("−1 200 €", lossAmount("1 200 €"))
+        assertEquals("0,0 Md€", lossAmount("-0,0 Md€"))
+        assertEquals("−0,5 Md€", lossAmount("0,5 Md€"))
+        val rows = balanceRows(listOf(Poste("Poste B", "2 Md€", " Les Y "), Poste("Poste A", " ", ""), Poste("Poste C", null, null)))
+        assertEquals(listOf("Poste B", "Poste A", "Poste C"), rows.map { it.quoi })
+        assertEquals(BalanceRow("Poste B", "Les Y", "−2 Md€"), rows[0])
+        assertEquals(BalanceRow("Poste A", null, null), rows[1])
+        assertEquals(BalanceRow("Poste C", null, null), rows[2])
     }
 
     @Test fun evaluator_tag_texts() {

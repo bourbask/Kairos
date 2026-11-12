@@ -1,5 +1,6 @@
 package app.kairos.mobile.ui.politique.screens
 
+import app.kairos.mobile.ui.politique.model.alphabetical
 import app.kairos.mobile.ui.politique.model.Lecture
 import app.kairos.mobile.ui.politique.kit.TableCard
 import app.kairos.mobile.ui.politique.model.PolData
@@ -142,9 +143,9 @@ data class BudgetsState(val programs: List<Program>, val gaps: List<Gap>, val re
 }
 
 fun budgetsState(data: PolData): BudgetsState {
-    val programs = data.decode<Program>("budgets", "PROGRAMS")
+    val programs = data.decode<Program>("budgets", "PROGRAMS").let { l -> l.filter { it.ref } + l.filter { !it.ref }.alphabetical { it.who } }
     // Écart incomplet gardé (sa balance compte) : la valeur manquante s'affiche « non trouvé », jamais zéro.
-    val gaps = data.decode<Gap>("budgets", "GAPS")
+    val gaps = data.decode<Gap>("budgets", "GAPS").alphabetical { it.who }
     val cards = gaps.map { g ->
         val (a, b) = gapLabels(g)
         TableCard("Annoncé contre crédité", g.what, lines = listOf("${nameOf(g.who)} : ${g.claimed?.let { fmtNum(it, 1) } ?: NO_VALUE} → ${g.credited?.let { fmtNum(it, 1) } ?: NO_VALUE} ${g.unit}".trim(), "$a / $b"), source = g.src)
@@ -161,14 +162,14 @@ data class LivingState(val salaires: List<BilanRow>, val scale: Scale, val progr
 
 fun livingState(data: PolData): LivingState {
     val all = data.decode<Program>("budgets", "PROGRAMS")
-    val measures = data.decode<Measure>("niveau-de-vie", "MEASURES")
+    val measures = data.decode<Measure>("niveau-de-vie", "MEASURES").alphabetical { it.who }
     val cards = measures.map { m ->
         TableCard("Pouvoir d'achat", nameOf(m.who), lines = listOf(m.hh?.let { "${fmtSigned(it)} € par an" } ?: "Par ménage : $NO_VALUE") + m.m.split(" ; ").filter { it.isNotBlank() } + listOf("Pour qui : ${m.b}", "Financé par : ${m.f}"))
     }
     val salaires = data.decode<BilanRow>("niveau-de-vie", "SALAIRES.rows")
     return LivingState(
         salaires, data.one("niveau-de-vie", "SALAIRES.scale", Scale.serializer()) ?: fallbackScale(salaires, " %"),
-        all.filter { !it.ref && it.hh != null }.sortedByDescending { it.hh }, data.refDebt(all), measures, cards,
+        all.filter { !it.ref && it.hh != null }.alphabetical { it.who }, data.refDebt(all), measures, cards,
     )
 }
 
@@ -181,7 +182,7 @@ data class BilanState(val ofce: List<BilanRow>, val ipp: List<BilanRow>, val ofc
 }
 
 fun bilanState(data: PolData): BilanState {
-    val cands = data.decode("bilan", "CANDS", String.serializer())
+    val cands = data.decode("bilan", "CANDS", String.serializer()).alphabetical { it }
     val matrix = data.decode<MatrixRow>("bilan", "MATRIX")
     val cards = matrix.map { r ->
         TableCard("Face au bilan sortant · ${r.s}", r.o, lines = cands.map { c -> r.c[c]?.let { x -> "$c — ${MARK_LABEL[x.firstOrNull()] ?: "Position"} : ${x.getOrNull(1).orEmpty()}" } ?: "$c : non trouvé" })

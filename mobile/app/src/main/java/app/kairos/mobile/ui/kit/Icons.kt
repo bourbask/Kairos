@@ -74,6 +74,15 @@ object KairosIcons {
         }
     }
     val EyeOff by lazy { icon("Masquer") { eye(); moveTo(4f, 4f); lineTo(20f, 20f) } }
+    val Fullscreen by lazy {
+        icon("Plein écran") {
+            moveTo(4f, 9f); verticalLineTo(4f); horizontalLineTo(9f)
+            moveTo(15f, 4f); horizontalLineTo(20f); verticalLineTo(9f)
+            moveTo(20f, 15f); verticalLineTo(20f); horizontalLineTo(15f)
+            moveTo(9f, 20f); horizontalLineTo(4f); verticalLineTo(15f)
+        }
+    }
+    val Info by lazy { icon("Information") { circle(12f, 12f, 9f); moveTo(12f, 11f); verticalLineTo(16.5f); moveTo(12f, 7.5f); verticalLineTo(7.51f) } }
 
     private fun PathBuilder.circle(cx: Float, cy: Float, r: Float) {
         moveTo(cx + r, cy)

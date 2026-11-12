@@ -177,7 +177,7 @@ fun HomeScreen(data: PolData, nav: PolNavigator, bottom: Dp) {
         full {
             Text(
                 "Chaque verdict juge l'état des preuves, pas les personnes. Les chiffres provisoires peuvent être révisés.",
-                Modifier.padding(top = 8.dp), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp,
+                Modifier.padding(top = 8.dp), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp,
             )
         }
     }

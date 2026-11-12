@@ -4,6 +4,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import app.kairos.mobile.ui.politique.model.Row
 import app.kairos.mobile.ui.politique.model.PolData
+import app.kairos.mobile.ui.politique.model.alphabetical
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.JsonArray
@@ -208,12 +209,13 @@ fun muniOf(data: PolData): List<Dossier> = data.decode<Dossier>("villes", "MUNI"
 /** Bilan local d'une identité ([id] null : maire non rattaché à une seule identité) ; [cities] vide : pas encore de bilan. */
 data class FactSection(val id: String?, val cities: List<Pair<String, List<CityFact>>>)
 
-/** Faits groupés par identité du maire, puis identités des municipales sans aucun fait. */
+/** Faits groupés par identité du maire, puis identités des municipales sans aucun fait ; chaque groupe par ordre alphabétique. */
 fun factSections(data: PolData): List<FactSection> {
     val facts = cityFactsOf(data)
     val byId = facts.groupBy { data.idOf(it.maire) }
     val done = byId.keys.filterNotNull().toSet()
-    val withFacts = byId.entries.sortedBy { it.key == null }.map { (id, l) -> FactSection(id, l.groupBy { it.ville }.toList()) }
-    val pending = muniOf(data).mapNotNull { data.idOf(it.t) }.distinct().filter { it !in done }.map { FactSection(it, emptyList()) }
+    val name = { id: String? -> id?.let { data.byId(it)?.nom }.orEmpty() }
+    val withFacts = byId.entries.alphabetical { name(it.key) }.sortedBy { it.key == null }.map { (id, l) -> FactSection(id, l.groupBy { it.ville }.toList()) }
+    val pending = muniOf(data).mapNotNull { data.idOf(it.t) }.distinct().filter { it !in done }.alphabetical(name).map { FactSection(it, emptyList()) }
     return withFacts + pending
 }

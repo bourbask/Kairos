@@ -49,10 +49,10 @@ import app.kairos.mobile.ui.politique.kit.EmptyState
 import app.kairos.mobile.ui.politique.kit.IdentityChip
 import app.kairos.mobile.ui.politique.kit.Kicker
 import app.kairos.mobile.ui.politique.kit.PolColors
-import app.kairos.mobile.ui.politique.kit.RichText
 import app.kairos.mobile.ui.politique.kit.SourceList
 import app.kairos.mobile.ui.politique.kit.frTypo
 import app.kairos.mobile.ui.politique.model.PolData
+import app.kairos.mobile.ui.politique.model.alphabetical
 import app.kairos.mobile.ui.politique.model.SourceRef
 import app.kairos.mobile.ui.politique.model.sourcesOf
 import java.time.LocalDate
@@ -91,13 +91,14 @@ private fun DossierCard(data: PolData, d: Dossier, onTable: () -> Unit, nav: Pol
 @Composable
 fun ProbiteScreen(data: PolData, nav: PolNavigator) {
     val agenda = remember(data) { agendaOf(data, LocalDate.now()) }
-    val affaires = remember(data) { affairesOf(data) }
+    val affaires = remember(data) { affairesOf(data).alphabetical { it.who } }
     val lobby = remember(data) { lobbyOf(data) }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = ScreenPad) {
         part {
-            FigCard(Modifier.padding(top = 6.dp)) {
-                RichText("<b>Présomption d'innocence.</b> Une enquête ou une mise en examen ne vaut pas culpabilité. Les étapes ne se valent pas : comparez-les, pas les noms.")
-            }
+            Text(
+                "Présomption d'innocence : une enquête ou une mise en examen ne vaut pas culpabilité. Les étapes ne se valent pas : comparez-les, pas les noms.",
+                Modifier.padding(top = 6.dp), fontSize = 13.sp, lineHeight = 18.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
         part {
             Section("Agenda", "Décisions attendues avant l'élection", null) {
@@ -106,7 +107,7 @@ fun ProbiteScreen(data: PolData, nav: PolNavigator) {
             }
         }
         part {
-            Section("Procédures", "Où en est chaque affaire", "La barre suit la procédure : enquête, mise en examen, procès, jugement, décision définitive.") {
+            Section("Procédures", "Où en est chaque affaire", null, note = "Étapes : enquête, mise en examen, procès, jugement, décision définitive.") {
                 if (affaires.isEmpty()) Empty("Aucune procédure suivie", "Aucune affaire n'est publiée pour l'instant. Une section vide ne vaut pas absence d'affaires : seules celles qui sont établies et sourcées figurent ici.")
                 else {
                     val cards = remember(affaires) { affaires.map(::affaireTableCard) }
@@ -117,7 +118,7 @@ fun ProbiteScreen(data: PolData, nav: PolNavigator) {
             }
         }
         part {
-            Section("Lobbying", "Des lois sous influence : cas documentés", "Établis par des enquêtes parlementaires ou journalistiques, avec la réponse des personnes mises en cause.") {
+            Section("Lobbying", "Des lois sous influence : cas documentés", null, note = "Établis par des enquêtes parlementaires ou journalistiques, avec la réponse des mis en cause.") {
                 if (lobby.isEmpty()) Empty("Aucun cas documenté", "Aucun cas de lobbying n'est publié pour l'instant.")
                 else {
                     val cards = remember(lobby) { lobby.map { dossierTableCard("Lobbying", it) } }
@@ -173,17 +174,17 @@ private fun AffaireCard(data: PolData, a: Affaire, onTable: () -> Unit, nav: Pol
 @Composable
 fun ArgentScreen(data: PolData, nav: PolNavigator) {
     val aide = remember(data) { aideOf(data) }
-    val partis = remember(data) { partisOf(data) }
-    val camps = remember(data) { campagnesOf(data) }
+    val partis = remember(data) { partisOf(data).alphabetical { it.parti } }
+    val camps = remember(data) { campagnesOf(data).alphabetical { it.cand } }
     val fin = remember(data) { financingOf(data) }
     val pc = PolColors.current
     LazyColumn(Modifier.fillMaxSize(), contentPadding = ScreenPad) {
         part { Text("Les partis vivent surtout d'argent public, calculé sur leurs résultats, puis de dons plafonnés et d'emprunts.", Modifier.padding(top = 6.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
         part {
-            Section("Aide publique", "Combien l'État verse à chaque parti", "En millions d'euros, selon les voix aux dernières législatives et le nombre de parlementaires.") {
+            Section("Aide publique", "Combien l'État verse à chaque parti", null, note = "En millions d'euros, selon les voix aux dernières législatives et le nombre de parlementaires.") {
                 if (aide.rows.isEmpty()) Empty("Aide publique pas encore publiée", "Les montants versés à chaque parti apparaîtront ici dès qu'ils seront sourcés.")
                 else FigCard {
-                    aide.rows.forEachIndexed { i, r ->
+                    aide.rows.alphabetical { shortLabel(it.l) }.forEachIndexed { i, r ->
                         if (i > 0) Divider()
                         val id = data.idOf(r.l)
                         val label = moneyLabel(r.v)
@@ -196,7 +197,7 @@ fun ArgentScreen(data: PolData, nav: PolNavigator) {
             }
         }
         part {
-            Section("Derniers comptes", "Dons, dettes et santé financière", "Ce que les partis tirent de leurs adhérents et donateurs, et ce qu'ils doivent.") {
+            Section("Derniers comptes", "Dons, dettes et santé financière", null, note = "Ce que les partis tirent de leurs adhérents et donateurs, et ce qu'ils doivent.") {
                 if (partis.isEmpty()) Empty("Comptes pas encore publiés", "Les comptes des partis (dons, dette, situation nette) apparaîtront ici dès qu'ils seront publiés.")
                 else Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     partis.forEach { p ->
@@ -214,7 +215,7 @@ fun ArgentScreen(data: PolData, nav: PolNavigator) {
             }
         }
         part {
-            Section("Présidentielle précédente", "Ce qu'a coûté chaque campagne", "Sous 5 % des voix, l'État ne rembourse presque rien.") {
+            Section("Présidentielle précédente", "Ce qu'a coûté chaque campagne", null, note = "Sous 5 % des voix, l'État ne rembourse presque rien.") {
                 if (camps.isEmpty()) Empty("Campagnes pas encore publiées", "Les dépenses et remboursements des campagnes présidentielles apparaîtront ici dès qu'ils seront sourcés.")
                 else FigCard {
                     val max = campagnesMax(camps)
@@ -257,7 +258,7 @@ fun MediasScreen(data: PolData, nav: PolNavigator) {
     val pc = PolColors.current
     LazyColumn(Modifier.fillMaxSize(), contentPadding = ScreenPad) {
         part {
-            Section("Propriété", "Qui possède quoi", "Une large part des grands médias appartient à quelques fortunes. Faites défiler.") {
+            Section("Propriété", "Qui possède quoi", null, note = "Une large part des grands médias appartient à quelques fortunes.") {
                 if (st.owners.isEmpty()) Empty("Propriétaires pas encore publiés", "La carte de la propriété des médias apparaîtra ici dès qu'elle sera sourcée.")
                 else Rail(st.owners, 280.dp) { _, x ->
                     FigCard(Modifier.fillMaxSize()) {
@@ -282,7 +283,7 @@ fun MediasScreen(data: PolData, nav: PolNavigator) {
             }
         }
         part {
-            Section("Audience", "Les chaînes d'info les plus regardées", "Part d'audience nationale, moyenne précédente puis dernière mesure.") {
+            Section("Audience", "Les chaînes d'info les plus regardées", null, note = "Part d'audience nationale : moyenne précédente, puis dernière mesure.") {
                 if (st.audience.rows.isEmpty()) Empty("Audiences pas encore publiées", "Les parts d'audience des chaînes d'information apparaîtront ici dès qu'elles seront sourcées.")
                 else FigCard {
                     st.audience.rows.forEachIndexed { i, r ->
@@ -303,7 +304,7 @@ fun MediasScreen(data: PolData, nav: PolNavigator) {
             }
         }
         part {
-            Section("Régulateur", "Ce que le régulateur et la justice ont fait", "Décisions, sanctions et mises en demeure, dans tous les sens.") {
+            Section("Régulateur", "Ce que le régulateur et la justice ont fait", null, note = "Décisions, sanctions et mises en demeure, dans tous les sens.") {
                 if (st.reg.isEmpty()) Empty("Aucune décision publiée", "La frise des décisions du régulateur et de la justice apparaîtra ici dès qu'elle sera sourcée.")
                 else Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     st.reg.forEach { r ->
@@ -317,7 +318,7 @@ fun MediasScreen(data: PolData, nav: PolNavigator) {
             }
         }
         part {
-            Section("Recherche", "L'influence des médias : ce qui est prouvé", "Les effets causaux sur le vote sont mesurés aux États-Unis. En France : le contenu et l'audience, pas encore l'effet sur le vote.") {
+            Section("Recherche", "L'influence des médias : ce qui est prouvé", null, note = "Effet causal sur le vote mesuré aux États-Unis ; en France, contenu et audience seulement.") {
                 if (st.studies.isEmpty()) Empty("Aucune étude publiée", "Les études sur l'influence des médias apparaîtront ici dès qu'elles seront sourcées.")
                 else {
                     val cards = remember(st.studies) { st.studies.map(::studyTableCard) }
@@ -339,7 +340,7 @@ fun MediasScreen(data: PolData, nav: PolNavigator) {
             }
         }
         part {
-            Section("Sondages", "Les instituts et leurs propriétaires", "Une intention de vote loin de l'élection reste une photographie, pas une prévision.") {
+            Section("Sondages", "Les instituts et leurs propriétaires", null, note = "Loin de l'élection, une intention de vote est une photographie, pas une prévision.") {
                 if (st.polls.isEmpty()) Empty("Instituts pas encore publiés", "Les instituts de sondage et leurs propriétaires apparaîtront ici dès qu'ils seront sourcés.")
                 else Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     st.polls.forEach { p ->

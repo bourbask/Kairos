@@ -24,7 +24,8 @@ class PolitiqueContractTest {
         // Le fichier des identités arrive tel quel : l'application écarte elle-même un avatar mal formé.
         val page = KairosJson.decodeFromString(PolPage.serializer(), text("fichier-identites"))
         val data = PolData(mapOf("identites" to mergePages(listOf(page))))
-        assertEquals(listOf("a", "b", "c", "parti-bleu"), data.identities.map { it.id })
+        // Ordre alphabétique des noms (« Candidat C » avant « Candidate B »).
+        assertEquals(listOf("a", "c", "b", "parti-bleu"), data.identities.map { it.id })
         assertNotNull("avatar valide gardé", avatarOf(data.byId("a")!!.avatar))
         assertNull("avatar invalide (15 lignes) écarté", avatarOf(data.byId("c")!!.avatar))
     }

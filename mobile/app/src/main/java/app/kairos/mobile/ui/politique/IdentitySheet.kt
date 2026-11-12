@@ -46,6 +46,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.kairos.mobile.ui.politique.kit.BalanceBlock
+import app.kairos.mobile.ui.politique.kit.BalanceHeader
+import app.kairos.mobile.ui.politique.kit.Muted
+import app.kairos.mobile.ui.politique.kit.opensBalance
 import app.kairos.mobile.ui.politique.kit.EmptyState
 import app.kairos.mobile.ui.politique.kit.IdentityChip
 import app.kairos.mobile.ui.politique.kit.KeyRow
@@ -289,11 +292,6 @@ fun IdentitySheet(data: PolData, id: String, nav: PolNavigator, onDismiss: () ->
                 return@Column
             }
             SectionPager(sections)
-            Text(
-                "Faites glisser horizontalement pour passer d'une section à l'autre.",
-                Modifier.padding(16.dp),
-                color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp,
-            )
         }
     }
 }
@@ -354,8 +352,8 @@ internal fun reducedMotion(): Boolean {
 @Composable
 private fun Tag(text: String, fg: Color = MaterialTheme.colorScheme.onSurfaceVariant, bg: Color = MaterialTheme.colorScheme.surfaceVariant) {
     Text(
-        text, Modifier.clip(RoundedCornerShape(50)).background(bg).padding(horizontal = 10.dp, vertical = 4.dp),
-        color = fg, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, maxLines = 1,
+        text, Modifier.clip(RoundedCornerShape(14.dp)).background(bg).padding(horizontal = 10.dp, vertical = 4.dp),
+        color = fg, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold,
     )
 }
 
@@ -390,14 +388,17 @@ private fun Double?.or(d: Int = 1, unit: String): String = this?.let { fmtNum(it
 @Composable
 private fun sections(data: PolData, id: String, l: IdentityLinks, nav: PolNavigator): List<Section> {
     val onEv: (String) -> Unit = { nav.sheet(PolSheetState.Evaluator(it)) }
-    fun balance(lecture: Lecture?, title: String, who: String?): (@Composable () -> Unit)? =
-        lecture?.let { { BalanceBlock(it, title, who, onOpen = { nav.sheet(PolSheetState.Balance(it, title, who)) }) } }
+    // Carte portant une balance : toute la carte ouvre son détail.
+    fun opens(lecture: Lecture?, title: String, who: String?): Modifier =
+        lecture?.let { Modifier.opensBalance(title) { nav.sheet(PolSheetState.Balance(it, title, who)) } } ?: Modifier
+    @Composable fun balance(lecture: Lecture?, title: String) { lecture?.let { BalanceBlock(it, title, onOpen = null) } }
     val out = mutableListOf<Section>()
     val p = ownProgram(l, data, id)
     val m = l.measures.firstOrNull()
     if (p != null || m != null || l.gaps.isNotEmpty()) out += Section("Programme") {
+        if (p?.lecture != null || m?.lecture != null || l.gaps.any { it.lecture != null }) BalanceHeader("Ce que chaque chiffre sacrifie")
         p?.let {
-            FigCard {
+            FigCard(inner = opens(it.lecture, "${it.who} : programme", it.who)) {
                 Kicker("Budget à l'horizon")
                 KeyValue(
                     listOf(
@@ -406,24 +407,27 @@ private fun sections(data: PolData, id: String, l: IdentityLinks, nav: PolNaviga
                         "Par ménage et par an" to (it.hh?.let { v -> fmtSigned(v) + " €" } ?: NO_VALUE),
                     ),
                 )
-                balance(it.lecture, "${it.who} : programme", it.who)?.invoke()
+                balance(it.lecture, "${it.who} : programme")
             }
         }
         m?.let {
-            FigCard {
+            FigCard(inner = opens(it.lecture, "${it.who} : pouvoir d'achat", it.who)) {
                 Kicker("Mesures pour le pouvoir d'achat")
                 it.m.split(" ; ").filter(String::isNotBlank).forEach { s -> Body("• $s") }
                 if (it.b.isNotBlank()) { Kicker("Pour qui", Modifier.padding(top = 10.dp)); Body(it.b) }
                 if (it.f.isNotBlank()) { Kicker("Financé par", Modifier.padding(top = 10.dp)); Body(it.f) }
-                balance(it.lecture, "${it.who} : pouvoir d'achat", it.who)?.invoke()
+                balance(it.lecture, "${it.who} : pouvoir d'achat")
             }
         }
         l.gaps.forEach { g ->
             FigCard {
-                Kicker("Annoncé contre crédité")
-                Title(g.what)
-                Body("Annoncé ${g.claimed.or(unit = " ${g.unit}")} · ${if (g.inverse) "estimé" else "crédité"} ${g.credited.or(unit = " ${g.unit}")}")
-                balance(g.lecture, g.what, g.who)?.invoke()
+                // Corps seul ouvrable : la source reste un bouton distinct.
+                Column(Modifier.fillMaxWidth().then(opens(g.lecture, g.what, g.who))) {
+                    Kicker("Annoncé contre crédité")
+                    Title(g.what)
+                    Body("Annoncé ${g.claimed.or(unit = " ${g.unit}")} · ${if (g.inverse) "estimé" else "crédité"} ${g.credited.or(unit = " ${g.unit}")}")
+                    balance(g.lecture, g.what)
+                }
                 g.src?.takeIf { it.isNotBlank() }?.let { SourceList(listOf(SourceRef(it, g.url, g.ev)), data, onEv) }
             }
         }
@@ -511,7 +515,7 @@ private fun sections(data: PolData, id: String, l: IdentityLinks, nav: PolNaviga
         }
     }
     if (l.cases.isNotEmpty()) out += Section("Justice") {
-        FigCard { Body("Présumé innocent tant qu'aucune condamnation n'est définitive.") }
+        Muted("Présumé innocent tant qu'aucune condamnation n'est définitive.")
         l.cases.forEach { a ->
             FigCard {
                 Kicker(listOf(a.who, a.date).filter(String::isNotBlank).joinToString(" · "))
