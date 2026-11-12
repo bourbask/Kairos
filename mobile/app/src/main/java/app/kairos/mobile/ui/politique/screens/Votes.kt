@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -524,7 +525,7 @@ fun DitVoteScreen(data: PolData, nav: PolNavigator) {
 private fun ScrutinCard(data: PolData, s: Scrutin, onClick: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
     fun n(k: String) = s.verdicts.count { it.v == k }
-    FigCard(inner = Modifier.clickable(onClick = onClick)) {
+    FigCard(inner = Modifier.clickable(onClickLabel = "Ouvrir le scrutin", role = Role.Button, onClick = onClick)) {
         Kicker(fmtDate(s.date))
         Text(frTypo(s.titre), Modifier.padding(top = 4.dp), fontSize = 16.5.sp, lineHeight = 21.sp, fontWeight = FontWeight.Bold)
         if (s.resultat.isNotBlank()) Text(s.resultat, Modifier.padding(top = 4.dp), fontSize = 13.sp, color = scheme.onSurfaceVariant)

@@ -121,12 +121,15 @@ fun balanceSummary(l: Lecture): BalanceSummary {
 }
 
 private val ZERO_AMOUNT = Regex("""^[-−]?\s*0+(?:[.,]0+)?(?![\d.,])""")
+/** Un nombre, séparateurs de milliers (espaces) et décimales compris. */
+private val NUMBER = Regex("""\d+(?:[\s\u00A0\u202F]\d{3})*(?:[.,]\d+)?""")
 
-/** Montant d'une perte : signe moins devant un chiffre ; montant nul, déjà signé ou rédigé (« plus de… ») laissé tel quel. */
+/** Montant d'une perte : signe moins devant un chiffre ; montant nul, fourchette (« 2 à 4 »), déjà signé ou rédigé (« plus de… ») laissé tel quel. */
 fun lossAmount(m: String): String {
     val t = m.trim()
     return when {
         ZERO_AMOUNT.containsMatchIn(t) -> t.trimStart('-', '−').trimStart()
+        NUMBER.findAll(t).count() > 1 -> t
         t.startsWith("-") -> "−" + t.drop(1).trimStart()
         t.firstOrNull()?.isDigit() == true -> "−$t"
         else -> t
@@ -447,6 +450,8 @@ fun BalanceBlock(lecture: Lecture, title: String, onOpen: (() -> Unit)?, modifie
     val s = balanceSummary(lecture)
     Column(modifier.fillMaxWidth().let { if (onOpen != null) it.opensBalance(title, onOpen) else it }.padding(top = 10.dp)) {
         if (lecture.verdict in PROMISES) PromiseChip(lecture.verdict, Modifier.padding(bottom = 6.dp))
+        // Sans contrepartie publiée, le texte est l'angle mort : le dire, pour ne pas le lire comme un sacrifice.
+        if (s.angleMort && s.long.isNotEmpty()) Kicker("Ce que le chiffre laisse dehors", Modifier.padding(bottom = 2.dp))
         if (s.short != null) {
             Text(frTypo(s.short), fontSize = 15.sp, lineHeight = 21.sp, fontWeight = FontWeight.SemiBold)
             if (s.postes.isNotEmpty()) PostesList(s.postes)

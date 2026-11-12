@@ -157,7 +157,7 @@ private fun CampHeader(data: PolData, camp: String, count: Int, tally: Map<Strin
 internal fun Lead(text: String, info: String? = null) {
     Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(text, Modifier.weight(1f, fill = false), color = MaterialTheme.colorScheme.onSurfaceVariant)
-        if (info != null) InfoIcon(info, "En savoir plus")
+        if (info != null) InfoIcon(info, "À propos : $text")
     }
 }
 

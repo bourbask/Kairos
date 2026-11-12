@@ -146,7 +146,8 @@ private fun DuelPick(data: PolData, nav: PolNavigator) {
     var sel by rememberSaveable { mutableStateOf(listOf<String>()) }
     val kind = sel.firstOrNull()?.let { if (it in r.people) IdKind.Personne else IdKind.Parti }
     Column(Modifier.fillMaxSize()) {
-        LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = ScreenPad) {
+        // Le pied fixe porte déjà la marge du dock : marge fixe ici.
+        LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 16.dp)) {
             item {
                 Text("Choisissez deux adversaires", Modifier.semantics { heading() }, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                 Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
