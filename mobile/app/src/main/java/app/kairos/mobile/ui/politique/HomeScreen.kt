@@ -1,6 +1,25 @@
 package app.kairos.mobile.ui.politique
 
 import androidx.compose.foundation.background
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.StartOffset
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.scale
+import androidx.compose.ui.graphics.drawscope.translate
+import app.kairos.mobile.ui.politique.kit.PolColors
+import kotlin.math.min
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -98,6 +117,9 @@ fun HomeScreen(data: PolData, nav: PolNavigator, bottom: Dp) {
     val claims = remember(data) { data.decode<Claim>("affirmations", "CLAIMS") }
     val bubble = remember(data) { bubbleLine(data) }
     val counts = remember(data) { RUBRICS.associate { it.id to it.count(data) } }
+    val vizzes by produceState(emptyMap<String, TileViz?>(), data) {
+        value = withContext(Dispatchers.Default) { RUBRICS.associate { it.id to tileViz(data, it.id) } }
+    }
     LazyVerticalGrid(
         GridCells.Fixed(2),
         Modifier.fillMaxSize(),
@@ -146,7 +168,7 @@ fun HomeScreen(data: PolData, nav: PolNavigator, bottom: Dp) {
         val tiles = RUBRICS.filter { it.kind != TileKind.Link }
         full { HeaderRow("Rubriques", plural(tiles.size, "entrée", "entrées")) }
         tiles.forEach { t ->
-            item(span = { GridItemSpan(if (t.kind == TileKind.Wide) maxLineSpan else 1) }) { Tile(t, counts[t.id].orEmpty()) { nav.go(PolRoute.Rubric(t.id)) } }
+            item(span = { GridItemSpan(if (t.kind == TileKind.Wide) maxLineSpan else 1) }) { Tile(t, counts[t.id].orEmpty(), vizzes[t.id]) { nav.go(PolRoute.Rubric(t.id)) } }
         }
         val links = RUBRICS.filter { it.kind == TileKind.Link }
         full { HeaderRow("Lire entre les lignes", plural(links.size, "entrée", "entrées")) }
@@ -189,10 +211,7 @@ private fun DuelHero(data: PolData, onClick: () -> Unit) {
                 Kicker("Comparer", color = ink.copy(alpha = 0.75f))
                 Text("Duel", fontSize = 30.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.03).em)
                 Text("Deux programmes face à face, chiffre par chiffre.", Modifier.width(200.dp).padding(top = 4.dp), fontSize = 14.sp, color = ink.copy(alpha = 0.85f))
-                Row(Modifier.fillMaxWidth().padding(top = 18.dp, end = 64.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Box(Modifier.weight(1f).height(8.dp).clip(RoundedCornerShape(4.dp)).background(Attn))
-                    Box(Modifier.weight(1f).height(8.dp).clip(RoundedCornerShape(4.dp)).background(Color(0xFF9FC4E8)))
-                }
+                LifeBars(ink)
             }
             if (duo.size == 2) {
                 Row(Modifier.align(Alignment.TopEnd).clearAndSetSemantics { }, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -203,6 +222,25 @@ private fun DuelHero(data: PolData, onClick: () -> Unit) {
             }
             Box(Modifier.align(Alignment.BottomEnd).size(44.dp).clip(CircleShape).background(Attn), contentAlignment = Alignment.Center) {
                 Icon(KairosIcons.ChevronForward, contentDescription = null, tint = AttnInk)
+            }
+        }
+    }
+}
+
+/** Deux barres de vie qui se répondent ; immobiles quand les animations du système sont coupées. */
+@Composable
+private fun LifeBars(ink: Color) {
+    val still = reducedMotion()
+    val pulse = rememberInfiniteTransition(label = "vie")
+    @Composable fun level(delay: Int): Float = if (still) 0.6f else pulse.animateFloat(
+        0.35f, 0.85f, infiniteRepeatable(tween(2600, easing = FastOutSlowInEasing), RepeatMode.Reverse, StartOffset(delay)), label = "barre",
+    ).value
+    val a = level(0)
+    val b = level(1300)
+    Row(Modifier.fillMaxWidth().padding(top = 18.dp, end = 64.dp).clearAndSetSemantics { }, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        listOf(Triple(a, Attn, Alignment.CenterStart), Triple(b, Color(0xFF9FC4E8), Alignment.CenterEnd)).forEach { (f, c, side) ->
+            Box(Modifier.weight(1f).height(8.dp).clip(RoundedCornerShape(4.dp)).background(ink.copy(alpha = 0.18f))) {
+                Box(Modifier.align(side).fillMaxHeight().fillMaxWidth(f).background(c))
             }
         }
     }
@@ -273,7 +311,7 @@ private fun IdCard(data: PolData, id: String, count: Int?, onClick: () -> Unit) 
 }
 
 @Composable
-private fun Tile(t: RubricTile, count: String, onClick: () -> Unit) {
+private fun Tile(t: RubricTile, count: String, viz: TileViz?, onClick: () -> Unit) {
     val wide = t.kind == TileKind.Wide
     val bubble = t.id == "bulle"
     val bg = if (bubble) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface
@@ -281,14 +319,75 @@ private fun Tile(t: RubricTile, count: String, onClick: () -> Unit) {
     val muted = if (bubble) ink.copy(alpha = 0.8f) else MaterialTheme.colorScheme.onSurfaceVariant
     Surface(
         onClick,
-        Modifier.fillMaxWidth().heightIn(min = if (wide) 0.dp else 132.dp).semantics { contentDescription = "${t.title}. ${t.hook}. $count" },
+        Modifier.fillMaxWidth().heightIn(min = if (wide) 0.dp else 172.dp).semantics { contentDescription = "${t.title}. ${t.hook}. $count" },
         shape = RoundedCornerShape(20.dp), color = bg, contentColor = ink, shadowElevation = 1.dp,
     ) {
-        Column(Modifier.padding(14.dp)) {
+        val texts: @Composable () -> Unit = {
             Text(t.title, fontSize = 17.sp, fontWeight = FontWeight.Bold)
             Text(frTypo(t.hook), Modifier.padding(top = 3.dp), color = muted, fontSize = 13.sp, lineHeight = 17.sp)
-            if (!wide) Spacer(Modifier.weight(1f, fill = false))
+        }
+        val cnt: @Composable () -> Unit = {
             Text(count.uppercase(), Modifier.padding(top = 8.dp), color = muted, fontFamily = Mono, fontWeight = FontWeight.SemiBold, fontSize = 11.sp, letterSpacing = 0.04.em)
+        }
+        if (wide) Row(Modifier.padding(14.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
+            viz?.let { VizCanvas(it, if (bubble) Modifier.size(104.dp, 64.dp) else Modifier.size(92.dp, 84.dp)) }
+            Column(Modifier.weight(1f)) { texts(); cnt() }
+        } else Column(Modifier.padding(14.dp)) {
+            viz?.let { VizCanvas(it, Modifier.fillMaxWidth().height(54.dp).padding(bottom = 0.dp)) }
+            Spacer(Modifier.height(if (viz != null) 10.dp else 0.dp))
+            texts()
+            Spacer(Modifier.weight(1f, fill = false))
+            cnt()
+        }
+    }
+}
+
+/** Mini-graphique dessiné à l'échelle, posé en bas et centré ; décoratif (les chiffres sont dans le texte de la tuile). */
+@Composable
+private fun VizCanvas(v: TileViz, modifier: Modifier) {
+    val pc = PolColors.current
+    val scheme = MaterialTheme.colorScheme
+    val night = duelNight()
+    val neutral = scheme.onSurfaceVariant
+    val paths = remember(v) { v.regions.map { ring -> Path().apply { ring.firstOrNull()?.let { moveTo(it.x, it.y) }; ring.drop(1).forEach { lineTo(it.x, it.y) }; close() } } }
+    fun color(m: Mark): Color = when (m.ink) {
+        Ink.Identity -> identityColor(m.hex) ?: neutral
+        Ink.Muted -> scheme.onSurfaceVariant
+        Ink.Line -> scheme.outlineVariant
+        Ink.Ink -> scheme.onSurface
+        Ink.Pour -> pc.pour
+        Ink.Contre -> pc.contre
+        Ink.Partiel -> pc.partiel
+        Ink.PartielBg -> pc.partielBg
+        Ink.Solide -> pc.solide
+        Ink.Fragile -> pc.fragile
+        Ink.Low -> pc.low
+        Ink.High -> pc.high
+        Ink.Night -> night
+    }
+    Canvas(modifier.clearAndSetSemantics { }) {
+        val s = min(size.width / v.w, size.height / v.h)
+        val unit = v.w / 140f
+        translate((size.width - v.w * s) / 2, size.height - v.h * s) {
+            scale(s, pivot = Offset.Zero) {
+                paths.forEach {
+                    drawPath(it, scheme.surfaceVariant)
+                    drawPath(it, scheme.onSurfaceVariant.copy(alpha = 0.5f), style = Stroke(unit * 0.7f))
+                }
+                v.marks.forEach { m ->
+                    val c = color(m)
+                    val r = CornerRadius(2f * unit)
+                    when (m.shape) {
+                        MarkShape.Box -> drawRoundRect(c, Offset(m.x, m.y), Size(m.w, m.h), r)
+                        MarkShape.Hollow -> drawRoundRect(c, Offset(m.x, m.y), Size(m.w, m.h), r, style = Stroke(unit * 0.8f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(2f * unit, 1.5f * unit))))
+                        MarkShape.Dot -> {
+                            drawCircle(c, m.w, Offset(m.x, m.y))
+                            drawCircle(scheme.onSurface.copy(alpha = 0.3f), m.w, Offset(m.x, m.y), style = Stroke(unit))
+                        }
+                        MarkShape.Dash -> drawLine(c, Offset(m.x, m.y), Offset(m.x + m.w, m.y + m.h), unit, pathEffect = PathEffect.dashPathEffect(floatArrayOf(3f * unit, 3f * unit)))
+                    }
+                }
+            }
         }
     }
 }
