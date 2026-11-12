@@ -58,6 +58,21 @@ import app.kairos.mobile.ui.politique.kit.SourceList
 import app.kairos.mobile.ui.politique.kit.VerdictChip
 import app.kairos.mobile.ui.politique.kit.frTypo
 import app.kairos.mobile.ui.politique.model.Claim
+import app.kairos.mobile.ui.politique.screens.AideRow
+import app.kairos.mobile.ui.politique.screens.Affaire
+import app.kairos.mobile.ui.politique.screens.Campagne
+import app.kairos.mobile.ui.politique.screens.Dossier
+import app.kairos.mobile.ui.politique.screens.PartiComptes
+import app.kairos.mobile.ui.politique.screens.affairesOf
+import app.kairos.mobile.ui.politique.screens.aideOf
+import app.kairos.mobile.ui.politique.screens.campagnesOf
+import app.kairos.mobile.ui.politique.screens.financingOf
+import app.kairos.mobile.ui.politique.screens.lobbyOf
+import app.kairos.mobile.ui.politique.screens.moneyLabel
+import app.kairos.mobile.ui.politique.screens.netLabel
+import app.kairos.mobile.ui.politique.screens.partisOf
+import app.kairos.mobile.ui.politique.screens.procedureStage
+import app.kairos.mobile.ui.politique.screens.stageTone
 import app.kairos.mobile.ui.politique.screens.DvItem
 import app.kairos.mobile.ui.politique.screens.claimsOf
 import app.kairos.mobile.ui.politique.screens.dvCount
@@ -102,13 +117,6 @@ data class IdCoh(val camp: String = "", val items: List<List<String>> = emptyLis
 @Serializable
 data class IdTurn(val camp: String = "", val p: String = "", val s: String = "", val a: String = "", val b: String = "", val k: String = "", val src: JsonElement? = null)
 
-/** Dossier d'argent ou de lobbying ; [stg] : `[code, libellé]`. */
-@Serializable
-data class IdCase(val t: String = "", val stg: List<String> = emptyList(), val p: String = "", val s: JsonElement? = null)
-
-@Serializable
-data class IdAide(val l: String = "", val v: Double? = null)
-
 @Serializable
 data class IdRhet(val t: String = "", val ex: List<List<String>> = emptyList())
 
@@ -127,8 +135,8 @@ data class Stance(val pos: String, val text: String)
 class IdentityLinks(
     val programs: List<IdProgram>, val gaps: List<IdGap>, val measures: List<IdMeasure>,
     val matrix: List<Pair<IdMatrixRow, Stance>>, val claims: List<Claim>, val coh: List<IdCoh>, val turns: List<IdTurn>,
-    val cases: List<Row>, val money: List<IdCase>, val aide: List<IdAide>, val partis: List<Row>, val c22: List<Row>,
-    val muni: List<IdCase>, val villes: List<Row>, val rhet: List<Pair<String, String>>, val communes: List<IdCommune>,
+    val cases: List<Affaire>, val money: List<Dossier>, val aide: List<AideRow>, val partis: List<PartiComptes>, val c22: List<Campagne>,
+    val muni: List<Dossier>, val villes: List<Row>, val rhet: List<Pair<String, String>>, val communes: List<IdCommune>,
     /** Chambre (« AN », « PE ») → nom du groupe et votes de ce groupe. */
     val votes: List<Triple<String, String, List<Pair<IdVote, List<String>>>>>,
     /** Scrutins croisés : ceux du parti pour une personne. */
@@ -159,12 +167,12 @@ fun identityLinks(data: PolData, id: String): IdentityLinks {
         claims = data.decode<Claim>("affirmations", "CLAIMS").filter { hit(it.camp) },
         coh = data.decode<IdCoh>("votes", "COH").filter { hit(it.camp) },
         turns = data.decode<IdTurn>("revirements", "RV").filter { r -> if (data.idsIn(r.p).isNotEmpty()) hit(r.p) else hit(r.camp) },
-        cases = rows("probite", "AFF").filter { a -> if (data.idsIn(a.s(0)).isNotEmpty()) hit(a.s(0)) else hit(a.s(1)) },
-        money = (data.decode<IdCase>("argent", "FIN") + data.decode<IdCase>("probite", "LOBBY")).filter { hit(it.t) },
-        aide = data.decode<IdAide>("argent", "AIDE.rows").filter { hit(it.l) },
-        partis = rows("argent", "PARTIS").filter { hit(it.s(0)) },
-        c22 = rows("argent", "C22").filter { hit(it.s(0)) },
-        muni = data.decode<IdCase>("villes", "MUNI").filter { hit(it.t) },
+        cases = affairesOf(data).filter { a -> if (data.idsIn(a.who).isNotEmpty()) hit(a.who) else hit(a.party) },
+        money = (financingOf(data) + lobbyOf(data)).filter { hit(it.t) },
+        aide = aideOf(data).rows.filter { hit(it.l) },
+        partis = partisOf(data).filter { hit(it.parti) },
+        c22 = campagnesOf(data).filter { hit(it.cand) },
+        muni = data.decode<Dossier>("villes", "MUNI").filter { hit(it.t) },
         villes = (rows("villes", "VRN") + rows("villes", "VECO")).filter { hit(it.s(1)) },
         rhet = data.decode<IdRhet>("rhetorique", "RHET").flatMap { r -> r.ex.filter { hit(it.getOrNull(0)) }.map { r.t to it.getOrElse(1) { "" } } },
         communes = data.decode<IdCommune>("villes", "COMMUNES").filter { it.qui == id },
@@ -184,7 +192,7 @@ private fun <T> List<T>.own(data: PolData, id: String, label: (T) -> String): T?
 
 fun ownProgram(l: IdentityLinks, data: PolData, id: String) = l.programs.own(data, id) { it.who }
 fun ownAide(l: IdentityLinks, data: PolData, id: String) = l.aide.own(data, id) { it.l }
-fun ownPartis(l: IdentityLinks, data: PolData, id: String) = l.partis.own(data, id) { it.s(0) }
+fun ownPartis(l: IdentityLinks, data: PolData, id: String) = l.partis.own(data, id) { it.parti }
 
 // ---------------------------------------------------------------- chiffres clés
 
@@ -215,7 +223,7 @@ fun identityStats(data: PolData, id: String, l: IdentityLinks = identityLinks(da
     ownAide(l, data, id)?.let { a ->
         a.v?.let { out += Stat("Aide publique", fmt(it, 2) + " M€", if (a.l == x.parti || a.l == x.nom) "aide annuelle" else "bloc « ${a.l.substringBefore(" (")} »") }
     }
-    ownPartis(l, data, id)?.d(3)?.let { out += Stat("Situation nette", signed(it, 1) + " M€", "derniers comptes publiés") }
+    ownPartis(l, data, id)?.net?.let { out += Stat("Situation nette", signed(it, 1) + " M€", "derniers comptes publiés") }
     if (l.claims.isNotEmpty()) {
         out += Stat("Phrases vérifiées", l.claims.size.toString(), plural(l.claims.count { it.v == "solide" }, "solide", "solides") + " · " + plural(l.claims.count { it.v in FRAGILE }, "fragile ou faux", "fragiles ou faux"))
     }
@@ -239,10 +247,6 @@ private val COH_LABEL = mapOf("ecart" to "Écart", "coherent" to "Cohérent", "e
 private val TURN_LABEL = mapOf("R" to "Revirement", "I" to "Inflexion", "C" to "Constance")
 private val STANCE_LABEL = mapOf("keep" to "Poursuit", "flip" to "Inverse", "mix" to "Modifie")
 private val DV_LABEL = mapOf("coherent" to "Cohérent", "ambigu" to "Ambigu", "ecart" to "Écart")
-private val STAGES = mapOf(
-    "enq" to ("Enquête" to 1), "mex" to ("Mise en examen" to 2), "proc" to ("Procès" to 3),
-    "rel" to ("Relaxe" to 4), "nd" to ("Condamnation non définitive" to 4), "def" to ("Condamnation définitive" to 5),
-)
 private val COMMUNE_STATUS = mapOf("gagnee" to "Gagnée en 2026", "conservee" to "Conservée", "ralliee" to "Maire rallié", "perdue" to "Perdue", "echec" to "Échec")
 private val CITY_KIND = mapOf("cont" to "Fait vérifiable", "causal" to "Décision de justice", "desc" to "Avis ou chiffre contesté")
 
@@ -390,7 +394,7 @@ private fun Tag(text: String, fg: Color = MaterialTheme.colorScheme.onSurfaceVar
 
 /** Couleur d'état d'un code : solide / partiel / fragile / pour / contre ; autre : neutre. */
 @Composable
-private fun StateTag(text: String, tone: String?) {
+internal fun StateTag(text: String, tone: String?) {
     val pc = PolColors.current
     when (tone) {
         "solide" -> Tag(text, pc.solide, pc.solideBg)
@@ -550,11 +554,11 @@ private fun sections(data: PolData, id: String, l: IdentityLinks, nav: PolNaviga
         Card { Body("Présumé innocent tant qu'aucune condamnation n'est définitive.") }
         l.cases.forEach { a ->
             Card {
-                Kicker(listOf(a.s(0), a.s(5)).filter(String::isNotBlank).joinToString(" · "))
-                Title(a.s(2))
-                StageLadder(a.s(3))
-                Body(a.s(4))
-                a.s(6).takeIf { it.isNotBlank() }?.let { SourceList(listOf(SourceRef("Source", it)), data, onEv) }
+                Kicker(listOf(a.who, a.date).filter(String::isNotBlank).joinToString(" · "))
+                Title(a.faits)
+                StageLadder(a.stg)
+                Body(a.etat)
+                a.url.takeIf { it.isNotBlank() }?.let { SourceList(listOf(SourceRef("Source", it)), data, onEv) }
             }
         }
     }
@@ -565,14 +569,14 @@ private fun sections(data: PolData, id: String, l: IdentityLinks, nav: PolNaviga
         part?.let {
             Card {
                 Kicker("Derniers comptes publiés")
-                KeyValue(listOf("Dons et cotisations" to it.d(1).or(unit = " M€"), "Dette" to it.d(2).or(unit = " M€"), "Situation nette" to (it.d(3)?.let { v -> signed(v, 1) + " M€" } ?: "non trouvé")))
+                KeyValue(listOf("Dons et cotisations" to moneyLabel(it.dons), "Dette" to moneyLabel(it.dette), "Situation nette" to netLabel(it.net)))
             }
         }
         l.c22.forEach { c ->
             Card {
-                Kicker("Présidentielle précédente · ${c.s(0)}")
-                KeyValue(listOf("Score" to c.s(1), "Dépenses" to c.d(2).or(2, " M€"), "Remboursé" to c.d(3).or(2, " M€")))
-                c.s(4).takeIf { it.isNotBlank() }?.let { Body(it) }
+                Kicker("Présidentielle précédente · ${c.cand}")
+                KeyValue(listOf("Score" to c.score, "Dépenses" to moneyLabel(c.depense), "Remboursé" to moneyLabel(c.rembourse)))
+                c.note.takeIf { it.isNotBlank() }?.let { Body(it) }
             }
         }
         l.money.forEach { f ->
@@ -607,22 +611,22 @@ private fun sections(data: PolData, id: String, l: IdentityLinks, nav: PolNaviga
     return out
 }
 
-/** Étape d'une procédure : cinq crans, et le mot. */
+/** Étape d'une procédure : cinq crans, et le mot ; la relaxe est en vert. */
 @Composable
-private fun StageLadder(code: String) {
-    val (label, step) = STAGES[code] ?: return
-    val ink = MaterialTheme.colorScheme.onSurface
-    Row(Modifier.padding(top = 8.dp).clearAndSetSemantics { contentDescription = "Étape : $label" }, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+internal fun StageLadder(code: String, modifier: Modifier = Modifier) {
+    val stage = procedureStage(code) ?: return
+    val on = if (stage.relaxe) PolColors.current.solide else MaterialTheme.colorScheme.onSurface
+    Row(modifier.padding(top = 8.dp).clearAndSetSemantics { contentDescription = "Étape : ${stage.label}, ${stage.step} sur 5" }, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         (1..5).forEach { s ->
-            Box(Modifier.weight(1f).height(6.dp).clip(RoundedCornerShape(3.dp)).background(if (s <= step) ink else MaterialTheme.colorScheme.outlineVariant))
+            Box(Modifier.weight(1f).height(6.dp).clip(RoundedCornerShape(3.dp)).background(if (s <= stage.step) on else MaterialTheme.colorScheme.outlineVariant))
         }
     }
-    Text(label, Modifier.padding(top = 4.dp), fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+    Text(stage.label, Modifier.padding(top = 4.dp), fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
 }
 
 /** `[code, libellé]` d'une étape judiciaire. */
 @Composable
-private fun StageTag(stg: List<String>) {
+internal fun StageTag(stg: List<String>) {
     val label = stg.getOrNull(1)?.takeIf { it.isNotBlank() } ?: return
-    StateTag(label, when (stg.getOrNull(0)) { "mex", "nd" -> "partiel"; "def" -> "fragile"; "rel" -> "solide"; else -> null })
+    StateTag(label, stageTone(stg.getOrNull(0)))
 }

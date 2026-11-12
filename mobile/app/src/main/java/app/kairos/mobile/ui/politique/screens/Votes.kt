@@ -81,10 +81,8 @@ import app.kairos.mobile.ui.politique.model.sourcesOf
 import app.kairos.mobile.ui.politique.reducedMotion
 import kotlinx.coroutines.launch
 
-private val ScreenPad = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 24.dp)
 private val Mono = FontFamily.Monospace
 
-private fun LazyListScope.part(content: @Composable () -> Unit) = item { content() }
 
 // ---------- Briques ----------
 

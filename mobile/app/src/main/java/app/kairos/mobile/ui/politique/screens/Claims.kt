@@ -78,7 +78,6 @@ import app.kairos.mobile.ui.politique.model.PolData
 import app.kairos.mobile.ui.politique.model.sourcesOf
 import app.kairos.mobile.ui.theme.mix
 
-private val ScreenPad = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 24.dp)
 
 internal fun PolData.campColor(camp: String): Color? = idOf(camp)?.let { byId(it)?.couleur }?.let { identityColor(it) }
 
@@ -156,7 +155,6 @@ private fun Lead(text: String) = Text(text, Modifier.padding(top = 6.dp), color 
 @Composable
 private fun Label(text: String, top: Int = 12) = Kicker(text, Modifier.padding(top = top.dp, bottom = 6.dp))
 
-private fun LazyListScope.part(content: @Composable () -> Unit) = item { content() }
 
 internal fun frCount(n: Int, one: String, many: String) = "$n ${if (n > 1) many else one}"
 

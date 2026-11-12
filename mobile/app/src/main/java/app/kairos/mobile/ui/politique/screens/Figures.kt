@@ -80,7 +80,7 @@ import app.kairos.mobile.ui.politique.model.SourceRef
 
 private val Mono = FontFamily.Monospace
 private const val BALANCE_LEAD = "Pour chaque chiffre : ce qu'il sacrifie, ce qu'il ne montre pas, et l'avis signé des évaluateurs."
-private val ScreenPad = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 24.dp)
+internal val ScreenPad = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 24.dp)
 
 /** Identité d'un libellé nominatif (« Nom · Parti » ou « Nom »). */
 private fun PolData.idFor(who: String): String? = idOf(who) ?: idOf(who.substringBefore(" · "))
@@ -93,14 +93,14 @@ private fun PolData.identityColorOf(who: String): Color? = idFor(who)?.let { byI
 // ---------- Briques communes ----------
 
 @Composable
-private fun FigCard(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+internal fun FigCard(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
     Surface(modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surface, tonalElevation = 1.dp, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
         Column(Modifier.padding(14.dp)) { content() }
     }
 }
 
 @Composable
-private fun Section(kicker: String, title: String, lead: String?, foot: String? = null, content: @Composable () -> Unit) {
+internal fun Section(kicker: String, title: String, lead: String?, foot: String? = null, content: @Composable () -> Unit) {
     Column(Modifier.fillMaxWidth().padding(top = 24.dp)) {
         SectionHeader(kicker, title, lead)
         Spacer(Modifier.height(10.dp))
@@ -185,7 +185,7 @@ private fun <T> BalanceRows(rows: List<T>, nameOf: (T) -> String, lecture: (T) -
 
 /** Carrousel à accroche, avec ses points de position. */
 @Composable
-private fun <T> Rail(items: List<T>, cardWidth: Dp, content: @Composable (Int, T) -> Unit) {
+internal fun <T> Rail(items: List<T>, cardWidth: Dp, content: @Composable (Int, T) -> Unit) {
     val state = rememberLazyListState()
     val scheme = MaterialTheme.colorScheme
     Column {
@@ -205,11 +205,11 @@ private fun Bal(lecture: Lecture, title: String, who: String?, nav: PolNavigator
     BalanceBlock(lecture, title, who, onOpen = { nav.sheet(PolSheetState.Balance(lecture, title, who)) }, modifier = modifier)
 
 @Composable
-private fun TableLink(onClick: () -> Unit) {
+internal fun TableLink(onClick: () -> Unit) {
     TextButton(onClick, Modifier.semantics { contentDescription = "Afficher cette carte en grand, à table" }) { Text("À table") }
 }
 
-private fun LazyListScope.part(content: @Composable () -> Unit) = item { content() }
+internal fun LazyListScope.part(content: @Composable () -> Unit) = item { content() }
 
 // ---------- Budgets ----------
 

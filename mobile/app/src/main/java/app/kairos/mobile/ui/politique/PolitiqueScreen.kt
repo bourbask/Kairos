@@ -45,7 +45,10 @@ import app.kairos.mobile.ui.politique.screens.DitVoteScreen
 import app.kairos.mobile.ui.politique.screens.RevirementsScreen
 import app.kairos.mobile.ui.politique.screens.ScrutinSheetAt
 import app.kairos.mobile.ui.politique.screens.VotesScreen
+import app.kairos.mobile.ui.politique.screens.ArgentScreen
 import app.kairos.mobile.ui.politique.screens.BudgetsScreen
+import app.kairos.mobile.ui.politique.screens.MediasScreen
+import app.kairos.mobile.ui.politique.screens.ProbiteScreen
 import app.kairos.mobile.ui.politique.screens.LivingScreen
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -200,6 +203,9 @@ fun RubricHost(id: String, data: PolData, nav: PolNavigator) {
         "votes" -> VotesScreen(data, nav)
         "revirements" -> RevirementsScreen(data, nav)
         "dit-vote" -> DitVoteScreen(data, nav)
+        "probite" -> ProbiteScreen(data, nav)
+        "argent" -> ArgentScreen(data, nav)
+        "medias" -> MediasScreen(data, nav)
         else -> Soon()
     }
 }
