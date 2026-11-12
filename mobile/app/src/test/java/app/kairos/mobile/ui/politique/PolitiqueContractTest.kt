@@ -43,7 +43,7 @@ class PolitiqueContractTest {
         assertEquals(PolHint("affirmations", "CLAIMS", "verifications", mapOf("titre" to "q", "verdict" to "v", "faits" to "facts", "source" to "src", "theme" to "theme", "camp" to "camp")), hints[0])
         val cards = homeCards(home)
         assertEquals(
-            listOf("Dit / voté", "Déclarations vérifiées", "Argent", "Budgets", "divers", "Niveau de vie", "Rhétorique", "Votes", "Hors de ma bulle"),
+            listOf("Dit / voté", "Déclarations vérifiées", "Argent", "Budgets", "divers", "Dossiers", "Qui chiffre ?", "Niveau de vie", "Rhétorique", "Votes", "Hors de ma bulle"),
             cards.map { it.titre },
         )
         assertEquals("indication avant le nom", RubricKind.Declarations, cards[1].kind)
@@ -183,7 +183,7 @@ class PolitiqueContractTest {
     @Test
     fun every_sample_decodes() {
         val all = javaClass.getResource("/politique")!!.let { java.io.File(it.toURI()).list()!!.sorted() }
-        assertEquals(11, all.size)
+        assertEquals(15, all.size)
         for (n in all) assertTrue(n, KairosJson.parseToJsonElement(javaClass.getResource("/politique/$n")!!.readText()) is JsonObject)
         assertTrue(rubric("votes").rattachements["AN_G"] is JsonArray)
     }
