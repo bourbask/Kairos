@@ -222,7 +222,7 @@ fun SheetHost(s: PolSheetState, data: PolData, nav: PolNavigator, onDismiss: () 
         is PolSheetState.Claim -> ClaimSheetAt(data, s.index, nav, onDismiss)
         is PolSheetState.Scrutin -> ScrutinSheetAt(data, s.id, nav, onDismiss)
         is PolSheetState.Balance -> BalanceSheet(s.lecture, s.title, s.who, data, { nav.sheet(PolSheetState.Evaluator(it)) }, onDismiss)
-        is PolSheetState.City -> CitySheet(data, s.name, nav, onDismiss)
+        is PolSheetState.City -> CitySheet(data, s.key, nav, onDismiss)
         is PolSheetState.Cluster -> ClusterSheet(data, s.villes, nav, onDismiss)
         is PolSheetState.Evaluator -> PolSheet(full = false, onDismiss = onDismiss) { Soon() }
     }

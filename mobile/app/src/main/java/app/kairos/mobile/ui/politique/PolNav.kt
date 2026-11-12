@@ -24,7 +24,9 @@ sealed interface PolSheetState {
     data class Claim(val index: Int) : PolSheetState
     data class Scrutin(val id: String) : PolSheetState
     data class Balance(val lecture: Lecture, val title: String, val who: String?) : PolSheetState
-    data class City(val name: String) : PolSheetState
+    /** [key] : code commune, sinon nom (voir `Commune.key`). */
+    data class City(val key: String) : PolSheetState
+    /** Villes d'une même bulle, par clé. */
     data class Cluster(val villes: List<String>) : PolSheetState
 }
 

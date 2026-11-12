@@ -59,7 +59,7 @@ class MapLogicTest {
             Placed(city("A3", "r1", "bleu"), Offset(0f, 30f)), Placed(city("B1", "r2", "rouge"), Offset(50f, 50f)),
         )
         val b = regionBubbles(regions, placed)
-        assertEquals(listOf("r1", "r2"), b.map { it.region })
+        assertEquals(listOf(listOf("r1"), listOf("r2")), b.map { it.regions })
         assertEquals(Offset(10f, 10f), b[0].at)
         assertEquals(listOf("bleu" to 2, "vert" to 1), partyCounts(b[0].cities))
         assertEquals(listOf("rouge" to 1), partyCounts(b[1].cities))
@@ -79,8 +79,35 @@ class MapLogicTest {
         assertEquals(listOf("Métropole", "Île", "Sans position"), m.communes.map { it.ville })
         assertEquals(listOf("Métropole"), m.placed.map { it.c.ville })
         assertEquals(listOf("Île"), outreMer(m.communes).map { it.ville })
+        assertEquals(listOf("Sans position"), m.unmapped.map { it.ville })
         assertEquals(Rect(0f, 0f, 100f, 100f), m.viewBox)
         assertEquals(listOf("11"), m.regions.map { it.code })
+    }
+
+    @Test fun unmapped_cities_are_listed_not_lost() {
+        val l = listOf(city("Posée", "11"), city("Région inconnue", "99"), city("Sans région", ""), city("Île", "04"),
+            Commune(ville = "Sans coordonnées", region = "11", lat = 45.0))
+        assertEquals(listOf("Région inconnue", "Sans région", "Sans coordonnées"), unmapped(l, setOf("11")).map { it.ville })
+        // Sans fond de carte : toute la métropole va dans la liste, l'outre-mer reste à part.
+        assertEquals(4, unmapped(l, emptySet()).size)
+        val noMap = villesModel(data("villes" to """{"COMMUNES":[{"ville":"V","insee":"1","lat":46,"lon":2,"region":"11"}]}"""))
+        assertTrue(noMap.placed.isEmpty() && !noMap.hasMap)
+        assertEquals(listOf("1"), noMap.unmapped.map { it.key })
+        assertEquals("Sans code", Commune(ville = "Sans code").key)
+    }
+
+    @Test fun region_bubbles_never_overlap() {
+        val placed = listOf(
+            Placed(city("A1", "r1", "bleu"), Offset(0f, 0f)), Placed(city("A2", "r1", "vert"), Offset(0f, 0f)),
+            Placed(city("B1", "r2", "rouge"), Offset(15f, 0f)), Placed(city("C1", "r3", "bleu"), Offset(200f, 0f)),
+        )
+        val bubbles = regionBubbles(listOf("r1", "r2", "r3"), placed)
+        // 1 unité par dp : r1 (rayon 9,4 + 2,3) et r2 (8,95 + 2,3) à 15 dp se chevauchent ; r3 reste seule.
+        val m = mergeOverlapping(bubbles, unitsPerDp = 1f)
+        assertEquals(listOf(listOf("r1", "r2"), listOf("r3")), m.map { it.regions })
+        assertEquals(3, m[0].cities.size)
+        assertEquals(Offset(5f, 0f), m[0].at) // moyenne pondérée par les villes
+        assertEquals(3, mergeOverlapping(bubbles, unitsPerDp = 0.5f).size)
     }
 
     @Test fun villes_survive_empty_and_wrong_types() {

@@ -327,8 +327,12 @@ private fun MapCanvas(data: PolData, m: VillesModel, shown: List<Commune>, reg: 
     val placed = remember(m, shownSet) { m.placed.filter { it.c in shownSet } }
     // Regroupement calculé pour la fenêtre d'arrivée : les repères glissent pendant le zoom, puis restent stables.
     val groups = remember(placed, reg, size, density, m) {
-        if (reg == null) regionBubbles(m.regions.map { it.code }, placed)
-        else clusterMarkers(placed.filter { it.c.region == reg }, unitsPerDp = density / fit(target, size).scale)
+        val u = density / fit(target, size).scale
+        when {
+            size == IntSize.Zero -> emptyList()
+            reg == null -> mergeOverlapping(regionBubbles(m.regions.map { it.code }, placed), u)
+            else -> clusterMarkers(placed.filter { it.c.region == reg }, u)
+        }
     }
     val counts = remember(shown) { shown.groupingBy { it.region }.eachCount() }
     val measurer = rememberTextMeasurer()
@@ -345,12 +349,15 @@ private fun MapCanvas(data: PolData, m: VillesModel, shown: List<Commune>, reg: 
         Modifier.fillMaxWidth().aspectRatio(ar).clipToBounds().onSizeChanged { size = it }
             .pointerInput(groups, reg, m) {
                 detectTapGestures { pos ->
+                    if (size == IntSize.Zero) return@detectTapGestures
                     val f = fit(win.value, size)
-                    val hit = groups.minByOrNull { (f.screen(it.at) - pos).getDistance() }?.takeIf { (f.screen(it.at) - pos).getDistance() <= 24.dp.toPx() }
+                    // Rayon de toucher : repère seul 15 dp, bulle 20 dp ; le plus proche l'emporte.
+                    val hit = groups.filter { (f.screen(it.at) - pos).getDistance() <= (if (it.cities.size == 1 && it.regions.isEmpty()) 15 else 20).dp.toPx() }
+                        .minByOrNull { (f.screen(it.at) - pos).getDistance() }
                     when {
-                        hit?.region != null -> onRegion(hit.region)
-                        hit != null && hit.cities.size > 1 -> onCluster(hit.cities.map { it.ville })
-                        hit != null -> onCity(hit.cities[0].ville)
+                        hit != null && hit.regions.size == 1 -> onRegion(hit.regions[0])
+                        hit != null && hit.cities.size > 1 -> onCluster(hit.cities.map { it.key })
+                        hit != null -> onCity(hit.cities[0].key)
                         else -> m.regions.firstOrNull { contains(it.rings, f.map(pos)) }?.let { onRegion(if (it.code == reg) null else it.code) }
                     }
                 }
@@ -373,11 +380,11 @@ private fun MapCanvas(data: PolData, m: VillesModel, shown: List<Commune>, reg: 
         }
         groups.forEach { g ->
             val at = f.screen(g.at)
-            if (g.cities.size == 1 && g.region == null) {
+            if (g.cities.size == 1 && g.regions.isEmpty()) {
                 val c = g.cities[0]
                 marker(c.statut, data.quiColor(c.qui), at, scheme.onSurface, scheme.surface)
             } else {
-                val r = if (g.region != null) 8.5f + min(4.5f, g.cities.size * 0.45f) else 8.5f
+                val r = bubbleRadiusDp(g)
                 val label = measurer.measure(g.cities.size.toString(), numStyle)
                 bubble(partyCounts(g.cities).map { (q, n) -> data.quiColor(q) to n }, at, r, scheme.onSurface, scheme.surface) {
                     drawText(label, topLeft = at - Offset(label.size.width / 2f, label.size.height / 2f))
@@ -418,9 +425,13 @@ private fun LegendChip(label: String, icon: @Composable () -> Unit) {
 @Composable
 private fun MapList(data: PolData, m: VillesModel, shown: List<Commune>, reg: String?, filtered: Boolean, facts: List<CityFact>, onRegion: (String?) -> Unit, onCity: (String) -> Unit) {
     val scheme = MaterialTheme.colorScheme
-    val metro = shown.filter { !isDom(it.region) }
+    val mapped = remember(m) { m.placed.map { it.c }.toSet() }
+    val off = remember(m) { m.unmapped.toSet() }
+    val metro = shown.filter { it in mapped }
+    val others = shown.filter { it in off }
     val dom = outreMer(shown)
-    if (reg != null) {
+    val row: @Composable (Int, Commune) -> Unit = { i, c -> if (i > 0) RowDivider(0.dp); CityRow(data, c, factsFor(facts, c.ville).size) { onCity(c.key) } }
+    if (m.hasMap && reg != null) {
         val nom = m.regions.firstOrNull { it.code == reg }?.nom.orEmpty()
         val l = metro.filter { it.region == reg }.sortedWith(compareBy(FR) { it.ville })
         Row(Modifier.fillMaxWidth().padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -429,9 +440,9 @@ private fun MapList(data: PolData, m: VillesModel, shown: List<Commune>, reg: St
         }
         FigCard(Modifier.padding(top = 8.dp)) {
             if (l.isEmpty()) Note("Aucune ville suivie dans cette région${if (filtered) " pour ce parti" else ""}.")
-            l.forEachIndexed { i, c -> if (i > 0) RowDivider(0.dp); CityRow(data, c, factsFor(facts, c.ville).size) { onCity(c.ville) } }
+            l.forEachIndexed { i, c -> row(i, c) }
         }
-    } else {
+    } else if (m.hasMap) {
         Row(Modifier.fillMaxWidth().padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("France métropolitaine", Modifier.weight(1f).semantics { heading() }, fontWeight = FontWeight.Bold, fontSize = 17.sp)
             Kicker(plural(metro.size, "ville", "villes"))
@@ -444,8 +455,8 @@ private fun MapList(data: PolData, m: VillesModel, shown: List<Commune>, reg: St
             }
         }
         val regs = m.regions.map { r -> r to metro.count { it.region == r.code } }.filter { it.second > 0 }.sortedByDescending { it.second }
-        FigCard(Modifier.padding(top = 10.dp)) {
-            if (regs.isEmpty()) Note(if (filtered) "Aucune ville pour ce parti en métropole." else "Aucune ville suivie en métropole.")
+        if (regs.isEmpty() && shown.isEmpty()) Note(if (filtered) "Aucune ville pour ce parti." else "Aucune ville suivie.")
+        if (regs.isNotEmpty()) FigCard(Modifier.padding(top = 10.dp)) {
             regs.forEachIndexed { i, (r, n) ->
                 if (i > 0) RowDivider(0.dp)
                 Row(
@@ -458,11 +469,14 @@ private fun MapList(data: PolData, m: VillesModel, shown: List<Commune>, reg: St
             }
         }
     }
+    if (others.isNotEmpty()) {
+        Kicker("Autres villes", Modifier.padding(top = 18.dp))
+        Note(if (m.hasMap) "Sans place sur la carte : région inconnue du fond de carte ou coordonnées manquantes." else "Fond de carte indisponible : les villes sont listées ici.")
+        FigCard(Modifier.padding(top = 6.dp)) { others.sortedWith(compareBy(FR) { it.ville }).forEachIndexed { i, c -> row(i, c) } }
+    }
     Kicker("Outre-mer", Modifier.padding(top = 18.dp))
     if (dom.isEmpty()) Note("Aucune ville d'outre-mer suivie${if (filtered) " pour ce parti" else ""}.")
-    else FigCard(Modifier.padding(top = 6.dp)) {
-        dom.forEachIndexed { i, c -> if (i > 0) RowDivider(0.dp); CityRow(data, c, factsFor(facts, c.ville).size) { onCity(c.ville) } }
-    }
+    else FigCard(Modifier.padding(top = 6.dp)) { dom.forEachIndexed { i, c -> row(i, c) } }
 }
 
 @Composable
@@ -502,8 +516,9 @@ private fun communeSources(c: Commune): List<SourceRef> {
 }
 
 @Composable
-fun CitySheet(data: PolData, name: String, nav: PolNavigator, onDismiss: () -> Unit) {
-    val c = remember(data, name) { data.communes().firstOrNull { it.ville == name } }
+fun CitySheet(data: PolData, key: String, nav: PolNavigator, onDismiss: () -> Unit) {
+    val c = remember(data, key) { data.communes().let { l -> l.firstOrNull { it.key == key } ?: l.firstOrNull { it.ville == key } } }
+    val name = c?.ville ?: key
     val facts = remember(data, name) { factsFor(cityFactsOf(data), name) }
     val onEv: (String) -> Unit = { nav.sheet(PolSheetState.Evaluator(it)) }
     PolSheet(full = false, onDismiss = onDismiss) {
@@ -540,8 +555,8 @@ fun CitySheet(data: PolData, name: String, nav: PolNavigator, onDismiss: () -> U
 }
 
 @Composable
-fun ClusterSheet(data: PolData, names: List<String>, nav: PolNavigator, onDismiss: () -> Unit) {
-    val l = remember(data, names) { data.communes().filter { it.ville in names }.sortedWith(compareBy(FR) { it.ville }) }
+fun ClusterSheet(data: PolData, keys: List<String>, nav: PolNavigator, onDismiss: () -> Unit) {
+    val l = remember(data, keys) { data.communes().filter { it.key in keys }.sortedWith(compareBy(FR) { it.ville }) }
     val facts = remember(data) { cityFactsOf(data) }
     PolSheet(full = false, onDismiss = onDismiss) {
         if (l.isEmpty()) {
@@ -549,10 +564,11 @@ fun ClusterSheet(data: PolData, names: List<String>, nav: PolNavigator, onDismis
             return@PolSheet
         }
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp)) {
-            Kicker(listOf(data.regionName(l[0].region), "même point de la carte").filter { it.isNotBlank() }.joinToString(" · "))
+            val regs = l.map { data.regionName(it.region) }.filter { it.isNotBlank() }.distinct().joinToString(", ")
+            Kicker(listOf(regs, "même point de la carte").filter { it.isNotBlank() }.joinToString(" · "))
             Text("${plural(l.size, "ville", "villes")} à cet endroit", Modifier.padding(top = 6.dp).semantics { heading() }, fontSize = 22.sp, fontWeight = FontWeight.Bold)
             FigCard(Modifier.padding(top = 12.dp)) {
-                l.forEachIndexed { i, c -> if (i > 0) RowDivider(0.dp); CityRow(data, c, factsFor(facts, c.ville).size) { nav.sheet(PolSheetState.City(c.ville)) } }
+                l.forEachIndexed { i, c -> if (i > 0) RowDivider(0.dp); CityRow(data, c, factsFor(facts, c.ville).size) { nav.sheet(PolSheetState.City(c.key)) } }
             }
         }
     }

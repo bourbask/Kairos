@@ -24,9 +24,12 @@ data class RegionShape(val code: String = "", val nom: String = "", val d: Strin
 
 @Serializable
 data class Commune(
-    val ville: String = "", val lat: Double? = null, val lon: Double? = null, val region: String = "",
+    val ville: String = "", val insee: String = "", val lat: Double? = null, val lon: Double? = null, val region: String = "",
     val qui: String = "", val statut: String = "", val detail: String = "", val src: JsonElement? = null,
-)
+) {
+    /** Identifiant stable : code commune, sinon nom. */
+    val key: String get() = insee.ifBlank { ville }
+}
 
 /** Coordonnées des données vers le repère du fond de carte. */
 fun project(p: Projection, lat: Double, lon: Double): Offset = Offset(((lon * p.k - p.minx) * p.s).toFloat(), ((p.maxy - lat) * p.s).toFloat())
@@ -81,10 +84,20 @@ data class RegionGeo(val code: String, val nom: String, val rings: List<List<Off
 
 data class Placed(val c: Commune, val at: Offset)
 
-/** Bulle de région, bulle-compteur ou repère seul ([cities] d'un élément). */
-data class MapGroup(val region: String?, val cities: List<Commune>, val at: Offset)
+/** Bulle de région(s) ([regions] non vide), bulle-compteur ou repère seul ([cities] d'un élément). */
+data class MapGroup(val regions: List<String>, val cities: List<Commune>, val at: Offset)
 
-data class VillesModel(val viewBox: Rect, val regions: List<RegionGeo>, val communes: List<Commune>, val placed: List<Placed>, val source: JsonElement?) {
+/** Rayon dessiné d'une bulle, en dp : grossit avec le nombre de villes pour une région. */
+fun bubbleRadiusDp(g: MapGroup): Float = if (g.regions.isNotEmpty()) 8.5f + min(4.5f, g.cities.size * 0.45f) else 8.5f
+
+/**
+ * [placed] : communes posées sur une région du fond ; [unmapped] : communes de métropole sans place
+ * sur la carte (région inconnue du fond, sans coordonnées, ou fond absent), listées à part.
+ */
+data class VillesModel(
+    val viewBox: Rect, val regions: List<RegionGeo>, val communes: List<Commune>, val placed: List<Placed>,
+    val unmapped: List<Commune>, val source: JsonElement?,
+) {
     val hasMap: Boolean get() = regions.isNotEmpty() && viewBox.width > 0 && viewBox.height > 0
 }
 
@@ -97,37 +110,54 @@ fun villesModel(data: PolData): VillesModel {
         ?: Rect.Zero
     val proj = data.one("carte", "projection", Projection.serializer())
     val communes = data.decode<Commune>("villes", "COMMUNES").filter { it.ville.isNotBlank() }
-    val placed = if (proj == null) emptyList() else communes.filter { !isDom(it.region) && it.lat != null && it.lon != null }.map { Placed(it, project(proj, it.lat!!, it.lon!!)) }
-    return VillesModel(vb, regions, communes, placed, data.file("carte")?.get("source"))
+    val codes = if (proj == null || vb.width <= 0 || vb.height <= 0) emptySet() else regions.map { it.code }.toSet()
+    val off = unmapped(communes, codes)
+    val placed = communes.filter { !isDom(it.region) && it !in off }.map { Placed(it, project(proj!!, it.lat!!, it.lon!!)) }
+    return VillesModel(vb, regions, communes, placed, off, data.file("carte")?.get("source"))
 }
+
+/** Communes de métropole impossibles à poser : région absente de [regionCodes] ou coordonnées manquantes. */
+fun unmapped(communes: List<Commune>, regionCodes: Set<String>): List<Commune> =
+    communes.filter { !isDom(it.region) && (it.region !in regionCodes || it.lat == null || it.lon == null) }
 
 private fun mean(l: List<Placed>) = Offset(l.sumOf { it.at.x.toDouble() }.toFloat() / l.size, l.sumOf { it.at.y.toDouble() }.toFloat() / l.size)
 
+/** Emprise à l'écran, en dp : 7 pour un repère, 11 pour une bulle-compteur, rayon extérieur pour une bulle de région. */
+private fun footDp(g: MapGroup): Float = when {
+    g.regions.isNotEmpty() -> bubbleRadiusDp(g) + 2.3f
+    g.cities.size > 1 -> 11f
+    else -> 7f
+}
+
 /** Vue pays : une bulle par région, au barycentre de ses villes. */
 fun regionBubbles(codes: List<String>, placed: List<Placed>): List<MapGroup> =
-    codes.mapNotNull { r -> placed.filter { it.c.region == r }.takeIf { it.isNotEmpty() }?.let { MapGroup(r, it.map(Placed::c), mean(it)) } }
+    codes.mapNotNull { r -> placed.filter { it.c.region == r }.takeIf { it.isNotEmpty() }?.let { MapGroup(listOf(r), it.map(Placed::c), mean(it)) } }
+
+/** Vue région : repères seuls, puis fusionnés tant qu'ils se chevauchent à l'écran. */
+fun clusterMarkers(placed: List<Placed>, unitsPerDp: Float): List<MapGroup> =
+    mergeOverlapping(placed.map { MapGroup(emptyList(), listOf(it.c), it.at) }, unitsPerDp)
 
 /**
- * Vue région : repères fusionnés tant que leurs emprises se chevauchent à l'écran. [unitsPerDp] :
- * unités de carte par dp au zoom courant (emprise 7 dp pour un repère, 11 pour une bulle).
+ * Fusionne les groupes dont les emprises se chevauchent à l'écran, jusqu'à stabilité : aucun point caché.
+ * [unitsPerDp] : unités de carte par dp au zoom courant. Le centre fusionné est la moyenne pondérée par les villes.
  */
-// ponytail: fusion par paires répétée, O(n³) au pire sur une région (une quinzaine de villes) ; grille si le volume grossit.
-fun clusterMarkers(placed: List<Placed>, unitsPerDp: Float): List<MapGroup> {
-    val groups = placed.map { mutableListOf(it) }.toMutableList()
-    val at = groups.map { it[0].at }.toMutableList()
-    fun foot(i: Int) = (if (groups[i].size > 1) 11f else 7f) * unitsPerDp
+// ponytail: fusion par paires répétée, O(n³) au pire (une quinzaine de groupes) ; grille si le volume grossit.
+fun mergeOverlapping(groups: List<MapGroup>, unitsPerDp: Float): List<MapGroup> {
+    val g = groups.toMutableList()
     var hit = true
     while (hit) {
         hit = false
-        loop@ for (i in groups.indices) for (j in i + 1 until groups.size) {
-            if (hypot(at[i].x - at[j].x, at[i].y - at[j].y) < (foot(i) + foot(j)) * 0.95f) {
-                groups[i] += groups[j]; at[i] = mean(groups[i])
-                groups.removeAt(j); at.removeAt(j); hit = true
+        loop@ for (i in g.indices) for (j in i + 1 until g.size) {
+            val a = g[i]; val b = g[j]
+            if (hypot(a.at.x - b.at.x, a.at.y - b.at.y) < (footDp(a) + footDp(b)) * unitsPerDp * 0.95f) {
+                val na = a.cities.size.toFloat(); val nb = b.cities.size.toFloat()
+                g[i] = MapGroup((a.regions + b.regions).distinct(), a.cities + b.cities, (a.at * na + b.at * nb) / (na + nb))
+                g.removeAt(j); hit = true
                 break@loop
             }
         }
     }
-    return groups.mapIndexed { i, g -> MapGroup(null, g.map(Placed::c), at[i]) }
+    return g
 }
 
 /** Partis présents et leur nombre de villes, du plus représenté au moins représenté. */
