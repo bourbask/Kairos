@@ -45,15 +45,12 @@ private fun PolData.rowsOf(c: Comparaison): List<JsonObject> = decode(c.rubrique
 private fun PolData.rowOf(rows: List<JsonObject>, key: String, id: String): JsonObject? =
     rows.filter { !it.isRef() && id in idsIn(it.str(key)) }.own(this, id) { it.str(key).orEmpty() }
 
-/** Ligne propre à un parti : celle à son nom ; sinon la seule qui le cite, marquée [bloc] ; plusieurs sans nom : aucune. */
+/** Ligne propre à un parti ([own]) ; [bloc] : montant partagé avec d'autres. */
 private class Own<T>(val row: T, val bloc: Boolean)
 
-private fun <T> PolData.ownRow(rows: List<T>, id: String, label: (T) -> String): Own<T>? {
-    val mine = rows.filter { id in idsIn(label(it)) }
-    val x = byId(id) ?: return null
-    mine.firstOrNull { label(it) == x.parti || label(it) == x.nom }?.let { return Own(it, false) }
-    return mine.singleOrNull()?.let { Own(it, true) }
-}
+/** [Own.bloc] : le libellé de la ligne désigne aussi une autre identité. */
+private fun <T> PolData.ownRow(rows: List<T>, id: String, label: (T) -> String): Own<T>? =
+    rows.filter { id in idsIn(label(it)) }.own(this, id, label)?.let { r -> Own(r, idsIn(label(r)).any { it != id }) }
 
 private fun PolData.aideRow(id: String) = ownRow(aideOf(this).rows, id) { it.l }
 private fun PolData.partiRow(id: String) = ownRow(partisOf(this), id) { it.parti }

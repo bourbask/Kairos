@@ -181,4 +181,28 @@ class DuelTest {
         val amb = data("identites" to ambIds, "argent" to """{"PARTIS":[["Groupe Bleu",1,2,3],["Bleu alliance",4,5,6]]}""", "votes" to """{"AN_G":["Groupe Vert","Groupe Bleu"]}""")
         assertNull(duelRounds(amb, "b", "v").filterIsInstance<BarRound>()[0].a)
     }
+
+    @Test fun own_never_falls_back_to_first() {
+        val label = { r: String -> r }
+        assertEquals("Groupe Bleu", listOf("Groupe Bleu").own(full, "b") { label(it) })
+        assertEquals("Bleu", listOf("Groupe Bleu", "Bleu").own(full, "b") { label(it) })
+        assertNull("plusieurs lignes, aucune au nom", listOf("Groupe Bleu", "Autre bloc").own(full, "b") { label(it) })
+        assertNull(emptyList<String>().own(full, "b") { label(it) })
+    }
+
+    @Test fun bloc_only_when_label_is_shared() {
+        val blocIds = """[
+          {"id":"b","nom":"Parti Bleu","parti":"Bleu","type":"parti","alias":["Liste Bleue","Union (commune)"]},
+          {"id":"v","nom":"Parti Vert","parti":"Vert","type":"parti","alias":["Union (commune)"]}
+        ]"""
+        val d = data("identites" to blocIds, "argent" to """{"AIDE":{"rows":[{"l":"Liste Bleue","v":3},{"l":"Union (commune)","v":9}]}}""", "votes" to """{"AN_G":["Liste Bleue"]}""")
+        val aide = duelRounds(d, "b", "v").filterIsInstance<BarRound>().single()
+        // b : deux lignes le citent, aucune à son nom → absent ; v : une ligne, partagée → bloc.
+        assertNull(aide.a); assertEquals(9.0, aide.b!!, 0.0)
+        assertTrue(aide.help, "Parti Vert : montant du bloc « Union »" in aide.help)
+        val own = data("identites" to blocIds, "argent" to """{"AIDE":{"rows":[{"l":"Liste Bleue","v":3}]}}""", "votes" to """{"AN_G":["Union (commune)"]}""")
+        val r = duelRounds(own, "b", "v").filterIsInstance<BarRound>().single()
+        assertEquals("libellé propre à b : pas de bloc", 3.0, r.a!!, 0.0)
+        assertFalse(r.help, "bloc" in r.help)
+    }
 }

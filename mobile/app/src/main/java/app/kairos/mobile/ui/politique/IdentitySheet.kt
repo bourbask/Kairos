@@ -186,11 +186,10 @@ fun identityLinks(data: PolData, id: String): IdentityLinks {
     )
 }
 
-/** Ligne propre à l'identité quand plusieurs la citent (bloc commun) : celle qui porte son nom ou son parti. */
+/** Ligne propre à l'identité parmi celles qui la citent : celle à son nom ou son parti, sinon la seule ; plusieurs sans nom : aucune. */
 internal fun <T> List<T>.own(data: PolData, id: String, label: (T) -> String): T? {
-    if (size < 2) return firstOrNull()
-    val x = data.byId(id) ?: return firstOrNull()
-    return firstOrNull { label(it) == x.parti || label(it) == x.nom } ?: first()
+    val x = data.byId(id) ?: return singleOrNull()
+    return firstOrNull { label(it) == x.parti || label(it) == x.nom } ?: singleOrNull()
 }
 
 fun ownProgram(l: IdentityLinks, data: PolData, id: String) = l.programs.own(data, id) { it.who }
