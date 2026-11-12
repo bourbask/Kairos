@@ -136,10 +136,14 @@ sealed interface DuelRound {
 /** Ce que chaque programme sacrifie : la balance des deux côtés, quand l'un au moins en a une. */
 data class Sacrifice(val a: Lecture?, val whoA: String?, val b: Lecture?, val whoB: String?)
 
-/** Barres tracées depuis [base] (la référence « sans mesure », sinon zéro) ; [others] : les autres lignes, pour situer sans classer. */
+/**
+ * Barres tracées depuis [base] (la référence « sans mesure », sinon zéro) ; [others] : les autres lignes, pour situer sans classer.
+ * [gapFormat] : avec une référence, l'écart signé qu'une barre représente (sinon la valeur, signée, est elle-même l'écart à zéro).
+ */
 class BarRound(
     override val title: String, override val help: String, val a: Double?, val b: Double?, val others: List<Double>, val base: Double,
     val format: (Double) -> String, val sources: List<SourceRef> = emptyList(), override val rubric: String? = null, val sacrifice: Sacrifice? = null,
+    val gapFormat: ((Double) -> String)? = null,
 ) : DuelRound {
     override val avail get() = (a != null) to (b != null)
     private val all get() = listOfNotNull(a, b) + others + base
@@ -155,8 +159,11 @@ class BarRound(
 
     fun label(v: Double?): String = v?.let(format) ?: NO_VALUE
 
+    /** Écart de [v] à la référence, signé ; sans référence : null. */
+    fun gap(v: Double): String? = gapFormat?.invoke(v)
+
     fun tableCard(nameA: String, nameB: String) = TableCard(
-        "Duel · $title", "$nameA face à $nameB", lines = listOf("$nameA : ${label(a)}", "$nameB : ${label(b)}", help).filter { it.isNotBlank() },
+        "Duel · $title", "$nameA face à $nameB", lines = listOf("$nameA : ${label(a)}${a?.let(::gap)?.let { " ($it)" }.orEmpty()}", "$nameB : ${label(b)}${b?.let(::gap)?.let { " ($it)" }.orEmpty()}", help).filter { it.isNotBlank() },
         source = sources.joinToString(" ; ") { sourceName(it) }.ifBlank { null },
     )
 }
@@ -256,6 +263,10 @@ fun fmtUnit(v: Double, unit: String): String = when {
     else -> fmtNum(v, 1)
 } + if (unit.isBlank()) "" else " " + unit.trim()
 
+/** Écart signé de [v] à la référence [ref] nommée [refName] ; un écart entre pourcentages se compte en points. */
+fun gapLabel(v: Double, ref: Double, unit: String, refName: String): String =
+    fmtSigned(v - ref, 1) + " " + (if ("%" in unit) "pt" else unit.trim()) + " par rapport à « $refName »"
+
 private fun PolData.indicatorRounds(a: String, b: String): List<BarRound> {
     val seen = mutableSetOf<String>()
     val out = mutableListOf<BarRound>()
@@ -275,6 +286,7 @@ private fun PolData.indicatorRounds(a: String, b: String): List<BarRound> {
                 ind.libelle.ifBlank { ind.champ }, IND_HELP[ind.champ].orEmpty(), ra?.num(ind.champ), rb?.num(ind.champ),
                 rows.filter { it !== ra && it !== rb }.mapNotNull { it.num(ind.champ) }, ref?.num(ind.champ) ?: 0.0,
                 { v -> fmtUnit(v, ind.unite) }, sourcesOfComp(c.source), c.rubrique, sacrifice,
+                gapFormat = ref?.num(ind.champ)?.let { base -> { v -> gapLabel(v, base, ind.unite, ref.str(c.cle_identite)?.ifBlank { null } ?: "sans mesure") } },
             )
         }
     }

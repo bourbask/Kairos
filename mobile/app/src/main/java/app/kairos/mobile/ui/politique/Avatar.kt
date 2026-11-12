@@ -17,6 +17,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -91,17 +92,18 @@ fun identityColor(hex: String?): Color? {
 /**
  * Vignette d'une identité : son personnage s'il est publié (images en boucle, figé quand les
  * animations du système sont coupées), sinon une pastille de sa couleur et son initiale.
- * Décorative : le nom est toujours écrit à côté.
+ * Décorative : le nom est toujours écrit à côté. [ring] : contour à la couleur d'un côté, tracé à
+ * l'intérieur de la même forme que le fond (mêmes arrondis), sans changer la taille.
  */
 @Composable
-fun IdentityBadge(identity: PolIdentity, size: Dp, modifier: Modifier = Modifier) {
+fun IdentityBadge(identity: PolIdentity, size: Dp, modifier: Modifier = Modifier, ring: Color? = null, ringWidth: Dp = 2.dp) {
     val avatar = remember(identity.avatar) { avatarOf(identity.avatar) }
     val tint = identityColor(identity.couleur) ?: MaterialTheme.colorScheme.primary
     if (avatar == null) {
         // Liseré : une couleur claire (blanc, jaune) reste visible sur une surface claire.
         val ink = KairosColors.current.scene['D']
         Box(
-            modifier.size(size).background(tint, CircleShape).border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape),
+            modifier.size(size).background(tint, CircleShape).border(if (ring != null) ringWidth else 1.dp, ring ?: MaterialTheme.colorScheme.outlineVariant, CircleShape),
             contentAlignment = Alignment.Center,
         ) {
             Text(
@@ -119,8 +121,13 @@ fun IdentityBadge(identity: PolIdentity, size: Dp, modifier: Modifier = Modifier
         if (avatar.frames.size < 2) return@LaunchedEffect
         animate(still = { frame = 0 }) { elapsed, _ -> frame = ((elapsed / avatar.ms) % avatar.frames.size).toInt() }
     }
-    Box(modifier.size(size).background(KairosColors.current.btn, RoundedCornerShape(size * 0.3f)), contentAlignment = Alignment.Center) {
-    Canvas(Modifier.size(size * 0.72f)) {
+    val shape = RoundedCornerShape(size * 0.3f)
+    Box(
+        modifier.size(size).clip(shape).background(KairosColors.current.btn).let { if (ring != null) it.border(ringWidth, ring, shape) else it },
+        contentAlignment = Alignment.Center,
+    ) {
+    // Avec contour : le personnage garde sa marge dans la partie libre.
+    Canvas(Modifier.size((if (ring != null) size - ringWidth * 2 else size) * 0.72f)) {
         val cell = this.size.minDimension / AVATAR_SIZE
         // Bords arrondis au pixel : cases jointives, sans liseré.
         fun edge(i: Int) = (i * cell).roundToInt().toFloat()

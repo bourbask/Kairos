@@ -170,6 +170,21 @@ class DuelTest {
         assertEquals("3,0", fmtUnit(3.0, ""))
     }
 
+    @Test fun signed_values_show_sign() {
+        // Valeurs négatives : signe et unité conservés.
+        assertEquals("−8,3 % du PIB", fmtUnit(-8.3, "% du PIB"))
+        assertEquals("−58,2 Md€/an", fmtUnit(-58.2, "Md€/an"))
+        assertEquals("+6,2 Md€/an", fmtUnit(6.2, "Md€/an"))
+        // Barre tracée depuis la référence : l'écart dit son signe, son unité et sa référence.
+        assertEquals("+0,7 pt par rapport à « Sans mesure »", gapLabel(8.3, 7.6, "% du PIB", "Sans mesure"))
+        assertEquals("−1,4 pt par rapport à « Sans mesure »", gapLabel(6.2, 7.6, "% du PIB", "Sans mesure"))
+        assertEquals("−10,0 €/an par rapport à « R »", gapLabel(-5.0, 5.0, "€/an", "R"))
+        val r = duelRounds(full, "p1", "p2").filterIsInstance<BarRound>().first { it.title == "Dette" }
+        assertEquals("−10,0 pt par rapport à « Sans mesure »", r.gap(r.a!!))
+        // Sans référence (barre depuis zéro) : pas d'écart affiché, la valeur signée suffit.
+        assertNull(duelRounds(full, "p1", "p2").filterIsInstance<BarRound>().first { it.title == "Par ménage" }.gap(200.0))
+    }
+
     @Test fun shared_block_is_said_and_never_guessed() {
         val blocIds = """[
           {"id":"b","nom":"Parti Bleu","parti":"Bleu","type":"parti","alias":["Bleu","Groupe Bleu","Bleu et Vert (alliance)"]},

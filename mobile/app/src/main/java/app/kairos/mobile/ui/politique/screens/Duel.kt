@@ -95,6 +95,7 @@ import app.kairos.mobile.ui.politique.identityColor
 import app.kairos.mobile.ui.politique.kit.BalanceBlock
 import app.kairos.mobile.ui.politique.kit.BalanceHeader
 import app.kairos.mobile.ui.politique.kit.LocalPolBottom
+import app.kairos.mobile.ui.politique.kit.NumberDot
 import app.kairos.mobile.ui.politique.kit.EmptyState
 import app.kairos.mobile.ui.politique.kit.Kicker
 import app.kairos.mobile.ui.politique.kit.SourceList
@@ -176,7 +177,8 @@ private fun DuelPick(data: PolData, nav: PolNavigator) {
                 }
             }
         }
-        Row(Modifier.fillMaxWidth().padding(bottom = LocalPolBottom.current).padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        // Le dock (et le personnage qui le dépasse) occupe le haut de la marge basse : on la rogne pour coller les actions au dock.
+        Row(Modifier.fillMaxWidth().padding(bottom = (LocalPolBottom.current - 24.dp).coerceAtLeast(12.dp)).padding(horizontal = 16.dp).padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton({
                 val k = kind ?: if (r.people.size >= 2) IdKind.Personne else IdKind.Parti
                 val pool = (if (k == IdKind.Personne) r.people else r.parties).shuffled()
@@ -236,9 +238,7 @@ private fun RosterButton(data: PolData, id: String, tag: String?, enabled: Boole
             IdentityBadge(x, 56.dp)
             Text(name, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, lineHeight = 14.sp, textAlign = TextAlign.Center, maxLines = 2, minLines = 2, overflow = TextOverflow.Ellipsis)
         }
-        if (tag != null) Box(Modifier.align(Alignment.TopEnd).padding(end = 4.dp).size(20.dp).clip(CircleShape).background(scheme.onSurface), contentAlignment = Alignment.Center) {
-            Text(tag, color = scheme.surface, fontFamily = Mono, fontWeight = FontWeight.ExtraBold, fontSize = 11.sp)
-        }
+        if (tag != null) NumberDot(tag, scheme.onSurface, scheme.surface, 20.dp, 11.sp, Modifier.align(Alignment.TopEnd).padding(end = 4.dp))
     }
 }
 
@@ -323,9 +323,7 @@ private fun Fighter(data: PolData, id: String, name: String, color: Color, mirro
     val x = data.byId(id) ?: return
     Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp, if (mirrored) Alignment.End else Alignment.Start)) {
         val badge = @Composable {
-            Box(Modifier.border(3.dp, color, RoundedCornerShape(12.dp)).padding(3.dp)) {
-                IdentityBadge(x, 40.dp, if (mirrored) Modifier.graphicsLayer { scaleX = -1f } else Modifier)
-            }
+            IdentityBadge(x, 52.dp, if (mirrored) Modifier.graphicsLayer { scaleX = -1f } else Modifier, ring = color, ringWidth = 3.dp)
         }
         if (!mirrored) badge()
         Column(Modifier.weight(1f, fill = false), horizontalAlignment = if (mirrored) Alignment.End else Alignment.Start) {
@@ -418,13 +416,15 @@ private fun BarBody(data: PolData, nav: PolNavigator, s: Sides, r: BarRound, sti
     LaunchedEffect(Unit) { if (!still) { delay(150); go = true } }
     listOf(r.a, r.b).forEachIndexed { i, v ->
         val p by animateFloatAsState(if (go) 1f else 0f, tween(if (still) 0 else 800, delayMillis = if (still) 0 else i * 140, easing = Ease), label = "barre")
-        Column(Modifier.padding(top = 12.dp).semantics(mergeDescendants = true) { contentDescription = "${s.name(i)} : ${r.label(v)}" }) {
+        val gap = v?.let(r::gap)
+        Column(Modifier.padding(top = 12.dp).semantics(mergeDescendants = true) { contentDescription = "${s.name(i)} : ${r.label(v)}${gap?.let { ", $it" }.orEmpty()}" }) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Swatch(s.color(i), s.hatched(i))
                 Text(s.name(i), Modifier.weight(1f).padding(start = 7.dp), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                 if (v == null) Text(NO_VALUE, fontSize = 13.sp, color = scheme.onSurfaceVariant)
                 else Text(r.label(v), fontFamily = Mono, fontWeight = FontWeight.Bold, fontSize = 16.sp)
             }
+            if (gap != null) Text(gap, Modifier.fillMaxWidth().clearAndSetSemantics { }, textAlign = TextAlign.End, fontSize = 12.5.sp, color = scheme.onSurfaceVariant)
             val track = scheme.surfaceVariant
             val line = scheme.outlineVariant
             val ink = scheme.onSurface
@@ -530,7 +530,7 @@ private fun SideSwitcher(data: PolData, s: Sides, content: @Composable (Int) -> 
                     selectedContentColor = MaterialTheme.colorScheme.onSurface, unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                 ) {
                     Row(Modifier.heightIn(min = 48.dp).padding(horizontal = 6.dp).clearAndSetSemantics { }, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        data.byId(s.id(i))?.let { x -> Box(Modifier.border(2.dp, s.color(i), RoundedCornerShape(8.dp)).padding(2.dp)) { IdentityBadge(x, 24.dp) } }
+                        data.byId(s.id(i))?.let { x -> IdentityBadge(x, 32.dp, ring = s.color(i)) }
                         Text(s.name(i), fontWeight = if (cur == i) FontWeight.Bold else FontWeight.SemiBold, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
