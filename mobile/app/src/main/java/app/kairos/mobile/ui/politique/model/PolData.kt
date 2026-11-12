@@ -43,7 +43,7 @@ class PolData(private val files: Map<String, JsonObject>) {
     private val aliases: Map<String, List<String>> = decode("identites", "", Aliases.serializer()).associate { it.id to it.alias }
     private val byIdMap = identities.associateBy { it.id }
     private val keyIndex: Map<String, List<String>> = identities
-        .flatMap { i -> (listOf(i.nom) + aliases[i.id].orEmpty()).map { fold(it) to i.id } }
+        .flatMap { i -> (listOf(i.nom) + aliases[i.id].orEmpty()).filter { it.isNotBlank() }.map { fold(it) to i.id } }
         .groupBy({ it.first }, { it.second }).mapValues { it.value.distinct() }
 
     val evaluators: Map<String, Evaluator> = decode<Evaluator>("evaluateurs", "EVALUATEURS").filter { it.id.isNotEmpty() }.associateBy { it.id }
@@ -56,7 +56,7 @@ class PolData(private val files: Map<String, JsonObject>) {
     fun byId(id: String): PolIdentity? = byIdMap[id]
 
     /** Toutes les identités dont un alias (ou le nom) égale [label], accents et casse ignorés. */
-    fun idsIn(label: String?): List<String> = label?.let { keyIndex[fold(it)] }.orEmpty()
+    fun idsIn(label: String?): List<String> = label?.takeIf { it.isNotBlank() }?.let { keyIndex[fold(it)] }.orEmpty()
 
     fun idOf(label: String?): String? = idsIn(label).firstOrNull()
 

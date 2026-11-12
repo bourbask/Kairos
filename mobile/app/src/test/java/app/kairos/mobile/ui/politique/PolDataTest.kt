@@ -84,7 +84,9 @@ class PolDataTest {
         assertEquals(listOf("a", "b"), data.idsIn("liste commune"))
         assertNull(data.idOf("inconnu"))
         assertNull(data.idOf(null))
-        assertEquals(4, data.identities.size + 0 - 1) // « mauvais » (sans nom) accepté, 12 ignoré
+        assertNull(data.idOf(""))
+        assertTrue(data.idsIn("").isEmpty())
+        assertEquals(5, data.identities.size) // « mauvais » (sans nom) gardé, 12 ignoré
     }
 
     @Test
