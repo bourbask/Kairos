@@ -75,6 +75,10 @@ class VotesTest {
         assertFalse(m.contains("suit la parole")); assertTrue(m.contains("en séance"))
         assertFalse(noGapsMessage(none, DvCount(0, 0, 0, 0, 0)).contains("en séance"))
         assertTrue(noGapsMessage(DvCount(2, 0, 0, 1, 2), none).contains("suit la parole"))
+        // Aucun scrutin sans déclaration : pas de phrase « Les 0 autres ».
+        val all = noGapsMessage(DvCount(2, 0, 0, 0, 2), none)
+        assertTrue(all.contains("suit la parole")); assertFalse(all.contains("sans déclaration"))
+        assertTrue(noGapsMessage(DvCount(1, 0, 0, 1, 1), none).let { it.contains("Sur le scrutin où") && it.contains("L'autre reste sans déclaration") })
     }
 
     @Test fun public_rate_label_null_when_nothing_countable() {

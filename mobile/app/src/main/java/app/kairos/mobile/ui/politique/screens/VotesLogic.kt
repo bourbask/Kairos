@@ -107,7 +107,12 @@ fun splitWhen(s: String): Pair<String, String> = WHEN.matchEntire(s)?.let { it.g
 fun noGapsMessage(k: DvCount, seance: DvCount): String =
     if (k.t == 0) NO_PUBLIC_STATEMENT +
         (if (seance.t > 0) " Seule la ligne annoncée en séance est documentée, signalée plus haut comme moins probante." else "")
-    else "Sur les ${k.t} scrutins où une déclaration publique a été trouvée, le vote suit la parole. Les ${k.sp} autres restent sans déclaration : ce n'est pas une preuve de cohérence."
+    else (if (k.t == 1) "Sur le scrutin où" else "Sur les ${k.t} scrutins où") + " une déclaration publique a été trouvée, le vote suit la parole." +
+        when (k.sp) {
+            0 -> ""
+            1 -> " L'autre reste sans déclaration : ce n'est pas une preuve de cohérence."
+            else -> " Les ${k.sp} autres restent sans déclaration : ce n'est pas une preuve de cohérence."
+        }
 
 const val NO_PUBLIC_STATEMENT = "Aucune déclaration publique trouvée hors séance : impossible de juger."
 
