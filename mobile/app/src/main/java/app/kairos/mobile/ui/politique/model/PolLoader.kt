@@ -27,7 +27,12 @@ val POL_FILES: List<String> = listOf(
 /** Clé sous laquelle un fichier dont le contenu est une liste (jamais découpée) est rangé. */
 const val LIST_KEY = "_liste"
 
-private const val UNKNOWN_FILE = "Fichier inconnu."
+/** Réponses du serveur reconnues par le chargeur (messages de `app_politique_fichier`). */
+const val POL_UNKNOWN_FILE = "Fichier inconnu."
+const val POL_PAGE_OUT_OF_RANGE = "Page hors bornes"
+
+/** Fichier encore instable après tous les essais : données en cours de mise à jour côté serveur. */
+class PolLoadException(message: String) : Exception(message)
 private const val ATTEMPTS = 2
 
 /**
@@ -61,18 +66,23 @@ private suspend fun loadFile(id: String, fetch: suspend (String, Int) -> PolPage
         val first = try {
             fetch(id, 0)
         } catch (e: ApiError.Server) {
-            if (e.message == UNKNOWN_FILE) return null else throw e
+            if (e.message == POL_UNKNOWN_FILE) return null else throw e
         }
         val pages = mutableListOf(first)
         var stable = true
         for (n in 1 until first.pages) {
-            val p = fetch(id, n)
+            // Fichier raccourci ou retiré entre deux pages : même traitement qu'un changement de version.
+            val p = try {
+                fetch(id, n)
+            } catch (e: ApiError.Server) {
+                if (e.message == POL_UNKNOWN_FILE || e.message?.startsWith(POL_PAGE_OUT_OF_RANGE) == true) { stable = false; break } else throw e
+            }
             if (p.version != first.version) { stable = false; break }
             pages += p
         }
         if (stable) return mergePages(pages)
     }
-    throw IllegalStateException("Fichier modifié pendant la lecture : $id")
+    throw PolLoadException("Fichier modifié pendant la lecture : $id")
 }
 
 /** Charge les fichiers en parallèle ; un fichier inconnu du module est simplement absent. */

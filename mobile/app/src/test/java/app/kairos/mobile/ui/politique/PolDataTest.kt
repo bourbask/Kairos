@@ -61,13 +61,34 @@ class PolDataTest {
         try {
             loadPolData({ _, n -> p0.copy(version = "v${k++}", pages = 2, page = n) }, listOf("dit-vote"))
             fail()
-        } catch (_: IllegalStateException) {}
+        } catch (_: PolLoadException) {}
+    }
+
+    @Test
+    fun loader_restarts_when_file_shrinks() = runBlocking {
+        val p0 = page("fichier-dit-vote-p0")
+        var calls = 0
+        val d = loadPolData({ _, n ->
+            calls++
+            when {
+                calls == 1 -> p0.copy(version = "v1", pages = 2)
+                calls == 2 -> throw ApiError.Server(422, "$POL_PAGE_OUT_OF_RANGE : le fichier compte 1 page(s).")
+                else -> p0.copy(version = "v2", pages = 1, page = n)
+            }
+        }, listOf("dit-vote"))
+        assertEquals(3, calls)
+        assertNotNull(d.file("dit-vote"))
+        // Hors bornes sur la page 0 : vraie erreur, remontée telle quelle.
+        try {
+            loadPolData({ _, _ -> throw ApiError.Server(422, POL_PAGE_OUT_OF_RANGE) }, listOf("dit-vote"))
+            fail()
+        } catch (_: ApiError.Server) {}
     }
 
     @Test
     fun loader_marks_unknown_file_absent() = runBlocking {
         val d = loadPolData({ id, _ ->
-            if (id == "meta") PolPage(id, contenu = obj("""{"verifie_le":"x"}""")) else throw ApiError.Server(400, "Fichier inconnu.")
+            if (id == "meta") PolPage(id, contenu = obj("""{"verifie_le":"x"}""")) else throw ApiError.Server(400, POL_UNKNOWN_FILE)
         }, listOf("meta", "villes"))
         assertNotNull(d.file("meta"))
         assertNull(d.file("villes"))

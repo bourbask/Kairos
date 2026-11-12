@@ -34,6 +34,7 @@ import app.kairos.mobile.ui.politique.kit.EmptyState
 import app.kairos.mobile.ui.politique.kit.TableCard
 import app.kairos.mobile.ui.politique.model.PolData
 import app.kairos.mobile.ui.politique.model.PolPage
+import app.kairos.mobile.ui.politique.model.PolLoadException
 import app.kairos.mobile.ui.politique.model.loadPolData
 import app.kairos.mobile.ui.politique.screens.BilanScreen
 import app.kairos.mobile.ui.politique.screens.BulleScreen
@@ -129,7 +130,7 @@ fun PolitiqueScreen(
             PolLoad.Down(politiqueIssue(e))
         } catch (e: CancellationException) {
             throw e
-        } catch (_: IllegalStateException) {
+        } catch (_: PolLoadException) {
             // Un fichier a changé pendant la lecture, deux fois de suite.
             PolLoad.Down("Données en cours de mise à jour sur le serveur.")
         }
