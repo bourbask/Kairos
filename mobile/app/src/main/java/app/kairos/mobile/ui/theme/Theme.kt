@@ -22,7 +22,7 @@ private val KairosShapes = Shapes(
 
 @Composable
 fun KairosTheme(dark: Boolean, palette: ThemePalette = ThemePalette.Fougere, content: @Composable () -> Unit) {
-    val colors = remember(palette, dark) { colorScheme(palette.roles(dark), dark) }
+    val colors = remember(palette, dark) { colorScheme(palette, dark) }
     val kairos = remember(palette, dark) { KairosColors.of(palette, dark) }
     MaterialTheme(colorScheme = colors, typography = KairosTypography, shapes = KairosShapes) {
         // Texte posé hors d'une Surface : couleur du thème, pas le noir par défaut de Compose.
