@@ -74,6 +74,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.material3.Icon
@@ -231,7 +232,7 @@ private fun Thread(conversation: Conversation, modifier: Modifier) {
         modifier.fillMaxWidth(),
         reverseLayout = true,
         contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.Bottom),
+        verticalArrangement = Arrangement.spacedBy(6.dp, Alignment.Bottom),
     ) {
         items(rows, key = { it.key }) { row ->
             Box(Modifier.fillMaxWidth().animateItem()) {
@@ -255,6 +256,10 @@ private fun caption(entry: ChatEntry): String {
     return if (entry.role == "user" && entry.source == "salon") "$time · depuis le salon" else time
 }
 
+/** Largeur max d'une bulle : 80 % de l'écran. */
+@Composable
+private fun bubbleMaxWidth() = (LocalConfiguration.current.screenWidthDp * 0.8f).dp
+
 @Composable
 private fun Bubble(text: String, mine: Boolean, caption: String, modifier: Modifier = Modifier) {
     val colors = MaterialTheme.colorScheme
@@ -263,24 +268,24 @@ private fun Bubble(text: String, mine: Boolean, caption: String, modifier: Modif
         horizontalAlignment = if (mine) Alignment.End else Alignment.Start,
     ) {
         val shape = RoundedCornerShape(
-            topStart = 18.dp, topEnd = 18.dp,
-            bottomStart = if (mine) 18.dp else 4.dp, bottomEnd = if (mine) 4.dp else 18.dp,
+            topStart = 16.dp, topEnd = 16.dp,
+            bottomStart = if (mine) 16.dp else 4.dp, bottomEnd = if (mine) 4.dp else 16.dp,
         )
         Surface(
             shape = shape,
             color = if (mine) colors.primary else colors.surface,
             contentColor = if (mine) colors.onPrimary else colors.onSurface,
             border = if (mine) null else BorderStroke(1.dp, colors.outlineVariant),
-            modifier = Modifier.widthIn(max = 300.dp),
+            modifier = Modifier.widthIn(max = bubbleMaxWidth()),
         ) {
-            Text(text, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(horizontal = 13.dp, vertical = 9.dp))
+            Text(text, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp))
         }
         if (caption.isNotEmpty()) {
             Text(
                 caption,
                 style = MaterialTheme.typography.labelSmall,
                 color = colors.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp),
             )
         }
     }
@@ -296,9 +301,9 @@ private fun FailedBubble(f: Failed, onRetry: () -> Unit, onEdit: () -> Unit) {
             color = colors.surface,
             contentColor = colors.onSurface,
             border = BorderStroke(1.5.dp, colors.error),
-            modifier = Modifier.widthIn(max = 300.dp),
+            modifier = Modifier.widthIn(max = bubbleMaxWidth()),
         ) {
-            Text(f.text, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(horizontal = 13.dp, vertical = 9.dp))
+            Text(f.text, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp))
         }
         Text(
             f.note,
@@ -361,7 +366,7 @@ private fun InputBar(conversation: Conversation, focusInput: Boolean, onMic: () 
         BasicTextField(
             value = conversation.draft,
             onValueChange = { conversation.draft = capInput(it) },
-            textStyle = MaterialTheme.typography.bodyLarge.copy(color = colors.onSurface),
+            textStyle = MaterialTheme.typography.bodyMedium.copy(color = colors.onSurface),
             cursorBrush = SolidColor(colors.primary),
             maxLines = 5,
             modifier = Modifier
@@ -377,7 +382,7 @@ private fun InputBar(conversation: Conversation, focusInput: Boolean, onMic: () 
                         .padding(horizontal = 16.dp, vertical = 13.dp),
                 ) {
                     if (conversation.draft.isEmpty()) {
-                        Text("Écrire à Kairos…", style = MaterialTheme.typography.bodyLarge, color = colors.onSurfaceVariant)
+                        Text("Écrire à Kairos…", style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant)
                     }
                     inner()
                 }
@@ -561,7 +566,7 @@ private fun LockedContent(talk: TalkController, level: Float, onSend: () -> Unit
         value = talk.transcript,
         onValueChange = talk::edit,
         readOnly = talk.listening,
-        textStyle = MaterialTheme.typography.bodyLarge.copy(color = colors.onSurface),
+        textStyle = MaterialTheme.typography.bodyMedium.copy(color = colors.onSurface),
         cursorBrush = SolidColor(colors.primary),
         maxLines = 6,
         modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Transcription modifiable" },
