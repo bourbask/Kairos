@@ -1,8 +1,6 @@
 package app.kairos.mobile.ui.theme
 
 import androidx.compose.material3.ColorScheme
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.ReadOnlyComposable
@@ -106,42 +104,49 @@ enum class ThemePalette(val label: String, val mood: String, val ink: Color, val
 /*
  * Correspondance avec Material 3 : primary = principale, primaryContainer = conteneur,
  * background = fond, surface = carte, texte = encre, tertiary = attention (fond ; texte
- * posé dessus = encre en clair, fond en sombre), error = urgent, secondaryContainer = ciel
- * (calendrier travail), onSurfaceVariant = texte discret, outlineVariant = trait.
+ * posé dessus = encre en clair, fond en sombre), error = urgent, onSurfaceVariant = texte
+ * discret, outlineVariant = trait. secondaryContainer reprend le conteneur principal :
+ * c'est le fond des boutons tonals, segments et puces sélectionnés, qui suivent la palette.
+ * Le calendrier travail (ciel/nuit) passe par [KairosColors], hors des rôles Material.
+ * Chaque rôle est posé explicitement : aucun ne retombe sur la palette de base Material.
  * Le texte « attention » sur fond clair passe par [KairosColors.attentionText].
  */
-internal fun colorScheme(r: ThemeRoles, dark: Boolean): ColorScheme = with(r) {
-    if (!dark) {
-        lightColorScheme(
-            primary = primary, onPrimary = onPrimary,
-            primaryContainer = primaryContainer, onPrimaryContainer = onPrimaryContainer,
-            secondary = onPrimaryContainer, onSecondary = onPrimary,
-            secondaryContainer = ciel, onSecondaryContainer = nuit,
-            tertiary = attention, onTertiary = text,
-            error = urgent, onError = onPrimary,
-            background = background, onBackground = text,
-            surface = surface, onSurface = text,
-            surfaceVariant = primaryContainer, onSurfaceVariant = discreet,
-            surfaceContainerLowest = surface, surfaceContainerLow = surface,
-            surfaceContainer = surface, surfaceContainerHigh = surface, surfaceContainerHighest = primaryContainer,
-            outline = discreet, outlineVariant = divider,
-        )
-    } else {
-        darkColorScheme(
-            primary = primary, onPrimary = onPrimary,
-            primaryContainer = primaryContainer, onPrimaryContainer = onPrimaryContainer,
-            secondary = onPrimaryContainer, onSecondary = background,
-            secondaryContainer = ciel, onSecondaryContainer = nuit,
-            tertiary = attention, onTertiary = background,
-            error = urgent, onError = background,
-            background = background, onBackground = text,
-            surface = surface, onSurface = text,
-            surfaceVariant = primaryContainer, onSurfaceVariant = discreet,
-            surfaceContainerLowest = background, surfaceContainerLow = surface,
-            surfaceContainer = surface, surfaceContainerHigh = surfaceHigh ?: mix(surface, text, 0.035f), surfaceContainerHighest = primaryContainer,
-            outline = discreet, outlineVariant = divider,
-        )
-    }
+internal fun colorScheme(palette: ThemePalette, dark: Boolean): ColorScheme = with(palette.roles(dark)) {
+    val high = if (dark) surfaceHigh ?: mix(surface, text, 0.035f) else surface
+    // Sur la surface inversée (l'encre), la principale de l'autre mode reste lisible.
+    val inversePrimary = palette.roles(!dark).primary
+    val onAccent = if (dark) background else text
+    // Rôles « fixes » : identiques en clair et en sombre, tirés des tons clairs de la palette.
+    val l = palette.light
+    val fixed = l.primaryContainer
+    val fixedDim = mix(l.primaryContainer, l.primary, 0.25f)
+    ColorScheme(
+        primary = primary, onPrimary = onPrimary,
+        primaryContainer = primaryContainer, onPrimaryContainer = onPrimaryContainer,
+        inversePrimary = inversePrimary,
+        secondary = onPrimaryContainer, onSecondary = if (dark) background else onPrimary,
+        secondaryContainer = primaryContainer, onSecondaryContainer = onPrimaryContainer,
+        tertiary = attention, onTertiary = onAccent,
+        tertiaryContainer = mix(surface, attention, 0.25f), onTertiaryContainer = text,
+        background = background, onBackground = text,
+        surface = surface, onSurface = text,
+        surfaceVariant = primaryContainer, onSurfaceVariant = discreet,
+        surfaceTint = primary,
+        inverseSurface = text, inverseOnSurface = background,
+        error = urgent, onError = if (dark) background else onPrimary,
+        errorContainer = mix(surface, urgent, 0.2f), onErrorContainer = text,
+        outline = discreet, outlineVariant = divider,
+        scrim = Color.Black,
+        surfaceBright = high, surfaceDim = background,
+        surfaceContainer = surface, surfaceContainerHigh = high, surfaceContainerHighest = primaryContainer,
+        surfaceContainerLow = surface, surfaceContainerLowest = if (dark) background else surface,
+        primaryFixed = fixed, primaryFixedDim = fixedDim,
+        onPrimaryFixed = l.onPrimaryContainer, onPrimaryFixedVariant = l.primary,
+        secondaryFixed = fixed, secondaryFixedDim = fixedDim,
+        onSecondaryFixed = l.onPrimaryContainer, onSecondaryFixedVariant = l.primary,
+        tertiaryFixed = mix(l.surface, l.attention, 0.25f), tertiaryFixedDim = mix(l.surface, l.attention, 0.5f),
+        onTertiaryFixed = l.text, onTertiaryFixedVariant = l.attentionText,
+    )
 }
 
 /** Mélange de deux couleurs, canal par canal, arrondi à l'entier comme la maquette. */
@@ -209,6 +214,10 @@ data class KairosColors(
     val scene: SceneColors,
     /** Teintes du personnage posé sur le fond de l'écran. */
     val page: SceneColors,
+    /** Fond du calendrier travail, distinct de la palette pour séparer les deux agendas. */
+    val ciel: Color,
+    /** Texte posé sur [ciel]. */
+    val nuit: Color,
 ) {
     companion object {
         /** Rôles du thème courant. */
@@ -216,7 +225,7 @@ data class KairosColors(
             @Composable @ReadOnlyComposable get() = LocalKairosColors.current
 
         fun of(palette: ThemePalette, dark: Boolean): KairosColors = with(palette.roles(dark)) {
-            KairosColors(attentionText, btn, body, SceneColors.of(palette, dark), SceneColors.onPage(palette, dark))
+            KairosColors(attentionText, btn, body, SceneColors.of(palette, dark), SceneColors.onPage(palette, dark), ciel, nuit)
         }
     }
 }
