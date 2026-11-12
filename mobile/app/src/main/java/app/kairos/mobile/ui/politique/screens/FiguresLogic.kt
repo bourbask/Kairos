@@ -28,20 +28,20 @@ data class Program(
 
 @Serializable
 data class Gap(
-    val who: String = "", val what: String = "", val claimed: Double = 0.0, val credited: Double = 0.0, val unit: String = "",
+    val who: String = "", val what: String = "", val claimed: Double? = null, val credited: Double? = null, val unit: String = "",
     val inverse: Boolean = false, val labels: List<String> = emptyList(), val src: String? = null, val url: String? = null,
     val ev: String? = null, val lecture: Lecture? = null,
 )
 
 @Serializable
 data class Measure(
-    val who: String = "", val hh: Double = 0.0, val m: String = "", val b: String = "", val f: String = "",
+    val who: String = "", val hh: Double? = null, val m: String = "", val b: String = "", val f: String = "",
     val lecture: Lecture? = null,
 )
 
 @Serializable
 data class BilanRow(
-    val l: String = "", val s: String? = null, val v: Double = 0.0, val total: Boolean = false, val cls: String? = null,
+    val l: String = "", val s: String? = null, val v: Double? = null, val total: Boolean = false, val cls: String? = null,
     val lecture: Lecture? = null,
 )
 
@@ -89,7 +89,7 @@ fun signedBar(v: Double, min: Double, max: Double): Span {
 /** Rapport annoncé / crédité (÷), ou estimé / annoncé si [Gap.inverse] (×) ; null si le diviseur est nul. */
 fun gapRatio(g: Gap): Double? {
     val (num, den) = if (g.inverse) g.credited to g.claimed else g.claimed to g.credited
-    return if (den == 0.0) null else num / den
+    return if (num == null || den == null || den == 0.0) null else num / den
 }
 
 fun gapRatioLabel(g: Gap): String {
@@ -121,6 +121,9 @@ internal fun <T> PolData.one(file: String, path: String, s: KSerializer<T>): T? 
     return cur?.let { try { PolJson.decodeFromJsonElement(s, it) } catch (_: Exception) { null } }
 }
 
+/** Lignes de barres chiffrées : sans valeur, la ligne est écartée plutôt que dessinée à zéro. */
+private fun PolData.bars(file: String, path: String) = decode<BilanRow>(file, path).filter { it.v != null }
+
 fun nameOf(who: String) = who.substringBefore(" · ")
 
 /** Dette de référence : valeur publiée, sinon celle de la ligne de référence des programmes. */
@@ -139,10 +142,11 @@ data class BudgetsState(val programs: List<Program>, val gaps: List<Gap>, val re
 
 fun budgetsState(data: PolData): BudgetsState {
     val programs = data.decode<Program>("budgets", "PROGRAMS")
-    val gaps = data.decode<Gap>("budgets", "GAPS")
+    // Écart sans ses deux valeurs : écarté plutôt que dessiné à zéro.
+    val gaps = data.decode<Gap>("budgets", "GAPS").filter { it.claimed != null && it.credited != null }
     val cards = gaps.map { g ->
         val (a, b) = gapLabels(g)
-        TableCard("Annoncé contre crédité", g.what, lines = listOf("${nameOf(g.who)} : ${fmtNum(g.claimed, 1)} → ${fmtNum(g.credited, 1)} ${g.unit}".trim(), "$a / $b"), source = g.src)
+        TableCard("Annoncé contre crédité", g.what, lines = listOf("${nameOf(g.who)} : ${fmtNum(g.claimed!!, 1)} → ${fmtNum(g.credited!!, 1)} ${g.unit}".trim(), "$a / $b"), source = g.src)
     }
     return BudgetsState(programs, gaps, data.refDebt(programs), data.one("budgets", "AXIS", Scale.serializer()), programs.filter { !it.ref && it.debt != null }, cards)
 }
@@ -156,10 +160,10 @@ fun livingState(data: PolData): LivingState {
     val all = data.decode<Program>("budgets", "PROGRAMS")
     val measures = data.decode<Measure>("niveau-de-vie", "MEASURES")
     val cards = measures.map { m ->
-        TableCard("Pouvoir d'achat", nameOf(m.who), lines = listOf("${fmtSigned(m.hh)} € par an") + m.m.split(" ; ").filter { it.isNotBlank() } + listOf("Pour qui : ${m.b}", "Financé par : ${m.f}"))
+        TableCard("Pouvoir d'achat", nameOf(m.who), lines = listOf(m.hh?.let { "${fmtSigned(it)} € par an" } ?: "Par ménage : $NO_VALUE") + m.m.split(" ; ").filter { it.isNotBlank() } + listOf("Pour qui : ${m.b}", "Financé par : ${m.f}"))
     }
     return LivingState(
-        data.decode("niveau-de-vie", "SALAIRES.rows"), data.one("niveau-de-vie", "SALAIRES.scale", Scale.serializer()) ?: Scale(-2.0, 2.0, " %"),
+        data.bars("niveau-de-vie", "SALAIRES.rows"), data.one("niveau-de-vie", "SALAIRES.scale", Scale.serializer()) ?: Scale(-2.0, 2.0, " %"),
         all.filter { !it.ref && it.hh != null }.sortedByDescending { it.hh }, data.refDebt(all), measures, cards,
     )
 }
@@ -177,7 +181,7 @@ fun bilanState(data: PolData): BilanState {
         TableCard("Face au bilan sortant · ${r.s}", r.o, lines = cands.map { c -> r.c[c]?.let { x -> "$c — ${MARK_LABEL[x.firstOrNull()] ?: "Position"} : ${x.getOrNull(1).orEmpty()}" } ?: "$c : non trouvé" })
     }
     return BilanState(
-        data.decode("bilan", "OFCE.rows"), data.decode("bilan", "IPP.rows"),
+        data.bars("bilan", "OFCE.rows"), data.bars("bilan", "IPP.rows"),
         data.one("bilan", "OFCE.scale", Scale.serializer()) ?: Scale(-3.0, 14.0, " pt"), data.one("bilan", "IPP.scale", Scale.serializer()) ?: Scale(0.0, 4.0, " %"),
         cands, matrix, cards,
     )

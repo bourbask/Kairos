@@ -93,4 +93,21 @@ class FiguresTest {
         val b = budgetsState(d)
         assertEquals(1, b.below); assertEquals(0, b.above)
     }
+
+    @Test fun missing_values_never_read_as_zero() {
+        val d = PolData(mapOf(
+            "budgets" to file("""{"GAPS":[{"who":"A","what":"Sans crédit","claimed":10},{"who":"B","what":"Complet","claimed":10,"credited":5},{"who":"C","what":"Mal typé","claimed":"x","credited":5}]}"""),
+            "niveau-de-vie" to file("""{"MEASURES":[{"who":"A","m":"Mesure"}],"SALAIRES":{"rows":[{"l":"2020"},{"l":"2021","v":-1.2}]}}"""),
+            "bilan" to file("""{"OFCE":{"rows":[{"l":"Choc","v":2.5},{"l":"Inconnu"}]},"IPP":{"rows":[{"l":"D1","v":"?"}]}}"""),
+        ))
+        val b = budgetsState(d)
+        assertEquals(listOf("Complet"), b.gaps.map { it.what }); assertEquals(1, b.gapCards.size)
+        val l = livingState(d)
+        assertNull(l.measures.single().hh)
+        assertTrue(l.cards.single().lines.first().contains(NO_VALUE)); assertFalse(l.cards.single().lines.any { it.startsWith("0") || it.startsWith("+0") })
+        assertEquals(listOf("2021"), l.salaires.map { it.l })
+        val bi = bilanState(d)
+        assertEquals(listOf("Choc"), bi.ofce.map { it.l }); assertTrue(bi.ipp.isEmpty())
+        assertNull(tileViz(d, "niveau-de-vie"))
+    }
 }

@@ -493,7 +493,7 @@ private fun GapBody(data: PolData, nav: PolNavigator, s: Sides, r: GapRound) {
         gaps.forEachIndexed { j, g ->
             val (la, lb) = gapLabels(g)
             Text(frTypo(g.what), Modifier.padding(top = if (j > 0) 12.dp else 0.dp), fontWeight = FontWeight.Bold, fontSize = 13.sp)
-            Text("$la ${fmtNum(g.claimed, 1)} · ${lb.lowercase()} ${fmtNum(g.credited, 1)} ${g.unit}".trim(), Modifier.padding(top = 4.dp), fontFamily = Mono, fontSize = 12.5.sp)
+            Text("$la ${g.claimed?.let { fmtNum(it, 1) } ?: NO_VALUE} · ${lb.lowercase()} ${g.credited?.let { fmtNum(it, 1) } ?: NO_VALUE} ${g.unit}".trim(), Modifier.padding(top = 4.dp), fontFamily = Mono, fontSize = 12.5.sp)
             g.lecture?.let { Bal(nav, it, g.what, g.who) }
             g.src?.takeIf { it.isNotBlank() }?.let { SourceList(listOf(SourceRef(it, g.url, g.ev)), data, { id -> nav.sheet(PolSheetState.Evaluator(id)) }, Modifier.padding(top = 0.dp)) }
         }

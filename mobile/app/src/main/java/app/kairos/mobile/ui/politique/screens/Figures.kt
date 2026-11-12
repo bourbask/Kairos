@@ -127,8 +127,9 @@ private fun HBars(rows: List<BilanRow>, scale: Scale, labelW: Dp, color: (BilanR
     val scheme = MaterialTheme.colorScheme
     rows.forEachIndexed { i, r ->
         if (i > 0) Box(Modifier.fillMaxWidth().height(1.dp).background(scheme.outlineVariant.copy(alpha = 0.6f)))
-        val bar = signedBar(r.v, scale.min, scale.max)
-        val label = (if (r.v > 0 && scale.min < 0) "+" else "") + fmtNum(r.v, 1) + scale.unit
+        val v = r.v!!
+        val bar = signedBar(v, scale.min, scale.max)
+        val label = (if (v > 0 && scale.min < 0) "+" else "") + fmtNum(v, 1) + scale.unit
         Row(Modifier.fillMaxWidth().padding(vertical = 7.dp).semantics(mergeDescendants = true) { contentDescription = "${r.l} : $label" }, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Column(Modifier.width(labelW)) {
                 Text(r.l, fontSize = 13.5.sp, lineHeight = 17.sp, fontWeight = if (r.total) FontWeight.ExtraBold else FontWeight.SemiBold)
@@ -138,8 +139,8 @@ private fun HBars(rows: List<BilanRow>, scale: Scale, labelW: Dp, color: (BilanR
                 val w = maxWidth
                 if (scale.min < 0) Box(Modifier.offset(x = w * axisPos(0.0, scale.min, scale.max).toFloat()).fillMaxHeight().width(1.5.dp).background(scheme.onSurface.copy(alpha = 0.45f)))
                 Box(Modifier.offset(x = w * bar.start.toFloat(), y = 4.dp).width(w * bar.width.toFloat()).height(18.dp).clip(RoundedCornerShape(4.dp)).background(color(r)))
-                val txt = @Composable { Text(label, fontFamily = Mono, fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp, softWrap = false, textAlign = if (r.v >= 0) TextAlign.Start else TextAlign.End) }
-                if (r.v >= 0) Box(Modifier.fillMaxHeight().padding(start = w * (bar.start + bar.width).toFloat() + 6.dp), contentAlignment = Alignment.CenterStart) { txt() }
+                val txt = @Composable { Text(label, fontFamily = Mono, fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp, softWrap = false, textAlign = if (v >= 0) TextAlign.Start else TextAlign.End) }
+                if (v >= 0) Box(Modifier.fillMaxHeight().padding(start = w * (bar.start + bar.width).toFloat() + 6.dp), contentAlignment = Alignment.CenterStart) { txt() }
                 else Box(Modifier.fillMaxSize().padding(end = (w * (1 - bar.start).toFloat() + 6.dp).coerceAtMost(w)), contentAlignment = Alignment.CenterEnd) { txt() }
             }
         }
@@ -336,7 +337,9 @@ private fun DetailTable(data: PolData, programs: List<Program>) {
 private fun GapCard(data: PolData, g: Gap, nav: PolNavigator, onTable: () -> Unit) {
     val pc = PolColors.current
     val scheme = MaterialTheme.colorScheme
-    val max = maxOf(g.claimed, g.credited)
+    val claimed = g.claimed!!
+    val credited = g.credited!!
+    val max = maxOf(claimed, credited)
     val (la, lb) = gapLabels(g)
     val id = data.idFor(g.who)
     FigCard {
@@ -353,8 +356,8 @@ private fun GapCard(data: PolData, g: Gap, nav: PolNavigator, onTable: () -> Uni
                 }
             }
         }
-        PBar(la, g.claimed, scheme.onSurface)
-        PBar(lb, g.credited, pc.pour)
+        PBar(la, claimed, scheme.onSurface)
+        PBar(lb, credited, pc.pour)
         g.lecture?.let { Bal(it, g.what, g.who, nav) }
         Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             if (!g.src.isNullOrBlank()) SourceButton(SourceRef(g.src, g.url, g.ev), data, { nav.sheet(PolSheetState.Evaluator(it)) }, Modifier.weight(1f, fill = false))
@@ -379,7 +382,7 @@ fun LivingScreen(data: PolData, nav: PolNavigator) {
         part {
             Section("Salaires", "Les salaires face à l'inflation", "Évolution du salaire net moyen réel dans le privé, après inflation.") {
                 if (salaires.isEmpty()) EmptyState("Aucune série de salaires", "La série des salaires réels n'est pas disponible pour l'instant.")
-                else FigCard { HBars(salaires, sScale, 60.dp) { if (it.v < 0) pc.high else pc.low } }
+                else FigCard { HBars(salaires, sScale, 60.dp) { if (it.v!! < 0) pc.high else pc.low } }
             }
         }
         if (salaires.any { it.lecture != null }) part {
@@ -451,7 +454,7 @@ private fun MeasureCard(data: PolData, m: Measure, nav: PolNavigator, onTable: (
     val scheme = MaterialTheme.colorScheme
     val id = data.idFor(m.who)
     val accent = data.identityColorOf(m.who) ?: scheme.primary
-    val pill = if (m.hh >= 0) pc.low else pc.high
+    val pill = m.hh?.let { if (it >= 0) pc.low else pc.high } ?: scheme.onSurfaceVariant
     Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), color = scheme.surface, tonalElevation = 1.dp, border = BorderStroke(1.dp, scheme.outlineVariant)) {
         Row(Modifier.height(IntrinsicSize.Min)) {
             Box(Modifier.width(5.dp).fillMaxHeight().background(accent))
@@ -463,7 +466,7 @@ private fun MeasureCard(data: PolData, m: Measure, nav: PolNavigator, onTable: (
                         data.partyLabel(m.who).takeIf { it.isNotBlank() }?.let { Text(it, fontSize = 12.5.sp, color = scheme.onSurfaceVariant) }
                     }
                 }
-                Text("${fmtSigned(m.hh)} €/an par ménage", Modifier.padding(top = 12.dp).clip(RoundedCornerShape(10.dp)).background(pill.copy(alpha = 0.13f)).padding(horizontal = 10.dp, vertical = 6.dp), color = pill, fontFamily = Mono, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                Text(m.hh?.let { "${fmtSigned(it)} €/an par ménage" } ?: "Par ménage : $NO_VALUE", Modifier.padding(top = 12.dp).clip(RoundedCornerShape(10.dp)).background(pill.copy(alpha = 0.13f)).padding(horizontal = 10.dp, vertical = 6.dp), color = pill, fontFamily = Mono, fontWeight = FontWeight.Bold, fontSize = 15.sp)
                 Column(Modifier.padding(top = 14.dp)) {
                     Kicker("Mesures")
                     m.m.split(" ; ").filter { it.isNotBlank() }.forEach { Text("• ${frTypo(it)}", Modifier.padding(top = 3.dp), fontSize = 14.sp, lineHeight = 19.sp) }
@@ -514,7 +517,7 @@ fun BilanScreen(data: PolData, nav: PolNavigator) {
                 if (ofce.isEmpty()) EmptyState("Aucune décomposition", "La décomposition de la dette n'est pas disponible pour l'instant.")
                 else FigCard {
                     Legend(modifier = Modifier.padding(bottom = 8.dp), items = listOf(pc.high to "Fait monter la dette", pc.low to "La fait baisser"))
-                    HBars(ofce, ofceScale, 118.dp) { if (it.total) ink else if (it.v >= 0) pc.high else pc.low }
+                    HBars(ofce, ofceScale, 118.dp) { if (it.total) ink else if (it.v!! >= 0) pc.high else pc.low }
                 }
             }
         }

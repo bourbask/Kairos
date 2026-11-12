@@ -52,13 +52,13 @@ fun tileViz(data: PolData, id: String): TileViz? = when (id) {
         viz(listOfNotNull(st.ref?.let { Mark(MarkShape.Dash, x(it), 2f, 0f, H - 4f, Ink.Muted) }).takeIf { dots.isNotEmpty() }.orEmpty() + dots)
     }
     "niveau-de-vie" -> {
-        val m = data.decode<Measure>("niveau-de-vie", "MEASURES").filter { it.hh != 0.0 }.sortedByDescending { it.hh }
-        val mx = m.maxOfOrNull { abs(it.hh) } ?: 0.0
+        val m = data.decode<Measure>("niveau-de-vie", "MEASURES").mapNotNull { m -> m.hh?.takeIf { it != 0.0 }?.let { m.who to it } }.sortedByDescending { it.second }
+        val mx = m.maxOfOrNull { abs(it.second) } ?: 0.0
         val bw = (W - 4f) / m.size.coerceAtLeast(1)
         viz(
-            if (mx <= 0) emptyList() else m.mapIndexed { i, r ->
-                val bh = (abs(r.hh) / mx).toFloat() * (H / 2 - 2f)
-                Mark(MarkShape.Box, 2f + i * bw + 2f, if (r.hh > 0) H / 2 - bh else H / 2, bw - 4f, bh, Ink.Identity, data.hexOf(r.who))
+            if (mx <= 0) emptyList() else m.mapIndexed { i, (who, hh) ->
+                val bh = (abs(hh) / mx).toFloat() * (H / 2 - 2f)
+                Mark(MarkShape.Box, 2f + i * bw + 2f, if (hh > 0) H / 2 - bh else H / 2, bw - 4f, bh, Ink.Identity, data.hexOf(who))
             },
         )
     }
@@ -82,12 +82,12 @@ fun tileViz(data: PolData, id: String): TileViz? = when (id) {
         )
     }
     "bilan" -> {
-        val rows = bilanState(data).ofce.filter { !it.total }.take(6)
-        val mx = rows.maxOfOrNull { abs(it.v) }?.takeIf { it > 0 } ?: 1.0
+        val rows = bilanState(data).ofce.filter { !it.total }.take(6).map { it.v!! }
+        val mx = rows.maxOfOrNull { abs(it) }?.takeIf { it > 0 } ?: 1.0
         viz(
-            rows.mapIndexed { i, r ->
-                val w = (abs(r.v) / mx).toFloat() * 60f
-                Mark(MarkShape.Box, if (r.v >= 0) 70f else 70f - w, i * 9f, w, 6f, if (r.v >= 0) Ink.High else Ink.Low)
+            rows.mapIndexed { i, v ->
+                val w = (abs(v) / mx).toFloat() * 60f
+                Mark(MarkShape.Box, if (v >= 0) 70f else 70f - w, i * 9f, w, 6f, if (v >= 0) Ink.High else Ink.Low)
             }.let { if (it.isEmpty()) it else it + Mark(MarkShape.Dash, 70f, 0f, 0f, H, Ink.Ink) },
         )
     }
