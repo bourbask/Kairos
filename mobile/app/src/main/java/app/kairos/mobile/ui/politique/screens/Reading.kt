@@ -88,9 +88,6 @@ private val Muted @Composable get() = MaterialTheme.colorScheme.onSurfaceVariant
 private val Ink = Color(0xFF1F2620)
 private val Attn = Color(0xFFD9952B)
 
-@Composable
-private fun Lead(text: String) = Text(text, Modifier.padding(top = 6.dp), color = Muted)
-
 // ---------- Rhétorique ----------
 
 @Composable

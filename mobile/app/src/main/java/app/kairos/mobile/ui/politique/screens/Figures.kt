@@ -5,6 +5,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -96,9 +97,9 @@ private fun PolData.identityColorOf(who: String): Color? = idFor(who)?.let { byI
 // ---------- Briques communes ----------
 
 @Composable
-internal fun FigCard(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+internal fun FigCard(modifier: Modifier = Modifier, onClick: (() -> Unit)? = null, content: @Composable ColumnScope.() -> Unit) {
     Surface(modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surface, tonalElevation = 1.dp, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
-        Column(Modifier.padding(14.dp)) { content() }
+        Column(Modifier.let { if (onClick != null) it.clickable(onClick = onClick) else it }.padding(14.dp), content = content)
     }
 }
 

@@ -150,7 +150,7 @@ private fun CampHeader(data: PolData, camp: String, count: Int, tally: Map<Strin
 }
 
 @Composable
-private fun Lead(text: String) = Text(text, Modifier.padding(top = 6.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+internal fun Lead(text: String) = Text(text, Modifier.padding(top = 6.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
 
 @Composable
 private fun Label(text: String, top: Int = 12) = Kicker(text, Modifier.padding(top = top.dp, bottom = 6.dp))

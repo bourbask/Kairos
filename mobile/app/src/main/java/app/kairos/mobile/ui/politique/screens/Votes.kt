@@ -181,17 +181,7 @@ private fun TallyBar(codes: List<String>, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun Card(modifier: Modifier = Modifier, onClick: (() -> Unit)? = null, content: @Composable () -> Unit) {
-    Surface(modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surface, tonalElevation = 1.dp) {
-        Column(Modifier.let { if (onClick != null) it.clickable(onClick = onClick) else it }.padding(14.dp)) { content() }
-    }
-}
-
-@Composable
 private fun Title(text: String) = Text(text, Modifier.semantics { heading() }, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-
-@Composable
-private fun Lead(text: String) = Text(text, Modifier.padding(top = 6.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
 
 private fun officialSource(chambre: String, url: String?) = listOf(SourceRef(if (chambre == "AN") "Scrutin officiel" else "Source du scrutin", url))
 
@@ -223,7 +213,7 @@ fun VotesScreen(data: PolData, nav: PolNavigator) {
             part { EmptyState("Aucun scrutin", "Aucun vote retenu pour cette assemblée. Essayez l'autre assemblée.") }
         } else if (mode == 0) {
             items(rows, key = { it.t + it.d }) { v ->
-                Card {
+                FigCard {
                     Text(frTypo(v.t), fontSize = 17.5.sp, lineHeight = 22.sp, fontWeight = FontWeight.Bold)
                     Text(v.d, Modifier.padding(top = 4.dp), fontSize = 12.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     v.n?.takeIf { it.isNotBlank() }?.let { Text(frTypo(it), Modifier.padding(top = 4.dp), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
@@ -239,7 +229,7 @@ fun VotesScreen(data: PolData, nav: PolNavigator) {
             part {
                 val gid = data.idOf(groups[gi])
                 val counts = voteCounts(rows, gi)
-                Card {
+                FigCard {
                     if (gid != null) IdentityChip(data, gid, large = true, text = groups[gi]) else Text(groups[gi], fontWeight = FontWeight.Bold)
                     if (counts.isNotEmpty()) Text(counts.joinToString(" · ") { (c, n) -> "$n ${VOTE_WORDS[c].orEmpty().lowercase()}" }, Modifier.padding(top = 8.dp), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     rows.forEach { v ->
@@ -512,7 +502,7 @@ fun DitVoteScreen(data: PolData, nav: PolNavigator) {
             part { Pills(partiesIn.map { PillOption(it, data.byId(it)?.nom ?: it) }, p, onSelect = { party = it }) }
             val items = partyItems
             part {
-                Card {
+                FigCard {
                     if (data.byId(p) != null) IdentityChip(data, p, large = true) else Text(p, fontWeight = FontWeight.Bold)
                     DvRate(data, items)
                 }
@@ -522,7 +512,7 @@ fun DitVoteScreen(data: PolData, nav: PolNavigator) {
             if (gaps.isEmpty()) {
                 part { EmptyState("Aucun écart relevé", noGapsMessage(dvCount(items), dvCount(items, "seance"))) }
             } else part {
-                Card(Modifier) { gaps.forEachIndexed { i, d -> if (i > 0) Box(Modifier.fillMaxWidth().height(1.dp).background(scheme.outlineVariant)); DvRow(data, d) { nav.sheet(PolSheetState.Scrutin(d.scrutin.id)) } } }
+                FigCard(Modifier) { gaps.forEachIndexed { i, d -> if (i > 0) Box(Modifier.fillMaxWidth().height(1.dp).background(scheme.outlineVariant)); DvRow(data, d) { nav.sheet(PolSheetState.Scrutin(d.scrutin.id)) } } }
             }
         }
     }
@@ -533,7 +523,7 @@ fun DitVoteScreen(data: PolData, nav: PolNavigator) {
 private fun ScrutinCard(data: PolData, s: Scrutin, onClick: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
     fun n(k: String) = s.verdicts.count { it.v == k }
-    Card(onClick = onClick) {
+    FigCard(onClick = onClick) {
         Kicker(fmtDate(s.date))
         Text(frTypo(s.titre), Modifier.padding(top = 4.dp), fontSize = 16.5.sp, lineHeight = 21.sp, fontWeight = FontWeight.Bold)
         if (s.resultat.isNotBlank()) Text(s.resultat, Modifier.padding(top = 4.dp), fontSize = 13.sp, color = scheme.onSurfaceVariant)
@@ -592,7 +582,7 @@ fun ScrutinSheet(data: PolData, s: Scrutin, nav: PolNavigator, onDismiss: () -> 
 
             SectionHeader("La parole", "Ce qu'ils ont dit, six mois autour du vote", modifier = Modifier.padding(top = 20.dp))
             if (s.paroles.isEmpty()) EmptyState("Aucune prise de parole retenue", "Aucune déclaration publique n'a été trouvée dans les sources consultées, pour aucun groupe, dans la fenêtre de six mois.", Modifier.padding(top = 10.dp))
-            else Card(Modifier.padding(top = 10.dp)) {
+            else FigCard(Modifier.padding(top = 10.dp)) {
                 s.paroles.forEachIndexed { i, p ->
                     if (i > 0) Box(Modifier.fillMaxWidth().padding(vertical = 12.dp).height(1.dp).background(scheme.outlineVariant))
                     ParoleBlock(data, p, onEv)

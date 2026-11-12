@@ -1,11 +1,9 @@
 package app.kairos.mobile.ui.politique
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.IntrinsicSize
@@ -99,6 +97,7 @@ import app.kairos.mobile.ui.politique.screens.procedureStage
 import app.kairos.mobile.ui.politique.screens.stageTone
 import app.kairos.mobile.ui.politique.screens.DvItem
 import app.kairos.mobile.ui.politique.screens.claimsOf
+import app.kairos.mobile.ui.politique.screens.FigCard
 import app.kairos.mobile.ui.politique.screens.NO_VALUE
 import app.kairos.mobile.ui.politique.screens.fmtNum
 import app.kairos.mobile.ui.politique.screens.fmtSigned
@@ -305,7 +304,7 @@ private fun StatsGrid(stats: List<Stat>) {
         stats.chunked(2).forEach { pair ->
             Row(Modifier.height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 pair.forEach { s ->
-                    Card(Modifier.weight(1f).fillMaxHeight().semantics(mergeDescendants = true) {}) {
+                    FigCard(Modifier.weight(1f).fillMaxHeight().semantics(mergeDescendants = true) {}) {
                         Kicker(s.label)
                         Text(s.value, Modifier.padding(top = 4.dp), fontSize = 24.sp, fontWeight = FontWeight.ExtraBold)
                         Text(s.sub, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
@@ -349,15 +348,6 @@ private fun SectionPager(sections: List<Section>) {
 internal fun reducedMotion(): Boolean {
     val context = LocalContext.current
     return remember { android.provider.Settings.Global.getFloat(context.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f }
-}
-
-@Composable
-private fun Card(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
-    Column(
-        modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surface)
-            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(16.dp)).padding(14.dp),
-        content = content,
-    )
 }
 
 /** Étiquette d'état : couleur neutre ou d'état, jamais celle d'un parti. */
@@ -407,7 +397,7 @@ private fun sections(data: PolData, id: String, l: IdentityLinks, nav: PolNaviga
     val m = l.measures.firstOrNull()
     if (p != null || m != null || l.gaps.isNotEmpty()) out += Section("Programme") {
         p?.let {
-            Card {
+            FigCard {
                 Kicker("Budget à l'horizon")
                 KeyValue(
                     listOf(
@@ -420,7 +410,7 @@ private fun sections(data: PolData, id: String, l: IdentityLinks, nav: PolNaviga
             }
         }
         m?.let {
-            Card {
+            FigCard {
                 Kicker("Mesures pour le pouvoir d'achat")
                 it.m.split(" ; ").filter(String::isNotBlank).forEach { s -> Body("• $s") }
                 if (it.b.isNotBlank()) { Kicker("Pour qui", Modifier.padding(top = 10.dp)); Body(it.b) }
@@ -429,7 +419,7 @@ private fun sections(data: PolData, id: String, l: IdentityLinks, nav: PolNaviga
             }
         }
         l.gaps.forEach { g ->
-            Card {
+            FigCard {
                 Kicker("Annoncé contre crédité")
                 Title(g.what)
                 Body("Annoncé ${g.claimed.or(unit = " ${g.unit}")} · ${if (g.inverse) "estimé" else "crédité"} ${g.credited.or(unit = " ${g.unit}")}")
@@ -440,7 +430,7 @@ private fun sections(data: PolData, id: String, l: IdentityLinks, nav: PolNaviga
     }
     if (l.matrix.isNotEmpty()) out += Section("Bilan sortant") {
         l.matrix.forEach { (r, st) ->
-            Card {
+            FigCard {
                 Row { Tag(MARK_LABEL[st.pos] ?: "Position") }
                 Title(r.o)
                 Body(st.text)
@@ -482,7 +472,7 @@ private fun sections(data: PolData, id: String, l: IdentityLinks, nav: PolNaviga
             .sortedWith(compareBy<DvItem> { if (it.verdict.v == "ecart") 0 else 1 }.thenByDescending { it.scrutin.date })
         if (gaps.isEmpty()) Body(noGapsMessage(k, dvCount(l.dv, "seance")))
         gaps.forEach { d ->
-            Card {
+            FigCard {
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { StateTag(DV_LABELS[d.verdict.v].orEmpty(), if (d.verdict.v == "ecart") "fragile" else "partiel") }
                 Title(d.scrutin.titre)
                 Body(d.verdict.explication)
@@ -492,7 +482,7 @@ private fun sections(data: PolData, id: String, l: IdentityLinks, nav: PolNaviga
     }
     if (l.claims.isNotEmpty()) out += Section("Phrases") {
         l.claims.forEach { c ->
-            Card {
+            FigCard {
                 Row { VerdictChip(c.v) }
                 Body("« ${c.q} »", Modifier.padding(top = 6.dp))
                 SourceList(sourcesOf(c.src), data, onEv)
@@ -511,7 +501,7 @@ private fun sections(data: PolData, id: String, l: IdentityLinks, nav: PolNaviga
     }
     if (l.turns.isNotEmpty()) out += Section("Revirements") {
         l.turns.forEach { r ->
-            Card {
+            FigCard {
                 Row { StateTag(TURN_KINDS.firstOrNull { it.first == r.k }?.second ?: "Position", when (r.k) { "R" -> "fragile"; "I" -> "partiel"; "C" -> "solide"; else -> null }) }
                 Title("${r.s} · ${r.p}")
                 Body("<b>Avant.</b> ${r.a}")
@@ -521,9 +511,9 @@ private fun sections(data: PolData, id: String, l: IdentityLinks, nav: PolNaviga
         }
     }
     if (l.cases.isNotEmpty()) out += Section("Justice") {
-        Card { Body("Présumé innocent tant qu'aucune condamnation n'est définitive.") }
+        FigCard { Body("Présumé innocent tant qu'aucune condamnation n'est définitive.") }
         l.cases.forEach { a ->
-            Card {
+            FigCard {
                 Kicker(listOf(a.who, a.date).filter(String::isNotBlank).joinToString(" · "))
                 Title(a.factsText)
                 StageLadder(a.stg)
@@ -535,22 +525,22 @@ private fun sections(data: PolData, id: String, l: IdentityLinks, nav: PolNaviga
     val aide = ownAide(l, data, id)
     val part = ownPartis(l, data, id)
     if (aide != null || part != null || l.c22.isNotEmpty() || l.money.isNotEmpty()) out += Section("Argent") {
-        aide?.v?.let { v -> Card { Kicker("Aide publique"); Text(moneyLabel(v), fontSize = 22.sp, fontWeight = FontWeight.ExtraBold) } }
+        aide?.v?.let { v -> FigCard { Kicker("Aide publique"); Text(moneyLabel(v), fontSize = 22.sp, fontWeight = FontWeight.ExtraBold) } }
         part?.let {
-            Card {
+            FigCard {
                 Kicker("Derniers comptes publiés")
                 KeyValue(listOf("Dons et cotisations" to moneyLabel(it.dons), "Dette" to moneyLabel(it.dette), "Situation nette" to netLabel(it.net)))
             }
         }
         l.c22.forEach { c ->
-            Card {
+            FigCard {
                 Kicker("Présidentielle précédente · ${c.cand}")
                 KeyValue(listOf("Score" to c.score, "Dépenses" to moneyLabel(c.depense), "Remboursé" to moneyLabel(c.rembourse)))
                 c.note.takeIf { it.isNotBlank() }?.let { Body(it) }
             }
         }
         l.money.forEach { f ->
-            Card {
+            FigCard {
                 StageTag(f.stg)
                 Title(f.t)
                 Body(f.p)
@@ -565,9 +555,9 @@ private fun sections(data: PolData, id: String, l: IdentityLinks, nav: PolNaviga
                 Text(statusLabel(c.statut), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
             }
         }
-        l.muni.forEach { mu -> Card { StageTag(mu.stg); Body(mu.p, Modifier.padding(top = 6.dp)) } }
+        l.muni.forEach { mu -> FigCard { StageTag(mu.stg); Body(mu.p, Modifier.padding(top = 6.dp)) } }
         l.villes.forEach { f ->
-            Card {
+            FigCard {
                 Row { Tag(factKind(f.kind).first) }
                 Title("${f.ville} · ${f.maire}")
                 Body(f.text)
@@ -576,7 +566,7 @@ private fun sections(data: PolData, id: String, l: IdentityLinks, nav: PolNaviga
         }
     }
     if (l.rhet.isNotEmpty()) out += Section("Procédés") {
-        l.rhet.forEach { (t, text) -> Card { Kicker(t); Body(text) } }
+        l.rhet.forEach { (t, text) -> FigCard { Kicker(t); Body(text) } }
     }
     return out
 }
