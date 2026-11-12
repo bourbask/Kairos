@@ -62,6 +62,8 @@ import app.kairos.mobile.ui.politique.kit.EmptyState
 import app.kairos.mobile.ui.politique.kit.EvaluatorTag
 import app.kairos.mobile.ui.politique.kit.IdentityChip
 import app.kairos.mobile.ui.politique.kit.Kicker
+import app.kairos.mobile.ui.politique.kit.InfoIcon
+import app.kairos.mobile.ui.politique.kit.opensBalance
 import app.kairos.mobile.ui.politique.kit.LevelTag
 import app.kairos.mobile.ui.politique.kit.PillOption
 import app.kairos.mobile.ui.politique.kit.Pills
@@ -201,7 +203,7 @@ fun RhetoriqueScreen(data: PolData, nav: PolNavigator) {
     LazyColumn(Modifier.fillMaxSize(), state = state, contentPadding = ScreenPad) {
         item {
             Column {
-                Lead("Les mêmes techniques reviennent d'un camp à l'autre. Les repérer ne dit pas qui a raison, mais aide à écouter sans se faire emporter. Retournez une carte pour ses exemples, sourcés.")
+                Lead("Les mêmes techniques reviennent d'un camp à l'autre.", "Les repérer ne dit pas qui a raison, mais aide à écouter sans se faire emporter. Retournez une carte pour ses exemples, sourcés.")
                 if (fams.size > 1) Pills(
                     fams.map { PillOption(it.label, it.label, it.cards.size) }, selected = "",
                     onSelect = { k -> val j = fams.indexOfFirst { it.label == k }; if (j >= 0) scope.launch { if (still) state.scrollToItem(1 + j) else state.animateScrollToItem(1 + j) } },
@@ -294,7 +296,7 @@ private fun DossierBlock(data: PolData, d: ContentDossier, startOpen: Boolean, n
 @Composable
 private fun ItemCard(data: PolData, x: ContentItem, j: Int, n: Int, nav: PolNavigator) {
     val onEv: (String) -> Unit = { nav.sheet(PolSheetState.Evaluator(it)) }
-    FigCard {
+    FigCard(inner = x.lecture?.let { l -> Modifier.opensBalance(x.dit, nav.balance(l, x.dit, null)) } ?: Modifier) {
         Text("Affirmation ${j + 1} sur $n", fontFamily = Mono, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Muted)
         Text(frTypo(x.dit), Modifier.padding(top = 8.dp), fontSize = 18.sp, lineHeight = 23.sp, fontWeight = FontWeight.Bold)
         Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -308,7 +310,7 @@ private fun ItemCard(data: PolData, x: ContentItem, j: Int, n: Int, nav: PolNavi
             }
         }
         CacheBox(x.cache)
-        x.lecture?.let { l -> BalanceBlock(l, x.dit, null, onOpen = { nav.sheet(PolSheetState.Balance(l, x.dit, null)) }) }
+        x.lecture?.let { l -> BalanceBlock(l, x.dit, onOpen = null) }
         x.procede?.takeIf { it.isNotBlank() }?.let { p ->
             val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
             Text(
@@ -326,7 +328,7 @@ private fun ItemCard(data: PolData, x: ContentItem, j: Int, n: Int, nav: PolNavi
 fun DossiersScreen(data: PolData, nav: PolNavigator) {
     val list = remember(data) { contentDossiersOf(data) }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = ScreenPad) {
-        part { Lead("Une vidéo, une tribune ou un tract qui tourne : chaque affirmation est reprise une à une, avec son verdict, les faits et le procédé rhétorique employé.") }
+        part { Lead("Ce qui circule, repris affirmation par affirmation.", "Une vidéo, une tribune ou un tract qui tourne : chaque affirmation est reprise une à une, avec son verdict, les faits et le procédé rhétorique employé. Une affirmation chiffrée porte sa balance : touchez la carte pour le détail.") }
         if (list.isEmpty()) part { EmptyState("Aucun dossier pour l'instant", "Les analyses de contenus qui circulent apparaîtront ici, affirmation par affirmation.", Modifier.padding(top = 16.dp)) }
         itemsIndexed(list) { i, d -> DossierBlock(data, d, startOpen = i == 0, nav) }
     }
@@ -340,10 +342,13 @@ fun EvaluatorsScreen(data: PolData, nav: PolNavigator) {
     LazyColumn(Modifier.fillMaxSize(), contentPadding = ScreenPad) {
         part {
             Column {
-                Lead("Un chiffre est toujours produit par quelqu'un. Chaque source chiffrée de cet espace porte l'étiquette de son producteur ; touchez-la pour sa fiche : statut, financement, dirigeants, historique.")
+                Lead("Chaque chiffre porte l'étiquette de son producteur.", "Un chiffre est toujours produit par quelqu'un. Touchez une étiquette pour la fiche de son producteur : statut, financement, dirigeants, historique.")
                 FigCard(Modifier.padding(top = 12.dp)) {
-                    Kicker("Lire l'étiquette")
-                    Column(Modifier.padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Kicker("Lire l'étiquette", Modifier.weight(1f))
+                        InfoIcon("Le niveau décrit les liens (statut, financement, dirigeants), pas la qualité d'un chiffrage. Chaque fiche justifie le sien.", "À propos du niveau")
+                    }
+                    Column(Modifier.padding(top = 2.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         (1..4).forEach { n ->
                             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                                 LevelTag(n, Modifier.width(104.dp))
@@ -351,7 +356,6 @@ fun EvaluatorsScreen(data: PolData, nav: PolNavigator) {
                             }
                         }
                     }
-                    Text("Le niveau décrit les liens (statut, financement, dirigeants), pas la qualité d'un chiffrage. Chaque fiche justifie le sien.", Modifier.padding(top = 10.dp), fontSize = 12.5.sp, color = Muted)
                 }
             }
         }

@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -31,7 +32,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -62,6 +62,9 @@ import app.kairos.mobile.ui.politique.kit.EmptyState
 import app.kairos.mobile.ui.politique.kit.EvaluatorTag
 import app.kairos.mobile.ui.politique.kit.IdentityChip
 import app.kairos.mobile.ui.politique.kit.Kicker
+import app.kairos.mobile.ui.politique.kit.TitleInfo
+import app.kairos.mobile.ui.politique.kit.FullscreenButton
+import app.kairos.mobile.ui.politique.kit.InfoIcon
 import app.kairos.mobile.ui.politique.kit.PillOption
 import app.kairos.mobile.ui.politique.kit.Pills
 import app.kairos.mobile.ui.politique.kit.PolColors
@@ -149,8 +152,14 @@ private fun CampHeader(data: PolData, camp: String, count: Int, tally: Map<Strin
     }
 }
 
+/** Phrase d'accroche d'une page ; [info] : le reste (comment lire, portée) en infobulle. */
 @Composable
-internal fun Lead(text: String) = Text(text, Modifier.padding(top = 6.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+internal fun Lead(text: String, info: String? = null) {
+    Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(text, Modifier.weight(1f, fill = false), color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (info != null) InfoIcon(info, "En savoir plus")
+    }
+}
 
 @Composable
 private fun Label(text: String, top: Int = 12) = Kicker(text, Modifier.padding(top = top.dp, bottom = 6.dp))
@@ -173,8 +182,7 @@ fun PhrasesScreen(data: PolData, nav: PolNavigator) {
     LazyColumn(Modifier.fillMaxSize(), contentPadding = ScreenPad, verticalArrangement = Arrangement.spacedBy(10.dp)) {
         part {
             Column {
-                Text("Entendues partout, vérifiées une à une", Modifier.semantics { heading() }, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                RichText("Des phrases qu'on entend à la télé, en meeting ou à table, de tous les camps. Pour chacune : le verdict des données, et surtout <b>ce qu'elle cache</b>.", Modifier.padding(top = 6.dp), color = scheme.onSurfaceVariant)
+                TitleInfo("Entendues partout, vérifiées une à une", "Des phrases qu'on entend à la télé, en meeting ou à table, de tous les camps. Pour chacune : le verdict des données, et surtout ce qu'elle cache.")
             }
         }
         part {
@@ -360,6 +368,8 @@ fun ClaimSheet(data: PolData, claim: Claim, nav: PolNavigator, onDismiss: () -> 
             Row(Modifier.padding(top = 14.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                 VerdictMeter(claim.v)
                 VerdictChip(claim.v, large = true)
+                Spacer(Modifier.weight(1f))
+                FullscreenButton({ nav.table(listOf(claimTableCard(claim)), 0) })
             }
             verdictDefinition(claim.v)?.let { Text("Verdict : $it.", Modifier.padding(top = 4.dp), fontSize = 13.sp, color = scheme.onSurfaceVariant) }
             CacheBox(claim.cache)
@@ -369,9 +379,8 @@ fun ClaimSheet(data: PolData, claim: Claim, nav: PolNavigator, onDismiss: () -> 
                 Kicker("Vérifié avec les chiffres de", Modifier.padding(top = 14.dp, bottom = 4.dp))
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) { evs.forEach { EvaluatorTag(it, onEv) } }
             }
-            claim.lecture?.let { BalanceBlock(it, claim.q, claim.camp, onOpen = { nav.sheet(PolSheetState.Balance(it, claim.q, claim.camp)) }) }
+            claim.lecture?.let { BalanceBlock(it, claim.q, onOpen = nav.balance(it, claim.q, claim.camp)) }
             SourceList(sourcesOf(claim.src), data, onEv)
-            FilledTonalButton({ nav.table(listOf(claimTableCard(claim)), 0) }, Modifier.padding(top = 16.dp).fillMaxWidth().heightIn(min = 48.dp)) { Text("Afficher en grand, à table") }
         }
     }
 }

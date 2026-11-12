@@ -120,10 +120,13 @@ fun balanceSummary(l: Lecture): BalanceSummary {
     return if (cp.isEmpty() && short == null) BalanceSummary(null, emptyList(), am, true) else BalanceSummary(short, postes, cp, false)
 }
 
-/** Montant d'une perte : signe moins devant un chiffre ; montant déjà signé ou rédigé (« plus de… ») laissé tel quel. */
+private val ZERO_AMOUNT = Regex("""^[-−]?\s*0+(?:[.,]0+)?(?![\d.,])""")
+
+/** Montant d'une perte : signe moins devant un chiffre ; montant nul, déjà signé ou rédigé (« plus de… ») laissé tel quel. */
 fun lossAmount(m: String): String {
     val t = m.trim()
     return when {
+        ZERO_AMOUNT.containsMatchIn(t) -> t.trimStart('-', '−').trimStart()
         t.startsWith("-") -> "−" + t.drop(1).trimStart()
         t.firstOrNull()?.isDigit() == true -> "−$t"
         else -> t
@@ -202,12 +205,21 @@ fun Kicker(text: String, modifier: Modifier = Modifier, color: Color = MaterialT
     Text(text.uppercase(), modifier, color = color, fontFamily = Mono, fontWeight = FontWeight.SemiBold, fontSize = 11.sp, letterSpacing = 0.09.em)
 }
 
+/** Titre (heading) suivi de son aide en infobulle ([info] nul : titre seul). */
 @Composable
-fun SectionHeader(kicker: String, title: String, lead: String? = null, modifier: Modifier = Modifier) {
+fun TitleInfo(title: String, info: String?, modifier: Modifier = Modifier, style: TextStyle = MaterialTheme.typography.titleLarge) {
+    Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(title, Modifier.weight(1f, fill = false).semantics { heading() }, style = style, fontWeight = FontWeight.Bold)
+        if (info != null) InfoIcon(info, "À propos : $title")
+    }
+}
+
+/** En-tête de section : sur-titre, titre ; [info] (comment lire, portée des chiffres) en infobulle. */
+@Composable
+fun SectionHeader(kicker: String, title: String, info: String? = null, modifier: Modifier = Modifier) {
     Column(modifier.fillMaxWidth()) {
         Kicker(kicker)
-        Text(title, Modifier.padding(top = 4.dp).semantics { heading() }, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-        if (lead != null) RichText(lead, Modifier.padding(top = 6.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+        TitleInfo(title, info, Modifier.padding(top = 4.dp).heightIn(min = 32.dp))
     }
 }
 
@@ -408,14 +420,13 @@ private fun PostesList(postes: List<Poste>) {
     }
 }
 
+/** Ce que montre une balance, dit une fois par section (infobulle). */
+const val BALANCE_INFO = "Pour chaque chiffre : ce qu'il coûte et qui paie, ou à défaut ce qu'il laisse dehors. Touchez la carte pour le détail et l'avis signé des évaluateurs."
+
 /** En-tête de section des balances : dit une seule fois ce qu'elles montrent ; [info] précise en infobulle. */
 @Composable
-fun BalanceHeader(title: String, info: String, modifier: Modifier = Modifier) {
-    Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(title, Modifier.weight(1f, fill = false).semantics { heading() }, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-        InfoIcon(info, "À propos : $title")
-    }
-}
+fun BalanceHeader(title: String, info: String = BALANCE_INFO, modifier: Modifier = Modifier) =
+    TitleInfo(title, info, modifier, MaterialTheme.typography.titleSmall)
 
 /** Rend tout un bloc (la carte qui porte une balance) ouvrable vers le détail [BalanceSheet]. */
 fun Modifier.opensBalance(title: String, onOpen: () -> Unit) =
@@ -428,11 +439,10 @@ fun Modifier.opensBalance(title: String, onOpen: () -> Unit) =
  * seul touchable, faute de carte (feuille, liste).
  */
 @Composable
-fun BalanceBlock(lecture: Lecture, title: String, who: String?, onOpen: (() -> Unit)?, modifier: Modifier = Modifier) {
+fun BalanceBlock(lecture: Lecture, title: String, onOpen: (() -> Unit)?, modifier: Modifier = Modifier) {
     val s = balanceSummary(lecture)
     Column(modifier.fillMaxWidth().let { if (onOpen != null) it.opensBalance(title, onOpen) else it }.padding(top = 10.dp)) {
         if (lecture.verdict in PROMISES) PromiseChip(lecture.verdict, Modifier.padding(bottom = 6.dp))
-        if (s.angleMort && s.long.isNotEmpty()) Kicker("Ce que le chiffre laisse dehors", Modifier.padding(bottom = 2.dp))
         if (s.short != null) {
             Text(frTypo(s.short), fontSize = 15.sp, lineHeight = 21.sp, fontWeight = FontWeight.SemiBold)
             if (s.postes.isNotEmpty()) PostesList(s.postes)
@@ -488,10 +498,18 @@ fun BalanceSheet(lecture: Lecture, title: String, who: String?, data: PolData, o
     }
 }
 
-/** Bouton icône « plein écran » : ouvre la carte en mode « À table ». */
+/** Bouton icône « plein écran » : ouvre la carte en mode « À table » ; son libellé en infobulle à l'appui long. */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FullscreenButton(onClick: () -> Unit, modifier: Modifier = Modifier, contentDescription: String = "Afficher en grand, à table") {
-    IconButton(onClick, modifier) { Icon(KairosIcons.Fullscreen, contentDescription, tint = MaterialTheme.colorScheme.onSurfaceVariant) }
+    TooltipBox(
+        positionProvider = TooltipDefaults.rememberTooltipPositionProvider(TooltipAnchorPosition.Above),
+        tooltip = { PlainTooltip { Text(contentDescription) } },
+        state = rememberTooltipState(),
+        modifier = modifier,
+    ) {
+        IconButton(onClick) { Icon(KairosIcons.Fullscreen, contentDescription, tint = MaterialTheme.colorScheme.onSurfaceVariant) }
+    }
 }
 
 /** Petite icône « i » : [text] en infobulle, au toucher comme à l'appui long ; cible de 48 dp. */

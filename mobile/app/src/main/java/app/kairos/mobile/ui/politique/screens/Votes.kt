@@ -65,6 +65,7 @@ import app.kairos.mobile.ui.politique.kit.LegendDot
 import app.kairos.mobile.ui.politique.kit.EmptyState
 import app.kairos.mobile.ui.politique.kit.IdentityChip
 import app.kairos.mobile.ui.politique.kit.Kicker
+import app.kairos.mobile.ui.politique.kit.InfoIcon
 import app.kairos.mobile.ui.politique.kit.PillOption
 import app.kairos.mobile.ui.politique.kit.Pills
 import app.kairos.mobile.ui.politique.kit.PolColors
@@ -76,6 +77,7 @@ import app.kairos.mobile.ui.politique.kit.SourceList
 import app.kairos.mobile.ui.politique.kit.frTypo
 import app.kairos.mobile.ui.politique.kit.safeHttps
 import app.kairos.mobile.ui.politique.model.PolData
+import app.kairos.mobile.ui.politique.model.alphabetical
 import app.kairos.mobile.ui.politique.model.SourceRef
 import app.kairos.mobile.ui.politique.model.sourcesOf
 import app.kairos.mobile.ui.politique.reducedMotion
@@ -161,7 +163,7 @@ private fun VoteCell(data: PolData, group: String, code: String, detail: String,
 @Composable
 private fun VoteGrid(data: PolData, cells: List<Triple<String, String, String>>, modifier: Modifier = Modifier) {
     Column(modifier.padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        cells.chunked(3).forEach { row ->
+        cells.alphabetical { it.first }.chunked(3).forEach { row ->
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 row.forEach { (g, c, d) -> VoteCell(data, g, c, d, Modifier.weight(1f).fillMaxHeight()) }
                 repeat(3 - row.size) { Box(Modifier.weight(1f)) }
@@ -191,18 +193,19 @@ private fun officialSource(chambre: String, url: String?) = listOf(SourceRef(if 
 fun VotesScreen(data: PolData, nav: PolNavigator) {
     var ch by rememberSaveable { mutableIntStateOf(0) }
     var mode by rememberSaveable { mutableIntStateOf(0) }
-    var g by rememberSaveable { mutableIntStateOf(0) }
+    var g by rememberSaveable { mutableIntStateOf(-1) }
     val key = CHAMBERS[ch].first
     val groups = remember(data, key) { data.decode<String>("votes", "${key}_G") }
+    val order = remember(groups) { groups.indices.alphabetical { groups[it] } }
     val rows = remember(data, key) { data.decode<VoteRow>("votes", "${key}_V") }
-    val coh = remember(data) { data.decode<CohGroup>("votes", "COH") }
+    val coh = remember(data) { data.decode<CohGroup>("votes", "COH").alphabetical { it.camp } }
     val pc = PolColors.current
-    val gi = g.coerceIn(0, (groups.size - 1).coerceAtLeast(0))
+    val gi = if (g in groups.indices) g else order.firstOrNull() ?: 0
     LazyColumn(Modifier.fillMaxSize(), contentPadding = ScreenPad, verticalArrangement = Arrangement.spacedBy(10.dp)) {
         part {
             Column {
                 Title("Ce qu'ils votent, pas ce qu'ils disent")
-                Segmented(CHAMBERS.map { it.second }, ch, { ch = it; g = 0 }, Modifier.padding(top = 12.dp))
+                Segmented(CHAMBERS.map { it.second }, ch, { ch = it; g = -1 }, Modifier.padding(top = 12.dp))
                 Segmented(listOf("Par scrutin", "Par groupe"), mode, { mode = it }, Modifier.padding(top = 8.dp))
                 Legend(Modifier.padding(top = 12.dp)) {
                     LegendDot(pc.pour, "Pour"); LegendDot(pc.contre, "Contre"); LegendDot(pc.partiel, "Abstention"); LegendDot(MaterialTheme.colorScheme.onSurfaceVariant, "Divisé")
@@ -224,7 +227,7 @@ fun VotesScreen(data: PolData, nav: PolNavigator) {
             }
         } else {
             part {
-                Pills(groups.mapIndexed { i, n -> PillOption(i.toString(), n) }, gi.toString(), onSelect = { g = it.toInt() })
+                Pills(order.map { i -> PillOption(i.toString(), groups[i]) }, gi.toString(), onSelect = { g = it.toInt() })
             }
             part {
                 val gid = data.idOf(groups[gi])
@@ -293,7 +296,7 @@ internal fun turnColors(k: String): Pair<Color, Color> {
 @Composable
 fun RevirementsScreen(data: PolData, nav: PolNavigator) {
     val rv = remember(data) { data.decode<Turn>("revirements", "RV") }
-    val camps = remember(rv) { revirementCamps(rv) }
+    val camps = remember(rv) { revirementCamps(rv).alphabetical { it } }
     var camp by rememberSaveable { mutableStateOf("") }
     val cur = camp.takeIf { it in camps } ?: camps.firstOrNull().orEmpty()
     val scheme = MaterialTheme.colorScheme
@@ -301,7 +304,7 @@ fun RevirementsScreen(data: PolData, nav: PolNavigator) {
         part {
             Column {
                 Title("Qui a changé d'avis")
-                Lead("Changer d'avis n'est pas un défaut en soi. Ce qui compte : le parti l'assume-t-il, et le changement touche-t-il le fond ou le calendrier ?")
+                Lead("Changer d'avis n'est pas un défaut en soi.", "Ce qui compte : le parti l'assume-t-il, et le changement touche-t-il le fond ou le calendrier ?")
                 Legend(Modifier.padding(top = 12.dp)) { TURN_KINDS.forEach { (k, l) -> val (fg, bg) = turnColors(k); Chip(l, fg, bg) } }
             }
         }
@@ -418,29 +421,27 @@ private fun DvRate(data: PolData, items: List<DvItem>) {
             if (k.c > 0) Chip(plural(k.c, "cohérent", "cohérents"), pc.solide, pc.solideBg)
         }
         if (s.t > 0) Column(Modifier.padding(top = 12.dp)) {
-            Kicker("Ligne annoncée en séance")
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Kicker("Ligne annoncée en séance", Modifier.weight(1f, fill = false))
+                InfoIcon("Moins probant : annoncer son vote puis le suivre est attendu. Les écarts y restent parlants (élus qui votent contre la ligne de leur groupe).", "À propos de la ligne annoncée en séance")
+            }
             Text(
                 "${s.c} / ${s.t} votes conformes à l'explication donnée dans l'hémicycle juste avant" +
                     (if (s.e > 0) ", ${plural(s.e, "écart", "écarts")}" else "") + (if (s.a > 0) ", ${plural(s.a, "vote divisé ou ambigu", "votes divisés ou ambigus")}" else "") + ".",
-                Modifier.padding(top = 4.dp), fontSize = 14.sp,
+                fontSize = 14.sp,
             )
-            Text("Moins probant : annoncer son vote puis le suivre est attendu. Les écarts y restent parlants (élus qui votent contre la ligne de leur groupe).", Modifier.padding(top = 4.dp), fontSize = 12.5.sp, color = scheme.onSurfaceVariant)
         }
-        if (k.sp > 0) Honest("${plural(k.sp, "scrutin", "scrutins")} sans déclaration trouvée", " dans les six mois autour du vote : ni cohérents ni incohérents, donc hors des deux taux.")
+        if (k.sp > 0) Honest("${plural(k.sp, "scrutin", "scrutins")} sans déclaration trouvée", "Aucune déclaration dans les six mois autour du vote : ni cohérents ni incohérents, donc hors des deux taux.")
     }
 }
 
+/** Réserve sur la portée d'un chiffre : une ligne discrète, l'explication en infobulle. */
 @Composable
-private fun Honest(bold: String, rest: String) {
-    Text(
-        buildAnnotated(bold, rest), Modifier.fillMaxWidth().padding(top = 10.dp).clip(RoundedCornerShape(12.dp))
-            .border(1.5.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp)).padding(horizontal = 12.dp, vertical = 10.dp),
-        fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
-}
-
-private fun buildAnnotated(bold: String, rest: String) = androidx.compose.ui.text.buildAnnotatedString {
-    append(bold); addStyle(androidx.compose.ui.text.SpanStyle(fontWeight = FontWeight.Bold), 0, bold.length); append(rest)
+private fun Honest(line: String, why: String) {
+    Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(line, Modifier.weight(1f, fill = false), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        InfoIcon(why, "Pourquoi : $line")
+    }
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -470,14 +471,14 @@ fun DitVoteScreen(data: PolData, nav: PolNavigator) {
     val key = CHAMBERS[ch].first
     val scheme = MaterialTheme.colorScheme
     val inCh = remember(all, key) { scrutinsFor(all, key, "") }
-    val partiesIn = remember(inCh) { dvParties(inCh) }
+    val partiesIn = remember(data, inCh) { dvParties(inCh).alphabetical { data.byId(it)?.nom ?: it } }
     val curParty = party.takeIf { it in partiesIn } ?: partiesIn.firstOrNull()
     val partyItems = remember(all, key, curParty) { dvFor(data, curParty).filter { it.scrutin.chambre == key } }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = ScreenPad, verticalArrangement = Arrangement.spacedBy(10.dp)) {
         part {
             Column {
                 Title("Ce qu'ils disent, ce qu'ils votent")
-                Lead("Chaque scrutin croisé avec ce que les partis en ont dit publiquement dans les six mois autour du vote. Un écart n'est pas forcément une trahison : lisez l'explication.")
+                Lead("Chaque scrutin croisé avec la parole publique des partis.", "Ce que les partis en ont dit publiquement dans les six mois autour du vote. Un écart n'est pas forcément une trahison : lisez l'explication.")
                 Segmented(CHAMBERS.map { it.second }, ch, { ch = it; f = "" }, Modifier.padding(top = 12.dp))
                 Segmented(listOf("Par scrutin", "Par parti"), mode, { mode = it }, Modifier.padding(top = 8.dp))
                 Legend(Modifier.padding(top = 12.dp)) { DV_ORDER.forEach { DvChip(it) } }
@@ -523,12 +524,12 @@ fun DitVoteScreen(data: PolData, nav: PolNavigator) {
 private fun ScrutinCard(data: PolData, s: Scrutin, onClick: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
     fun n(k: String) = s.verdicts.count { it.v == k }
-    FigCard(onClick = onClick) {
+    FigCard(inner = Modifier.clickable(onClick = onClick)) {
         Kicker(fmtDate(s.date))
         Text(frTypo(s.titre), Modifier.padding(top = 4.dp), fontSize = 16.5.sp, lineHeight = 21.sp, fontWeight = FontWeight.Bold)
         if (s.resultat.isNotBlank()) Text(s.resultat, Modifier.padding(top = 4.dp), fontSize = 13.sp, color = scheme.onSurfaceVariant)
         FlowRow(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            s.positions.forEach { (g, p) ->
+            s.positions.entries.alphabetical { it.key }.forEach { (g, p) ->
                 val c = p.getOrElse(0) { "N" }
                 val color = data.idOf(g)?.let { data.byId(it)?.couleur }?.let { identityColor(it) } ?: scheme.outline
                 Row(
@@ -566,7 +567,8 @@ fun ScrutinSheetAt(data: PolData, id: String, nav: PolNavigator, onDismiss: () -
 fun ScrutinSheet(data: PolData, s: Scrutin, nav: PolNavigator, onDismiss: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
     val onEv: (String) -> Unit = { nav.sheet(PolSheetState.Evaluator(it)) }
-    val vs = remember(s) { s.verdicts.sortedBy { DV_ORDER.indexOf(it.v) } }
+    // Écarts d'abord ; à verdict égal, ordre alphabétique.
+    val vs = remember(data, s) { s.verdicts.alphabetical { data.byId(it.qui)?.nom ?: it.qui }.sortedBy { DV_ORDER.indexOf(it.v) } }
     PolSheet(full = true, onDismiss = onDismiss) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp)) {
             Kicker("${fmtChamber(s.chambre)} · ${fmtDate(s.date)}")
@@ -590,7 +592,7 @@ fun ScrutinSheet(data: PolData, s: Scrutin, nav: PolNavigator, onDismiss: () -> 
             }
 
             SectionHeader("Dit / voté", "Parti par parti", modifier = Modifier.padding(top = 20.dp))
-            Honest("« Aucune déclaration trouvée »", " n'est pas un bon point : on ne peut rien comparer. C'est une absence de source, pas une cohérence.")
+            Honest("« Aucune déclaration trouvée » n'est pas un bon point.", "On ne peut rien comparer : c'est une absence de source, pas une cohérence.")
             if (vs.isEmpty()) EmptyState("Aucun verdict", "Aucun verdict n'est publié pour ce scrutin.", Modifier.padding(top = 10.dp))
             vs.forEach { v ->
                 val p = positionOf(data, s, v.qui)

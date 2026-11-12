@@ -49,10 +49,11 @@ import app.kairos.mobile.ui.politique.kit.EmptyState
 import app.kairos.mobile.ui.politique.kit.IdentityChip
 import app.kairos.mobile.ui.politique.kit.Kicker
 import app.kairos.mobile.ui.politique.kit.PolColors
-import app.kairos.mobile.ui.politique.kit.RichText
+import app.kairos.mobile.ui.politique.kit.InfoIcon
 import app.kairos.mobile.ui.politique.kit.SourceList
 import app.kairos.mobile.ui.politique.kit.frTypo
 import app.kairos.mobile.ui.politique.model.PolData
+import app.kairos.mobile.ui.politique.model.alphabetical
 import app.kairos.mobile.ui.politique.model.SourceRef
 import app.kairos.mobile.ui.politique.model.sourcesOf
 import java.time.LocalDate
@@ -91,12 +92,13 @@ private fun DossierCard(data: PolData, d: Dossier, onTable: () -> Unit, nav: Pol
 @Composable
 fun ProbiteScreen(data: PolData, nav: PolNavigator) {
     val agenda = remember(data) { agendaOf(data, LocalDate.now()) }
-    val affaires = remember(data) { affairesOf(data) }
+    val affaires = remember(data) { affairesOf(data).alphabetical { it.who } }
     val lobby = remember(data) { lobbyOf(data) }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = ScreenPad) {
         part {
-            FigCard(Modifier.padding(top = 6.dp)) {
-                RichText("<b>Présomption d'innocence.</b> Une enquête ou une mise en examen ne vaut pas culpabilité. Les étapes ne se valent pas : comparez-les, pas les noms.")
+            Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Présomption d'innocence : une enquête ne vaut pas culpabilité.", Modifier.weight(1f, fill = false), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                InfoIcon("Une enquête ou une mise en examen ne vaut pas culpabilité. Les étapes ne se valent pas : comparez-les, pas les noms.", "À propos de la présomption d'innocence")
             }
         }
         part {
@@ -173,8 +175,8 @@ private fun AffaireCard(data: PolData, a: Affaire, onTable: () -> Unit, nav: Pol
 @Composable
 fun ArgentScreen(data: PolData, nav: PolNavigator) {
     val aide = remember(data) { aideOf(data) }
-    val partis = remember(data) { partisOf(data) }
-    val camps = remember(data) { campagnesOf(data) }
+    val partis = remember(data) { partisOf(data).alphabetical { it.parti } }
+    val camps = remember(data) { campagnesOf(data).alphabetical { it.cand } }
     val fin = remember(data) { financingOf(data) }
     val pc = PolColors.current
     LazyColumn(Modifier.fillMaxSize(), contentPadding = ScreenPad) {
@@ -183,7 +185,7 @@ fun ArgentScreen(data: PolData, nav: PolNavigator) {
             Section("Aide publique", "Combien l'État verse à chaque parti", "En millions d'euros, selon les voix aux dernières législatives et le nombre de parlementaires.") {
                 if (aide.rows.isEmpty()) Empty("Aide publique pas encore publiée", "Les montants versés à chaque parti apparaîtront ici dès qu'ils seront sourcés.")
                 else FigCard {
-                    aide.rows.forEachIndexed { i, r ->
+                    aide.rows.alphabetical { shortLabel(it.l) }.forEachIndexed { i, r ->
                         if (i > 0) Divider()
                         val id = data.idOf(r.l)
                         val label = moneyLabel(r.v)
@@ -257,7 +259,7 @@ fun MediasScreen(data: PolData, nav: PolNavigator) {
     val pc = PolColors.current
     LazyColumn(Modifier.fillMaxSize(), contentPadding = ScreenPad) {
         part {
-            Section("Propriété", "Qui possède quoi", "Une large part des grands médias appartient à quelques fortunes. Faites défiler.") {
+            Section("Propriété", "Qui possède quoi", "Une large part des grands médias appartient à quelques fortunes.") {
                 if (st.owners.isEmpty()) Empty("Propriétaires pas encore publiés", "La carte de la propriété des médias apparaîtra ici dès qu'elle sera sourcée.")
                 else Rail(st.owners, 280.dp) { _, x ->
                     FigCard(Modifier.fillMaxSize()) {

@@ -85,6 +85,7 @@ import app.kairos.mobile.ui.politique.PolSheetState
 import app.kairos.mobile.ui.politique.duelNight
 import app.kairos.mobile.ui.politique.identityColor
 import app.kairos.mobile.ui.politique.kit.BalanceBlock
+import app.kairos.mobile.ui.politique.kit.BalanceHeader
 import app.kairos.mobile.ui.politique.kit.LocalPolBottom
 import app.kairos.mobile.ui.politique.kit.EmptyState
 import app.kairos.mobile.ui.politique.kit.Kicker
@@ -442,7 +443,7 @@ private fun BarBody(data: PolData, nav: PolNavigator, s: Sides, r: BarRound, sti
     if (r.others.isNotEmpty()) Text("Points gris : les autres (${r.others.size}), pour situer sans classer.", Modifier.padding(top = 4.dp), fontSize = 12.5.sp, color = scheme.onSurfaceVariant)
     SourceList(r.sources, data, { nav.sheet(PolSheetState.Evaluator(it)) })
     r.sacrifice?.let { sac ->
-        Kicker("Ce que chaque programme sacrifie", Modifier.padding(top = 14.dp))
+        BalanceHeader("Ce que chaque programme sacrifie", modifier = Modifier.padding(top = 8.dp))
         HitRow(s) { i ->
             val (lec, who) = if (i == 0) sac.a to sac.whoA else sac.b to sac.whoB
             if (lec != null) Bal(nav, lec, who ?: s.name(i), who) else Na("Balance non documentée.")
@@ -452,7 +453,7 @@ private fun BarBody(data: PolData, nav: PolNavigator, s: Sides, r: BarRound, sti
 
 @Composable
 private fun Bal(nav: PolNavigator, lecture: Lecture, title: String, who: String?) =
-    BalanceBlock(lecture, title, who, onOpen = { nav.sheet(PolSheetState.Balance(lecture, title, who)) }, modifier = Modifier.padding(top = 0.dp))
+    BalanceBlock(lecture, title, onOpen = nav.balance(lecture, title, who), modifier = Modifier.padding(top = 0.dp))
 
 @Composable
 private fun Na(text: String) = Text(text, fontSize = 13.sp, fontStyle = FontStyle.Italic, color = MaterialTheme.colorScheme.onSurfaceVariant)

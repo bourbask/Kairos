@@ -87,6 +87,7 @@ import app.kairos.mobile.ui.politique.kit.frTypo
 import app.kairos.mobile.ui.politique.model.Claim
 import app.kairos.mobile.ui.politique.model.IdKind
 import app.kairos.mobile.ui.politique.model.PolData
+import app.kairos.mobile.ui.politique.screens.Lead
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.time.LocalDate
@@ -174,12 +175,7 @@ fun HomeScreen(data: PolData, nav: PolNavigator, bottom: Dp) {
         val links = RUBRICS.filter { it.kind == TileKind.Link }
         full { HeaderRow("Lire entre les lignes", plural(links.size, "entrée", "entrées")) }
         items(links, span = { GridItemSpan(maxLineSpan) }) { t -> LinkRow(t, counts[t.id].orEmpty()) { nav.go(PolRoute.Rubric(t.id)) } }
-        full {
-            Text(
-                "Chaque verdict juge l'état des preuves, pas les personnes. Les chiffres provisoires peuvent être révisés.",
-                Modifier.padding(top = 8.dp), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp,
-            )
-        }
+        full { Lead("Chaque verdict juge l'état des preuves, pas les personnes.", "Les chiffres provisoires peuvent être révisés.") }
     }
 }
 

@@ -90,6 +90,7 @@ import app.kairos.mobile.ui.politique.kit.SectionHeader
 import app.kairos.mobile.ui.politique.kit.SourceList
 import app.kairos.mobile.ui.politique.kit.frTypo
 import app.kairos.mobile.ui.politique.model.PolData
+import app.kairos.mobile.ui.politique.model.alphabetical
 import app.kairos.mobile.ui.politique.model.SourceRef
 import app.kairos.mobile.ui.politique.model.sourcesOf
 import app.kairos.mobile.ui.politique.plural
@@ -186,17 +187,14 @@ fun VillesScreen(data: PolData, nav: PolNavigator) {
     val model by produceState<VillesModel?>(null, data) { value = withContext(Dispatchers.Default) { villesModel(data) } }
     val facts = remember(data) { cityFactsOf(data) }
     val sections = remember(data) { factSections(data) }
-    val muni = remember(data) { muniOf(data) }
+    val muni = remember(data) { muniOf(data).alphabetical { it.t } }
     // Région zoomée : gardée ici, hors des éléments de la liste, pour que le retour revienne à la vue France même carte hors écran.
     var qui by rememberSaveable { mutableStateOf("") }
     var reg by rememberSaveable { mutableStateOf<String?>(null) }
     BackHandler(enabled = reg != null) { reg = null }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = ScreenPad) {
         part {
-            Text(
-                frTypo("Un indice imparfait (un maire ne gère ni l'armée ni la protection sociale) mais concret. Faits vérifiables séparés des avis."),
-                Modifier.padding(top = 6.dp), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 15.sp, lineHeight = 21.sp,
-            )
+            Lead("Un indice imparfait, mais concret.", "Un maire ne gère ni l'armée ni la protection sociale. Faits vérifiables séparés des avis.")
         }
         part {
             Section("Municipales", "La carte des villes suivies", "Filtrez par parti, touchez une région pour zoomer, puis une ville pour sa fiche. La couleur dit le parti, le repère dit le résultat ; un nombre regroupe les villes trop proches.") {
@@ -295,7 +293,7 @@ private fun VillesMap(
     val shown = remember(m, qui) { m.communes.filter { qui.isEmpty() || it.qui == qui } }
     val options = remember(m) {
         listOf(PillOption("", "Tous les partis", m.communes.size)) +
-            m.communes.groupingBy { it.qui }.eachCount().toList().sortedByDescending { it.second }
+            m.communes.groupingBy { it.qui }.eachCount().toList().alphabetical { quiLabel(data, it.first) }
                 .map { (q, n) -> PillOption(q, quiLabel(data, q), n, data.quiColor(q)) }
     }
     val openCity = { name: String -> nav.sheet(PolSheetState.City(name)) }

@@ -34,9 +34,10 @@ class TileVizTest {
         val v = tileViz(data, "budgets")!!
         val dots = v.marks.filter { it.shape == MarkShape.Dot }
         assertEquals("programmes hors référence", 2, dots.size)
-        assertEquals("#2255AA", dots[0].hex)
-        assertEquals(Ink.Identity, dots[0].ink)
-        assertTrue("dette plus faible plus à gauche", dots[0].x < dots[1].x)
+        // Programmes par ordre alphabétique : on retrouve chacun par sa couleur.
+        val a = dots.single { it.hex == "#2255AA" }
+        assertEquals(Ink.Identity, a.ink)
+        assertTrue("dette plus faible plus à gauche", a.x < dots.single { it !== a }.x)
         val ref = v.marks.single { it.shape == MarkShape.Dash }
         assertEquals(6f + 20f / 40f * (v.w - 12f), ref.x, eps)
     }

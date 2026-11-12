@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -27,7 +28,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Button
@@ -70,6 +70,8 @@ import app.kairos.mobile.ui.politique.kit.EmptyState
 import app.kairos.mobile.ui.politique.kit.LocalPolBottom
 import app.kairos.mobile.ui.politique.kit.IdentityChip
 import app.kairos.mobile.ui.politique.kit.Kicker
+import app.kairos.mobile.ui.politique.kit.TitleInfo
+import app.kairos.mobile.ui.politique.kit.FullscreenButton
 import app.kairos.mobile.ui.politique.kit.PolColors
 import app.kairos.mobile.ui.politique.kit.SourceList
 import app.kairos.mobile.ui.politique.kit.VerdictChip
@@ -122,8 +124,12 @@ private fun QuizStart(claims: List<Claim>, camps: List<String>, onPlay: (String)
     LazyColumn(Modifier.fillMaxSize(), contentPadding = Pad, verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
             Column {
-                Text("Devinez le verdict des données", Modifier.semantics { heading() }, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                Text("Des phrases entendues à table, de tous bords. Pour chacune, devinez ce que disent les données publiques, puis découvrez les faits et la source.", Modifier.padding(top = 6.dp), color = scheme.onSurfaceVariant)
+                TitleInfo(
+                    "Devinez le verdict des données",
+                    "Des phrases entendues à table, de tous bords. Pour chacune, devinez ce que disent les données publiques, puis découvrez les faits et la source. " +
+                        "Vrai mais… : la phrase est exacte, mais elle trompe (chiffre sorti de son contexte, comparaison bancale). « Fragile » et « Faux » se jouent tous deux à gauche. " +
+                        "Le score compte vos bonnes réponses, jamais celles d'un camp. Chaque paquet alterne les camps.",
+                )
             }
         }
         item {
@@ -137,13 +143,7 @@ private fun QuizStart(claims: List<Claim>, camps: List<String>, onPlay: (String)
                 }
             }
         }
-        item {
-            Text(
-                "Vrai mais… : la phrase est exacte, mais elle trompe (chiffre sorti de son contexte, comparaison bancale). « Fragile » et « Faux » se jouent tous deux à gauche." +
-                    if (out > 0) " ${frCount(out, "phrase non documentée est", "phrases non documentées sont")} hors jeu : aucun verdict à deviner." else "",
-                fontSize = 13.sp, color = scheme.onSurfaceVariant,
-            )
-        }
+        if (out > 0) item { Text("${frCount(out, "phrase non documentée", "phrases non documentées")} hors jeu.", fontSize = 13.sp, color = scheme.onSurfaceVariant) }
         if (themes.isEmpty()) {
             item { EmptyState("Aucune phrase jouable", "Il faut des phrases vérifiées avec un verdict pour jouer. Elles apparaîtront ici dès leur publication.") }
             return@LazyColumn
@@ -162,7 +162,6 @@ private fun QuizStart(claims: List<Claim>, camps: List<String>, onPlay: (String)
                 }
             }
         }
-        item { Text("Le score compte vos bonnes réponses, jamais celles d'un camp. Chaque paquet alterne les camps.", Modifier.padding(top = 6.dp), fontSize = 12.5.sp, color = scheme.onSurfaceVariant) }
     }
 }
 
@@ -350,6 +349,8 @@ private fun QuizBack(data: PolData, nav: PolNavigator, claim: Claim, guess: Gues
             Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                 VerdictMeter(claim.v)
                 VerdictChip(claim.v, large = true)
+                Spacer(Modifier.weight(1f))
+                FullscreenButton({ nav.table(listOf(claimTableCard(claim)), 0) })
             }
             Text(
                 fb.text, Modifier.padding(top = 8.dp).semantics { liveRegion = LiveRegionMode.Polite }, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
@@ -359,7 +360,6 @@ private fun QuizBack(data: PolData, nav: PolNavigator, claim: Claim, guess: Gues
             CacheBox(claim.cache)
             claim.facts.forEach { Text("• ${frTypo(it)}", Modifier.padding(top = 10.dp), fontSize = 14.5.sp, lineHeight = 20.sp) }
             SourceList(sourcesOf(claim.src), data, { nav.sheet(PolSheetState.Evaluator(it)) })
-            FilledTonalButton({ nav.table(listOf(claimTableCard(claim)), 0) }, Modifier.padding(top = 14.dp).heightIn(min = 48.dp)) { Text("À table") }
         }
     }
 }
