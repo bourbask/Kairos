@@ -58,6 +58,8 @@ import app.kairos.mobile.ui.politique.kit.SourceList
 import app.kairos.mobile.ui.politique.kit.VerdictChip
 import app.kairos.mobile.ui.politique.kit.frTypo
 import app.kairos.mobile.ui.politique.model.Claim
+import app.kairos.mobile.ui.politique.screens.groupIndex
+import app.kairos.mobile.ui.politique.screens.turnsOf
 import app.kairos.mobile.ui.politique.screens.factKind
 import app.kairos.mobile.ui.politique.screens.AideRow
 import app.kairos.mobile.ui.politique.screens.Affaire
@@ -153,7 +155,7 @@ fun identityLinks(data: PolData, id: String): IdentityLinks {
     fun rows(file: String, path: String) = data.decode(file, path, JsonArray.serializer()).map(::Row)
     val votes = listOf("AN" to "Assemblée nationale", "PE" to "Parlement européen").mapNotNull { (ch, name) ->
         val groups = data.decode<String>("votes", "${ch}_G")
-        val g = groups.indexOfFirst { hit(it) }.takeIf { it >= 0 } ?: return@mapNotNull null
+        val g = groupIndex(data, groups, id).takeIf { it >= 0 } ?: return@mapNotNull null
         Triple(name, groups[g], data.decode<IdVote>("votes", "${ch}_V").mapNotNull { v -> v.c.getOrNull(g)?.let { v to it } })
     }
     val dvOf = if (data.kindOf(id) == IdKind.Personne) data.partyOf(id) else id
@@ -167,7 +169,7 @@ fun identityLinks(data: PolData, id: String): IdentityLinks {
         },
         claims = data.decode<Claim>("affirmations", "CLAIMS").filter { hit(it.camp) },
         coh = data.decode<IdCoh>("votes", "COH").filter { hit(it.camp) },
-        turns = data.decode<IdTurn>("revirements", "RV").filter { r -> if (data.idsIn(r.p).isNotEmpty()) hit(r.p) else hit(r.camp) },
+        turns = turnsOf(data, id),
         cases = affairesOf(data).filter { a -> if (data.idsIn(a.who).isNotEmpty()) hit(a.who) else hit(a.party) },
         money = (financingOf(data) + lobbyOf(data)).filter { hit(it.t) },
         aide = aideOf(data).rows.filter { hit(it.l) },

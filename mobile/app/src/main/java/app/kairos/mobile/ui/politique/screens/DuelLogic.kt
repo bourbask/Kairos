@@ -45,12 +45,29 @@ private fun PolData.rowsOf(c: Comparaison): List<JsonObject> = decode(c.rubrique
 private fun PolData.rowOf(rows: List<JsonObject>, key: String, id: String): JsonObject? =
     rows.filter { !it.isRef() && id in idsIn(it.str(key)) }.own(this, id) { it.str(key).orEmpty() }
 
-private fun PolData.aideRow(id: String) = aideOf(this).rows.filter { id in idsIn(it.l) }.own(this, id) { it.l }
-private fun PolData.partiRow(id: String) = partisOf(this).filter { id in idsIn(it.parti) }.own(this, id) { it.parti }
+/** Ligne propre à un parti : celle à son nom ; sinon la seule qui le cite, marquée [bloc] ; plusieurs sans nom : aucune. */
+private class Own<T>(val row: T, val bloc: Boolean)
+
+private fun <T> PolData.ownRow(rows: List<T>, id: String, label: (T) -> String): Own<T>? {
+    val mine = rows.filter { id in idsIn(label(it)) }
+    val x = byId(id) ?: return null
+    mine.firstOrNull { label(it) == x.parti || label(it) == x.nom }?.let { return Own(it, false) }
+    return mine.singleOrNull()?.let { Own(it, true) }
+}
+
+private fun PolData.aideRow(id: String) = ownRow(aideOf(this).rows, id) { it.l }
+private fun PolData.partiRow(id: String) = ownRow(partisOf(this), id) { it.parti }
+
+/** Note « montant du bloc » pour chaque côté dont la ligne est celle d'un bloc commun. */
+private fun PolData.blocNote(a: String, ra: Own<*>?, b: String, rb: Own<*>?, label: (Any?) -> String): String =
+    listOf(a to ra, b to rb).filter { it.second?.bloc == true }
+        .joinToString(" ") { (id, o) -> "${duelName(this, id)} : montant du bloc « ${shortLabel(label(o!!.row))} »." }
 
 /** Groupe de [id] dans une chambre (`AN`, `PE`) : index et nom ; aucun : null. */
-private fun PolData.groupOf(ch: String, id: String): Pair<Int, String>? =
-    decode<String>("votes", "${ch}_G").withIndex().firstOrNull { id in idsIn(it.value) }?.let { it.index to it.value }
+private fun PolData.groupOf(ch: String, id: String): Pair<Int, String>? {
+    val groups = decode<String>("votes", "${ch}_G")
+    return groupIndex(this, groups, id).takeIf { it >= 0 }?.let { it to groups[it] }
+}
 
 /**
  * Famille de duel : une personne qui a au moins une ligne d'indicateurs comparables, un parti qui a une aide,
@@ -200,6 +217,10 @@ fun pickToggle(sel: List<String>, id: String): List<String> = when {
     else -> listOf(sel[0], id)
 }
 
+/** Légendes de couverture du bandeau ; sans round, aucune (jamais « 0/0 »). */
+fun coverageCaption(rounds: List<DuelRound>): Pair<String, String>? =
+    if (rounds.isEmpty()) null else coverage(rounds).let { (a, b) -> "Données $a/${rounds.size}" to "Données $b/${rounds.size}" }
+
 /** Rounds dont chaque côté a des données. */
 fun coverage(rounds: List<DuelRound>): Pair<Int, Int> = rounds.count { it.avail.first } to rounds.count { it.avail.second }
 
@@ -212,11 +233,11 @@ private val IND_HELP = mapOf(
 
 /** Valeur dans son unité : pourcentage, montant signé, ou nombre suivi de l'unité. */
 fun fmtUnit(v: Double, unit: String): String = when {
-    "%" in unit -> fmt(v, 1) + " %"
-    "Md€" in unit -> signed(v, 1) + " Md€"
-    "€" in unit -> signed(v) + " €"
-    else -> (fmt(v, 1) + " " + unit).trim()
-}
+    "%" in unit -> fmt(v, 1)
+    "Md€" in unit -> signed(v, 1)
+    "€" in unit -> signed(v)
+    else -> fmt(v, 1)
+} + if (unit.isBlank()) "" else " " + unit.trim()
 
 private fun PolData.indicatorRounds(a: String, b: String): List<BarRound> {
     val seen = mutableSetOf<String>()
@@ -253,8 +274,6 @@ private fun PolData.votesRound(ch: String, a: String, b: String, viaParty: Boole
     return VotesRound(ch, ga?.second, gb?.second, viaParty, lines)
 }
 
-private fun PolData.turnsOf(id: String): List<IdTurn> =
-    decode<IdTurn>("revirements", "RV").filter { r -> if (idsIn(r.p).isNotEmpty()) id in idsIn(r.p) else id in idsIn(r.camp) }
 
 /** Rounds d'un duel prêt ([duelReady]) ; sinon aucun. */
 fun duelRounds(data: PolData, a: String, b: String): List<DuelRound> {
@@ -275,20 +294,23 @@ fun duelRounds(data: PolData, a: String, b: String): List<DuelRound> {
         val aide = aideOf(data).rows
         if (aide.isNotEmpty()) {
             val (ra, rb) = data.aideRow(a) to data.aideRow(b)
+            val note = data.blocNote(a, ra, b, rb) { (it as AideRow).l }
             out += BarRound(
-                "Aide publique", "Versée par l'État, calculée sur les voix aux dernières législatives et le nombre de parlementaires.",
-                ra?.v, rb?.v, aide.filter { it !== ra && it !== rb }.mapNotNull { it.v }, 0.0, ::moneyLabel, rubric = "argent",
+                "Aide publique", "Versée par l'État, calculée sur les voix aux dernières législatives et le nombre de parlementaires. $note".trim(),
+                ra?.row?.v, rb?.row?.v, aide.filter { it !== ra?.row && it !== rb?.row }.mapNotNull { it.v }, 0.0, ::moneyLabel, rubric = "argent",
             )
         }
         val partis = partisOf(data)
         if (partis.isNotEmpty()) {
-            val (ra, rb) = data.partiRow(a) to data.partiRow(b)
+            val (oa, ob) = data.partiRow(a) to data.partiRow(b)
+            val (ra, rb) = oa?.row to ob?.row
+            val note = data.blocNote(a, oa, b, ob) { (it as PartiComptes).parti }
             listOf<Triple<String, String, (PartiComptes) -> Double?>>(
                 Triple("Dons et cotisations", "Ce que le parti tire de ses adhérents et donateurs.") { it.dons },
                 Triple("Dette du parti", "Ce que le parti doit.") { it.dette },
                 Triple("Situation nette", "Patrimoine moins dettes. Un patrimoine immobilier ancien la gonfle.") { it.net },
             ).forEach { (t, h, f) ->
-                out += BarRound(t, h, ra?.let(f), rb?.let(f), partis.filter { it !== ra && it !== rb }.mapNotNull(f), 0.0,
+                out += BarRound(t, "$h $note".trim(), ra?.let(f), rb?.let(f), partis.filter { it !== ra && it !== rb }.mapNotNull(f), 0.0,
                     if (t == "Situation nette") ::netLabel else ::moneyLabel, rubric = "argent")
             }
         }
@@ -298,7 +320,7 @@ fun duelRounds(data: PolData, a: String, b: String): List<DuelRound> {
     val pB = if (person) data.partyOf(b) else b
     val dA = dvFor(data, pA); val dB = dvFor(data, pB)
     if (dA.isNotEmpty() || dB.isNotEmpty()) out += DvRound(pA, pB, dA, dB, person)
-    val tA = data.turnsOf(a); val tB = data.turnsOf(b)
+    val tA = turnsOf(data, a); val tB = turnsOf(data, b)
     if (tA.isNotEmpty() || tB.isNotEmpty()) out += TurnRound(tA, tB)
     return out
 }

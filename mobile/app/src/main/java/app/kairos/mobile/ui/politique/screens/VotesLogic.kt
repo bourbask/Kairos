@@ -72,7 +72,14 @@ fun positionOf(data: PolData, s: Scrutin, qui: String) = positionOf(s, qui) { da
 fun voteCounts(rows: List<VoteRow>, g: Int): List<Pair<String, Int>> =
     VOTE_WORDS.keys.map { k -> k to rows.count { it.c.getOrNull(g)?.getOrNull(0) == k } }.filter { it.second > 0 }
 
+/** Index du groupe que désigne un alias de [id] ; aucun : -1. */
+fun groupIndex(data: PolData, groups: List<String>, id: String): Int = groups.indexOfFirst { id in data.idsIn(it) }
+
 // ---------- Revirements ----------
+
+/** Positions suivies d'une identité : par personne citée, sinon par camp. */
+fun turnsOf(data: PolData, id: String): List<IdTurn> =
+    data.decode<IdTurn>("revirements", "RV").filter { r -> id in data.idsIn(r.p.takeIf { data.idsIn(it).isNotEmpty() } ?: r.camp) }
 
 val TURN_KINDS = listOf("R" to "Revirement", "I" to "Inflexion", "C" to "Constance")
 

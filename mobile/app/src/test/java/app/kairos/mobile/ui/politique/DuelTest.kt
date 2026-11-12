@@ -143,4 +143,42 @@ class DuelTest {
         assertEquals(listOf("a", "c"), pickToggle(listOf("a", "b"), "c"))
         assertEquals(listOf("b"), pickToggle(listOf("a", "b"), "a"))
     }
+
+    @Test fun coverage_hidden_without_rounds() {
+        assertNull(coverageCaption(emptyList()))
+        val r = duelRounds(full, "p1", "p2")
+        val (ca, cb) = coverage(r)
+        assertEquals("Données $ca/${r.size}" to "Données $cb/${r.size}", coverageCaption(r))
+    }
+
+    @Test fun units_kept_whole() {
+        assertEquals("+200 €/an", fmtUnit(200.0, "€/an"))
+        assertEquals("110,0 % du PIB", fmtUnit(110.0, "% du PIB"))
+        assertEquals("−1,5 Md€/an", fmtUnit(-1.5, "Md€/an"))
+        assertEquals("3,0 sièges", fmtUnit(3.0, "sièges"))
+        assertEquals("3,0", fmtUnit(3.0, ""))
+    }
+
+    @Test fun shared_block_is_said_and_never_guessed() {
+        val blocIds = """[
+          {"id":"b","nom":"Parti Bleu","parti":"Bleu","type":"parti","alias":["Bleu","Groupe Bleu","Bleu et Vert (alliance)"]},
+          {"id":"v","nom":"Parti Vert","parti":"Vert","type":"parti","alias":["Vert","Groupe Vert","Bleu et Vert (alliance)"]}
+        ]"""
+        val d = data(
+            "identites" to blocIds,
+            "argent" to """{"AIDE":{"rows":[{"l":"Bleu et Vert (alliance)","v":9},{"l":"Rouge","v":1}]},"PARTIS":[["Groupe Bleu",1,2,3],["Bleu",4,5,6],["Vert",7,8,9],["Groupe Vert",1,1,1]]}""",
+        )
+        val r = duelRounds(d, "b", "v").filterIsInstance<BarRound>()
+        // Une seule ligne, au nom d'un bloc : le montant est celui du bloc, et c'est dit.
+        val aide = r[0]
+        assertEquals(9.0, aide.a!!, 0.0); assertEquals(9.0, aide.b!!, 0.0)
+        assertTrue(aide.help, "montant du bloc « Bleu et Vert »" in aide.help)
+        // Plusieurs lignes : celle qui porte le nom du parti.
+        assertEquals(4.0, r[1].a!!, 0.0); assertEquals(7.0, r[1].b!!, 0.0)
+        assertFalse(r[1].help.contains("bloc"))
+        // Plusieurs lignes, aucune au nom du parti : valeur absente, jamais la première.
+        val ambIds = """[{"id":"b","nom":"Parti Bleu","parti":"Bleu","type":"parti","alias":["Groupe Bleu","Bleu alliance"]},{"id":"v","nom":"Parti Vert","parti":"Vert","type":"parti","alias":["Groupe Vert"]}]"""
+        val amb = data("identites" to ambIds, "argent" to """{"PARTIS":[["Groupe Bleu",1,2,3],["Bleu alliance",4,5,6]]}""", "votes" to """{"AN_G":["Groupe Vert","Groupe Bleu"]}""")
+        assertNull(duelRounds(amb, "b", "v").filterIsInstance<BarRound>()[0].a)
+    }
 }

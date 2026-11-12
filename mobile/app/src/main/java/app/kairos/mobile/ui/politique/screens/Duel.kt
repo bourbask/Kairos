@@ -289,6 +289,7 @@ private fun Hud(data: PolData, s: Sides, r: List<DuelRound>, still: Boolean) {
             Text("VS", Modifier.padding(horizontal = 8.dp).clearAndSetSemantics { }, color = Attn, fontWeight = FontWeight.ExtraBold, fontStyle = FontStyle.Italic, fontSize = 28.sp)
             Fighter(data, s.b, s.nameB, s.colorB, mirrored = true, Modifier.weight(1f))
         }
+        val caption = coverageCaption(r) ?: return@Column
         var go by remember { mutableStateOf(still) }
         LaunchedEffect(Unit) { if (!still) { delay(500); go = true } }
         val pa by animateFloatAsState(if (go) ca.toFloat() / n else 0f, tween(if (still) 0 else 700, easing = Ease), label = "couverture A")
@@ -298,8 +299,8 @@ private fun Hud(data: PolData, s: Sides, r: List<DuelRound>, still: Boolean) {
             CovBar(pb, s.colorB, fromEnd = true, Modifier.weight(1f))
         }
         Row(Modifier.fillMaxWidth().padding(top = 5.dp).clearAndSetSemantics { }) {
-            Text("DONNÉES $ca/${r.size}", Modifier.weight(1f), color = HudInk.copy(alpha = 0.7f), fontFamily = Mono, fontWeight = FontWeight.SemiBold, fontSize = 10.5.sp, letterSpacing = 0.06.em)
-            Text("DONNÉES $cb/${r.size}", color = HudInk.copy(alpha = 0.7f), fontFamily = Mono, fontWeight = FontWeight.SemiBold, fontSize = 10.5.sp, letterSpacing = 0.06.em)
+            Text(caption.first.uppercase(), Modifier.weight(1f), color = HudInk.copy(alpha = 0.7f), fontFamily = Mono, fontWeight = FontWeight.SemiBold, fontSize = 10.5.sp, letterSpacing = 0.06.em)
+            Text(caption.second.uppercase(), color = HudInk.copy(alpha = 0.7f), fontFamily = Mono, fontWeight = FontWeight.SemiBold, fontSize = 10.5.sp, letterSpacing = 0.06.em)
         }
     }
 }
@@ -552,14 +553,15 @@ private fun DvBody(data: PolData, nav: PolNavigator, s: Sides, r: DvRound) {
 private fun TurnBody(s: Sides, r: TurnRound) {
     HitRow(s) { i ->
         val l = if (i == 0) r.a else r.b
+        if (l.isEmpty()) { Na("Aucune position suivie."); return@HitRow }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             TURN_KINDS.forEach { (k, label) ->
+                val n = l.count { it.k == k }
                 val (fg, bg) = turnColors(k)
-                Chip("${l.count { it.k == k }} ${label.lowercase()}", fg, bg)
+                if (n > 0) Chip("$n ${label.lowercase()}${if (n > 1) "s" else ""}", fg, bg)
             }
         }
-        if (l.isEmpty()) Box(Modifier.padding(top = 6.dp)) { Na("Aucune position suivie.") }
-        else Text(l.joinToString(" · ") { it.s }, Modifier.padding(top = 6.dp), fontSize = 13.sp)
+        Text(l.joinToString(" · ") { it.s }, Modifier.padding(top = 6.dp), fontSize = 13.sp)
     }
 }
 
