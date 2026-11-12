@@ -218,15 +218,16 @@ services:
     image: kairos:local
     restart: unless-stopped
     user: "1001:1001"
-    mem_limit: 32m
+    mem_limit: 64m
     pids_limit: 32
     read_only: true
     entrypoint: ["/app/kairos-politique"]
     environment:
       POLITIQUE_BIND: 0.0.0.0:8103
       POLITIQUE_DONNEES: /app/politique
-    env_file:   # POLITIQUE_TOKEN (obligatoire)
-      - path: kairos.env
+    # Fichier dédié : ce module ne reçoit aucun autre secret de Kairos.
+    env_file:   # POLITIQUE_TOKEN (obligatoire) — cf. politique.env.example
+      - path: politique.env
         required: false
     volumes:
       # Dossier des fichiers JSON sur l'hôte (POLITIQUE_DONNEES_HOTE, dans .env) ; jamais créé à vide.

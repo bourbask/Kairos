@@ -19,7 +19,7 @@
 - Résultats bornés (64 000 caractères par réponse), erreurs claires en français, aucun contenu dans les journaux.
 - Conteneur : lecture seule, `cap_drop: ALL`, `no-new-privileges`, `mem_limit` et `pids_limit`, réseau interne seulement, dossier de données en lecture seule.
 - `git commit --no-gpg-sign`, messages conventionnels en français, sans attribution ; commentaires d'intention en français.
-- Vérification : `cargo test --workspace` ; `mobile/` : `./gradlew --no-daemon testDebugUnitTest assembleDebug` (JAVA_HOME `~/.local/jdk/jdk-21.0.13+9`).
+- Vérification : `cargo test --workspace` ; `mobile/` : `./gradlew --no-daemon testDebugUnitTest assembleDebug` (JDK 21).
 
 ## Review Focus
 
