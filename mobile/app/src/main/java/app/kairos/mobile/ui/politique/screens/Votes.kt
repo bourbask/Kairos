@@ -53,6 +53,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.kairos.mobile.ui.politique.IdentityBadge
@@ -93,7 +94,7 @@ internal fun Chip(text: String, fg: Color, bg: Color, dashed: Boolean = false, m
     val line = MaterialTheme.colorScheme.outline
     Text(
         text.uppercase(), modifier.clip(CircleShape).background(bg).let { if (dashed) it.border(1.dp, line, CircleShape) else it }.padding(horizontal = 9.dp, vertical = 5.dp),
-        color = fg, fontFamily = Mono, fontWeight = FontWeight.SemiBold, fontSize = 11.sp, letterSpacing = 0.5.sp, maxLines = 1,
+        color = fg, fontFamily = Mono, fontWeight = FontWeight.SemiBold, fontSize = 11.sp, letterSpacing = 0.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
     )
 }
 
@@ -154,7 +155,7 @@ private fun VoteCell(data: PolData, group: String, code: String, detail: String,
         Column(Modifier.padding(horizontal = 8.dp, vertical = 7.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(group, color = fg, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
             Text(word, color = fg, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-            if (detail.isNotBlank()) Text(detail, color = fg, fontSize = 11.sp, lineHeight = 14.sp, maxLines = 2)
+            if (detail.isNotBlank()) Text(detail, color = fg, fontSize = 11.sp, lineHeight = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
     }
 }

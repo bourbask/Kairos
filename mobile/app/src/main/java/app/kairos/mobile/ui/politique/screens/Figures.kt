@@ -43,6 +43,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -467,8 +468,8 @@ private fun MeasureCard(data: PolData, m: Measure, nav: PolNavigator, onTable: (
     val accent = data.identityColorOf(m.who) ?: scheme.primary
     val pill = m.hh?.let { if (it >= 0) pc.low else pc.high } ?: scheme.onSurfaceVariant
     Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), color = scheme.surface, tonalElevation = 1.dp, border = BorderStroke(1.dp, scheme.outlineVariant)) {
-        Row(Modifier.height(IntrinsicSize.Min)) {
-            Box(Modifier.width(5.dp).fillMaxHeight().background(accent))
+        // Liseré dessiné, pas mesuré : une hauteur intrinsèque sous-estimée rognait le bas de la carte.
+        Column(Modifier.drawBehind { drawRect(accent, size = Size(5.dp.toPx(), size.height)) }.padding(start = 5.dp)) {
             Column(Modifier.padding(14.dp)) {
                 Column(Modifier.fillMaxWidth().opensBalanceOf(m.lecture, "${nameOf(m.who)} : mesures de pouvoir d'achat", m.who, nav)) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {

@@ -209,6 +209,24 @@ class TurnRound(val a: List<Turn>, val b: List<Turn>) : DuelRound {
     override val rubric = "revirements"
 }
 
+/** Mise en page des côtés d'un round : deux colonnes, ou onglets glissables un côté à la fois. */
+enum class RoundLayout { SideBySide, Switcher }
+
+/** Au-delà, le texte d'un côté ne tient plus dans une demi-largeur de téléphone. */
+const val LONG_SIDE = 120
+
+/** Rédigé : balance, bilan, chiffrage ; liste : dit / voté et revirements selon la longueur de leurs textes. */
+fun layoutFor(round: DuelRound): RoundLayout {
+    val long = when (round) {
+        is BarRound -> round.sacrifice != null
+        is BilanRound, is GapRound -> true
+        is VotesRound -> false
+        is DvRound -> listOf(round.a, round.b).any { side -> side.filter { it.verdict.v == "ecart" }.sumOf { it.scrutin.titre.length } > LONG_SIDE }
+        is TurnRound -> listOf(round.a, round.b).any { side -> side.sumOf { it.s.length + 3 } > LONG_SIDE }
+    }
+    return if (long) RoundLayout.Switcher else RoundLayout.SideBySide
+}
+
 /** Choix : retouché, un adversaire sort (le second devient premier) ; au-delà de deux, le second est remplacé. */
 fun pickToggle(sel: List<String>, id: String): List<String> = when {
     id in sel -> sel - id

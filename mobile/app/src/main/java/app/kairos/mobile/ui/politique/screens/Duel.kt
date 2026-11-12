@@ -25,18 +25,24 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.PrimaryTabRow
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRowDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -46,6 +52,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -74,6 +81,7 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
@@ -100,6 +108,7 @@ import app.kairos.mobile.ui.politique.rubricTitle
 import app.kairos.mobile.ui.theme.mix
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 private val Mono = FontFamily.Monospace
@@ -243,6 +252,7 @@ private fun Loading(label: String) {
 
 /** Les deux côtés d'un duel : nom court, couleur, hachures du second si les couleurs se confondent. */
 private class Sides(val a: String, val b: String, val nameA: String, val nameB: String, val colorA: Color, val colorB: Color, val hatch: Boolean) {
+    fun id(i: Int) = if (i == 0) a else b
     fun name(i: Int) = if (i == 0) nameA else nameB
     fun color(i: Int) = if (i == 0) colorA else colorB
     fun hatched(i: Int) = i == 1 && hatch
@@ -387,11 +397,11 @@ private fun RoundCard(data: PolData, nav: PolNavigator, s: Sides, i: Int, round:
             if (round.help.isNotBlank()) Text(frTypo(round.help), Modifier.padding(top = 3.dp), fontSize = 12.5.sp, lineHeight = 17.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             when (round) {
                 is BarRound -> BarBody(data, nav, s, round, still)
-                is BilanRound -> BilanBody(s, round)
+                is BilanRound -> BilanBody(data, s, round)
                 is GapRound -> GapBody(data, nav, s, round)
                 is VotesRound -> VotesBody(s, round)
                 is DvRound -> DvBody(data, nav, s, round)
-                is TurnRound -> TurnBody(s, round)
+                is TurnRound -> TurnBody(data, s, round)
             }
             round.rubric?.let { id ->
                 TextButton({ nav.go(PolRoute.Rubric(id)) }, Modifier.padding(top = 4.dp)) { Text("Rubrique ${rubricTitle(id)} ›") }
@@ -444,7 +454,7 @@ private fun BarBody(data: PolData, nav: PolNavigator, s: Sides, r: BarRound, sti
     SourceList(r.sources, data, { nav.sheet(PolSheetState.Evaluator(it)) })
     r.sacrifice?.let { sac ->
         BalanceHeader("Ce que chaque programme sacrifie", modifier = Modifier.padding(top = 8.dp))
-        HitRow(s) { i ->
+        Sided(data, s, layoutFor(r)) { i ->
             val (lec, who) = if (i == 0) sac.a to sac.whoA else sac.b to sac.whoB
             if (lec != null) Bal(nav, lec, who ?: s.name(i), who) else Na("Balance non documentée.")
         }
@@ -458,28 +468,74 @@ private fun Bal(nav: PolNavigator, lecture: Lecture, title: String, who: String?
 @Composable
 private fun Na(text: String) = Text(text, fontSize = 13.sp, fontStyle = FontStyle.Italic, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
-/** Deux cases côte à côte, teintées à l'identité de chaque côté. */
+/** Côtés d'un round selon [layout] : deux cases côte à côte, ou onglets glissables. */
+@Composable
+private fun Sided(data: PolData, s: Sides, layout: RoundLayout, content: @Composable (Int) -> Unit) =
+    if (layout == RoundLayout.Switcher) SideSwitcher(data, s, content) else HitRow(s, content = content)
+
+/** Case teintée à l'identité d'un côté, liseré à gauche. */
+@Composable
+private fun SideCell(color: Color, modifier: Modifier, content: @Composable () -> Unit) {
+    Column(
+        modifier.clip(RoundedCornerShape(12.dp)).background(mix(MaterialTheme.colorScheme.surfaceVariant, color, 0.12f))
+            .drawBehind { drawRect(color, size = Size(4.dp.toPx(), size.height)) }
+            .padding(start = 12.dp, end = 10.dp, top = 10.dp, bottom = 10.dp),
+    ) { content() }
+}
+
+/**
+ * Deux cases côte à côte, de même hauteur. Le contenu doit se mesurer juste en intrinsèque :
+ * textes et colonnes, pas de bouton (une `Row` y compte une seule ligne et rognerait la case).
+ */
 @Composable
 private fun HitRow(s: Sides, modifier: Modifier = Modifier, content: @Composable (Int) -> Unit) {
-    val scheme = MaterialTheme.colorScheme
     Row(modifier.fillMaxWidth().padding(top = 8.dp).height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        (0..1).forEach { i ->
-            val c = s.color(i)
-            Column(
-                Modifier.weight(1f).fillMaxHeight().clip(RoundedCornerShape(12.dp)).background(mix(scheme.surfaceVariant, c, 0.12f))
-                    .drawBehind { drawRect(c, size = Size(4.dp.toPx(), size.height)) }
-                    .padding(start = 12.dp, end = 10.dp, top = 10.dp, bottom = 10.dp),
-            ) { content(i) }
+        (0..1).forEach { i -> SideCell(s.color(i), Modifier.weight(1f).fillMaxHeight()) { content(i) } }
+    }
+}
+
+/**
+ * Un côté à la fois, pour le texte long : onglets aux couleurs des adversaires, contenu glissable.
+ * L'onglet de l'autre côté et le bord de sa case, visible à droite, disent qu'il y a une suite.
+ */
+@Composable
+private fun SideSwitcher(data: PolData, s: Sides, content: @Composable (Int) -> Unit) {
+    val pager = rememberPagerState { 2 }
+    val scope = rememberCoroutineScope()
+    val still = reducedMotion()
+    val cur = pager.currentPage
+    Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+        PrimaryTabRow(
+            selectedTabIndex = cur, containerColor = Color.Transparent,
+            indicator = { TabRowDefaults.PrimaryIndicator(Modifier.tabIndicatorOffset(cur, matchContentSize = true), width = Dp.Unspecified, color = s.color(cur)) },
+        ) {
+            (0..1).forEach { i ->
+                Tab(
+                    selected = cur == i,
+                    onClick = { scope.launch { if (still) pager.scrollToPage(i) else pager.animateScrollToPage(i) } },
+                    modifier = Modifier.semantics { contentDescription = "Côté ${if (i == 0) "A" else "B"} : ${s.name(i)}" },
+                    selectedContentColor = MaterialTheme.colorScheme.onSurface, unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                ) {
+                    Row(Modifier.heightIn(min = 48.dp).padding(horizontal = 6.dp).clearAndSetSemantics { }, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        data.byId(s.id(i))?.let { x -> Box(Modifier.border(2.dp, s.color(i), RoundedCornerShape(8.dp)).padding(2.dp)) { IdentityBadge(x, 24.dp) } }
+                        Text(s.name(i), fontWeight = if (cur == i) FontWeight.Bold else FontWeight.SemiBold, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+            }
+        }
+        // Le pager ne prend que le glissement horizontal : le défilement vertical reste à la liste.
+        HorizontalPager(pager, Modifier.fillMaxWidth().padding(top = 8.dp), contentPadding = PaddingValues(end = 28.dp), pageSpacing = 8.dp, verticalAlignment = Alignment.Top) { i ->
+            SideCell(s.color(i), Modifier.fillMaxWidth()) { content(i) }
         }
     }
 }
 
 @Composable
-private fun BilanBody(s: Sides, r: BilanRound) {
-    r.lines.forEach { l ->
-        Text(frTypo(l.o), Modifier.padding(top = 14.dp), fontWeight = FontWeight.Bold, fontSize = 14.sp)
-        HitRow(s, Modifier.padding(top = 0.dp)) { i ->
+private fun BilanBody(data: PolData, s: Sides, r: BilanRound) {
+    Sided(data, s, layoutFor(r)) { i ->
+        r.lines.forEachIndexed { j, l ->
             val x = if (i == 0) l.a else l.b
+            Text(frTypo(l.o), Modifier.padding(top = if (j > 0) 14.dp else 0.dp, bottom = 5.dp), fontWeight = FontWeight.Bold, fontSize = 14.sp)
             MarkPill(x?.firstOrNull())
             if (x != null) Text(frTypo(x.getOrNull(1).orEmpty()), Modifier.padding(top = 5.dp), fontSize = 13.sp, lineHeight = 18.sp)
             else Box(Modifier.padding(top = 5.dp)) { Na("Aucune position dans une source fiable.") }
@@ -489,7 +545,7 @@ private fun BilanBody(s: Sides, r: BilanRound) {
 
 @Composable
 private fun GapBody(data: PolData, nav: PolNavigator, s: Sides, r: GapRound) {
-    HitRow(s) { i ->
+    Sided(data, s, layoutFor(r)) { i ->
         val gaps = if (i == 0) r.a else r.b
         if (gaps.isEmpty()) Na("Aucun chiffrage extérieur relevé.")
         gaps.forEachIndexed { j, g ->
@@ -530,10 +586,10 @@ private fun VotesBody(s: Sides, r: VotesRound) {
 @Composable
 private fun DvBody(data: PolData, nav: PolNavigator, s: Sides, r: DvRound) {
     val scheme = MaterialTheme.colorScheme
-    HitRow(s) { i ->
+    Sided(data, s, layoutFor(r)) { i ->
         val items = if (i == 0) r.a else r.b
         val party = if (i == 0) r.partyA else r.partyB
-        if (party == null || items.isEmpty()) { Na("Aucun scrutin croisé pour ce parti."); return@HitRow }
+        if (party == null || items.isEmpty()) { Na("Aucun scrutin croisé pour ce parti."); return@Sided }
         Kicker(duelName(data, party))
         val k = dvCount(items)
         val rate = publicRateLabel(k)
@@ -545,17 +601,22 @@ private fun DvBody(data: PolData, nav: PolNavigator, s: Sides, r: DvRound) {
         }
         if (k.sp > 0) Box(Modifier.padding(top = 4.dp)) { Na("${frCount(k.sp, "scrutin", "scrutins")} sans déclaration trouvée, non comptés") }
         items.filter { it.verdict.v == "ecart" }.forEach { d ->
-            TextButton({ nav.sheet(PolSheetState.Scrutin(d.scrutin.id)) }) { Text("Écart : ${d.scrutin.titre}", textAlign = TextAlign.Start, fontSize = 13.sp) }
+            // Pas de TextButton : sa forme en pilule rognait un titre sur plusieurs lignes.
+            Box(
+                Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(role = Role.Button, onClickLabel = "Ouvrir le scrutin") { nav.sheet(PolSheetState.Scrutin(d.scrutin.id)) }
+                    .padding(vertical = 6.dp),
+                contentAlignment = Alignment.CenterStart,
+            ) { Text("Écart : ${frTypo(d.scrutin.titre)}", color = scheme.primary, fontSize = 13.sp, lineHeight = 18.sp, fontWeight = FontWeight.SemiBold) }
         }
     }
 }
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun TurnBody(s: Sides, r: TurnRound) {
-    HitRow(s) { i ->
+private fun TurnBody(data: PolData, s: Sides, r: TurnRound) {
+    Sided(data, s, layoutFor(r)) { i ->
         val l = if (i == 0) r.a else r.b
-        if (l.isEmpty()) { Na("Aucune position suivie."); return@HitRow }
+        if (l.isEmpty()) { Na("Aucune position suivie."); return@Sided }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             TURN_KINDS.forEach { (k, label) ->
                 val n = l.count { it.k == k }

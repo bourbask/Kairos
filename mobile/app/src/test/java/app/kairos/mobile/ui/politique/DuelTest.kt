@@ -216,4 +216,19 @@ class DuelTest {
         assertEquals("libellé propre à b : pas de bloc", 3.0, r.a!!, 0.0)
         assertFalse(r.help, "bloc" in r.help)
     }
+
+    @Test fun balance_round_uses_side_switcher() {
+        fun bar(sac: Sacrifice?) = BarRound("Dette", "", 1.0, 2.0, emptyList(), 0.0, { it.toString() }, sacrifice = sac)
+        assertEquals(RoundLayout.Switcher, layoutFor(bar(Sacrifice(app.kairos.mobile.ui.politique.model.Lecture(), "Alpha", null, null))))
+        assertEquals(RoundLayout.SideBySide, layoutFor(bar(null)))
+        assertEquals(RoundLayout.Switcher, layoutFor(BilanRound(listOf(BilanLine("O", listOf("keep", "Garde"), null)))))
+        assertEquals(RoundLayout.Switcher, layoutFor(GapRound(emptyList(), emptyList())))
+        assertEquals(RoundLayout.SideBySide, layoutFor(VotesRound("AN", "G1", "G2", false, emptyList())))
+        val short = Turn(s = "Retraites")
+        assertEquals(RoundLayout.SideBySide, layoutFor(TurnRound(listOf(short), listOf(short))))
+        assertEquals(RoundLayout.Switcher, layoutFor(TurnRound(List(12) { Turn(s = "Position suivie $it") }, listOf(short))))
+        fun dv(v: String, titre: String) = DvItem(Scrutin(titre = titre), Verdict(v = v))
+        assertEquals(RoundLayout.SideBySide, layoutFor(DvRound("b", "v", listOf(dv("ecart", "Court")), listOf(dv("coherent", "x".repeat(500))), false)))
+        assertEquals(RoundLayout.Switcher, layoutFor(DvRound("b", "v", listOf(dv("ecart", "x".repeat(LONG_SIDE + 1))), emptyList(), false)))
+    }
 }
