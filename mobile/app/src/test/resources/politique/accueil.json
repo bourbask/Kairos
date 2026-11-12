@@ -155,10 +155,28 @@
       "titre": "Budgets"
     },
     {
+      "entrees": 4,
+      "id": "dit-vote",
+      "resume": "Votes croisés avec les déclarations publiques.",
+      "titre": "Dit / voté"
+    },
+    {
       "entrees": 1,
       "id": "divers",
       "resume": "",
       "titre": "divers"
+    },
+    {
+      "entrees": 1,
+      "id": "dossiers",
+      "resume": "Contenus qui circulent, vérifiés affirmation par affirmation.",
+      "titre": "Dossiers"
+    },
+    {
+      "entrees": 3,
+      "id": "evaluateurs",
+      "resume": "Les producteurs des chiffres et leur indépendance.",
+      "titre": "Qui chiffre ?"
     },
     {
       "entrees": 3,

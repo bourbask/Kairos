@@ -1,0 +1,32 @@
+{
+  "contenu": {
+    "projection": {
+      "k": 0.7,
+      "lat0": 46.5,
+      "maxy": 51.0,
+      "minx": -3.5,
+      "s": 99.0
+    },
+    "regions": [
+      {
+        "code": "01",
+        "d": "M10 10L50 10L50 50L10 50Z",
+        "nom": "Région fictive A"
+      },
+      {
+        "code": "02",
+        "d": "M50 50L90 50L90 90L50 90Z",
+        "nom": "Région fictive B"
+      }
+    ],
+    "source": [
+      "Fond de carte fictif",
+      "https://example.org/carte"
+    ],
+    "viewBox": "0 0 100 100"
+  },
+  "id": "carte",
+  "page": 0,
+  "pages": 1,
+  "version": "18fae27693b40000-18f"
+}
