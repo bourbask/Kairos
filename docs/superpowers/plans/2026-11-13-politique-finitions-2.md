@@ -37,3 +37,9 @@
 - [ ] Vérifier dans le module finances et l'API du système de budget (projet séparé, seulement lire son contrat d'API dans le dépôt Kairos : `tentacles/finances/src/api.rs`) qu'un classement vers une catégorie sans enveloppe est accepté ; sinon le dire et s'arrêter là (BLOCKED).
 - [ ] Liste de catégories courantes génériques (logement, énergie, transports, carburant, santé, assurances, abonnements, vêtements, maison, cadeaux, enfants, animaux, voyages, impôts, épargne, divers…) ajoutée aux alternatives de `decisions`, fusionnée sans doublon avec les enveloppes, triée ; surchargeable par configuration ; test.
 - [ ] Commit `feat(finances): catégories courantes proposées au classement`.
+
+### Task 4: Espace de conversation avec Kairos — bulles et texte (point 7)
+Retour de l'utilisateur : dans l'espace de conversation, le texte est beaucoup trop gros, illisible, et les bulles prennent trop de place.
+- [ ] Taille de texte des messages au niveau du corps de texte des autres espaces ; bulles plus compactes (marges, largeur max, espacement entre messages) ; cohérence avec la typographie de l'app ; respect de l'échelle de police système (pas de taille figée qui ignore l'accessibilité).
+- [ ] Captures émulateur avant/après (clair, sombre, police système agrandie 1,3).
+- [ ] Commit `fix(mobile): conversation plus compacte et lisible`.
