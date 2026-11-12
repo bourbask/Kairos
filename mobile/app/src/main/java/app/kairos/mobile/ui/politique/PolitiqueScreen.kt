@@ -36,6 +36,9 @@ import app.kairos.mobile.ui.politique.kit.TableCard
 import app.kairos.mobile.ui.politique.model.PolData
 import app.kairos.mobile.ui.politique.model.PolPage
 import app.kairos.mobile.ui.politique.model.loadPolData
+import app.kairos.mobile.ui.politique.screens.BilanScreen
+import app.kairos.mobile.ui.politique.screens.BudgetsScreen
+import app.kairos.mobile.ui.politique.screens.LivingScreen
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.serialization.json.buildJsonObject
@@ -180,6 +183,9 @@ fun PolitiqueScreen(
 @Composable
 fun RubricHost(id: String, data: PolData, nav: PolNavigator) {
     when (id) {
+        "budgets" -> BudgetsScreen(data, nav)
+        "niveau-de-vie" -> LivingScreen(data, nav)
+        "bilan" -> BilanScreen(data, nav)
         else -> Soon()
     }
 }
