@@ -15,6 +15,7 @@ import java.util.Locale
 /** Probité, argent, médias : tout est facultatif, une donnée absente ou mal typée donne une liste vide. */
 
 const val NO_VALUE = "non trouvé"
+const val FACTS_MISSING = "Faits non précisés dans la source"
 const val PRESUMPTION = "Toute personne est présumée innocente tant qu'elle n'est pas définitivement condamnée."
 
 // ---------- Procédures ----------
@@ -41,13 +42,14 @@ data class Dossier(val t: String = "", val stg: List<String> = emptyList(), val 
 
 data class Affaire(val who: String, val party: String, val faits: String, val stg: String, val etat: String, val date: String, val url: String) {
     val stage: Stage? get() = procedureStage(stg)
+    val factsText: String get() = faits.ifBlank { FACTS_MISSING }
 }
 
 private fun PolData.rows(file: String, path: String): List<Row> = decode(file, path, JsonArray.serializer()).map(::Row)
 
 fun affairesOf(data: PolData): List<Affaire> = data.rows("probite", "AFF")
     .map { Affaire(it.s(0), it.s(1), it.s(2), it.s(3), it.s(4), it.s(5), it.s(6)) }
-    .filter { it.faits.isNotBlank() }
+    .filter { listOf(it.who, it.party, it.faits, it.etat, it.url).any(String::isNotBlank) }
 
 fun lobbyOf(data: PolData): List<Dossier> = data.decode<Dossier>("probite", "LOBBY").filter { it.t.isNotBlank() }
 
@@ -62,7 +64,7 @@ fun initials(name: String): String = name.split(Regex("[\\s-]+")).filter { it.fi
 fun affaireTableCard(a: Affaire): TableCard = TableCard(
     kicker = "Probité · ${a.stage?.label ?: "Procédure"}",
     title = listOf(a.who, a.party).filter { it.isNotBlank() }.joinToString(" · ").ifBlank { "Procédure" },
-    lines = listOf(a.faits, a.etat, PRESUMPTION).filter { it.isNotBlank() },
+    lines = listOf(a.factsText, a.etat, PRESUMPTION).filter { it.isNotBlank() },
 )
 
 fun dossierTableCard(kind: String, d: Dossier): TableCard = TableCard(

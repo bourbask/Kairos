@@ -98,4 +98,17 @@ class ContextTest {
         assertEquals("a", d.uniqueId("Candidat A")); assertNull(d.uniqueId("Nom partagé")); assertNull(d.uniqueId("Inconnu"))
         assertEquals("CA", initials("Candidat Alpha")); assertEquals("", initials("x y"))
     }
+
+    @Test fun affaire_without_facts_is_kept() {
+        val d = data("probite" to """{"AFF":[["Candidat A","Parti Bleu","","enq","Enquête ouverte","",""],["","","","","","",""]]}""")
+        val a = affairesOf(d).single()
+        assertEquals(FACTS_MISSING, a.factsText)
+        assertTrue(FACTS_MISSING in affaireTableCard(a).lines)
+    }
+
+    @Test fun money_label_format() {
+        assertEquals("4,30 M€", moneyLabel(4.3)); assertEquals("0,63 M€", moneyLabel(0.63))
+        assertEquals("14,8 M€", moneyLabel(14.8)); assertEquals("10,0 M€", moneyLabel(10.0))
+        assertEquals("non trouvé", moneyLabel(null))
+    }
 }

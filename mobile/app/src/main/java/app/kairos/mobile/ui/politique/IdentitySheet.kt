@@ -221,7 +221,7 @@ fun identityStats(data: PolData, id: String, l: IdentityLinks = identityLinks(da
         p.hh?.let { out += Stat("Par ménage", signed(it) + " €", "par an, en moyenne") }
     }
     ownAide(l, data, id)?.let { a ->
-        a.v?.let { out += Stat("Aide publique", fmt(it, 2) + " M€", if (a.l == x.parti || a.l == x.nom) "aide annuelle" else "bloc « ${a.l.substringBefore(" (")} »") }
+        a.v?.let { out += Stat("Aide publique", moneyLabel(it), if (a.l == x.parti || a.l == x.nom) "aide annuelle" else "bloc « ${a.l.substringBefore(" (")} »") }
     }
     ownPartis(l, data, id)?.net?.let { out += Stat("Situation nette", signed(it, 1) + " M€", "derniers comptes publiés") }
     if (l.claims.isNotEmpty()) {
@@ -555,7 +555,7 @@ private fun sections(data: PolData, id: String, l: IdentityLinks, nav: PolNaviga
         l.cases.forEach { a ->
             Card {
                 Kicker(listOf(a.who, a.date).filter(String::isNotBlank).joinToString(" · "))
-                Title(a.faits)
+                Title(a.factsText)
                 StageLadder(a.stg)
                 Body(a.etat)
                 a.url.takeIf { it.isNotBlank() }?.let { SourceList(listOf(SourceRef("Source", it)), data, onEv) }
@@ -565,7 +565,7 @@ private fun sections(data: PolData, id: String, l: IdentityLinks, nav: PolNaviga
     val aide = ownAide(l, data, id)
     val part = ownPartis(l, data, id)
     if (aide != null || part != null || l.c22.isNotEmpty() || l.money.isNotEmpty()) out += Section("Argent") {
-        aide?.v?.let { v -> Card { Kicker("Aide publique"); Text(fmt(v, 2) + " M€", fontSize = 22.sp, fontWeight = FontWeight.ExtraBold) } }
+        aide?.v?.let { v -> Card { Kicker("Aide publique"); Text(moneyLabel(v), fontSize = 22.sp, fontWeight = FontWeight.ExtraBold) } }
         part?.let {
             Card {
                 Kicker("Derniers comptes publiés")

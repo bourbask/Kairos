@@ -176,14 +176,14 @@ private fun AffaireCard(data: PolData, a: Affaire, onTable: () -> Unit, nav: Pol
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             val identity = whoId?.let { data.byId(it) }
             if (identity != null) IdentityBadge(identity, 36.dp)
-            else Text(initials(a.who), Modifier.size(36.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant).padding(top = 8.dp), fontWeight = FontWeight.Bold, fontSize = 13.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            else Box(Modifier.size(36.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant).clearAndSetSemantics { }, contentAlignment = Alignment.Center) { Text(initials(a.who), fontWeight = FontWeight.Bold, fontSize = 13.sp) }
             Column(Modifier.weight(1f)) {
                 if (a.who.isNotBlank()) Text(a.who, fontWeight = FontWeight.Bold, fontSize = 15.sp)
                 if (partyId != null) IdentityChip(data, partyId, modifier = Modifier.padding(top = 2.dp)) else if (a.party.isNotBlank()) Muted(a.party)
             }
             TableLink(onTable)
         }
-        Text(frTypo(a.faits), Modifier.padding(top = 12.dp), fontSize = 14.5.sp)
+        Text(frTypo(a.factsText), Modifier.padding(top = 12.dp), fontSize = 14.5.sp)
         if (a.stage != null) {
             StageLadder(a.stg)
             if (a.date.isNotBlank()) Kicker(a.date, Modifier.padding(top = 2.dp))
@@ -211,7 +211,7 @@ fun ArgentScreen(data: PolData, nav: PolNavigator) {
                     aide.rows.forEachIndexed { i, r ->
                         if (i > 0) Divider()
                         val id = data.uniqueId(r.l)
-                        val label = r.v?.let { fmtNum(it, 2) + " M€" } ?: NO_VALUE
+                        val label = moneyLabel(r.v)
                         Column(Modifier.padding(vertical = 6.dp).semantics(mergeDescendants = true) { contentDescription = "${shortLabel(r.l)} : $label" }) {
                             Text(shortLabel(r.l), fontWeight = FontWeight.SemiBold, fontSize = 13.5.sp)
                             Bar(barFraction(r.v, aide.max), identityColor(id?.let { data.byId(it)?.couleur }) ?: MaterialTheme.colorScheme.primary, label)
