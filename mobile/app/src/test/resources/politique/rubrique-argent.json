@@ -1,0 +1,53 @@
+{
+  "contenu": {
+    "AIDE": {
+      "rows": [
+        {
+          "l": "Parti Bleu",
+          "v": 1.5
+        },
+        {
+          "l": "Parti Vert",
+          "v": 0.8
+        }
+      ],
+      "scale": {
+        "dec": 1,
+        "max": 10,
+        "min": 0,
+        "unit": "M€"
+      }
+    },
+    "PARTIS": [
+      [
+        "PB",
+        1.2,
+        0.3,
+        0.1
+      ],
+      [
+        "Parti Vert",
+        0.9,
+        0.2,
+        0.0
+      ]
+    ]
+  },
+  "id": "argent",
+  "presentation": [],
+  "rattachements": {
+    "AIDE.rows": [
+      [
+        "parti-bleu"
+      ],
+      []
+    ],
+    "PARTIS": [
+      [
+        "parti-bleu"
+      ],
+      []
+    ]
+  },
+  "titre": "Argent"
+}

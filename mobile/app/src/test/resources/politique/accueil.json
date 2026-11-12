@@ -1,0 +1,193 @@
+{
+  "identites": [
+    {
+      "avatar": {
+        "images": [
+          [
+            "................",
+            ".....gggggg.....",
+            "....DFFFFFFD....",
+            "...DFFFFFFFFD...",
+            "...DFDFFFFDFD...",
+            "...DFFFFFFFFD...",
+            "...DFFFhhFFFD...",
+            "....DFFFFFFD....",
+            ".....DDDDDD.....",
+            "....DCCCCCCD....",
+            "...DCCCCCCCCD...",
+            "...DCCCAACCCD...",
+            "...DCCCCCCCCD...",
+            "....DDDDDDDD....",
+            "................",
+            "................"
+          ],
+          [
+            "................",
+            ".....bbbyyy.....",
+            "....DFFFFFFD....",
+            "...DFFFFFFFFD...",
+            "...DFFFFFFFFD...",
+            "...DFFFFFFFFD...",
+            "...DFFFhhFFFD...",
+            "....DFFFFFFD....",
+            ".....DDDDDD.....",
+            "....DCCCCCCD....",
+            "...DCCCCCCCCD...",
+            "...DCCCAACCCD...",
+            "...DCCCCCCCCD...",
+            "....DDDDDDDD....",
+            "................",
+            "................"
+          ]
+        ],
+        "ms": 400
+      },
+      "couleur": "#3366cc",
+      "id": "a",
+      "nom": "Candidat A",
+      "parti": "Parti Bleu"
+    },
+    {
+      "couleur": "#33aa55",
+      "id": "b",
+      "nom": "Candidate B",
+      "parti": "Parti Vert"
+    },
+    {
+      "couleur": "#cc3333",
+      "id": "c",
+      "nom": "Candidat C",
+      "parti": "Parti Rouge"
+    },
+    {
+      "couleur": "#3366cc",
+      "id": "parti-bleu",
+      "nom": "Parti Bleu",
+      "parti": "Parti Bleu"
+    }
+  ],
+  "presentations": [
+    {
+      "champs": {
+        "camp": "camp",
+        "faits": "facts",
+        "source": "src",
+        "theme": "theme",
+        "titre": "q",
+        "verdict": "v"
+      },
+      "chemin": "CLAIMS",
+      "rubrique": "affirmations",
+      "vue": "verifications"
+    },
+    {
+      "champs": {
+        "camp": "camp",
+        "source": "src",
+        "theme": "theme",
+        "titre": "q",
+        "verdict": "v"
+      },
+      "chemin": "CLAIMS",
+      "rubrique": "affirmations",
+      "vue": "bulle"
+    },
+    {
+      "champs": {
+        "definition": "d",
+        "exemple": "ex",
+        "question": "ask",
+        "reperer": "spot",
+        "titre": "t"
+      },
+      "chemin": "RHET",
+      "rubrique": "rhetorique",
+      "vue": "rhetorique"
+    },
+    {
+      "champs": {
+        "date": "d",
+        "titre": "t",
+        "vote": "c"
+      },
+      "chemin": "AN_V",
+      "rubrique": "votes",
+      "vue": "votes"
+    },
+    {
+      "champs": {
+        "camp": "who",
+        "dit": "said",
+        "source": "src",
+        "vote": "voted"
+      },
+      "chemin": "DV",
+      "rubrique": "votes",
+      "vue": "votes"
+    },
+    {
+      "champs": {
+        "source": "src",
+        "titre": "who"
+      },
+      "chemin": "PROGRAMS",
+      "rubrique": "budgets",
+      "vue": "generique"
+    }
+  ],
+  "rubriques": [
+    {
+      "entrees": 4,
+      "id": "affirmations",
+      "resume": "Affirmations confrontées aux faits, avec verdict et sources.",
+      "titre": "Déclarations vérifiées"
+    },
+    {
+      "entrees": 4,
+      "id": "argent",
+      "resume": "Financement des partis et de la vie politique.",
+      "titre": "Argent"
+    },
+    {
+      "entrees": 4,
+      "id": "budgets",
+      "resume": "Coût des programmes, chiffres annoncés et évalués.",
+      "titre": "Budgets"
+    },
+    {
+      "entrees": 1,
+      "id": "divers",
+      "resume": "",
+      "titre": "divers"
+    },
+    {
+      "entrees": 3,
+      "id": "niveau-de-vie",
+      "resume": "Effet des mesures proposées sur le revenu des ménages.",
+      "titre": "Niveau de vie"
+    },
+    {
+      "entrees": 1,
+      "id": "rhetorique",
+      "resume": "Procédés rhétoriques : les repérer, les questionner.",
+      "titre": "Rhétorique"
+    },
+    {
+      "entrees": 5,
+      "id": "votes",
+      "resume": "Votes des groupes au Parlement.",
+      "titre": "Votes"
+    }
+  ],
+  "themes": [
+    {
+      "id": "budget",
+      "titre": "Budget des programmes"
+    },
+    {
+      "id": "niveau-de-vie",
+      "titre": "Niveau de vie"
+    }
+  ],
+  "verifie_le": "2026-01-15"
+}

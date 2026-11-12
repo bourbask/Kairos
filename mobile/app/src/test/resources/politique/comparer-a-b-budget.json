@@ -1,0 +1,95 @@
+{
+  "identites": [
+    {
+      "avatar": {
+        "images": [
+          [
+            "................",
+            ".....gggggg.....",
+            "....DFFFFFFD....",
+            "...DFFFFFFFFD...",
+            "...DFDFFFFDFD...",
+            "...DFFFFFFFFD...",
+            "...DFFFhhFFFD...",
+            "....DFFFFFFD....",
+            ".....DDDDDD.....",
+            "....DCCCCCCD....",
+            "...DCCCCCCCCD...",
+            "...DCCCAACCCD...",
+            "...DCCCCCCCCD...",
+            "....DDDDDDDD....",
+            "................",
+            "................"
+          ],
+          [
+            "................",
+            ".....bbbyyy.....",
+            "....DFFFFFFD....",
+            "...DFFFFFFFFD...",
+            "...DFFFFFFFFD...",
+            "...DFFFFFFFFD...",
+            "...DFFFhhFFFD...",
+            "....DFFFFFFD....",
+            ".....DDDDDD.....",
+            "....DCCCCCCD....",
+            "...DCCCCCCCCD...",
+            "...DCCCAACCCD...",
+            "...DCCCCCCCCD...",
+            "....DDDDDDDD....",
+            "................",
+            "................"
+          ]
+        ],
+        "ms": 400
+      },
+      "couleur": "#3366cc",
+      "id": "a",
+      "nom": "Candidat A",
+      "parti": "Parti Bleu"
+    },
+    {
+      "couleur": "#33aa55",
+      "id": "b",
+      "nom": "Candidate B",
+      "parti": "Parti Vert"
+    }
+  ],
+  "lignes": [
+    {
+      "libelle": "Déficit",
+      "unite": "Md€",
+      "valeurs": [
+        {
+          "id": "a",
+          "source": "https://example.org/budget-a",
+          "valeur": 3.1
+        },
+        {
+          "id": "b",
+          "source": "https://example.org/budget-b",
+          "valeur": 4.2
+        }
+      ]
+    },
+    {
+      "libelle": "Effet par ménage",
+      "unite": "€/an",
+      "valeurs": [
+        {
+          "id": "a",
+          "source": "https://example.org/budget-a",
+          "valeur": 400
+        },
+        {
+          "id": "b",
+          "source": "https://example.org/budget-b",
+          "valeur": null
+        }
+      ]
+    }
+  ],
+  "theme": {
+    "id": "budget",
+    "titre": "Budget des programmes"
+  }
+}

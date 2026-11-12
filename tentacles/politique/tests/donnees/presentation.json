@@ -1,0 +1,13 @@
+[
+  {"rubrique": "affirmations", "chemin": "CLAIMS", "vue": "verifications",
+   "champs": {"titre": "q", "verdict": "v", "faits": "facts", "source": "src", "theme": "theme", "camp": "camp"}},
+  {"rubrique": "affirmations", "chemin": "CLAIMS", "vue": "bulle",
+   "champs": {"theme": "theme", "camp": "camp", "titre": "q", "verdict": "v", "source": "src"}},
+  {"rubrique": "rhetorique", "chemin": "RHET", "vue": "rhetorique",
+   "champs": {"titre": "t", "definition": "d", "reperer": "spot", "exemple": "ex", "question": "ask"}},
+  {"rubrique": "votes", "chemin": "AN_V", "vue": "votes", "champs": {"titre": "t", "date": "d", "vote": "c"}},
+  {"rubrique": "votes", "chemin": "DV", "vue": "votes", "champs": {"camp": "who", "dit": "said", "vote": "voted", "source": "src"}},
+  {"rubrique": "budgets", "chemin": "PROGRAMS", "vue": "generique", "champs": {"titre": "who", "source": "src"}},
+  {"rubrique": "budgets", "chemin": "GAPS", "vue": "inconnue", "champs": {"titre": "what"}},
+  {"rubrique": "budgets", "chemin": "GAPS", "vue": "generique", "champs": {"couleur": "what"}}
+]
