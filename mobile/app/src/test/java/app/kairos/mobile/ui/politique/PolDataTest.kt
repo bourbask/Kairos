@@ -1,6 +1,7 @@
 package app.kairos.mobile.ui.politique
 
 import app.kairos.mobile.data.ApiError
+import app.kairos.mobile.ui.politique.kit.sourceName
 import app.kairos.mobile.ui.politique.model.*
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.*
@@ -155,6 +156,10 @@ class PolDataTest {
         assertEquals(listOf(SourceRef("L", "u", "e"), SourceRef("M", null)), s("""[["L","u","e"],["M"]]"""))
         assertEquals(listOf(SourceRef("ofce", "u", "ofce")), s("""{"ev":"ofce","url":"u"}"""))
         assertEquals(listOf(SourceRef("Seule")), s("\"Seule\""))
+        // Sans libellé, jamais l'adresse brute comme nom : l'hôte (https) ou « Source ».
+        assertEquals(listOf(SourceRef("", "http://x.example.org/a")), s("""{"url":"http://x.example.org/a"}"""))
+        assertEquals("Source", sourceName(s("""{"url":"http://x.example.org/a"}""").single()))
+        assertEquals("example.org", sourceName(s("""{"url":"https://www.example.org/a"}""").single()))
         assertTrue(s("null").isEmpty() && s("[]").isEmpty() && s("3").isEmpty())
     }
 

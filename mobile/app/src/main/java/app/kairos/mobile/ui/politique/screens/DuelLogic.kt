@@ -1,5 +1,6 @@
 package app.kairos.mobile.ui.politique.screens
 
+import app.kairos.mobile.ui.politique.kit.sourceName
 import app.kairos.mobile.ui.politique.fmt
 import app.kairos.mobile.ui.politique.kit.TableCard
 import app.kairos.mobile.ui.politique.model.IdKind
@@ -158,7 +159,7 @@ class BarRound(
 
     fun tableCard(nameA: String, nameB: String) = TableCard(
         "Duel · $title", "$nameA face à $nameB", lines = listOf("$nameA : ${label(a)}", "$nameB : ${label(b)}", help).filter { it.isNotBlank() },
-        source = sources.joinToString(" ; ") { it.label }.ifBlank { null },
+        source = sources.joinToString(" ; ") { sourceName(it) }.ifBlank { null },
     )
 }
 

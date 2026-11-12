@@ -82,8 +82,9 @@ fun sourcesOf(e: JsonElement?): List<SourceRef> = when (e) {
     is JsonObject -> {
         val url = e["url"].text()
         val ev = e["ev"].text()
-        val label = (e["label"] ?: e["nom"]).text() ?: ev ?: url
-        listOfNotNull(label?.let { SourceRef(it, url, ev) })
+        // Jamais l'adresse comme nom : sans libellé, l'affichage se rabat sur l'hôte.
+        val label = (e["label"] ?: e["nom"]).text() ?: ev
+        if (label == null && url == null) emptyList() else listOf(SourceRef(label.orEmpty(), url, ev))
     }
     is JsonArray ->
         if (e.isNotEmpty() && e.all { it is JsonPrimitive }) {
