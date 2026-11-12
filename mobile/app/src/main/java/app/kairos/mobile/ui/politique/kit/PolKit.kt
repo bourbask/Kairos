@@ -8,7 +8,6 @@ import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.net.Uri
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -51,6 +50,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.nativeCanvas
@@ -216,23 +216,28 @@ private val Mono = FontFamily.Monospace
 /**
  * Pastille ronde portant un repère court (chiffre, lettre), centré sur l'encre du glyphe : les métriques
  * de police (ascendante, descendante, marges) changent d'un appareil à l'autre et décalent un `Text`.
- * Décorative : le libellé voisin porte le sens.
+ * Muette pour l'accessibilité : l'étiquette qui la porte dit le sens (niveau d'indépendance, adversaire A ou B).
  */
 @Composable
 fun NumberDot(text: String, bg: Color, fg: Color, size: Dp, fontSize: TextUnit, modifier: Modifier = Modifier) {
-    val paint = remember { Paint(Paint.ANTI_ALIAS_FLAG).apply { typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD) } }
-    val path = remember { Path() }
-    val ink = remember { RectF() }
-    Canvas(modifier.size(size).clearAndSetSemantics { }) {
-        drawCircle(bg)
-        paint.color = fg.toArgb()
-        paint.textSize = fontSize.toPx()
+    Box(modifier.size(size).clearAndSetSemantics { }.drawWithCache {
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+            color = fg.toArgb()
+            // Suit l'échelle de police du système, plafonné pour rester dans la pastille.
+            textSize = minOf(fontSize.toPx(), this@drawWithCache.size.minDimension * DOT_GLYPH_MAX)
+        }
         // Contour exact du glyphe (au sous-pixel), là où getTextBounds arrondit au pixel.
-        paint.getTextPath(text, 0, text.length, 0f, 0f, path)
-        path.computeBounds(ink, true)
-        drawContext.canvas.nativeCanvas.drawText(text, center.x - ink.centerX(), center.y - ink.centerY(), paint)
-    }
+        val ink = RectF().also { Path().apply { paint.getTextPath(text, 0, text.length, 0f, 0f, this) }.computeBounds(it, true) }
+        onDrawBehind {
+            drawCircle(bg)
+            drawContext.canvas.nativeCanvas.drawText(text, center.x - ink.centerX(), center.y - ink.centerY(), paint)
+        }
+    })
 }
+
+/** Corps maximal du repère, en part du diamètre de la pastille. */
+private const val DOT_GLYPH_MAX = 0.62f
 private fun Modifier.outline(color: Color, width: Float = 1f, shape: Shape = CircleShape) = border(BorderStroke(width.dp, color), shape)
 
 @Composable
@@ -331,7 +336,10 @@ private fun Modifier.opensEvaluator(ev: Evaluator, onOpen: (String) -> Unit) =
 
 /** Légende : l'étiquette d'un niveau, sans action. */
 @Composable
-fun LevelTag(n: Int, modifier: Modifier = Modifier) = IndTag(n, if (n > 0) "Niveau $n" else "Non qualifié", modifier, RoundedCornerShape(8.dp))
+fun LevelTag(n: Int, modifier: Modifier = Modifier) = IndTag(
+    n, if (n > 0) "Niveau $n" else "Non qualifié",
+    modifier.clearAndSetSemantics { contentDescription = "Indépendance " + if (n > 0) "niveau $n sur 4" else "non qualifiée" }, RoundedCornerShape(8.dp),
+)
 
 /**
  * Source : étiquette de l'évaluateur reconnu (id explicite, sinon alias en tête du libellé) collée au bouton.

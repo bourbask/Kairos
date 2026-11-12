@@ -95,6 +95,7 @@ import app.kairos.mobile.ui.politique.identityColor
 import app.kairos.mobile.ui.politique.kit.BalanceBlock
 import app.kairos.mobile.ui.politique.kit.BalanceHeader
 import app.kairos.mobile.ui.politique.kit.LocalPolBottom
+import app.kairos.mobile.ui.politique.kit.DockSlack
 import app.kairos.mobile.ui.politique.kit.NumberDot
 import app.kairos.mobile.ui.politique.kit.EmptyState
 import app.kairos.mobile.ui.politique.kit.Kicker
@@ -178,7 +179,7 @@ private fun DuelPick(data: PolData, nav: PolNavigator) {
             }
         }
         // Le dock (et le personnage qui le dépasse) occupe le haut de la marge basse : on la rogne pour coller les actions au dock.
-        Row(Modifier.fillMaxWidth().padding(bottom = (LocalPolBottom.current - 24.dp).coerceAtLeast(12.dp)).padding(horizontal = 16.dp).padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.fillMaxWidth().padding(bottom = (LocalPolBottom.current - DockSlack).coerceAtLeast(12.dp)).padding(horizontal = 16.dp).padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton({
                 val k = kind ?: if (r.people.size >= 2) IdKind.Personne else IdKind.Parti
                 val pool = (if (k == IdKind.Personne) r.people else r.parties).shuffled()

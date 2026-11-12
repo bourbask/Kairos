@@ -179,6 +179,10 @@ class DuelTest {
         assertEquals("+0,7 pt par rapport à « Sans mesure »", gapLabel(8.3, 7.6, "% du PIB", "Sans mesure"))
         assertEquals("−1,4 pt par rapport à « Sans mesure »", gapLabel(6.2, 7.6, "% du PIB", "Sans mesure"))
         assertEquals("−10,0 €/an par rapport à « R »", gapLabel(-5.0, 5.0, "€/an", "R"))
+        // Écart nul à l'affichage : jamais « +0,0 pt ».
+        assertEquals("égal à « R »", gapLabel(7.6, 7.6, "% du PIB", "R"))
+        assertEquals("égal à « R »", gapLabel(7.64, 7.6, "% du PIB", "R"))
+        assertEquals("égal à « R »", gapLabel(7.56, 7.6, "% du PIB", "R"))
         val r = duelRounds(full, "p1", "p2").filterIsInstance<BarRound>().first { it.title == "Dette" }
         assertEquals("−10,0 pt par rapport à « Sans mesure »", r.gap(r.a!!))
         // Sans référence (barre depuis zéro) : pas d'écart affiché, la valeur signée suffit.

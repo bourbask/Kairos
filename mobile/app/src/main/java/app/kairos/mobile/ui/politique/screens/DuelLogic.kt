@@ -263,9 +263,10 @@ fun fmtUnit(v: Double, unit: String): String = when {
     else -> fmtNum(v, 1)
 } + if (unit.isBlank()) "" else " " + unit.trim()
 
-/** Écart signé de [v] à la référence [ref] nommée [refName] ; un écart entre pourcentages se compte en points. */
+/** Écart signé de [v] à la référence [ref] nommée [refName] ; un écart entre pourcentages se compte en points ; nul à l'affichage : « égal ». */
 fun gapLabel(v: Double, ref: Double, unit: String, refName: String): String =
-    fmtSigned(v - ref, 1) + " " + (if ("%" in unit) "pt" else unit.trim()) + " par rapport à « $refName »"
+    if (Math.round((v - ref) * 10) == 0L) "égal à « $refName »"
+    else fmtSigned(v - ref, 1) + " " + (if ("%" in unit) "pt" else unit.trim()) + " par rapport à « $refName »"
 
 private fun PolData.indicatorRounds(a: String, b: String): List<BarRound> {
     val seen = mutableSetOf<String>()
