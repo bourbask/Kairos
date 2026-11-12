@@ -148,7 +148,6 @@ class MapLogicTest {
         assertEquals("Divers droite", quiLabel(d, "divers-droite"))
         assertEquals("Liste locale", quiLabel(d, "Liste locale"))
         assertEquals("Gagnée", statusLabel("gagnee")); assertEquals("inconnu", statusLabel("inconnu"))
-        assertEquals("2 Parti Bleu, 1 PL", partySum(d, listOf(city("a", "1", "bleu"), city("b", "1", "long"), city("c", "1", "bleu"))))
         val win = regionWindow(Rect(0f, 0f, 100f, 50f))
         assertEquals(Rect(-12f, -12f, 112f, 62f), win)
     }

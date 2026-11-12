@@ -180,9 +180,6 @@ fun quiLabel(data: PolData, qui: String): String {
     return if (i.nom.length > 18) i.parti?.takeIf { it.isNotBlank() } ?: i.nom else i.nom
 }
 
-fun partySum(data: PolData, cities: List<Commune>): String =
-    cities.groupingBy { quiLabel(data, it.qui) }.eachCount().toList().sortedByDescending { it.second }.joinToString(", ") { "${it.second} ${it.first}" }
-
 val FR: Collator = Collator.getInstance(Locale.FRENCH)
 
 // ---------- Bilans locaux ----------

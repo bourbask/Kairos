@@ -779,35 +779,22 @@ mod tests {
     /// `POLITIQUE_ECHANTILLONS=1` les réécrit.
     #[test]
     fn contract_samples_match_app_resources() {
-        let s = server();
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../mobile/app/src/test/resources/politique");
-        let echantillons = [
-            ("accueil", v(s.app_politique_accueil())),
-            ("rubrique-affirmations", rubrique(&s, "affirmations")),
-            ("rubrique-argent", rubrique(&s, "argent")),
-            ("rubrique-budgets", rubrique(&s, "budgets")),
-            ("rubrique-rhetorique", rubrique(&s, "rhetorique")),
-            ("rubrique-votes", rubrique(&s, "votes")),
-            ("fiche-a", v(fiche(&s, "a"))),
-            ("fiche-c", v(fiche(&s, "c"))),
-            ("comparer-a-b-budget", v(comparer(&s, &["a", "b"], "budget"))),
-            ("comparer-a-c-niveau-de-vie", v(comparer(&s, &["a", "c"], "niveau-de-vie"))),
-            ("chercher-electricite", v(chercher(&s, "électricité"))),
-        ];
-        // Pagination : dossier à dates fixes, avec un dit-vote généré qui dépasse le budget.
+        // L'application ne lit que des fichiers paginés. Dossier à dates fixes, avec un dit-vote généré
+        // qui dépasse le budget d'une page.
         let tmp = copie("echantillons");
         std::fs::write(tmp.join("dit-vote.json"), gros_dit_vote()).unwrap();
-        for f in ["dit-vote", "evaluateurs", "carte"] {
+        for f in ["dit-vote", "evaluateurs", "carte", "identites"] {
             date_fixe(&tmp.join(format!("{f}.json")));
         }
         let sp = server_sur(&tmp);
-        let mut echantillons = Vec::from(echantillons);
-        echantillons.extend([
+        let echantillons = [
+            ("fichier-identites", v(fichier(&sp, "identites", 0))),
             ("fichier-dit-vote-p0", v(fichier(&sp, "dit-vote", 0))),
             ("fichier-dit-vote-p1", v(fichier(&sp, "dit-vote", 1))),
             ("fichier-evaluateurs", v(fichier(&sp, "evaluateurs", 0))),
             ("fichier-carte", v(fichier(&sp, "carte", 0))),
-        ]);
+        ];
         let _ = std::fs::remove_dir_all(&tmp);
         let ecrire = std::env::var("POLITIQUE_ECHANTILLONS").is_ok_and(|x| x == "1");
         for (nom, rep) in echantillons {

@@ -1,6 +1,11 @@
 {
-  "identites": [
+  "contenu": [
     {
+      "alias": [
+        "Candidat A",
+        "Cand. A",
+        "Liste commune"
+      ],
       "avatar": {
         "images": [
           [
@@ -49,33 +54,62 @@
       "type": "personne"
     },
     {
+      "alias": [
+        "Mme B",
+        "Liste commune"
+      ],
+      "couleur": "#33aa55",
+      "id": "b",
+      "nom": "Candidate B",
+      "parti": "Parti Vert",
+      "type": "personne"
+    },
+    {
+      "alias": [
+        "Candidat C"
+      ],
+      "avatar": {
+        "images": [
+          [
+            "................",
+            ".....DDDDDD.....",
+            "....DFFFFFFD....",
+            "...DFFFFFFFFD...",
+            "...DFDFFFFDFD...",
+            "...DFFFFFFFFD...",
+            "...DFFFhhFFFD...",
+            "....DFFFFFFD....",
+            ".....DDDDDD.....",
+            "....DCCCCCCD....",
+            "...DCCCCCCCCD...",
+            "...DCCCAACCCD...",
+            "...DCCCCCCCCD...",
+            "....DDDDDDDD....",
+            "................"
+          ]
+        ],
+        "ms": 400
+      },
       "couleur": "#cc3333",
       "id": "c",
       "nom": "Candidat C",
       "parti": "Parti Rouge",
       "type": "personne"
-    }
-  ],
-  "lignes": [
+    },
     {
-      "libelle": "Revenu des ménages",
-      "unite": "€/an",
-      "valeurs": [
-        {
-          "id": "a",
-          "source": "Évaluation fictive, example.org",
-          "valeur": 250
-        },
-        {
-          "id": "c",
-          "source": null,
-          "valeur": null
-        }
-      ]
+      "alias": [
+        "Parti Bleu",
+        "PB"
+      ],
+      "couleur": "#3366cc",
+      "id": "parti-bleu",
+      "nom": "Parti Bleu",
+      "parti": "Parti Bleu",
+      "type": "parti"
     }
   ],
-  "theme": {
-    "id": "niveau-de-vie",
-    "titre": "Niveau de vie"
-  }
+  "id": "identites",
+  "page": 0,
+  "pages": 1,
+  "version": "18fae27693b40000-629"
 }

@@ -1,12 +1,11 @@
 package app.kairos.mobile.ui.politique
 
 import app.kairos.mobile.data.KairosJson
-import app.kairos.mobile.data.PolIdentity
+import app.kairos.mobile.ui.politique.model.PolData
 import app.kairos.mobile.ui.politique.model.PolPage
-import kotlinx.serialization.builtins.ListSerializer
+import app.kairos.mobile.ui.politique.model.mergePages
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -21,11 +20,13 @@ class PolitiqueContractTest {
     private fun text(name: String) = javaClass.getResource("/politique/$name.json")!!.readText()
 
     @Test
-    fun identities_keep_valid_avatars_only() {
-        val ids = KairosJson.decodeFromJsonElement(ListSerializer(PolIdentity.serializer()), KairosJson.parseToJsonElement(text("accueil")).jsonObject["identites"]!!)
-        assertEquals(listOf("a", "b", "c", "parti-bleu"), ids.map { it.id })
-        assertNotNull("avatar valide gardé", avatarOf(ids[0].avatar))
-        assertNull("avatar invalide retiré par le module", ids[2].avatar)
+    fun identities_file_decodes_and_invalid_avatar_is_refused() {
+        // Le fichier des identités arrive tel quel : l'application écarte elle-même un avatar mal formé.
+        val page = KairosJson.decodeFromString(PolPage.serializer(), text("fichier-identites"))
+        val data = PolData(mapOf("identites" to mergePages(listOf(page))))
+        assertEquals(listOf("a", "b", "c", "parti-bleu"), data.identities.map { it.id })
+        assertNotNull("avatar valide gardé", avatarOf(data.byId("a")!!.avatar))
+        assertNull("avatar invalide (15 lignes) écarté", avatarOf(data.byId("c")!!.avatar))
     }
 
     @Test
@@ -46,7 +47,7 @@ class PolitiqueContractTest {
     @Test
     fun every_sample_decodes() {
         val all = javaClass.getResource("/politique")!!.let { java.io.File(it.toURI()).list()!!.sorted() }
-        assertEquals(15, all.size)
+        assertEquals(5, all.size)
         for (n in all) assertTrue(n, KairosJson.parseToJsonElement(javaClass.getResource("/politique/$n")!!.readText()) is JsonObject)
     }
 }
