@@ -87,7 +87,7 @@ Revue de toute la branche (et du commit du dépôt privé), correctifs, PR vers 
 
 ### Task 7: Personnages des identités (données privées)
 
-Chaque identité peut porter un champ facultatif `avatar` : `{ "images": [[16 chaînes de 16 caractères], …], "ms": 400 }` (2 à 4 images d'une petite animation de repos). Caractères : `.` vide, `F` corps (couleur du corps des personnages du thème), `h` ombre, `D` encre, `A` accent du thème, `C` couleur de l'identité. Aucune teinte de peau : les visages prennent la couleur du corps des personnages Kairos.
+Chaque identité peut porter un champ facultatif `avatar` : `{ "images": [[16 chaînes de 16 caractères], …], "ms": 400 }` (2 à 4 images d'une petite animation de repos). Caractères : `.` vide, `F` corps (couleur du corps des personnages du thème), `h` ombre, `D` encre, `A` accent du thème, `C` couleur de l'identité, puis cheveux à teinte fixe, la même dans tous les thèmes : `g` blancs ou gris, `b` bruns, `y` blonds. Aucune teinte de peau : les visages prennent la couleur du corps des personnages Kairos.
 
 - Module (Task 1) : renvoie `avatar` tel quel dans `identites` de l'accueil et dans `identite` de la fiche ; valide la forme (16×16, caractères autorisés, 1 à 4 images) et l'ignore si invalide.
 - Application (Task 3) : vignette et fiche affichent l'avatar rendu comme les personnages (mêmes rôles de couleur, `C` = couleur de l'identité, animation coupée si les animations du système le sont) ; sinon pastille de couleur.

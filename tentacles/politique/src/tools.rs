@@ -629,6 +629,7 @@ mod tests {
         assert!(!avatar_valide(&json!({"images": [img(ligne)]})));
         assert!(!avatar_valide(&json!({"images": [], "ms": 400})));
         assert!(!avatar_valide(&json!({"images": vec![img(ligne); 5], "ms": 400})));
+        assert!(avatar_valide(&json!({"images": [img("..FhDACgby......")], "ms": 400})));
         assert!(!avatar_valide(&json!({"images": [img("...............X")], "ms": 400})));
         assert!(!avatar_valide(&json!({"images": [img("...............")], "ms": 400})));
     }

@@ -2,6 +2,7 @@ package app.kairos.mobile.ui.politique
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -21,10 +22,12 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import app.kairos.mobile.data.PolIdentity
 import app.kairos.mobile.ui.mascot.animate
 import app.kairos.mobile.ui.theme.KairosColors
 import app.kairos.mobile.ui.theme.SceneColors
+import app.kairos.mobile.ui.theme.contrast
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -34,8 +37,14 @@ import kotlin.math.roundToInt
 /** Côté de la grille d'un avatar. */
 const val AVATAR_SIZE = 16
 
-/** Rôles d'un avatar : corps, ombre, encre, accent du thème, puis `C` = couleur de l'identité. */
-const val AVATAR_ROLES = "FhDAC"
+/**
+ * Rôles d'un avatar : corps, ombre, encre, accent du thème, `C` = couleur de l'identité, puis
+ * cheveux à teinte fixe, la même dans tous les thèmes : `g` blancs ou gris, `b` bruns, `y` blonds.
+ */
+const val AVATAR_ROLES = "FhDACgby"
+
+/** Teintes fixes des cheveux, lisibles sur le corps et sur le fond du bouton de chaque thème. */
+val HAIR_COLORS = mapOf('g' to Color(0xFFB4B8BB), 'b' to Color(0xFF5C3A21), 'y' to Color(0xFFD9B44A))
 
 /** Images empaquetées (x | y << 8 | rôle << 16, cases vides omises) et durée d'une image. */
 class Avatar(val frames: List<IntArray>, val ms: Long)
@@ -66,10 +75,10 @@ fun avatarOf(e: JsonElement?): Avatar? {
     return Avatar(frames, ms.coerceIn(80L, 5_000L))
 }
 
-/** Teinte d'une case : rôles des personnages du thème, `C` = [identity]. */
+/** Teinte d'une case : rôles des personnages du thème, `C` = [identity], cheveux = [HAIR_COLORS]. */
 fun avatarColor(packed: Int, colors: SceneColors, identity: Color): Color {
     val role = AVATAR_ROLES[packed shr 16]
-    return if (role == 'C') identity else colors[role]
+    return if (role == 'C') identity else HAIR_COLORS[role] ?: colors[role]
 }
 
 /** Couleur `#RRGGBB` de l'identité ; illisible : null. */
@@ -89,8 +98,17 @@ fun IdentityBadge(identity: PolIdentity, size: Dp, modifier: Modifier = Modifier
     val avatar = remember(identity.avatar) { avatarOf(identity.avatar) }
     val tint = identityColor(identity.couleur) ?: MaterialTheme.colorScheme.primary
     if (avatar == null) {
-        Box(modifier.size(size).background(tint, CircleShape), contentAlignment = Alignment.Center) {
-            Text(identity.nom.take(1).uppercase(), color = Color.White, fontWeight = FontWeight.Bold)
+        // Liseré : une couleur claire (blanc, jaune) reste visible sur une surface claire.
+        val ink = KairosColors.current.scene['D']
+        Box(
+            modifier.size(size).background(tint, CircleShape).border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                identity.nom.take(1).uppercase(),
+                color = if (contrast(Color.White, tint) >= contrast(ink, tint)) Color.White else ink,
+                fontWeight = FontWeight.Bold,
+            )
         }
         return
     }

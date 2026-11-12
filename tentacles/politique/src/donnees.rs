@@ -25,8 +25,9 @@ const ROLES: &[&str] =
 /// Taille au-delà de laquelle un fichier est ignoré (protège la mémoire du conteneur).
 const MAX_FICHIER: u64 = 4 * 1024 * 1024;
 
-/// Caractères permis dans une image d'avatar.
-const AVATAR_CHARS: &[char] = &['.', 'F', 'h', 'D', 'A', 'C'];
+/// Caractères permis dans une image d'avatar : rôles du thème, couleur de l'identité, puis teintes
+/// fixes de cheveux (`g` blancs ou gris, `b` bruns, `y` blonds).
+const AVATAR_CHARS: &[char] = &['.', 'F', 'h', 'D', 'A', 'C', 'g', 'b', 'y'];
 
 struct Fichier {
     stamp: (SystemTime, u64),

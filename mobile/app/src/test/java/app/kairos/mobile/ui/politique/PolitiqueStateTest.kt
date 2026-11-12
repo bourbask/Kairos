@@ -227,7 +227,7 @@ class PolitiqueStateTest {
 
     @Test
     fun avatar_decoding_and_roles() {
-        val row = "..FFhhDDAACC...."
+        val row = "..FFhhDDAACCgby."
         fun json(frames: Int, rows: List<String> = List(16) { row }, ms: String = "300") = KairosJson.parseToJsonElement(
             """{"images":[${List(frames) { rows.joinToString(",", "[", "]") { "\"$it\"" } }.joinToString(",")}],"ms":$ms}""",
         )
@@ -235,7 +235,7 @@ class PolitiqueStateTest {
         assertNotNull(a)
         assertEquals(2, a!!.frames.size)
         assertEquals(300L, a.ms)
-        assertEquals("cases vides omises", 10 * 16, a.frames[0].size)
+        assertEquals("cases vides omises", 13 * 16, a.frames[0].size)
         assertNull("5 images : refusé", avatarOf(json(5)))
         assertNull("0 image : refusé", avatarOf(json(0)))
         assertNull("ligne trop courte", avatarOf(json(1, List(16) { "..." })))
@@ -256,6 +256,9 @@ class PolitiqueStateTest {
         assertEquals(colors['D'], byChar['D'])
         assertEquals(colors['A'], byChar['A'])
         assertEquals(id, byChar['C'])
+        assertEquals("cheveux : teinte fixe, hors thème", HAIR_COLORS['g'], byChar['g'])
+        assertEquals(HAIR_COLORS['b'], byChar['b'])
+        assertEquals(HAIR_COLORS['y'], byChar['y'])
         assertEquals(id, identityColor("#3B5C95"))
         assertNull(identityColor("bleu"))
     }
