@@ -37,6 +37,9 @@ import app.kairos.mobile.ui.politique.model.PolData
 import app.kairos.mobile.ui.politique.model.PolPage
 import app.kairos.mobile.ui.politique.model.loadPolData
 import app.kairos.mobile.ui.politique.screens.BilanScreen
+import app.kairos.mobile.ui.politique.screens.BulleScreen
+import app.kairos.mobile.ui.politique.screens.ClaimSheetAt
+import app.kairos.mobile.ui.politique.screens.PhrasesScreen
 import app.kairos.mobile.ui.politique.screens.BudgetsScreen
 import app.kairos.mobile.ui.politique.screens.LivingScreen
 import kotlinx.coroutines.CancellationException
@@ -186,6 +189,8 @@ fun RubricHost(id: String, data: PolData, nav: PolNavigator) {
         "budgets" -> BudgetsScreen(data, nav)
         "niveau-de-vie" -> LivingScreen(data, nav)
         "bilan" -> BilanScreen(data, nav)
+        "phrases" -> PhrasesScreen(data, nav)
+        "bulle" -> BulleScreen(data, nav)
         else -> Soon()
     }
 }
@@ -195,6 +200,7 @@ fun RubricHost(id: String, data: PolData, nav: PolNavigator) {
 fun SheetHost(s: PolSheetState, data: PolData, nav: PolNavigator, onDismiss: () -> Unit) {
     when (s) {
         is PolSheetState.Identity -> IdentitySheet(data, s.id, nav, onDismiss)
+        is PolSheetState.Claim -> ClaimSheetAt(data, s.index, nav, onDismiss)
         is PolSheetState.Balance -> BalanceSheet(s.lecture, s.title, s.who, data, { nav.sheet(PolSheetState.Evaluator(it)) }, onDismiss)
         is PolSheetState.Evaluator -> PolSheet(full = false, onDismiss = onDismiss) { Soon() }
     }

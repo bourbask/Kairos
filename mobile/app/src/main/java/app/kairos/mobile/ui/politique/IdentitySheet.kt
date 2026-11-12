@@ -58,6 +58,7 @@ import app.kairos.mobile.ui.politique.kit.SourceList
 import app.kairos.mobile.ui.politique.kit.VerdictChip
 import app.kairos.mobile.ui.politique.kit.frTypo
 import app.kairos.mobile.ui.politique.model.Claim
+import app.kairos.mobile.ui.politique.screens.claimsOf
 import app.kairos.mobile.ui.politique.model.IdKind
 import app.kairos.mobile.ui.politique.model.Lecture
 import app.kairos.mobile.ui.politique.model.PolData
@@ -527,6 +528,7 @@ private fun sections(data: PolData, id: String, l: IdentityLinks, nav: PolNaviga
                 Row { VerdictChip(c.v) }
                 Body("« ${c.q} »", Modifier.padding(top = 6.dp))
                 SourceList(sourcesOf(c.src), data, onEv)
+                claimsOf(data).indexOf(c).takeIf { it >= 0 }?.let { i -> TextButton({ nav.sheet(PolSheetState.Claim(i)) }, Modifier.heightIn(min = 48.dp)) { Text("Les faits et ce qu'elle cache") } }
             }
         }
     }
