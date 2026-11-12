@@ -22,6 +22,7 @@ sealed interface PolSheetState {
     data class Identity(val id: String) : PolSheetState
     data class Evaluator(val id: String) : PolSheetState
     data class Claim(val index: Int) : PolSheetState
+    data class Scrutin(val id: String) : PolSheetState
     data class Balance(val lecture: Lecture, val title: String, val who: String?) : PolSheetState
 }
 

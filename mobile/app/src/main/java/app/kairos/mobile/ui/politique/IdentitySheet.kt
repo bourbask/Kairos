@@ -58,7 +58,10 @@ import app.kairos.mobile.ui.politique.kit.SourceList
 import app.kairos.mobile.ui.politique.kit.VerdictChip
 import app.kairos.mobile.ui.politique.kit.frTypo
 import app.kairos.mobile.ui.politique.model.Claim
+import app.kairos.mobile.ui.politique.screens.DvItem
 import app.kairos.mobile.ui.politique.screens.claimsOf
+import app.kairos.mobile.ui.politique.screens.dvCount
+import app.kairos.mobile.ui.politique.screens.dvFor
 import app.kairos.mobile.ui.politique.model.IdKind
 import app.kairos.mobile.ui.politique.model.Lecture
 import app.kairos.mobile.ui.politique.model.PolData
@@ -107,12 +110,6 @@ data class IdAide(val l: String = "", val v: Double? = null)
 data class IdRhet(val t: String = "", val ex: List<List<String>> = emptyList())
 
 @Serializable
-data class IdVerdict(val qui: String = "", val v: String = "", val base: String? = null, val explication: String = "")
-
-@Serializable
-data class IdScrutin(val id: String = "", val titre: String = "", val date: String = "", val verdicts: List<IdVerdict> = emptyList())
-
-@Serializable
 data class IdCommune(val ville: String = "", val qui: String = "", val statut: String = "")
 
 /** Ligne-tableau des données (`["libellé", 1.5, null…]`) : lecture par position, tolérante. */
@@ -122,7 +119,6 @@ class Row(private val a: List<JsonElement>) {
 }
 
 data class Stance(val pos: String, val text: String)
-data class DvItem(val scrutin: IdScrutin, val verdict: IdVerdict)
 
 /** Tout ce que les données rattachent à une identité, par correspondance d'alias. */
 class IdentityLinks(
@@ -149,7 +145,7 @@ fun identityLinks(data: PolData, id: String): IdentityLinks {
         Triple(name, groups[g], data.decode<IdVote>("votes", "${ch}_V").mapNotNull { v -> v.c.getOrNull(g)?.let { v to it } })
     }
     val dvOf = if (data.kindOf(id) == IdKind.Personne) data.partyOf(id) else id
-    val dv = if (dvOf == null) emptyList() else data.decode<IdScrutin>("dit-vote", "SCRUTINS").flatMap { s -> s.verdicts.filter { it.qui == dvOf }.map { DvItem(s, it) } }
+    val dv = if (dvOf == null) emptyList() else dvFor(data, dvOf)
     return IdentityLinks(
         programs = data.decode<IdProgram>("budgets", "PROGRAMS").filter { !it.ref && hit(it.who) },
         gaps = data.decode<IdGap>("budgets", "GAPS").filter { hit(it.who) },
@@ -204,12 +200,6 @@ fun signed(v: Double, d: Int? = null): String {
 
 private val FRAGILE = setOf("fragile", "faux", "non-documente")
 
-/** Dit / voté hors séance : (conformes, comptés) ; « aucune déclaration » n'est jamais compté. */
-fun dvCount(items: List<DvItem>): Pair<Int, Int> {
-    val m = items.filter { it.verdict.v in setOf("coherent", "ambigu", "ecart") && it.verdict.base != "seance" }
-    return m.count { it.verdict.v == "coherent" } to m.size
-}
-
 /** Jusqu'à quatre chiffres clés, chacun seulement si la donnée existe. */
 fun identityStats(data: PolData, id: String, l: IdentityLinks = identityLinks(data, id)): List<Stat> {
     val x = data.byId(id) ?: return emptyList()
@@ -226,8 +216,8 @@ fun identityStats(data: PolData, id: String, l: IdentityLinks = identityLinks(da
     if (l.claims.isNotEmpty()) {
         out += Stat("Phrases vérifiées", l.claims.size.toString(), plural(l.claims.count { it.v == "solide" }, "solide", "solides") + " · " + plural(l.claims.count { it.v in FRAGILE }, "fragile ou faux", "fragiles ou faux"))
     }
-    val (c, t) = dvCount(l.dv)
-    if (t > 0) out += Stat("Dit / voté", "$c / $t", "votes conformes à la parole publique")
+    val k = dvCount(l.dv)
+    if (k.t > 0) out += Stat("Dit / voté", "${k.c} / ${k.t}", "votes conformes à la parole publique")
     if (l.coh.isNotEmpty()) out += Stat("Votes à rebours", l.coh.sumOf { g -> g.items.count { it.firstOrNull() != "coherent" } }.toString(), "écarts relevés")
     if (l.turns.isNotEmpty()) {
         val r = l.turns.count { it.k == "R" }
@@ -502,11 +492,11 @@ private fun sections(data: PolData, id: String, l: IdentityLinks, nav: PolNaviga
                 IdentityChip(data, l.dvOf, onClick = { nav.sheet(PolSheetState.Identity(l.dvOf)) })
             }
         }
-        val (c, t) = dvCount(l.dv)
+        val k = dvCount(l.dv)
         Kicker("Parole publique, hors séance")
-        Text("$c / $t", fontSize = 26.sp, fontWeight = FontWeight.ExtraBold)
+        Text("${k.c} / ${k.t}", fontSize = 26.sp, fontWeight = FontWeight.ExtraBold)
         Text(
-            "scrutins où le vote suit ce que le parti dit en public" + if (t == 0) " (aucune déclaration publique trouvée)" else "",
+            "scrutins où le vote suit ce que le parti dit en public" + if (k.t == 0) " (aucune déclaration publique trouvée)" else "",
             color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp,
         )
         Kicker("Écarts et votes ambigus", Modifier.padding(top = 12.dp))
