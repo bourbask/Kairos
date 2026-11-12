@@ -621,7 +621,7 @@ data class DocumentsSnapshot(
 )
 
 /**
- * Identité (candidat ou parti) de l'espace Politique. [avatar] : petit personnage facultatif,
+ * Identité (candidat, parti ou camp) de l'espace Politique. [avatar] : petit personnage facultatif,
  * gardé brut et validé à l'affichage : une forme inattendue ne fait jamais échouer la lecture.
  */
 @Serializable
@@ -631,5 +631,7 @@ data class PolIdentity(
     val parti: String? = null,
     val couleur: String? = null,
     val avatar: JsonElement? = null,
+    /** « personne », « parti » ou « camp » ; absent ou autre : déduit (voir `PolData.kindOf`). */
+    val type: String? = null,
 )
 

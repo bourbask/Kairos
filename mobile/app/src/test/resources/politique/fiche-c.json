@@ -3,7 +3,8 @@
     "couleur": "#cc3333",
     "id": "c",
     "nom": "Candidat C",
-    "parti": "Parti Rouge"
+    "parti": "Parti Rouge",
+    "type": "personne"
   },
   "rubriques": [
     {

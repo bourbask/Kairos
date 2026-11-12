@@ -157,6 +157,9 @@ fn identite_json(i: &Identite) -> Value {
     if let Some(a) = &i.avatar {
         v["avatar"] = a.clone();
     }
+    if let Some(t) = &i.genre {
+        v["type"] = json!(t);
+    }
     v
 }
 

@@ -44,7 +44,8 @@
     "couleur": "#3366cc",
     "id": "a",
     "nom": "Candidat A",
-    "parti": "Parti Bleu"
+    "parti": "Parti Bleu",
+    "type": "personne"
   },
   "rubriques": [
     {

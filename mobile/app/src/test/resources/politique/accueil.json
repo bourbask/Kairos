@@ -45,25 +45,29 @@
       "couleur": "#3366cc",
       "id": "a",
       "nom": "Candidat A",
-      "parti": "Parti Bleu"
+      "parti": "Parti Bleu",
+      "type": "personne"
     },
     {
       "couleur": "#33aa55",
       "id": "b",
       "nom": "Candidate B",
-      "parti": "Parti Vert"
+      "parti": "Parti Vert",
+      "type": "personne"
     },
     {
       "couleur": "#cc3333",
       "id": "c",
       "nom": "Candidat C",
-      "parti": "Parti Rouge"
+      "parti": "Parti Rouge",
+      "type": "personne"
     },
     {
       "couleur": "#3366cc",
       "id": "parti-bleu",
       "nom": "Parti Bleu",
-      "parti": "Parti Bleu"
+      "parti": "Parti Bleu",
+      "type": "parti"
     }
   ],
   "presentations": [

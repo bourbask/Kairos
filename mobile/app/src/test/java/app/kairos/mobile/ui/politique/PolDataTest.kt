@@ -98,6 +98,46 @@ class PolDataTest {
         assertNull(data.partyOf("gauche"))
     }
 
+    private fun ids(json: String, vararg extra: Pair<String, String>) =
+        PolData(mapOf("identites" to obj("""{"$LIST_KEY": $json}""")) + extra.associate { it.first to obj(it.second) })
+
+    @Test
+    fun kind_prefers_explicit_type() {
+        val d = ids("""[
+            {"id":"x","nom":"Parti Bleu","parti":"Parti Bleu","type":"personne"},
+            {"id":"y","nom":"Candidat A","parti":"PB","type":"Parti"},
+            {"id":"z","nom":"Candidat C","parti":"PB","type":"camp"},
+            {"id":"w","nom":"Gauche","type":"inconnu"},
+            {"id":"v","nom":"Candidat D","parti":"PB","type":3}
+        ]""")
+        assertEquals(IdKind.Personne, d.kindOf("x"))
+        assertEquals(IdKind.Parti, d.kindOf("y"))
+        assertEquals(IdKind.Camp, d.kindOf("z"))
+        assertEquals(IdKind.Camp, d.kindOf("w")) // type inconnu : déduit, sans parti
+        assertEquals(IdKind.Personne, d.kindOf("v")) // type mal typé : déduit
+    }
+
+    @Test
+    fun kind_fallback_party_with_acronym() {
+        val d = ids(
+            """[
+            {"id":"pb","nom":"Parti Bleu","parti":"PB","alias":["PB","Les Bleus"]},
+            {"id":"a","nom":"Candidat A","parti":"PB","alias":["Candidat A","A"]},
+            {"id":"b","nom":"Candidat B","parti":"PB","alias":["Candidat B"]},
+            {"id":"c","nom":"Candidat C","parti":"PB","alias":["Cand. C"]}
+        ]""",
+            "bilan" to """{"CANDS":["A"]}""",
+            "budgets" to """{"PROGRAMS":[{"who":"Candidat B"},{"who":"Parti Bleu","ref":true}]}""",
+        )
+        assertEquals(IdKind.Parti, d.kindOf("pb"))
+        assertEquals(IdKind.Personne, d.kindOf("a")) // alias candidat du bilan
+        assertEquals(IdKind.Personne, d.kindOf("b")) // candidat d'un programme
+        assertEquals(IdKind.Personne, d.kindOf("c")) // ni parti ni nom dans les alias
+        assertEquals("pb", d.partyOf("a"))
+        assertNull(d.partyOf("pb"))
+        assertEquals(listOf("a", "b", "c"), d.identities.filter { d.partyOf(it.id) == "pb" }.map { it.id })
+    }
+
     @Test
     fun ev_for_prefers_explicit_then_longest_alias() {
         assertEquals("institut", data.evFor("Institut X note 3")?.id)

@@ -59,6 +59,9 @@ pub struct Identite {
     pub alias: Vec<String>,
     #[serde(default)]
     pub avatar: Option<Value>,
+    /// « personne », « parti » ou « camp » ; absent : l'application le déduit.
+    #[serde(default, rename = "type")]
+    pub genre: Option<String>,
 }
 
 impl Identite {

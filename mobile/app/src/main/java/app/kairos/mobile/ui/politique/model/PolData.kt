@@ -71,18 +71,45 @@ class PolData(private val files: Map<String, JsonObject>) {
 
     fun idOf(label: String?): String? = idsIn(label).firstOrNull()
 
-    fun kindOf(id: String): IdKind {
-        val i = byIdMap[id]
-        return when {
-            i?.parti == null -> IdKind.Camp
-            i.parti.isNotEmpty() && i.parti != i.nom -> IdKind.Personne
-            else -> IdKind.Parti
+    /** Libellés des candidats (bilan, programmes hors référence), repliés. */
+    private val candidates: Set<String> by lazy {
+        (decode<String>("bilan", "CANDS") +
+            decode("budgets", "PROGRAMS", JsonObject.serializer())
+                .filter { (it["ref"] as? JsonPrimitive)?.content != "true" }
+                .mapNotNull { (it["who"] as? JsonPrimitive)?.takeIf { p -> p.isString }?.content })
+            .map(::fold).filter { it.isNotEmpty() }.toSet()
+    }
+
+    private val kinds = java.util.concurrent.ConcurrentHashMap<String, IdKind>()
+
+    /**
+     * Type publié (`type`) d'abord ; sinon déduit : camp sans parti ; parti si le nom est le parti ;
+     * personne si un alias est un candidat ; parti si le parti ou le nom figure dans les alias ; sinon personne.
+     */
+    fun kindOf(id: String): IdKind = kinds.computeIfAbsent(id) {
+        val i = byIdMap[id] ?: return@computeIfAbsent IdKind.Camp
+        when (i.type?.let(::fold)) {
+            "personne" -> return@computeIfAbsent IdKind.Personne
+            "parti" -> return@computeIfAbsent IdKind.Parti
+            "camp" -> return@computeIfAbsent IdKind.Camp
+        }
+        val parti = i.parti?.let(::fold).orEmpty()
+        val al = aliases[id].orEmpty().map(::fold)
+        when {
+            parti.isEmpty() -> IdKind.Camp
+            parti == fold(i.nom) -> IdKind.Parti
+            al.any { it in candidates } -> IdKind.Personne
+            parti in al || fold(i.nom) in al -> IdKind.Parti
+            else -> IdKind.Personne
         }
     }
 
+    /** Parti d'une personne : l'identité de type parti au même sigle, sinon celle que désigne son libellé de parti. */
     fun partyOf(id: String): String? {
+        if (kindOf(id) != IdKind.Personne) return null
         val p = byIdMap[id]?.parti?.takeIf { it.isNotEmpty() } ?: return null
-        return idsIn(p).firstOrNull { it != id }
+        return identities.firstOrNull { it.id != id && kindOf(it.id) == IdKind.Parti && fold(it.parti.orEmpty()) == fold(p) }?.id
+            ?: idsIn(p).firstOrNull { it != id && kindOf(it) == IdKind.Parti }
     }
 
     /** Évaluateur désigné par [explicit] (id), sinon par l'alias le plus long qui ouvre [label] et finit sur une fin de mot. */

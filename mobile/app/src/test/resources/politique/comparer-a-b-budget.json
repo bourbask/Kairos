@@ -45,13 +45,15 @@
       "couleur": "#3366cc",
       "id": "a",
       "nom": "Candidat A",
-      "parti": "Parti Bleu"
+      "parti": "Parti Bleu",
+      "type": "personne"
     },
     {
       "couleur": "#33aa55",
       "id": "b",
       "nom": "Candidate B",
-      "parti": "Parti Vert"
+      "parti": "Parti Vert",
+      "type": "personne"
     }
   ],
   "lignes": [
