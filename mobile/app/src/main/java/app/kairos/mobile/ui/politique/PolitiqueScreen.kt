@@ -67,6 +67,7 @@ import androidx.compose.ui.unit.dp
 import app.kairos.mobile.data.ApiError
 import app.kairos.mobile.data.PolCompare
 import app.kairos.mobile.data.PolFiche
+import app.kairos.mobile.data.PolHint
 import app.kairos.mobile.data.PolHome
 import app.kairos.mobile.data.PolIdentity
 import app.kairos.mobile.data.PolRubric
@@ -94,7 +95,7 @@ private sealed interface Route {
     data class Compare(val preset: String?) : Route
     data object Verify : Route
     data object DitVote : Route
-    data class Rubric(val id: String, val titre: String) : Route
+    data class Rubric(val id: String, val titre: String, val bulle: Boolean = false) : Route
     data object Shares : Route
     data object Site : Route
 }
@@ -201,11 +202,11 @@ fun PolitiqueScreen(
         ) {
             when (route) {
                 null -> Home(load, onRetry = { reload++ }, onGo = ::push)
-                is Route.Fiche -> FicheView(repository, route.id, home, onUnauthorized, onCompare = { push(Route.Compare(route.id)) })
+                is Route.Fiche -> FicheView(repository, route.id, home, onUnauthorized, onCompare = { push(Route.Compare(route.id)) }, onOpen = { push(Route.Fiche(it)) })
                 is Route.Compare -> CompareView(repository, home, route.preset, onUnauthorized)
                 Route.Verify -> VerifyView(repository, home, onUnauthorized)
                 Route.DitVote -> DitVoteView(repository, home, onUnauthorized)
-                is Route.Rubric -> RubricView(repository, route.id, home, onUnauthorized)
+                is Route.Rubric -> RubricView(repository, route.id, route.bulle, home, onUnauthorized)
                 Route.Shares, Route.Site -> Unit
             }
         }
@@ -275,7 +276,7 @@ private fun Home(load: HomeLoad, onRetry: () -> Unit, onGo: (Route) -> Unit) {
     }
 }
 
-private fun RubricCard.route(): Route = if (id == null) Route.DitVote else Route.Rubric(id, titre)
+private fun RubricCard.route(): Route = if (id == null) Route.DitVote else Route.Rubric(id, titre, bulle = kind == RubricKind.Bulle)
 
 @Composable
 private fun IdentityTile(id: PolIdentity, onClick: () -> Unit) {
@@ -314,7 +315,7 @@ private fun RubricTile(c: RubricCard, modifier: Modifier, onClick: () -> Unit) {
 // --- Fiche -----------------------------------------------------------------------------
 
 @Composable
-private fun FicheView(repository: Repository, id: String, home: PolHome?, onUnauthorized: () -> Unit, onCompare: () -> Unit) {
+private fun FicheView(repository: Repository, id: String, home: PolHome?, onUnauthorized: () -> Unit, onCompare: () -> Unit, onOpen: (String) -> Unit) {
     Fetch(id, onUnauthorized, { repository.lookup(POLITIQUE, "app_politique_fiche", PolFiche.serializer(), buildJsonObject { put("id", id) }) }) { f ->
         val who = f.identite
         Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -324,12 +325,15 @@ private fun FicheView(repository: Repository, id: String, home: PolHome?, onUnau
                 Text(who.nom, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 who.parti?.let { Caption(it) }
             }
+            // Le parti a sa propre fiche : un lien, pas ses entrées mêlées à celles de la personne.
+            partyOf(who, home)?.let { p -> TextButton(onClick = { onOpen(p.id) }) { Text("Voir le parti") } }
         }
         val tabs = ficheTabs(f)
         Caption(if (tabs.isEmpty()) "Aucune entrée rattachée." else "${tabs.sumOf { it.entrees.size }} entrées sourcées, par rubrique.")
         var tab by remember(id) { mutableIntStateOf(0) }
         Chips(tabs.map { it.titre.ifBlank { it.key } }, tab) { tab = it }
-        tabs.getOrNull(tab)?.entrees?.forEach { EntryCard(it) }
+        tabs.getOrNull(tab)?.let { g -> g.entrees.forEach { EntryCard(it.entree, hint = hintFor(home?.presentations, g.key, it.chemin)) } }
+        if (f.tronque) Caption("Liste coupée : la suite reste dans les rubriques.", Modifier.padding(top = 4.dp))
         if (home != null && home.themes.isNotEmpty() && home.identites.size >= 2) {
             Button(onClick = onCompare, modifier = Modifier.padding(top = 8.dp)) { Text("Comparer avec…") }
         }
@@ -425,23 +429,18 @@ private fun VerifyView(repository: Repository, home: PolHome?, onUnauthorized: (
     if (search.searching) Caption("Recherche…", Modifier.padding(top = 6.dp))
     search.failed?.let { StatusBanner(it, Modifier.padding(top = 8.dp)) }
     val r = search.results ?: return
-    val groups = boundedResults(r.resultats)
+    val hints = home?.presentations.orEmpty()
+    val groups = boundedResults(r.resultats, hints)
     if (groups.isEmpty()) return Caption("Rien dans les données sur ces mots.", Modifier.padding(top = 12.dp))
-    val (checked, others) = groups.partition { rubricKind(it.key, it.titre) == RubricKind.Declarations }
+    val (checked, others) = groups.partition { rubricKind(it.key, it.titre, hints) == RubricKind.Declarations }
     if (checked.isNotEmpty()) SectionHeader("Ce qu'en disent les données")
-    checked.forEach { g -> g.entrees.forEach { EntryCard(it, identitiesOf(it, home)) } }
+    checked.forEach { g -> g.entrees.forEach { EntryCard(it.entree, identitiesOf(it.entree, home), hintFor(hints, g.key, it.chemin)) } }
     if (others.isNotEmpty()) SectionHeader("Ailleurs dans les rubriques")
     others.forEach { g ->
         Text(g.titre.ifBlank { summaryOf(home, g.key)?.titre ?: g.key }, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(vertical = 6.dp))
-        g.entrees.forEach { EntryCard(it, identitiesOf(it, home)) }
+        g.entrees.forEach { EntryCard(it.entree, identitiesOf(it.entree, home), hintFor(hints, g.key, it.chemin)) }
     }
-}
-
-/** Identités nommées dans les champs simples d'une entrée de recherche (aucun rattachement fourni). */
-private fun identitiesOf(e: JsonElement, home: PolHome?): List<PolIdentity> {
-    val o = e as? JsonObject ?: return emptyList()
-    val values = o.values.mapNotNull { scalar(it)?.let(::fold) }.toSet()
-    return home?.identites.orEmpty().filter { fold(it.nom) in values || fold(it.id) in values }
+    if (r.tronque) Caption("Résultats coupés : préciser la recherche.", Modifier.padding(top = 6.dp))
 }
 
 // --- Dit / voté ------------------------------------------------------------------------
@@ -454,14 +453,14 @@ private fun DitVoteView(repository: Repository, home: PolHome?, onUnauthorized: 
     Chips(ids.map { it.nom }, tab) { tab = it }
     val id = ids[tab.coerceIn(0, ids.size - 1)].id
     Fetch(id, onUnauthorized, { repository.lookup(POLITIQUE, "app_politique_fiche", PolFiche.serializer(), buildJsonObject { put("id", id) }) }) { f ->
-        val d = ditVote(f)
+        val d = ditVote(f, home?.presentations.orEmpty())
         if (d.pairs.isNotEmpty()) {
             d.pairs.forEach { p ->
                 Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Quote("A dit", p.said, Modifier.weight(1f))
                     Quote("A voté", p.voted, Modifier.weight(1f))
                 }
-                val rest = entryView(p.rest)
+                val rest = entryView(p.rest, p.hint)
                 (rest.fields.map { it.text } + listOfNotNull(rest.source)).takeIf { it.isNotEmpty() }?.let { Caption(it.joinToString(" · "), Modifier.padding(4.dp)) }
             }
             return@Fetch
@@ -471,11 +470,11 @@ private fun DitVoteView(repository: Repository, home: PolHome?, onUnauthorized: 
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Column(Modifier.weight(1f)) {
                 SectionHeader("Déclarations")
-                d.said.forEach { EntryCard(it) }
+                d.said.forEach { EntryCard(it.entry, hint = it.hint) }
             }
             Column(Modifier.weight(1f)) {
                 SectionHeader("Votes, revirements")
-                d.voted.forEach { EntryCard(it) }
+                d.voted.forEach { EntryCard(it.entry, hint = it.hint) }
             }
         }
     }
@@ -490,25 +489,27 @@ private fun Quote(label: String, text: String, modifier: Modifier) = Card(modifi
 // --- Rubrique --------------------------------------------------------------------------
 
 @Composable
-private fun RubricView(repository: Repository, id: String, home: PolHome?, onUnauthorized: () -> Unit) {
+private fun RubricView(repository: Repository, id: String, asBulle: Boolean, home: PolHome?, onUnauthorized: () -> Unit) {
     Fetch(id, onUnauthorized, { repository.lookup(POLITIQUE, "app_politique_rubrique", PolRubric.serializer(), buildJsonObject { put("id", id) }) }) { r ->
-        summaryOf(home, id)?.resume?.let { Caption(it, Modifier.padding(bottom = 4.dp)) }
-        val themes = if (rubricKind(r.id.ifEmpty { id }, r.titre) == RubricKind.Bulle) bulle(r.contenu) else null
-        if (themes != null) return@Fetch BulleView(themes)
+        val rid = r.id.ifEmpty { id }
+        if (!asBulle) summaryOf(home, id)?.resume?.let { Caption(it, Modifier.padding(bottom = 4.dp)) }
+        val bulleHint = r.presentation.firstOrNull { it.vue == "bulle" }
+        val themes = if (asBulle || rubricKind(rid, r.titre, r.presentation) == RubricKind.Bulle) bulle(r.contenu, bulleHint) else null
+        if (themes != null) return@Fetch BulleView(themes, bulleHint)
         val parts = sections(r.contenu)
         if (parts.isEmpty()) return@Fetch Caption("Rubrique vide.")
         parts.forEach { s ->
             if (s.label.isNotBlank()) SectionHeader(s.label)
             s.notes.forEach { n -> Caption(listOf(n.label, n.text).filter { it.isNotBlank() }.joinToString(" : ")) }
             s.entries.forEachIndexed { i, e ->
-                EntryCard(e, attachedIds(r, s.path, i).mapNotNull { a -> home?.identites?.firstOrNull { it.id == a } })
+                EntryCard(e, attachedIds(r, s.path, i).mapNotNull { a -> home?.identites?.firstOrNull { it.id == a } }, hintFor(r.presentation, rid, s.path))
             }
         }
     }
 }
 
 @Composable
-private fun BulleView(themes: List<BulleTheme>) {
+private fun BulleView(themes: List<BulleTheme>, hint: PolHint?) {
     var tab by remember { mutableIntStateOf(0) }
     Chips(themes.map { it.theme }, tab) { tab = it }
     val t = themes[tab.coerceIn(0, themes.size - 1)]
@@ -517,14 +518,14 @@ private fun BulleView(themes: List<BulleTheme>) {
             pair.forEach { (camp, claims) ->
                 Column(Modifier.weight(1f)) {
                     Text(camp, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(vertical = 4.dp))
-                    claims.forEach { EntryCard(it) }
+                    claims.forEach { EntryCard(it, hint = hint) }
                 }
             }
             if (pair.size == 1) Spacer(Modifier.weight(1f))
         }
     }
     if (t.notes.isNotEmpty()) SectionHeader("Pour tout le thème")
-    t.notes.forEach { EntryCard(it) }
+    t.notes.forEach { EntryCard(it, hint = hint) }
 }
 
 // --- Briques communes ------------------------------------------------------------------
@@ -598,8 +599,8 @@ private fun Card(modifier: Modifier = Modifier, content: @Composable () -> Unit)
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun EntryCard(e: JsonElement, identities: List<PolIdentity> = emptyList()) {
-    val v = remember(e) { entryView(e) }
+private fun EntryCard(e: JsonElement, identities: List<PolIdentity> = emptyList(), hint: PolHint? = null) {
+    val v = remember(e, hint) { entryView(e, hint) }
     val context = LocalContext.current
     Card {
         Box(Modifier.semantics(mergeDescendants = true) {}) {

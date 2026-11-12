@@ -4,6 +4,7 @@ import androidx.compose.ui.graphics.Color
 import app.kairos.mobile.data.ApiError
 import app.kairos.mobile.data.KairosJson
 import app.kairos.mobile.data.PolCompare
+import app.kairos.mobile.data.PolEntry
 import app.kairos.mobile.data.PolFiche
 import app.kairos.mobile.data.PolGroup
 import app.kairos.mobile.data.PolHome
@@ -125,8 +126,8 @@ class PolitiqueStateTest {
         assertEquals("vite", t.results)
         assertFalse(t.searching)
 
-        val groups = (1..20).map { i -> PolGroup(rubrique = "r$i", entrees = List(50) { JsonPrimitive(it) }) } +
-            PolGroup(rubrique = "declarations", titre = "Déclarations vérifiées", entrees = listOf(JsonPrimitive("x"))) +
+        val groups = (1..20).map { i -> PolGroup(rubrique = "r$i", entrees = List(50) { PolEntry("L", it, JsonPrimitive(it)) }) } +
+            PolGroup(rubrique = "declarations", titre = "Déclarations vérifiées", entrees = listOf(PolEntry(entree = JsonPrimitive("x")))) +
             PolGroup(rubrique = "vide")
         val b = boundedResults(groups)
         assertEquals(SEARCH_GROUPS, b.size)
@@ -203,9 +204,9 @@ class PolitiqueStateTest {
     @Test
     fun dit_vote_pairs_only_when_data_links() {
         fun fiche(json: String) = KairosJson.decodeFromString(PolFiche.serializer(), json)
-        val linked = ditVote(fiche("""{"identite":{"id":"a"},"rubriques":[{"id":"dit_vote","entrees":[{"dit":"Nous protégerons X.","vote":"Contre X","source":"s"}]}]}"""))
+        val linked = ditVote(fiche("""{"identite":{"id":"a"},"rubriques":[{"id":"dit_vote","entrees":[{"chemin":"L","index":0,"entree":{"dit":"Nous protégerons X.","vote":"Contre X","source":"s"}}]}]}"""))
         assertEquals("Contre X", linked.pairs.single().voted)
-        val apart = ditVote(fiche("""{"identite":{"id":"a"},"rubriques":[{"id":"declarations","entrees":[{"titre":"Propos"}]},{"id":"votes","entrees":[{"titre":"V1"}]},{"id":"revirements","entrees":[{"titre":"R1"}]},{"id":"budgets","entrees":[{"titre":"B"}]}]}"""))
+        val apart = ditVote(fiche("""{"identite":{"id":"a"},"rubriques":[{"id":"declarations","entrees":[{"entree":{"titre":"Propos"}}]},{"id":"votes","entrees":[{"entree":{"titre":"V1"}}]},{"id":"revirements","entrees":[{"entree":{"titre":"R1"}}]},{"id":"budgets","entrees":[{"entree":{"titre":"B"}}]}]}"""))
         assertTrue(apart.pairs.isEmpty())
         assertEquals(1, apart.said.size)
         assertEquals(2, apart.voted.size)

@@ -4,6 +4,7 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 
 /** Lecture tolérante : champs inconnus ignorés, valeurs inattendues ramenées au défaut. */
@@ -646,6 +647,19 @@ data class PolHome(
     val identites: List<PolIdentity> = emptyList(),
     val rubriques: List<PolRubricSummary> = emptyList(),
     val themes: List<PolTheme> = emptyList(),
+    val presentations: List<PolHint> = emptyList(),
+)
+
+/**
+ * Indication de présentation d'une liste de rubrique ([chemin]) : la vue à employer et le
+ * rôle de ses champs (`titre`, `verdict`, `source`…). Absente : l'application devine.
+ */
+@Serializable
+data class PolHint(
+    val rubrique: String = "",
+    val chemin: String = "",
+    val vue: String = "generique",
+    val champs: Map<String, String> = emptyMap(),
 )
 
 /**
@@ -658,7 +672,12 @@ data class PolRubric(
     val titre: String = "",
     val contenu: JsonElement? = null,
     val rattachements: JsonObject = JsonObject(emptyMap()),
+    val presentation: List<PolHint> = emptyList(),
 )
+
+/** Entrée d'une fiche ou d'une recherche : sa liste ([chemin]) et sa place dans la rubrique. */
+@Serializable
+data class PolEntry(val chemin: String = "", val index: Int = 0, val entree: JsonElement = JsonNull)
 
 /** Entrées d'une rubrique : fiche (`id`) ou recherche (`rubrique`). */
 @Serializable
@@ -666,18 +685,18 @@ data class PolGroup(
     val id: String = "",
     val rubrique: String = "",
     val titre: String = "",
-    val entrees: List<JsonElement> = emptyList(),
+    val entrees: List<PolEntry> = emptyList(),
 ) {
     val key: String get() = id.ifEmpty { rubrique }
 }
 
 /** Fiche d'une identité (`app_politique_fiche`). */
 @Serializable
-data class PolFiche(val identite: PolIdentity, val rubriques: List<PolGroup> = emptyList())
+data class PolFiche(val identite: PolIdentity, val rubriques: List<PolGroup> = emptyList(), val tronque: Boolean = false)
 
 /** Résultats de recherche (`app_politique_chercher`). */
 @Serializable
-data class PolSearch(val q: String = "", val resultats: List<PolGroup> = emptyList())
+data class PolSearch(val q: String = "", val resultats: List<PolGroup> = emptyList(), val tronque: Boolean = false)
 
 /** Valeur d'une identité ; [valeur] absente ou nulle : non renseignée. */
 @Serializable

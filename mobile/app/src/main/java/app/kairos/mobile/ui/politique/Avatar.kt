@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -22,7 +23,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import app.kairos.mobile.data.PolIdentity
 import app.kairos.mobile.ui.mascot.animate
-import app.kairos.mobile.ui.mascot.onPageColors
+import app.kairos.mobile.ui.theme.KairosColors
 import app.kairos.mobile.ui.theme.SceneColors
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -93,13 +94,15 @@ fun IdentityBadge(identity: PolIdentity, size: Dp, modifier: Modifier = Modifier
         }
         return
     }
-    val colors = onPageColors()
+    // Visages couleur du corps, sans contour : posés sur la pastille du bouton Kairos, comme le personnage.
+    val colors = KairosColors.current.scene
     var frame by remember(avatar) { mutableIntStateOf(0) }
     LaunchedEffect(avatar) {
         if (avatar.frames.size < 2) return@LaunchedEffect
         animate(still = { frame = 0 }) { elapsed, _ -> frame = ((elapsed / avatar.ms) % avatar.frames.size).toInt() }
     }
-    Canvas(modifier.size(size)) {
+    Box(modifier.size(size).background(KairosColors.current.btn, RoundedCornerShape(size * 0.3f)), contentAlignment = Alignment.Center) {
+    Canvas(Modifier.size(size * 0.72f)) {
         val cell = this.size.minDimension / AVATAR_SIZE
         // Bords arrondis au pixel : cases jointives, sans liseré.
         fun edge(i: Int) = (i * cell).roundToInt().toFloat()
@@ -108,5 +111,6 @@ fun IdentityBadge(identity: PolIdentity, size: Dp, modifier: Modifier = Modifier
             val y = (v shr 8) and 0xFF
             drawRect(avatarColor(v, colors, tint), Offset(edge(x), edge(y)), Size(edge(x + 1) - edge(x), edge(y + 1) - edge(y)))
         }
+    }
     }
 }
