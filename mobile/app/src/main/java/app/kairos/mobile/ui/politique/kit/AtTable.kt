@@ -4,7 +4,6 @@ import android.content.Intent
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -24,14 +23,16 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
@@ -66,7 +67,10 @@ fun shareText(c: TableCard): String = buildList {
  */
 @Composable
 fun AtTable(cards: List<TableCard>, start: Int, onClose: () -> Unit) {
-    if (cards.isEmpty()) return
+    if (cards.isEmpty()) {
+        LaunchedEffect(Unit) { onClose() }
+        return
+    }
     val pc = PolColors.current
     val context = LocalContext.current
     val pager = rememberPagerState(initialPage = start.coerceIn(0, cards.size - 1)) { cards.size }
@@ -74,9 +78,9 @@ fun AtTable(cards: List<TableCard>, start: Int, onClose: () -> Unit) {
     val angle by animateFloatAsState(if (flipped) 180f else 0f, label = "retourner")
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
         Column(Modifier.fillMaxSize().background(pc.tableBg).safeDrawingPadding()) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClose, Modifier.heightIn(min = 48.dp)) { Text("Fermer", color = pc.tableInk, fontSize = 16.sp) }
-                Text("${pager.currentPage + 1} / ${cards.size}", color = pc.tableInk.copy(alpha = 0.7f), fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                Text("${pager.currentPage + 1} / ${cards.size}", color = pc.tableInk.copy(alpha = 0.7f), fontFamily = FontFamily.Monospace, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
             }
             HorizontalPager(pager, Modifier.weight(1f).graphicsLayer { rotationZ = angle }) { page ->
                 val c = cards[page]

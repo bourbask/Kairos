@@ -30,6 +30,7 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -196,7 +197,7 @@ fun IdentityChip(data: PolData, id: String, large: Boolean = false, text: String
     val ink = MaterialTheme.colorScheme.onSurface
     val badge = if (large) 26.dp else 20.dp
     Row(
-        modifier.clip(CircleShape).background(bg).outline(ink.copy(alpha = 0.22f))
+        modifier.let { if (onClick != null) it.minimumInteractiveComponentSize() else it }.clip(CircleShape).background(bg).outline(ink.copy(alpha = 0.22f))
             .let { if (onClick != null) it.clickable(role = Role.Button, onClick = onClick) else it }
             .heightIn(min = if (large) 34.dp else 28.dp)
             .padding(start = if (hasAvatar) 4.dp else 10.dp, end = 10.dp, top = 3.dp, bottom = 3.dp),
@@ -229,7 +230,7 @@ fun EvaluatorTag(ev: Evaluator, onOpen: (String) -> Unit, modifier: Modifier = M
         else -> listOf(scheme.surface, scheme.onSurfaceVariant, scheme.onSurfaceVariant, scheme.surface, scheme.outlineVariant)
     }
     Row(
-        modifier.clip(shape).background(look[0]!!).let { m -> look[4]?.let { m.outline(it, if (n == 4) 1.5f else 1f, shape) } ?: m }
+        modifier.minimumInteractiveComponentSize().clip(shape).background(look[0]!!).let { m -> look[4]?.let { m.outline(it, if (n == 4) 1.5f else 1f, shape) } ?: m }
             .clickable(role = Role.Button) { onOpen(ev.id) }
             .semantics(mergeDescendants = true) { contentDescription = evA11yLabel(ev) }
             .heightIn(min = 28.dp).padding(start = 6.dp, end = 9.dp, top = 5.dp, bottom = 5.dp),
@@ -257,7 +258,7 @@ fun SourceButton(src: SourceRef, data: PolData, onOpenEv: (String) -> Unit, modi
     Row(modifier) {
         if (ev != null) EvaluatorTag(ev, onOpenEv, Modifier, RoundedCornerShape(8.dp, 0.dp, 0.dp, 8.dp))
         Row(
-            Modifier.clip(shape).background(scheme.surface).outline(scheme.outlineVariant, 1f, shape)
+            Modifier.let { if (url != null) it.minimumInteractiveComponentSize() else it }.clip(shape).background(scheme.surface).outline(scheme.outlineVariant, 1f, shape)
                 .let { if (url != null) it.clickable(role = Role.Button) { openUrl(context, url) } else it }
                 .semantics { if (url != null) contentDescription = "Voir la source : $name (s'ouvre dans le navigateur)" }
                 .heightIn(min = 28.dp).padding(horizontal = 9.dp, vertical = 5.dp),
@@ -470,7 +471,7 @@ fun Pills(options: List<PillOption>, selected: String, onSelect: (String) -> Uni
         options.forEach { o ->
             val on = o.key == selected
             Row(
-                Modifier.heightIn(min = 40.dp).clip(CircleShape).background(if (on) scheme.onSurface else scheme.surface)
+                Modifier.minimumInteractiveComponentSize().heightIn(min = 40.dp).clip(CircleShape).background(if (on) scheme.onSurface else scheme.surface)
                     .let { if (on) it else it.outline(scheme.outlineVariant) }
                     .clickable(role = Role.Button) { onSelect(o.key) }.semantics { this.selected = on }.padding(horizontal = 14.dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp),
@@ -491,7 +492,7 @@ fun Segmented(options: List<String>, selected: Int, onSelect: (Int) -> Unit, mod
         options.forEachIndexed { i, label ->
             val on = i == selected
             Box(
-                Modifier.weight(1f).heightIn(min = 40.dp).clip(CircleShape).background(if (on) scheme.onSurface else Color.Transparent)
+                Modifier.weight(1f).minimumInteractiveComponentSize().heightIn(min = 40.dp).clip(CircleShape).background(if (on) scheme.onSurface else Color.Transparent)
                     .clickable(role = Role.Tab) { onSelect(i) }.semantics { this.selected = on }.padding(horizontal = 10.dp),
                 contentAlignment = Alignment.Center,
             ) { Text(label, color = if (on) scheme.background else scheme.onSurfaceVariant, fontWeight = FontWeight.SemiBold, fontSize = 13.5.sp, maxLines = 1) }

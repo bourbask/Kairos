@@ -57,8 +57,8 @@ class PolKitTest {
     }
 
     @Test fun evaluator_tag_texts() {
-        val ev = Evaluator(id = "x", nom = "Institut de recherche économique et sociale appliquée", alias = listOf("IRESA 2024", "IRESA"), independance = 2)
-        assertEquals("IRESA", evShortName(ev))
+        val ev = Evaluator(id = "x", nom = "Institut Exemple pour la recherche économique et sociale", alias = listOf("IEX 2024", "IEX"), independance = 2)
+        assertEquals("IEX", evShortName(ev))
         assertEquals("Court", evShortName(Evaluator(nom = "Court")))
         assertEquals(2, indLevel(ev))
         assertEquals(0, indLevel(Evaluator(independance = 9)))
