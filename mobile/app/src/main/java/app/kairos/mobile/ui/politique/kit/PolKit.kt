@@ -215,12 +215,11 @@ fun IdentityDot(data: PolData, id: String, modifier: Modifier = Modifier) {
     Box(modifier.size(10.dp).clip(CircleShape).background(bg).outline(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)).clearAndSetSemantics { })
 }
 
-/** Étiquette d'évaluateur : pastille du niveau d'indépendance (1 à 4) et nom court ; ouvre sa fiche. */
+/** Étiquette d'indépendance : pastille du niveau (1 à 4, « ? » sinon) et [text] ; les couleurs ne dépendent que du niveau. */
 @Composable
-fun EvaluatorTag(ev: Evaluator, onOpen: (String) -> Unit, modifier: Modifier = Modifier, shape: Shape = RoundedCornerShape(8.dp)) {
+private fun IndTag(n: Int, text: String, modifier: Modifier, shape: Shape) {
     val pc = PolColors.current
     val scheme = MaterialTheme.colorScheme
-    val n = indLevel(ev)
     // fond, texte, fond de la pastille, texte de la pastille, contour
     val look = when (n) {
         1 -> listOf(pc.ind1, pc.ind1Ink, pc.ind1Ink, pc.ind1, null)
@@ -230,18 +229,30 @@ fun EvaluatorTag(ev: Evaluator, onOpen: (String) -> Unit, modifier: Modifier = M
         else -> listOf(scheme.surface, scheme.onSurfaceVariant, scheme.onSurfaceVariant, scheme.surface, scheme.outlineVariant)
     }
     Row(
-        modifier.minimumInteractiveComponentSize().clip(shape).background(look[0]!!).let { m -> look[4]?.let { m.outline(it, if (n == 4) 1.5f else 1f, shape) } ?: m }
-            .clickable(role = Role.Button) { onOpen(ev.id) }
-            .semantics(mergeDescendants = true) { contentDescription = evA11yLabel(ev) }
+        modifier.clip(shape).background(look[0]!!).let { m -> look[4]?.let { m.outline(it, if (n == 4) 1.5f else 1f, shape) } ?: m }
             .heightIn(min = 28.dp).padding(start = 6.dp, end = 9.dp, top = 5.dp, bottom = 5.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Box(Modifier.size(17.dp).clip(CircleShape).background(look[2]!!), contentAlignment = Alignment.Center) {
             Text(if (n > 0) n.toString() else "?", color = look[3]!!, fontFamily = Mono, fontWeight = FontWeight.Bold, fontSize = 10.sp)
         }
-        Text(evShortName(ev), color = look[1]!!, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(text, color = look[1]!!, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
+
+/** Étiquette d'évaluateur : pastille du niveau d'indépendance (1 à 4) et nom court ; ouvre sa fiche. */
+@Composable
+fun EvaluatorTag(ev: Evaluator, onOpen: (String) -> Unit, modifier: Modifier = Modifier, shape: Shape = RoundedCornerShape(8.dp)) {
+    IndTag(
+        indLevel(ev), evShortName(ev),
+        modifier.minimumInteractiveComponentSize().clickable(role = Role.Button) { onOpen(ev.id) }.semantics(mergeDescendants = true) { contentDescription = evA11yLabel(ev) },
+        shape,
+    )
+}
+
+/** Légende : l'étiquette d'un niveau, sans action. */
+@Composable
+fun LevelTag(n: Int, modifier: Modifier = Modifier) = IndTag(n, if (n > 0) "Niveau $n" else "Non qualifié", modifier, RoundedCornerShape(8.dp))
 
 /**
  * Source : étiquette de l'évaluateur reconnu (id explicite, sinon alias en tête du libellé) collée au bouton.

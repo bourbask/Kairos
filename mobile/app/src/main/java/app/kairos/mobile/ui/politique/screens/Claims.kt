@@ -122,7 +122,7 @@ private fun CampTag(data: PolData, camp: String) {
 }
 
 @Composable
-private fun StackBar(tally: Map<String, Int>, modifier: Modifier = Modifier) {
+internal fun StackBar(tally: Map<String, Int>, modifier: Modifier = Modifier) {
     val pc = PolColors.current
     val line = MaterialTheme.colorScheme.outlineVariant
     val parts = tally.filterValues { it > 0 }

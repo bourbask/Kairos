@@ -31,7 +31,6 @@ import app.kairos.mobile.ui.mimir.SharesPanel
 import app.kairos.mobile.ui.politique.kit.AtTable
 import app.kairos.mobile.ui.politique.kit.BalanceSheet
 import app.kairos.mobile.ui.politique.kit.EmptyState
-import app.kairos.mobile.ui.politique.kit.PolSheet
 import app.kairos.mobile.ui.politique.kit.TableCard
 import app.kairos.mobile.ui.politique.model.PolData
 import app.kairos.mobile.ui.politique.model.PolPage
@@ -52,6 +51,11 @@ import app.kairos.mobile.ui.politique.screens.ProbiteScreen
 import app.kairos.mobile.ui.politique.screens.LivingScreen
 import app.kairos.mobile.ui.politique.screens.VillesScreen
 import app.kairos.mobile.ui.politique.screens.CitySheet
+import app.kairos.mobile.ui.politique.screens.DossiersScreen
+import app.kairos.mobile.ui.politique.screens.EvaluatorSheetAt
+import app.kairos.mobile.ui.politique.screens.EvaluatorsScreen
+import app.kairos.mobile.ui.politique.screens.RhetSheetAt
+import app.kairos.mobile.ui.politique.screens.RhetoriqueScreen
 import app.kairos.mobile.ui.politique.screens.ClusterSheet
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -210,6 +214,9 @@ fun RubricHost(id: String, data: PolData, nav: PolNavigator) {
         "argent" -> ArgentScreen(data, nav)
         "medias" -> MediasScreen(data, nav)
         "villes" -> VillesScreen(data, nav)
+        "rhetorique" -> RhetoriqueScreen(data, nav)
+        "dossiers" -> DossiersScreen(data, nav)
+        "evaluateurs" -> EvaluatorsScreen(data, nav)
         else -> Soon()
     }
 }
@@ -224,7 +231,8 @@ fun SheetHost(s: PolSheetState, data: PolData, nav: PolNavigator, onDismiss: () 
         is PolSheetState.Balance -> BalanceSheet(s.lecture, s.title, s.who, data, { nav.sheet(PolSheetState.Evaluator(it)) }, onDismiss)
         is PolSheetState.City -> CitySheet(data, s.key, nav, onDismiss)
         is PolSheetState.Cluster -> ClusterSheet(data, s.villes, nav, onDismiss)
-        is PolSheetState.Evaluator -> PolSheet(full = false, onDismiss = onDismiss) { Soon() }
+        is PolSheetState.Evaluator -> EvaluatorSheetAt(data, s.id, nav, onDismiss)
+        is PolSheetState.Rhet -> RhetSheetAt(data, s.t, nav, onDismiss)
     }
 }
 
