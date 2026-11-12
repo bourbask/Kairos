@@ -218,7 +218,7 @@ const val LONG_SIDE = 120
 /** Rédigé : balance, bilan, chiffrage ; liste : dit / voté et revirements selon la longueur de leurs textes. */
 fun layoutFor(round: DuelRound): RoundLayout {
     val long = when (round) {
-        is BarRound -> round.sacrifice != null
+        is BarRound -> round.sacrifice.let { it != null && (it.a != null || it.b != null) }
         is BilanRound, is GapRound -> true
         is VotesRound -> false
         is DvRound -> listOf(round.a, round.b).any { side -> side.filter { it.verdict.v == "ecart" }.sumOf { it.scrutin.titre.length } > LONG_SIDE }

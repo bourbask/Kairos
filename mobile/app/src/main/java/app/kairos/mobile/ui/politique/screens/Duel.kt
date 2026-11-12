@@ -17,11 +17,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -81,6 +79,8 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.layout.SubcomposeLayout
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
@@ -471,7 +471,7 @@ private fun Na(text: String) = Text(text, fontSize = 13.sp, fontStyle = FontStyl
 /** Côtés d'un round selon [layout] : deux cases côte à côte, ou onglets glissables. */
 @Composable
 private fun Sided(data: PolData, s: Sides, layout: RoundLayout, content: @Composable (Int) -> Unit) =
-    if (layout == RoundLayout.Switcher) SideSwitcher(data, s, content) else HitRow(s, content = content)
+    if (layout == RoundLayout.Switcher) SideSwitcher(data, s, content) else HitRow(s, content)
 
 /** Case teintée à l'identité d'un côté, liseré à gauche. */
 @Composable
@@ -484,15 +484,27 @@ private fun SideCell(color: Color, modifier: Modifier, content: @Composable () -
 }
 
 /**
- * Deux cases côte à côte, de même hauteur. Le contenu doit se mesurer juste en intrinsèque :
- * textes et colonnes, pas de bouton (une `Row` y compte une seule ligne et rognerait la case).
+ * Cases [shown] posées côte à côte, à la hauteur de la plus haute des deux côtés.
+ * Pas d'intrinsèque (une `Row` y compte une seule ligne et rognait la case) : chaque côté est
+ * d'abord mesuré à blanc (ni posé, ni dessiné, ni lu), puis la case réelle reçoit la hauteur commune.
  */
 @Composable
-private fun HitRow(s: Sides, modifier: Modifier = Modifier, content: @Composable (Int) -> Unit) {
-    Row(modifier.fillMaxWidth().padding(top = 8.dp).height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        (0..1).forEach { i -> SideCell(s.color(i), Modifier.weight(1f).fillMaxHeight()) { content(i) } }
+private fun SameHeight(s: Sides, shown: List<Int>, gap: Dp, modifier: Modifier = Modifier, content: @Composable (Int) -> Unit) {
+    val cell = @Composable { i: Int, m: Modifier -> SideCell(s.color(i), m) { content(i) } }
+    SubcomposeLayout(modifier.fillMaxWidth()) { c ->
+        val g = gap.roundToPx()
+        val w = ((c.maxWidth - g * (shown.size - 1)) / shown.size).coerceAtLeast(0)
+        val probe = Constraints(minWidth = w, maxWidth = w)
+        val h = (0..1).maxOf { i -> subcompose("probe$i") { cell(i, Modifier.clearAndSetSemantics { }) }.maxOfOrNull { it.measure(probe).height } ?: 0 }
+        val placed = shown.map { i -> subcompose("side$i") { cell(i, Modifier) }.map { it.measure(Constraints.fixed(w, h)) } }
+        layout(c.maxWidth, h) { placed.forEachIndexed { k, ps -> ps.forEach { it.place(k * (w + g), 0) } } }
     }
 }
+
+/** Deux cases côte à côte, de même hauteur. */
+@Composable
+private fun HitRow(s: Sides, content: @Composable (Int) -> Unit) =
+    SameHeight(s, listOf(0, 1), 8.dp, Modifier.padding(top = 8.dp), content)
 
 /**
  * Un côté à la fois, pour le texte long : onglets aux couleurs des adversaires, contenu glissable.
@@ -525,7 +537,8 @@ private fun SideSwitcher(data: PolData, s: Sides, content: @Composable (Int) -> 
         }
         // Le pager ne prend que le glissement horizontal : le défilement vertical reste à la liste.
         HorizontalPager(pager, Modifier.fillMaxWidth().padding(top = 8.dp), contentPadding = PaddingValues(end = 28.dp), pageSpacing = 8.dp, verticalAlignment = Alignment.Top) { i ->
-            SideCell(s.color(i), Modifier.fillMaxWidth()) { content(i) }
+            // Même hauteur pour les deux pages : pas de saut de la liste au changement de côté.
+            SameHeight(s, listOf(i), 0.dp, content = content)
         }
     }
 }

@@ -221,6 +221,8 @@ class DuelTest {
         fun bar(sac: Sacrifice?) = BarRound("Dette", "", 1.0, 2.0, emptyList(), 0.0, { it.toString() }, sacrifice = sac)
         assertEquals(RoundLayout.Switcher, layoutFor(bar(Sacrifice(app.kairos.mobile.ui.politique.model.Lecture(), "Alpha", null, null))))
         assertEquals(RoundLayout.SideBySide, layoutFor(bar(null)))
+        assertEquals("deux balances absentes", RoundLayout.SideBySide, layoutFor(bar(Sacrifice(null, "Alpha", null, "Beta"))))
+        assertEquals(RoundLayout.Switcher, layoutFor(bar(Sacrifice(null, null, app.kairos.mobile.ui.politique.model.Lecture(), "Beta"))))
         assertEquals(RoundLayout.Switcher, layoutFor(BilanRound(listOf(BilanLine("O", listOf("keep", "Garde"), null)))))
         assertEquals(RoundLayout.Switcher, layoutFor(GapRound(emptyList(), emptyList())))
         assertEquals(RoundLayout.SideBySide, layoutFor(VotesRound("AN", "G1", "G2", false, emptyList())))

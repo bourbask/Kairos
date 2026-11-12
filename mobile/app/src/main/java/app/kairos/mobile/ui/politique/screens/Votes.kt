@@ -53,7 +53,6 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.kairos.mobile.ui.politique.IdentityBadge
@@ -92,9 +91,11 @@ private val Mono = FontFamily.Monospace
 @Composable
 internal fun Chip(text: String, fg: Color, bg: Color, dashed: Boolean = false, modifier: Modifier = Modifier) {
     val line = MaterialTheme.colorScheme.outline
+    // Rayon fixe, pas de cercle : un libellé trop long passe à la ligne sans que la forme le rogne.
+    val shape = RoundedCornerShape(12.dp)
     Text(
-        text.uppercase(), modifier.clip(CircleShape).background(bg).let { if (dashed) it.border(1.dp, line, CircleShape) else it }.padding(horizontal = 9.dp, vertical = 5.dp),
-        color = fg, fontFamily = Mono, fontWeight = FontWeight.SemiBold, fontSize = 11.sp, letterSpacing = 0.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+        text.uppercase(), modifier.clip(shape).background(bg).let { if (dashed) it.border(1.dp, line, shape) else it }.padding(horizontal = 9.dp, vertical = 5.dp),
+        color = fg, fontFamily = Mono, fontWeight = FontWeight.SemiBold, fontSize = 11.sp, letterSpacing = 0.5.sp,
     )
 }
 
@@ -155,7 +156,7 @@ private fun VoteCell(data: PolData, group: String, code: String, detail: String,
         Column(Modifier.padding(horizontal = 8.dp, vertical = 7.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(group, color = fg, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
             Text(word, color = fg, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-            if (detail.isNotBlank()) Text(detail, color = fg, fontSize = 11.sp, lineHeight = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            if (detail.isNotBlank()) Text(detail, color = fg, fontSize = 11.sp, lineHeight = 14.sp)
         }
     }
 }
