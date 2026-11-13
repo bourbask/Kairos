@@ -55,6 +55,7 @@ import app.kairos.mobile.ui.politique.screens.ProbiteScreen
 import app.kairos.mobile.ui.politique.screens.LivingScreen
 import app.kairos.mobile.ui.politique.screens.VillesScreen
 import app.kairos.mobile.ui.politique.screens.CitySheet
+import app.kairos.mobile.ui.politique.screens.DeclarationsScreen
 import app.kairos.mobile.ui.politique.screens.DossiersScreen
 import app.kairos.mobile.ui.politique.screens.EvaluatorSheetAt
 import app.kairos.mobile.ui.politique.screens.EvaluatorsScreen
@@ -225,6 +226,7 @@ fun RubricHost(id: String, data: PolData, nav: PolNavigator) {
         "villes" -> VillesScreen(data, nav)
         "rhetorique" -> RhetoriqueScreen(data, nav)
         "dossiers" -> DossiersScreen(data, nav)
+        "declarations" -> DeclarationsScreen(data, nav)
         "evaluateurs" -> EvaluatorsScreen(data, nav)
         else -> Soon()
     }

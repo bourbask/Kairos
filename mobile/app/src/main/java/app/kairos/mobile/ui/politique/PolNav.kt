@@ -3,6 +3,7 @@ package app.kairos.mobile.ui.politique
 import app.kairos.mobile.ui.politique.kit.TableCard
 import app.kairos.mobile.ui.politique.model.Lecture
 import app.kairos.mobile.ui.politique.model.PolData
+import app.kairos.mobile.ui.politique.screens.declarationsOf
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.jsonPrimitive
@@ -112,6 +113,7 @@ val RUBRICS: List<RubricTile> = listOf(
     RubricTile("argent", "Argent", "Qui finance partis et campagnes") { it.size("argent", "FIN").or("dossier", "dossiers") },
     RubricTile("medias", "Médias", "Qui possède quoi, ce qui est prouvé") { it.size("medias", "OWNERS").or("propriétaire", "propriétaires") },
     RubricTile("villes", "Villes", "La carte des mairies, et ce qu'ils y font", TileKind.Wide) { it.size("villes", "COMMUNES").or("ville suivie", "villes suivies") },
+    RubricTile("declarations", "Paroles publiques", "Ce qu'ils ont dit, face aux faits", TileKind.Wide) { declarationsOf(it).size.or("déclaration", "déclarations") },
     RubricTile("bulle", "Hors de ma bulle", "Les mêmes thèmes, lus depuis chaque camp, côte à côte.", TileKind.Wide, ::bubbleLine),
     RubricTile("phrases", "Phrases", "Ce que chaque phrase entendue cache vraiment.", TileKind.Link) { it.size("affirmations", "CLAIMS").or("phrase vérifiée", "phrases vérifiées") },
     RubricTile("dossiers", "Dossiers", "Un contenu viral, repris phrase par phrase.", TileKind.Link) { it.size("dossiers", "DOSSIERS").or("dossier", "dossiers") },

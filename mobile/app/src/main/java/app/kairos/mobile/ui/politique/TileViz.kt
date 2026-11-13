@@ -2,7 +2,9 @@ package app.kairos.mobile.ui.politique
 
 import androidx.compose.ui.geometry.Offset
 import app.kairos.mobile.ui.politique.model.PolData
+import app.kairos.mobile.ui.politique.screens.DECL_VERDICTS
 import app.kairos.mobile.ui.politique.screens.Measure
+import app.kairos.mobile.ui.politique.screens.declarationsOf
 import app.kairos.mobile.ui.politique.screens.Turn
 import app.kairos.mobile.ui.politique.screens.VoteRow
 import app.kairos.mobile.ui.politique.screens.aideOf
@@ -123,6 +125,14 @@ fun tileViz(data: PolData, id: String): TileViz? = when (id) {
                 Mark(if (ink == null) MarkShape.Hollow else MarkShape.Box, i * 14f, r * 9f, 11f, 6.5f, ink ?: Ink.Muted)
             }
         },
+    )
+    // Dernières déclarations, une case chacune : contredite (plein), exacte, non vérifiable (contour).
+    "declarations" -> viz(
+        declarationsOf(data).take(24).mapIndexed { i, d ->
+            val ink = when (d.verdict) { "exact" -> Ink.Solide; "non-verifiable", !in DECL_VERDICTS -> null; else -> Ink.Fragile }
+            Mark(if (ink == null) MarkShape.Hollow else MarkShape.Box, (i % 6) * 14f, (i / 6) * 14f, 11f, 11f, ink ?: Ink.Muted)
+        },
+        84f, 53f,
     )
     "bulle" -> viz(
         campsOf(data, claimsOf(data)).mapIndexed { i, c -> Mark(MarkShape.Dot, 28f + i * 24f, 32f + if (i % 2 == 1) -6f else 6f, 20f, 20f, Ink.Identity, data.hexOf(c)) },
