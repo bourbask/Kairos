@@ -93,6 +93,10 @@ const val NEUTRAL_LABEL = "Non précisé"
 private val VERDICT_LABELS = mapOf(
     "solide" to "Solide", "partiel" to "En partie vrai", "trompeur" to "Vrai mais trompeur",
     "fragile" to "Fragile", "faux" to "Faux", "non-documente" to "Non documenté",
+    // Paroles publiques face aux faits.
+    "auto-contradiction" to "Auto-contradiction", "contredit-justice" to "Contredit par la justice",
+    "contredit-document" to "Contredit par un document", "contredit-preuve" to "Contredit par une preuve",
+    "exact" to "Exact", "non-verifiable" to "Non vérifiable",
 )
 
 /** Les sept verdicts de promesse (balance d'un chiffre) : libellé, famille de couleur, définition. */
@@ -194,6 +198,9 @@ fun splitBold(text: String): List<Pair<String, Boolean>> {
     if (last < text.length) out += text.substring(last) to bold
     return out
 }
+
+/** Citation entre guillemets, sauf si elle en porte déjà. */
+fun quoted(q: String): String = q.trim().let { if (it.startsWith("«")) it else "« $it »" }
 
 /** Espaces insécables autour des guillemets français et avant `: ; ? !`. */
 fun frTypo(s: String): String =
@@ -385,7 +392,8 @@ private fun verdictLook(v: String): VerdictLook {
     val pc = PolColors.current
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
     return when (v) {
-        "solide" -> VerdictLook(pc.solide, pc.solideBg, null)
+        "solide", "exact" -> VerdictLook(pc.solide, pc.solideBg, null)
+        "auto-contradiction", "contredit-justice", "contredit-document", "contredit-preuve" -> VerdictLook(pc.fragile, pc.fragileBg, null)
         "partiel" -> VerdictLook(pc.partiel, pc.partielBg, null)
         "trompeur" -> VerdictLook(pc.trompeur, pc.trompeurBg, null)
         "fragile" -> VerdictLook(pc.fragile, pc.fragileBg, null)

@@ -313,17 +313,22 @@ private fun ItemCard(data: PolData, x: ContentItem, j: Int, n: Int, nav: PolNavi
             CacheBox(x.cache)
             x.lecture?.let { l -> BalanceBlock(l, x.dit, onOpen = null) }
         }
-        x.procede?.takeIf { it.isNotBlank() }?.let { p ->
-            val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
-            Text(
-                "Procédé : $p",
-                Modifier.padding(top = 12.dp).heightIn(min = 48.dp).clip(RoundedCornerShape(24.dp)).background(if (dark) Color(0xFF2A3A4C) else Color(0xFF23384A))
-                    .clickable(role = Role.Button) { nav.sheet(PolSheetState.Rhet(p)) }.padding(horizontal = 14.dp, vertical = 12.dp),
-                color = if (dark) Color(0xFFF2F5EF) else Color(0xFFF7F5EF), fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
-            )
-        }
+        ProcedeLink(x.procede, nav)
         SourceList(sourcesOf(x.src), data, onEv)
     }
+}
+
+/** Procédé rhétorique employé : ouvre sa carte ; vide : rien. */
+@Composable
+internal fun ProcedeLink(p: String?, nav: PolNavigator) {
+    if (p.isNullOrBlank()) return
+    val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
+    Text(
+        "Procédé : $p",
+        Modifier.padding(top = 12.dp).heightIn(min = 48.dp).clip(RoundedCornerShape(24.dp)).background(if (dark) Color(0xFF2A3A4C) else Color(0xFF23384A))
+            .clickable(role = Role.Button) { nav.sheet(PolSheetState.Rhet(p)) }.padding(horizontal = 14.dp, vertical = 12.dp),
+        color = if (dark) Color(0xFFF2F5EF) else Color(0xFFF7F5EF), fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+    )
 }
 
 @Composable
