@@ -64,3 +64,9 @@ fun quizEndMessage(ok: Int, n: Int): String = when {
     ok * 10 >= n * 4 -> "Des réflexes justes, et quelques surprises."
     else -> "Les données surprennent souvent : c'est le but."
 }
+
+/** Progression de la barre : `answered` réponses données sur `n` ; l'icône de résultat se remplit sur la page de résultat. */
+class QuizProgress(val fraction: Float, val resultReached: Boolean)
+
+fun quizProgress(answered: Int, n: Int, atResult: Boolean): QuizProgress =
+    QuizProgress(if (n <= 0) 0f else (answered.toFloat() / n).coerceIn(0f, 1f), atResult)

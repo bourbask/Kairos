@@ -84,6 +84,15 @@ object KairosIcons {
     }
     val Info by lazy { icon("Information") { circle(12f, 12f, 9f); moveTo(12f, 11f); verticalLineTo(16.5f); moveTo(12f, 7.5f); verticalLineTo(7.51f) } }
 
+    /** Drapeau d'arrivée : contour (pas atteint) et plein (atteint). */
+    val Flag by lazy { icon("Résultat") { flag() } }
+    val FlagFilled by lazy { icon("Résultat atteint", filled = true) { flag() } }
+
+    private fun PathBuilder.flag() {
+        moveTo(5f, 21f); verticalLineTo(3f)
+        moveTo(5f, 4f); horizontalLineTo(19f); lineTo(15f, 9f); lineTo(19f, 14f); horizontalLineTo(5f)
+    }
+
     private fun PathBuilder.circle(cx: Float, cy: Float, r: Float) {
         moveTo(cx + r, cy)
         arcTo(r, r, 0f, isMoreThanHalf = true, isPositiveArc = true, x1 = cx - r, y1 = cy)
@@ -99,9 +108,10 @@ object KairosIcons {
         circle(12f, 12f, 3f)
     }
 
-    private fun icon(name: String, mirrored: Boolean = false, draw: PathBuilder.() -> Unit): ImageVector =
+    private fun icon(name: String, mirrored: Boolean = false, filled: Boolean = false, draw: PathBuilder.() -> Unit): ImageVector =
         ImageVector.Builder(name, 24.dp, 24.dp, 24f, 24f, autoMirror = mirrored).path(
             // Couleur de gabarit : remplacée par la teinte de `Icon`.
+            fill = if (filled) SolidColor(Color.Black) else null,
             stroke = SolidColor(Color.Black),
             strokeLineWidth = 2f,
             strokeLineCap = StrokeCap.Round,

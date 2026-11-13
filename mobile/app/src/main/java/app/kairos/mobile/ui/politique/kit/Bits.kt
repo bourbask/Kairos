@@ -37,6 +37,9 @@ import app.kairos.mobile.ui.politique.model.SourceRef
  */
 val LocalPolBottom = compositionLocalOf { 24.dp }
 
+/** Haut de [LocalPolBottom] que le dock laisse vide : une barre d'actions fixe peut s'y loger pour coller au dock. */
+val DockSlack = 24.dp
+
 /** Filet entre deux lignes d'une carte. */
 @Composable
 fun Divider(top: Dp = 0.dp) = Box(Modifier.padding(top = top).fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)))

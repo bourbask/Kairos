@@ -33,6 +33,16 @@ class QuizTest {
         assertTrue(swipeToNext(91f, 0f)); assertTrue(swipeToNext(0f, -0.6f)); assertFalse(swipeToNext(50f, 0.2f))
     }
 
+    @Test fun progress_reaches_end_on_last_answer() {
+        assertEquals(0f, quizProgress(0, 5, false).fraction, 0f)
+        assertEquals(0.6f, quizProgress(3, 5, false).fraction, 1e-6f)
+        // 5/5 : dernière réponse donnée, barre pleine, résultat pas encore atteint.
+        val last = quizProgress(5, 5, false)
+        assertEquals(1f, last.fraction, 0f); assertFalse(last.resultReached)
+        assertTrue(quizProgress(5, 5, true).resultReached)
+        assertEquals(0f, quizProgress(0, 0, false).fraction, 0f)
+    }
+
     @Test fun near_feedback_for_trompeur_answered_vrai() {
         val f = quizFeedback("trompeur", Guess.Vrai)
         assertEquals(Tone.Near, f.tone)
