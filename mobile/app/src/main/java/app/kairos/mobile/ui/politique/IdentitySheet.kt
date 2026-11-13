@@ -160,7 +160,7 @@ fun identityLinks(data: PolData, id: String): IdentityLinks {
         matrix = data.decode<MatrixRow>("bilan", "MATRIX").flatMap { r ->
             r.c.filterKeys { hit(it) }.values.map { p -> r to Stance(p.getOrElse(0) { "" }, p.getOrElse(1) { "" }) }
         },
-        claims = data.decode<Claim>("affirmations", "CLAIMS").filter { hit(it.camp) },
+        claims = claimsOf(data).filter { hit(it.camp) },
         coh = data.decode<CohGroup>("votes", "COH").filter { hit(it.camp) },
         turns = turnsOf(data, id),
         cases = affairesOf(data).filter { a -> if (data.idsIn(a.who).isNotEmpty()) hit(a.who) else hit(a.party) },
@@ -194,7 +194,7 @@ fun ownPartis(l: IdentityLinks, data: PolData, id: String) = l.partis.own(data, 
 
 data class Stat(val label: String, val value: String, val sub: String)
 
-private val FRAGILE = setOf("fragile", "faux", "non-documente")
+private val FRAGILE = setOf("trompeur", "plutot-faux", "non-prouve", "faux")
 
 /** Jusqu'à quatre chiffres clés, chacun seulement si la donnée existe. */
 fun identityStats(data: PolData, id: String, l: IdentityLinks = identityLinks(data, id)): List<Stat> {
@@ -219,7 +219,7 @@ fun identityStats(data: PolData, id: String, l: IdentityLinks = identityLinks(da
     }
     ownPartis(l, data, id)?.net?.let { out += Stat("Situation nette", netLabel(it), "derniers comptes publiés") }
     if (l.claims.isNotEmpty()) {
-        out += Stat("Phrases vérifiées", l.claims.size.toString(), plural(l.claims.count { it.v == "solide" }, "solide", "solides") + " · " + plural(l.claims.count { it.v in FRAGILE }, "fragile ou faux", "fragiles ou faux"))
+        out += Stat("Phrases vérifiées", l.claims.size.toString(), plural(l.claims.count { it.v == "vrai" }, "vrai", "vrais") + " · " + plural(l.claims.count { it.v in FRAGILE }, "défavorable", "défavorables"))
     }
     val k = dvCount(l.dv)
     if (k.t > 0) out += Stat("Dit / voté", "${k.c} / ${k.t}", "votes conformes à la parole publique")

@@ -6,6 +6,8 @@ import app.kairos.mobile.ui.politique.model.Evaluator
 import app.kairos.mobile.ui.politique.model.Lecture
 import app.kairos.mobile.ui.politique.model.Poste
 import app.kairos.mobile.ui.politique.model.SourceRef
+import app.kairos.mobile.ui.politique.model.VERDICT_SCALE
+import app.kairos.mobile.ui.politique.model.normalizeVerdict
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -28,10 +30,18 @@ class PolKitTest {
         assertNull(safeHttps(null))
     }
 
+    @Test fun legacy_verdicts_are_normalized_and_scale_is_ordered() {
+        assertEquals(listOf("vrai", "non-prouve", "plutot-vrai"), listOf("solide", "fragile", "partiel").map(::normalizeVerdict))
+        assertEquals("trompeur", normalizeVerdict("trompeur")); assertEquals("inconnu", normalizeVerdict("inconnu"))
+        assertEquals(listOf("vrai", "plutot-vrai", "trompeur", "plutot-faux", "non-prouve", "faux", "non-documente"), VERDICT_SCALE)
+    }
+
     @Test fun verdict_labels_cover_all_values() {
         val expected = mapOf(
-            "solide" to "Solide", "partiel" to "En partie vrai", "trompeur" to "Vrai mais trompeur",
-            "fragile" to "Fragile", "faux" to "Faux", "non-documente" to "Non documenté",
+            "vrai" to "Vrai", "plutot-vrai" to "Plutôt vrai", "trompeur" to "Trompeur", "plutot-faux" to "Plutôt faux",
+            "non-prouve" to "Non prouvé", "faux" to "Faux", "non-documente" to "Non documenté",
+            // Anciens ids toujours lus.
+            "solide" to "Vrai", "partiel" to "Plutôt vrai", "fragile" to "Non prouvé",
         )
         expected.forEach { (k, v) -> assertEquals(v, verdictLabel(k)) }
         assertEquals(NEUTRAL_LABEL, verdictLabel("inconnu"))
