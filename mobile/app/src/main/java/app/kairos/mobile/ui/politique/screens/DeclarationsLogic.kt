@@ -84,16 +84,19 @@ fun declView(st: DeclState, f: DeclFilter): List<Int> = st.list.indices.filter {
 
 private fun JsonElement?.str(): String? = (this as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }
 
-/** Source de la citation ; le minutage rejoint le libellé (jamais lu comme un évaluateur). */
+/** Source de la citation ; le minutage ouvre le libellé, lisible même quand le nom est coupé (jamais lu comme un évaluateur). */
 fun citationSource(d: Declaration): SourceRef? {
     val a = d.source as? JsonArray ?: return sourcesOf(d.source).firstOrNull()
     val label = a.getOrNull(0).str()
     val url = a.getOrNull(1).str()
     if (label == null && url == null) return null
-    return SourceRef(listOfNotNull(label, a.getOrNull(2).str()).joinToString(" · "), url)
+    return SourceRef(listOfNotNull(a.getOrNull(2).str(), label).joinToString(" · "), url)
 }
 
 fun preuvesOf(d: Declaration): List<SourceRef> = sourcesOf(d.preuves)
+
+/** Clé de liste unique même si deux déclarations partagent un id : le rang la préfixe. */
+fun declKey(d: Declaration, rank: Int): String = "$rank:${d.id}"
 
 /** Nom de l'auteur : sa fiche, sinon le nom publié. */
 fun whoName(data: PolData, d: Declaration): String = whoOf(data, d)?.let { data.byId(it)?.nom } ?: d.qui

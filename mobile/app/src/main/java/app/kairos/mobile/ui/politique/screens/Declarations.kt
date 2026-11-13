@@ -103,7 +103,7 @@ fun DeclarationsScreen(data: PolData, nav: PolNavigator) {
             }
         }
         if (view.isEmpty()) part { EmptyState("Aucune déclaration pour ce choix", "Aucune déclaration ne combine ce pouvoir, ce verdict et ce camp. Élargissez un des filtres (« Tous »).") }
-        items(view.size, key = { st.list[view[it]].id.ifEmpty { "#${view[it]}" } }) { j ->
+        items(view.size, key = { declKey(st.list[view[it]], view[it]) }) { j ->
             DeclarationCard(data, st.list[view[j]], nav) { nav.table(cards, j) }
         }
     }

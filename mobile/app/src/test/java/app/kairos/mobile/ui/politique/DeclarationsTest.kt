@@ -96,7 +96,7 @@ class DeclarationsTest {
     @Test fun sources_named_https_only() {
         val d2 = declState(data).list[0]
         // Source de la citation : minutage lu dans le libellé, jamais pris pour un évaluateur.
-        assertEquals(SourceRef("Média fictif · 12:30–12:45", "https://example.org/v"), citationSource(d2))
+        assertEquals(SourceRef("12:30–12:45 · Média fictif", "https://example.org/v"), citationSource(d2))
         assertNull(citationSource(Declaration()))
         assertEquals(listOf("Rapport fictif", "Page"), preuvesOf(d2).map { it.label })
         assertEquals("ev", preuvesOf(d2)[0].ev)
@@ -107,8 +107,20 @@ class DeclarationsTest {
     @Test fun home_tile_counts_and_marks() {
         assertEquals("5 déclarations", RUBRICS.single { it.id == "declarations" }.count(data))
         assertEquals("Paroles publiques", rubricTitle("declarations"))
-        assertEquals(listOf(Ink.Fragile, Ink.Fragile, Ink.Solide, Ink.Fragile, Ink.Muted), tileViz(data, "declarations")!!.marks.map { it.ink })
-        assertEquals(MarkShape.Hollow, tileViz(data, "declarations")!!.marks.last().shape)
+        // Encre neutre, une case par déclaration : jamais de couleur de verdict.
+        assertEquals(List(5) { Ink.Line }, tileViz(data, "declarations")!!.marks.map { it.ink })
+        assertTrue(tileViz(data, "declarations")!!.marks.all { it.shape == MarkShape.Box })
+    }
+
+    @Test fun duplicate_ids_keep_unique_keys() {
+        val dup = PolData(mapOf("declarations" to obj("""{"DECLARATIONS": [
+            {"id":"x","qui":"A","date":"2026-01-01","citation":"Un","verdict":"exact"},
+            {"id":"x","qui":"B","date":"2026-01-01","citation":"Deux","verdict":"exact"},
+            {"qui":"C","citation":"Trois"},{"qui":"D","citation":"Quatre"}]}""")))
+        val st = declState(dup)
+        assertEquals(4, st.list.size)
+        val keys = declView(st, DeclFilter()).map { declKey(st.list[it], it) }
+        assertEquals(keys.size, keys.toSet().size)
     }
 
     @Test fun identity_links_include_declarations() {
