@@ -55,7 +55,7 @@ data class TableCard(
 fun shareText(c: TableCard): String = buildList {
     add(c.kicker)
     add(c.title)
-    c.quote?.let { add("« $it »") }
+    c.quote?.let { add(quoted(it)) }
     c.verdict?.let { add(verdictLabel(it)) }
     addAll(c.lines)
     c.source?.let { add("Source : $it") }
@@ -87,7 +87,7 @@ fun AtTable(cards: List<TableCard>, start: Int, onClose: () -> Unit) {
                 Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 8.dp)) {
                     Kicker(c.kicker, color = pc.tableInk.copy(alpha = 0.7f))
                     Text(c.title, Modifier.padding(top = 10.dp), color = pc.tableInk, fontSize = 34.sp, lineHeight = 37.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.03).em)
-                    if (c.quote != null) Text("« ${c.quote} »", Modifier.padding(top = 10.dp), color = pc.tableInk, fontSize = 36.sp, lineHeight = 40.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.03).em)
+                    if (c.quote != null) Text(frTypo(quoted(c.quote)), Modifier.padding(top = 10.dp), color = pc.tableInk, fontSize = 36.sp, lineHeight = 40.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.03).em)
                     if (c.verdict != null) VerdictChip(c.verdict, Modifier.padding(top = 22.dp), large = true)
                     c.lines.forEach { Text(frTypo(it), Modifier.padding(top = 12.dp), color = pc.tableInk, fontSize = 21.sp, lineHeight = 29.sp) }
                     if (c.source != null) Text(c.source, Modifier.padding(top = 22.dp).alpha(0.75f), color = pc.tableInk, fontSize = 15.sp)

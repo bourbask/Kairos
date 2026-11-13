@@ -21,7 +21,7 @@ data class PolPage(
 )
 
 val POL_FILES: List<String> = listOf(
-    "meta", "identites", "comparaisons", "affirmations", "argent", "bilan", "budgets", "dit-vote", "dossiers", "evaluateurs",
+    "meta", "identites", "comparaisons", "affirmations", "argent", "bilan", "budgets", "declarations", "dit-vote", "dossiers", "evaluateurs",
     "carte", "medias", "niveau-de-vie", "probite", "revirements", "rhetorique", "villes", "votes",
 )
 
