@@ -1,0 +1,86 @@
+{
+  "contenu": {
+    "DECLARATIONS": [
+      {
+        "citation": "« Rien n'a changé. »",
+        "contexte": "Entretien fictif",
+        "date": "2026-02-01",
+        "faits": [
+          "Un rapport fictif indique le contraire."
+        ],
+        "fonction": "Ministre fictif",
+        "id": "a-2026-02-01",
+        "pouvoir": "gouvernement",
+        "preuves": [
+          [
+            "Rapport fictif",
+            "https://example.org/rapport",
+            "institut-fictif-1"
+          ]
+        ],
+        "procede": "Homme de paille",
+        "qui": "a",
+        "reponse": "« Je maintiens. » (Média fictif)",
+        "source": [
+          "Média fictif, 01/02/2026",
+          "https://example.org/entretien",
+          "12:30–12:45"
+        ],
+        "verdict": "contredit-document"
+      },
+      {
+        "citation": "Le chiffre a doublé.",
+        "contexte": "Meeting fictif",
+        "date": "2026-03-10",
+        "faits": [
+          "La série fictive confirme le doublement."
+        ],
+        "fonction": "Députée fictive",
+        "id": "b-2026-03-10",
+        "parti": "parti-bleu",
+        "pouvoir": "opposition",
+        "preuves": [
+          [
+            "Série fictive",
+            "https://example.org/serie"
+          ]
+        ],
+        "qui": "b",
+        "source": [
+          "Vidéo fictive",
+          "https://example.org/video",
+          ""
+        ],
+        "verdict": "exact"
+      },
+      {
+        "citation": "Aucun incident.",
+        "contexte": "Communiqué fictif",
+        "date": "2025-12-05",
+        "faits": [
+          "Un second communiqué fictif recense des incidents."
+        ],
+        "fonction": "Préfet fictif",
+        "id": "x-2025-12-05",
+        "pouvoir": "gouvernement",
+        "preuves": [
+          [
+            "Second communiqué fictif",
+            "https://example.org/communique-2"
+          ]
+        ],
+        "qui": "Personne Exemple",
+        "source": [
+          "Communiqué fictif",
+          "https://example.org/communique",
+          ""
+        ],
+        "verdict": "auto-contradiction"
+      }
+    ]
+  },
+  "id": "declarations",
+  "page": 0,
+  "pages": 1,
+  "version": "18fae27693b40000-582"
+}
