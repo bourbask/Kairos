@@ -32,7 +32,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Button
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.progressBarRangeInfo
+import app.kairos.mobile.ui.kit.KairosIcons
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -192,9 +197,7 @@ private fun QuizGame(data: PolData, nav: PolNavigator, claims: List<Claim>, camp
     var exit by remember(i) { mutableIntStateOf(0) }
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp).padding(top = 4.dp, bottom = LocalPolBottom.current)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Box(Modifier.weight(1f).height(6.dp).clip(CircleShape).background(scheme.outlineVariant)) {
-                Box(Modifier.fillMaxHeight().fillMaxWidth(i.toFloat() / n).background(scheme.onSurface))
-            }
+            QuizBar(quizProgress(ans.size, n, atResult = false), Modifier.weight(1f))
             Text("${i + 1} / $n · ${frCount(score, "juste", "justes")}", Modifier.semantics { liveRegion = LiveRegionMode.Polite }, fontSize = 13.sp, fontWeight = FontWeight.Bold, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
         }
         Box(Modifier.weight(1f).padding(top = 14.dp, bottom = 12.dp)) {
@@ -225,6 +228,26 @@ private fun QuizGame(data: PolData, nav: PolNavigator, claims: List<Claim>, camp
                 }
             }
         }
+    }
+}
+
+/** Barre de progression, drapeau de résultat accolé à droite : contour pendant le jeu, plein sur la page de résultat. */
+@Composable
+private fun QuizBar(p: QuizProgress, modifier: Modifier = Modifier) {
+    val scheme = MaterialTheme.colorScheme
+    Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Box(
+            Modifier.weight(1f).height(6.dp).clip(CircleShape).background(scheme.outlineVariant)
+                .semantics { progressBarRangeInfo = ProgressBarRangeInfo(p.fraction, 0f..1f) },
+        ) {
+            Box(Modifier.fillMaxHeight().fillMaxWidth(p.fraction).background(scheme.onSurface))
+        }
+        Icon(
+            if (p.resultReached) KairosIcons.FlagFilled else KairosIcons.Flag,
+            // Pendant le jeu, seule la barre parle ; la page de résultat l'annonce.
+            if (p.resultReached) "Résultat atteint" else null,
+            Modifier.size(20.dp), tint = if (p.resultReached) scheme.onSurface else scheme.outline,
+        )
     }
 }
 
@@ -372,6 +395,7 @@ private fun QuizEnd(data: PolData, nav: PolNavigator, claims: List<Claim>, deck:
     val scheme = MaterialTheme.colorScheme
     val pc = PolColors.current
     LazyColumn(Modifier.fillMaxSize(), contentPadding = Pad, horizontalAlignment = Alignment.CenterHorizontally) {
+        item { QuizBar(quizProgress(ans.size, deck.size, atResult = true), Modifier.fillMaxWidth().padding(top = 4.dp)) }
         item {
             Column(Modifier.fillMaxWidth().padding(top = 16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 Kicker(theme.ifEmpty { "Toutes les phrases" })

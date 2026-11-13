@@ -3,6 +3,10 @@ package app.kairos.mobile.ui.politique.kit
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
+import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.RectF
+import android.graphics.Typeface
 import android.net.Uri
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -46,8 +50,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -61,9 +68,10 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
@@ -124,12 +132,18 @@ private val ZERO_AMOUNT = Regex("""^[-−]?\s*0+(?:[.,]0+)?(?![\d.,])""")
 /** Un nombre, séparateurs de milliers (espaces) et décimales compris. */
 private val NUMBER = Regex("""\d+(?:[\s\u00A0\u202F]\d{3})*(?:[.,]\d+)?""")
 
-/** Montant d'une perte : signe moins devant un chiffre ; montant nul, fourchette (« 2 à 4 »), déjà signé ou rédigé (« plus de… ») laissé tel quel. */
+/** Fourchette en tête (« 2 à 4 », « 2-4 », « 1 200 € à 3 000 € ») : son signe serait ambigu. */
+private val RANGE = Regex("""^${NUMBER.pattern}\s*[^\d\s(]*\s*(?:à|-|–)\s*\d""")
+
+/**
+ * Montant d'une perte : signe moins devant un chiffre, précision entre parenthèses comprise ; montant nul,
+ * fourchette (« 2 à 4 »), déjà signé ou rédigé (« plus de… ») laissé tel quel.
+ */
 fun lossAmount(m: String): String {
     val t = m.trim()
     return when {
         ZERO_AMOUNT.containsMatchIn(t) -> t.trimStart('-', '−').trimStart()
-        NUMBER.findAll(t).count() > 1 -> t
+        RANGE.containsMatchIn(t) -> t
         t.startsWith("-") -> "−" + t.drop(1).trimStart()
         t.firstOrNull()?.isDigit() == true -> "−$t"
         else -> t
@@ -199,8 +213,31 @@ fun openUrl(context: Context, url: String?) {
 
 private val Mono = FontFamily.Monospace
 
-/** Interligne rogné des deux côtés : le glyphe se centre optiquement dans sa boîte. */
-private val Tight = TextStyle(lineHeightStyle = LineHeightStyle(LineHeightStyle.Alignment.Center, LineHeightStyle.Trim.Both))
+/**
+ * Pastille ronde portant un repère court (chiffre, lettre), centré sur l'encre du glyphe : les métriques
+ * de police (ascendante, descendante, marges) changent d'un appareil à l'autre et décalent un `Text`.
+ * Muette pour l'accessibilité : l'étiquette qui la porte dit le sens (niveau d'indépendance, adversaire A ou B).
+ */
+@Composable
+fun NumberDot(text: String, bg: Color, fg: Color, size: Dp, fontSize: TextUnit, modifier: Modifier = Modifier) {
+    Box(modifier.size(size).clearAndSetSemantics { }.drawWithCache {
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+            color = fg.toArgb()
+            // Suit l'échelle de police du système, plafonné pour rester dans la pastille.
+            textSize = minOf(fontSize.toPx(), this@drawWithCache.size.minDimension * DOT_GLYPH_MAX)
+        }
+        // Contour exact du glyphe (au sous-pixel), là où getTextBounds arrondit au pixel.
+        val ink = RectF().also { Path().apply { paint.getTextPath(text, 0, text.length, 0f, 0f, this) }.computeBounds(it, true) }
+        onDrawBehind {
+            drawCircle(bg)
+            drawContext.canvas.nativeCanvas.drawText(text, center.x - ink.centerX(), center.y - ink.centerY(), paint)
+        }
+    })
+}
+
+/** Corps maximal du repère, en part du diamètre de la pastille. */
+private const val DOT_GLYPH_MAX = 0.62f
 private fun Modifier.outline(color: Color, width: Float = 1f, shape: Shape = CircleShape) = border(BorderStroke(width.dp, color), shape)
 
 @Composable
@@ -284,9 +321,7 @@ private fun IndTag(n: Int, text: String, modifier: Modifier, shape: Shape) {
             .heightIn(min = 28.dp).padding(horizontal = 7.dp, vertical = 5.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Box(Modifier.size(17.dp).clip(CircleShape).background(look[2]!!), contentAlignment = Alignment.Center) {
-            Text(if (n > 0) n.toString() else "?", color = look[3]!!, style = Tight, fontFamily = Mono, fontWeight = FontWeight.Bold, fontSize = 10.sp, lineHeight = 10.sp)
-        }
+        NumberDot(if (n > 0) n.toString() else "?", look[2]!!, look[3]!!, 17.dp, 10.sp)
         Text(text, color = look[1]!!, fontSize = 12.sp, lineHeight = 16.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
@@ -301,7 +336,10 @@ private fun Modifier.opensEvaluator(ev: Evaluator, onOpen: (String) -> Unit) =
 
 /** Légende : l'étiquette d'un niveau, sans action. */
 @Composable
-fun LevelTag(n: Int, modifier: Modifier = Modifier) = IndTag(n, if (n > 0) "Niveau $n" else "Non qualifié", modifier, RoundedCornerShape(8.dp))
+fun LevelTag(n: Int, modifier: Modifier = Modifier) = IndTag(
+    n, if (n > 0) "Niveau $n" else "Non qualifié",
+    modifier.clearAndSetSemantics { contentDescription = "Indépendance " + if (n > 0) "niveau $n sur 4" else "non qualifiée" }, RoundedCornerShape(8.dp),
+)
 
 /**
  * Source : étiquette de l'évaluateur reconnu (id explicite, sinon alias en tête du libellé) collée au bouton.
