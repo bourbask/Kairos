@@ -48,7 +48,7 @@ class PolitiqueContractTest {
     @Test
     fun every_sample_decodes() {
         val all = javaClass.getResource("/politique")!!.let { java.io.File(it.toURI()).list()!!.sorted() }
-        assertEquals(5, all.size)
+        assertEquals(6, all.size)
         for (n in all) assertTrue(n, KairosJson.parseToJsonElement(javaClass.getResource("/politique/$n")!!.readText()) is JsonObject)
     }
 }
