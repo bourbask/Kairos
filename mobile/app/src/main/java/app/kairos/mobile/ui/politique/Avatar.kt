@@ -21,6 +21,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -29,6 +30,7 @@ import app.kairos.mobile.ui.mascot.animate
 import app.kairos.mobile.ui.theme.KairosColors
 import app.kairos.mobile.ui.theme.SceneColors
 import app.kairos.mobile.ui.theme.contrast
+import app.kairos.mobile.ui.theme.mix
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -40,12 +42,13 @@ const val AVATAR_SIZE = 16
 
 /**
  * Rôles d'un avatar : corps, ombre, encre, accent du thème, `C` = couleur de l'identité, puis
- * cheveux à teinte fixe, la même dans tous les thèmes : `g` blancs ou gris, `b` bruns, `y` blonds.
+ * cheveux à teinte fixe, la même dans tous les thèmes : `g` blancs ou gris, `b` bruns, `y` blonds,
+ * `r` roux ; `G` / `H` : corps plus foncé et son ombre, tirés du thème.
  */
-const val AVATAR_ROLES = "FhDACgby"
+const val AVATAR_ROLES = "FhDACgbyrGH"
 
 /** Teintes fixes des cheveux, lisibles sur le corps et sur le fond du bouton de chaque thème. */
-val HAIR_COLORS = mapOf('g' to Color(0xFFB4B8BB), 'b' to Color(0xFF5C3A21), 'y' to Color(0xFFD9B44A))
+val HAIR_COLORS = mapOf('g' to Color(0xFFB4B8BB), 'b' to Color(0xFF5C3A21), 'y' to Color(0xFFD9B44A), 'r' to Color(0xFF8E4E33))
 
 /** Images empaquetées (x | y << 8 | rôle << 16, cases vides omises) et durée d'une image. */
 class Avatar(val frames: List<IntArray>, val ms: Long)
@@ -79,7 +82,25 @@ fun avatarOf(e: JsonElement?): Avatar? {
 /** Teinte d'une case : rôles des personnages du thème, `C` = [identity], cheveux = [HAIR_COLORS]. */
 fun avatarColor(packed: Int, colors: SceneColors, identity: Color): Color {
     val role = AVATAR_ROLES[packed shr 16]
-    return if (role == 'C') identity else HAIR_COLORS[role] ?: colors[role]
+    return when (role) {
+        'C' -> identity
+        'G' -> deeperBody(colors)
+        'H' -> mix(deeperBody(colors), colors['B'], 0.3f)
+        else -> HAIR_COLORS[role] ?: colors[role]
+    }
+}
+
+/**
+ * Corps plus foncé, vers une teinte chaude tirée de l'accent du thème : foncé au plus fort tant que
+ * les yeux restent lisibles (3:1).
+ */
+fun deeperBody(colors: SceneColors): Color {
+    val body = colors['F']
+    val eye = colors['D']
+    // Corps déjà sombre : la teinte chaude serait plus claire, on fonce vers le noir.
+    val warm = mix(Color.Black, colors['A'], 0.45f).takeIf { it.luminance() < body.luminance() } ?: Color.Black
+    return listOf(0.6f, 0.55f, 0.5f, 0.45f, 0.4f, 0.35f, 0.3f).map { mix(body, warm, it) }.firstOrNull { contrast(eye, it) >= 3.0 }
+        ?: mix(body, warm, 0.3f)
 }
 
 /** Couleur `#RRGGBB` de l'identité ; illisible : null. */
