@@ -80,6 +80,7 @@ import app.kairos.mobile.ui.politique.kit.FullscreenButton
 import app.kairos.mobile.ui.politique.kit.PolColors
 import app.kairos.mobile.ui.politique.kit.SourceList
 import app.kairos.mobile.ui.politique.kit.VerdictChip
+import app.kairos.mobile.ui.politique.kit.verdictLook
 import app.kairos.mobile.ui.politique.kit.VerdictMeter
 import app.kairos.mobile.ui.politique.kit.frTypo
 import app.kairos.mobile.ui.politique.kit.verdictLabel
@@ -95,17 +96,18 @@ private class GuessLook(val arrow: String, val fg: Color, val bg: Color)
 
 @Composable
 private fun look(g: Guess): GuessLook {
-    val pc = PolColors.current
-    return when (g) {
-        Guess.Faux -> GuessLook("←", pc.fragile, pc.fragileBg)
-        Guess.Partiel -> GuessLook("↑", pc.partiel, pc.partielBg)
-        Guess.Mais -> GuessLook("↓", pc.trompeur, pc.trompeurBg)
-        Guess.Vrai -> GuessLook("→", pc.solide, pc.solideBg)
+    val (arrow, v) = when (g) {
+        Guess.Faux -> "←" to "faux"
+        Guess.PlutotFaux -> "↓" to "plutot-faux"
+        Guess.PlutotVrai -> "↑" to "plutot-vrai"
+        Guess.Vrai -> "→" to "vrai"
     }
+    val l = verdictLook(v)
+    return GuessLook(arrow, l.fg, l.bg)
 }
 
 /** Les quatre réponses, de gauche à droite, comme sur l'écran de départ. */
-private val ORDER = listOf(Guess.Faux, Guess.Partiel, Guess.Mais, Guess.Vrai)
+private val ORDER = listOf(Guess.Faux, Guess.PlutotFaux, Guess.PlutotVrai, Guess.Vrai)
 
 @Composable
 fun QuizScreen(data: PolData, nav: PolNavigator) {
@@ -132,7 +134,7 @@ private fun QuizStart(claims: List<Claim>, camps: List<String>, onPlay: (String)
                 TitleInfo(
                     "Devinez le verdict des données",
                     "Des phrases entendues à table, de tous bords. Pour chacune, devinez ce que disent les données publiques, puis découvrez les faits et la source. " +
-                        "Vrai mais… : la phrase est exacte, mais elle trompe (chiffre sorti de son contexte, comparaison bancale). " +
+                        "« Plutôt faux » regroupe les phrases trompeuses, plutôt fausses ou non prouvées. " +
                         "Le score compte vos bonnes réponses, jamais celles d'un camp. Chaque paquet alterne les camps.",
                 )
             }
@@ -148,7 +150,7 @@ private fun QuizStart(claims: List<Claim>, camps: List<String>, onPlay: (String)
                 }
             }
         }
-        item { Text("Vrai mais… : exacte, mais trompeuse. « Fragile » et « Faux » se jouent à gauche.", fontSize = 13.sp, color = scheme.onSurfaceVariant) }
+        item { Text("« Trompeur » et « Non prouvé » se jouent en « Plutôt faux ».", fontSize = 13.sp, color = scheme.onSurfaceVariant) }
         if (out > 0) item { Text("${frCount(out, "phrase non documentée", "phrases non documentées")} hors jeu.", fontSize = 13.sp, color = scheme.onSurfaceVariant) }
         if (themes.isEmpty()) {
             item { EmptyState("Aucune phrase jouable", "Il faut des phrases vérifiées avec un verdict pour jouer. Elles apparaîtront ici dès leur publication.") }
@@ -338,7 +340,7 @@ private fun QuizFront(data: PolData, claim: Claim, x: Float, y: Float, interacti
                         Text("Phrase entendue côté ${claim.camp.lowercase()}", Modifier.padding(top = 10.dp), fontSize = 13.5.sp, color = scheme.onSurfaceVariant)
                     }
                     Row(Modifier.fillMaxWidth().clearAndSetSemantics { }, horizontalArrangement = Arrangement.SpaceBetween) {
-                        listOf("← Faux", "↑ En partie", "↓ Vrai mais", "Vrai →").forEach { Text(it.uppercase(), fontSize = 9.5.sp, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace, color = scheme.onSurfaceVariant) }
+                        listOf("← Faux", "↓ Plutôt faux", "↑ Plutôt vrai", "Vrai →").forEach { Text(it.uppercase(), fontSize = 9.5.sp, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace, color = scheme.onSurfaceVariant) }
                     }
                 }
             }
@@ -346,8 +348,8 @@ private fun QuizFront(data: PolData, claim: Claim, x: Float, y: Float, interacti
                 val mid = kotlin.math.abs(x) < 60f
                 Stamp("Vrai", look(Guess.Vrai).fg, ramp(x / 100f), -12f, Modifier.align(Alignment.TopStart).offset(20.dp, 76.dp))
                 Stamp("Faux", look(Guess.Faux).fg, ramp(-x / 100f), 12f, Modifier.align(Alignment.TopEnd).offset((-20).dp, 76.dp))
-                Stamp("En partie", look(Guess.Partiel).fg, if (mid) ramp(-y / 100f) else 0f, 0f, Modifier.align(Alignment.BottomCenter).offset(y = (-70).dp))
-                Stamp("Vrai mais…", look(Guess.Mais).fg, if (mid) ramp(y / 100f) else 0f, 0f, Modifier.align(Alignment.TopCenter).offset(y = 76.dp))
+                Stamp("Plutôt vrai", look(Guess.PlutotVrai).fg, if (mid) ramp(-y / 100f) else 0f, 0f, Modifier.align(Alignment.BottomCenter).offset(y = (-70).dp))
+                Stamp("Plutôt faux", look(Guess.PlutotFaux).fg, if (mid) ramp(y / 100f) else 0f, 0f, Modifier.align(Alignment.TopCenter).offset(y = 76.dp))
             }
         }
     }
@@ -378,7 +380,7 @@ private fun QuizBack(data: PolData, nav: PolNavigator, claim: Claim, guess: Gues
             }
             Text(
                 fb.text, Modifier.padding(top = 8.dp).semantics { liveRegion = LiveRegionMode.Polite }, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
-                color = when (fb.tone) { Tone.Ok -> pc.solide; Tone.Near -> pc.trompeur; Tone.Ko -> scheme.onSurfaceVariant },
+                color = when (fb.tone) { Tone.Ok -> pc.solide; Tone.Near -> pc.partiel; Tone.Ko -> scheme.onSurfaceVariant },
             )
             Text("« ${frTypo(claim.q)} »", Modifier.padding(top = 12.dp), fontSize = 16.sp, lineHeight = 21.sp, fontWeight = FontWeight.SemiBold)
             CacheBox(claim.cache)

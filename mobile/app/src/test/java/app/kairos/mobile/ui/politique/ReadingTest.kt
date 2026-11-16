@@ -73,8 +73,8 @@ class ReadingTest {
     @Test fun dossier_tally() {
         val l = contentDossiersOf(dz)
         assertEquals(listOf("T1", "T2"), l.map { it.titre })
-        assertEquals(listOf("solide" to 1, "faux" to 2), dossierTally(l[0].items))
-        assertEquals(listOf("solide" to 1, "faux" to 2, "" to 1), dossierBar(l[0].items))
+        assertEquals(listOf("vrai" to 1, "faux" to 2), dossierTally(l[0].items))
+        assertEquals(listOf("vrai" to 1, "faux" to 2, "" to 1), dossierBar(l[0].items))
         assertTrue(dossierTally(l[1].items).isEmpty())
         assertEquals("militant", l[0].source.type)
         assertNull(l[0].source.ev)

@@ -1,0 +1,5 @@
+{"PROMESSES": [
+  {"id": "a-impot", "qui": "a", "theme": "Fiscalité", "promesse": "Baisser l'impôt fictif de moitié.", "gravite": 2, "pourquoi": "Aucune recette fictive en face.", "src": [["Chiffrage fictif", "https://example.org/chiffrage", "institut-fictif-1"]]},
+  {"id": "b-traite", "qui": "b", "theme": "Europe", "promesse": "Ne plus appliquer un traité fictif.", "gravite": 3, "pourquoi": "Le traité fictif lie l'État tant qu'il n'est pas dénoncé.", "fondement": ["Article fictif 55", "https://example.org/article-55"], "src": [["Analyse fictive", "https://example.org/analyse"]]},
+  {"id": "c-retraite", "qui": "c", "theme": "Retraites", "promesse": "Fixer l'âge de départ à un âge fictif.", "gravite": 1, "pourquoi": "Arbitrage de valeurs, chiffrage contesté.", "src": [["Note fictive", "https://example.org/note"]]}
+]}

@@ -45,13 +45,13 @@ class ClaimsTest {
 
     @Test fun filters_combine_and_paginate() {
         val st = phrasesState(data)
-        assertEquals(listOf("solide", "fragile", "faux"), st.verdicts)
+        assertEquals(listOf("vrai", "non-prouve", "faux"), st.verdicts)
         assertEquals(listOf("École", "Énergie", "Santé"), st.themes)
         assertEquals(listOf("Camp A", "Camp B", "Camp C"), st.camps)
         assertEquals(9, phrasesView(st, PhraseFilter()).total)
         assertEquals(listOf(3, 7), phrasesView(st, PhraseFilter(v = "faux", camp = "Camp A")).items)
         assertEquals(listOf(1, 6), phrasesView(st, PhraseFilter(v = "faux", theme = "Énergie")).items)
-        assertEquals(0, phrasesView(st, PhraseFilter(v = "solide", camp = "Camp B", theme = "Santé")).total)
+        assertEquals(0, phrasesView(st, PhraseFilter(v = "vrai", camp = "Camp B", theme = "Santé")).total)
         // Pagination : 25 phrases, 20 affichées, puis 5 de plus.
         val many = PolData(mapOf("affirmations" to file("""{"CLAIMS":[${(0 until 25).joinToString(",") { """{"theme":"T","camp":"A","q":"q$it","v":"solide"}""" }}]}""")))
         val big = phrasesState(many)
@@ -63,8 +63,8 @@ class ClaimsTest {
 
     @Test fun verdict_tally_by_camp() {
         val c = claimsOf(data)
-        assertEquals(linkedMapOf("solide" to 1, "fragile" to 1, "faux" to 2), verdictTally(c, "Camp A").filterValues { it > 0 })
-        assertEquals(mapOf("solide" to 2, "fragile" to 1, "faux" to 5), verdictTally(c).filterValues { it > 0 })
+        assertEquals(linkedMapOf("vrai" to 1, "non-prouve" to 1, "faux" to 2), verdictTally(c, "Camp A").filterValues { it > 0 })
+        assertEquals(mapOf("vrai" to 2, "non-prouve" to 1, "faux" to 5), verdictTally(c).filterValues { it > 0 })
         assertEquals(emptyMap<String, Int>(), verdictTally(c, "Inconnu").filterValues { it > 0 })
     }
 
@@ -72,7 +72,7 @@ class ClaimsTest {
         val c = claimsOf(data)[0]
         val t = claimTableCard(c)
         assertEquals("Énergie · entendu côté Camp A", t.kicker)
-        assertEquals("Q0", t.quote); assertEquals("solide", t.verdict)
+        assertEquals("Q0", t.quote); assertEquals("vrai", t.verdict)
         assertTrue(t.lines.first().startsWith("Ce que la phrase cache : Cache 0"))
         assertEquals("Source fictive", t.source)
         assertEquals("mars 2026", fmtDate("2026-03")); assertEquals("1er mars 2026", fmtDate("2026-03-01")); assertEquals("12 mars 2026", fmtDate("2026-03-12")); assertEquals("n'importe quoi", fmtDate("n'importe quoi"))

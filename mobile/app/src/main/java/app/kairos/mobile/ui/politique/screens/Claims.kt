@@ -76,6 +76,7 @@ import app.kairos.mobile.ui.politique.kit.VerdictChip
 import app.kairos.mobile.ui.politique.kit.VerdictMeter
 import app.kairos.mobile.ui.politique.kit.frTypo
 import app.kairos.mobile.ui.politique.kit.verdictLabel
+import app.kairos.mobile.ui.politique.kit.verdictLook
 import app.kairos.mobile.ui.politique.model.Claim
 import app.kairos.mobile.ui.politique.model.PolData
 import app.kairos.mobile.ui.politique.model.sourcesOf
@@ -126,14 +127,12 @@ private fun CampTag(data: PolData, camp: String) {
 
 @Composable
 internal fun StackBar(tally: Map<String, Int>, modifier: Modifier = Modifier) {
-    val pc = PolColors.current
     val line = MaterialTheme.colorScheme.outlineVariant
     val parts = tally.filterValues { it > 0 }
     if (parts.isEmpty()) return
-    val color = mapOf("solide" to pc.solide, "partiel" to pc.partiel, "trompeur" to pc.trompeur, "fragile" to pc.fragile, "faux" to pc.faux)
     val desc = parts.entries.joinToString(", ") { "${it.value} ${verdictLabel(it.key).lowercase()}" }
     Row(modifier.height(8.dp).clip(CircleShape).semantics { contentDescription = desc }, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-        parts.forEach { (v, n) -> Box(Modifier.weight(n.toFloat()).fillMaxHeight().background(color[v] ?: line)) }
+        parts.forEach { (v, n) -> Box(Modifier.weight(n.toFloat()).fillMaxHeight().background(if (v == "non-documente") line else verdictLook(v).fg)) }
     }
 }
 

@@ -62,6 +62,10 @@ import app.kairos.mobile.ui.politique.kit.frTypo
 import app.kairos.mobile.ui.politique.model.Claim
 import app.kairos.mobile.ui.politique.screens.CHAMBERS
 import app.kairos.mobile.ui.politique.screens.Declaration
+import app.kairos.mobile.ui.politique.screens.Promesse
+import app.kairos.mobile.ui.politique.screens.PromesseCard
+import app.kairos.mobile.ui.politique.screens.promessesOf
+import app.kairos.mobile.ui.politique.screens.promWho
 import app.kairos.mobile.ui.politique.screens.DeclarationCard
 import app.kairos.mobile.ui.politique.screens.campOf
 import app.kairos.mobile.ui.politique.screens.declTableCard
@@ -138,9 +142,11 @@ class IdentityLinks(
     val dv: List<DvItem>, val dvOf: String?, private val id: String,
     /** Paroles publiques : celles de l'identité, et pour un parti celles de ses membres. */
     val decls: List<Declaration> = emptyList(),
+    /** Promesses classées : celles de l'identité, et pour un parti celles de ses membres. */
+    val proms: List<Promesse> = emptyList(),
 ) {
     val size: Int get() = programs.size + gaps.size + measures.size + matrix.size + claims.size + coh.size + turns.size + cases.size +
-        money.size + aide.size + partis.size + c22.size + muni.size + villes.size + rhet.size + communes.size + votes.sumOf { it.third.size } + decls.size +
+        money.size + aide.size + partis.size + c22.size + muni.size + villes.size + rhet.size + communes.size + votes.sumOf { it.third.size } + decls.size + proms.size +
         if (dvOf == id) dv.size else 0
 }
 
@@ -160,7 +166,7 @@ fun identityLinks(data: PolData, id: String): IdentityLinks {
         matrix = data.decode<MatrixRow>("bilan", "MATRIX").flatMap { r ->
             r.c.filterKeys { hit(it) }.values.map { p -> r to Stance(p.getOrElse(0) { "" }, p.getOrElse(1) { "" }) }
         },
-        claims = data.decode<Claim>("affirmations", "CLAIMS").filter { hit(it.camp) },
+        claims = claimsOf(data).filter { hit(it.camp) },
         coh = data.decode<CohGroup>("votes", "COH").filter { hit(it.camp) },
         turns = turnsOf(data, id),
         cases = affairesOf(data).filter { a -> if (data.idsIn(a.who).isNotEmpty()) hit(a.who) else hit(a.party) },
@@ -177,6 +183,7 @@ fun identityLinks(data: PolData, id: String): IdentityLinks {
         dvOf = dvOf,
         id = id,
         decls = declarationsOf(data).filter { whoOf(data, it) == id || campOf(data, it) == id },
+        proms = promessesOf(data).filter { p -> promWho(data, p).let { it == id || (it != null && data.partyOf(it) == id) } },
     )
 }
 
@@ -194,7 +201,7 @@ fun ownPartis(l: IdentityLinks, data: PolData, id: String) = l.partis.own(data, 
 
 data class Stat(val label: String, val value: String, val sub: String)
 
-private val FRAGILE = setOf("fragile", "faux", "non-documente")
+private val FRAGILE = setOf("trompeur", "plutot-faux", "non-prouve", "faux")
 
 /** Jusqu'à quatre chiffres clés, chacun seulement si la donnée existe. */
 fun identityStats(data: PolData, id: String, l: IdentityLinks = identityLinks(data, id)): List<Stat> {
@@ -219,7 +226,7 @@ fun identityStats(data: PolData, id: String, l: IdentityLinks = identityLinks(da
     }
     ownPartis(l, data, id)?.net?.let { out += Stat("Situation nette", netLabel(it), "derniers comptes publiés") }
     if (l.claims.isNotEmpty()) {
-        out += Stat("Phrases vérifiées", l.claims.size.toString(), plural(l.claims.count { it.v == "solide" }, "solide", "solides") + " · " + plural(l.claims.count { it.v in FRAGILE }, "fragile ou faux", "fragiles ou faux"))
+        out += Stat("Phrases vérifiées", l.claims.size.toString(), plural(l.claims.count { it.v == "vrai" }, "vrai", "vrais") + " · " + plural(l.claims.count { it.v in FRAGILE }, "défavorable", "défavorables"))
     }
     val k = dvCount(l.dv)
     if (k.t > 0) out += Stat("Dit / voté", "${k.c} / ${k.t}", "votes conformes à la parole publique")
@@ -505,6 +512,9 @@ private fun sections(data: PolData, id: String, l: IdentityLinks, nav: PolNaviga
     }
     if (l.decls.isNotEmpty()) out += Section("Paroles") {
         l.decls.forEachIndexed { i, d -> DeclarationCard(data, d, nav, self = id) { nav.table(l.decls.map { declTableCard(data, it) }, i) } }
+    }
+    if (l.proms.isNotEmpty()) out += Section("Promesses") {
+        l.proms.forEach { PromesseCard(data, it, nav, self = id) }
     }
     if (l.coh.isNotEmpty()) out += Section("Cohérence") {
         l.coh.flatMap { it.items }.forEach { item ->

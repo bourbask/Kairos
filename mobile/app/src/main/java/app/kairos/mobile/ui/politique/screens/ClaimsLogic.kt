@@ -3,6 +3,8 @@ package app.kairos.mobile.ui.politique.screens
 import app.kairos.mobile.ui.politique.kit.sourceName
 import app.kairos.mobile.ui.politique.kit.TableCard
 import app.kairos.mobile.ui.politique.model.Claim
+import app.kairos.mobile.ui.politique.model.VERDICT_SCALE
+import app.kairos.mobile.ui.politique.model.normalizeVerdict
 import app.kairos.mobile.ui.politique.model.PolData
 import app.kairos.mobile.ui.politique.model.sourcesOf
 import app.kairos.mobile.ui.politique.model.alphabetical
@@ -14,20 +16,21 @@ import java.util.Locale
 const val PHRASES_PAGE = 20
 const val BULLE_PAGE = 12
 
-val VERDICT_ORDER = listOf("solide", "partiel", "trompeur", "fragile", "faux", "non-documente")
+val VERDICT_ORDER = VERDICT_SCALE
 
 private val VERDICT_DEFS = mapOf(
-    "solide" to "établi par des données publiques",
-    "partiel" to "une part exacte, une part non",
-    "trompeur" to "exact, mais présenté pour faire croire autre chose",
-    "fragile" to "repose sur peu de preuves ou des chiffres datés",
-    "faux" to "contredit par les données",
-    "non-documente" to "aucune donnée publique pour trancher",
+    "vrai" to "les faits soutiennent l'affirmation",
+    "plutot-vrai" to "l'essentiel est soutenu ; nuance sur un détail ou l'ampleur",
+    "trompeur" to "faits exacts, conclusion qu'ils ne soutiennent pas",
+    "plutot-faux" to "l'essentiel n'est pas soutenu ou est fortement exagéré",
+    "non-prouve" to "affirmé sans preuve suffisante",
+    "faux" to "contredit par les faits",
+    "non-documente" to "impossible à vérifier faute de données publiques",
 )
 
-fun verdictDefinition(v: String): String? = VERDICT_DEFS[v]
+fun verdictDefinition(v: String): String? = VERDICT_DEFS[normalizeVerdict(v)]
 
-fun claimsOf(data: PolData): List<Claim> = data.decode<Claim>("affirmations", "CLAIMS")
+fun claimsOf(data: PolData): List<Claim> = data.decode<Claim>("affirmations", "CLAIMS").map { it.copy(v = normalizeVerdict(it.v)) }
 
 /** Camps publiés, puis ceux que seules les phrases citent. */
 fun campsOf(data: PolData, claims: List<Claim>): List<String> =
@@ -116,3 +119,8 @@ fun claimTableCard(c: Claim): TableCard = TableCard(
     lines = listOfNotNull(c.cache?.takeIf { it.isNotBlank() }?.let { "Ce que la phrase cache : $it" }) + c.facts,
     source = sourcesOf(c.src).joinToString(" ; ") { sourceName(it) }.takeIf { it.isNotBlank() },
 )
+
+// ---------- Ça vient d'où ? ----------
+
+/** Paquet « Ça vient d'où ? » : les phrases dont l'origine est publiée, mélangées par [seed] (une graine par session). */
+fun originDeck(data: PolData, seed: Long): List<Claim> = claimsOf(data).filter { it.origine.isNotBlank() && it.v in VERDICT_SCALE && it.v != "non-documente" }.shuffled(kotlin.random.Random(seed))

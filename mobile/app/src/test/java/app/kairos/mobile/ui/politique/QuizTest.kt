@@ -7,10 +7,13 @@ import org.junit.Test
 
 class QuizTest {
     @Test fun expected_answer_per_verdict() {
+        assertEquals(Guess.Vrai, expectedAnswer("vrai"))
+        assertEquals(Guess.PlutotVrai, expectedAnswer("plutot-vrai"))
+        listOf("trompeur", "plutot-faux", "non-prouve").forEach { assertEquals(Guess.PlutotFaux, expectedAnswer(it)) }
+        // Anciens ids.
         assertEquals(Guess.Vrai, expectedAnswer("solide"))
-        assertEquals(Guess.Mais, expectedAnswer("trompeur"))
-        assertEquals(Guess.Partiel, expectedAnswer("partiel"))
-        assertEquals(Guess.Faux, expectedAnswer("fragile"))
+        assertEquals(Guess.PlutotVrai, expectedAnswer("partiel"))
+        assertEquals(Guess.PlutotFaux, expectedAnswer("fragile"))
         assertEquals(Guess.Faux, expectedAnswer("faux"))
         assertNull(expectedAnswer("non-documente"))
         assertNull(expectedAnswer("bizarre"))
@@ -24,9 +27,9 @@ class QuizTest {
         assertEquals(Guess.Vrai, swipeDirection(40f, 0f, 0.6f, 0f))
         assertNull(swipeDirection(20f, 0f, 0.9f, 0f))
         assertEquals(Guess.Faux, swipeDirection(-40f, 0f, -0.6f, 0f))
-        assertEquals(Guess.Partiel, swipeDirection(0f, -91f, 0f, 0f))
-        assertEquals(Guess.Mais, swipeDirection(10f, 91f, 0f, 0f))
-        assertEquals(Guess.Mais, swipeDirection(0f, 40f, 0f, 0.6f))
+        assertEquals(Guess.PlutotVrai, swipeDirection(0f, -91f, 0f, 0f))
+        assertEquals(Guess.PlutotFaux, swipeDirection(10f, 91f, 0f, 0f))
+        assertEquals(Guess.PlutotFaux, swipeDirection(0f, 40f, 0f, 0.6f))
         assertNull(swipeDirection(0f, 80f, 0f, 0f))
         // Trop de côté pour monter ou descendre.
         assertNull(swipeDirection(85f, -120f, 0f, 0f))
@@ -44,18 +47,18 @@ class QuizTest {
     }
 
     @Test fun near_feedback_for_trompeur_answered_vrai() {
-        val f = quizFeedback("trompeur", Guess.Vrai)
+        assertEquals(Tone.Ok, quizFeedback("trompeur", Guess.PlutotFaux).tone)
+        val f = quizFeedback("trompeur", Guess.Faux)
         assertEquals(Tone.Near, f.tone)
         assertTrue(f.text.startsWith("Presque"))
-        assertEquals(Tone.Ok, quizFeedback("trompeur", Guess.Mais).tone)
-        assertEquals(Tone.Near, quizFeedback("solide", Guess.Mais).tone)
-        assertEquals("Vous aviez dit « Faux ».", quizFeedback("solide", Guess.Faux).text)
-        assertTrue(quizFeedback("fragile", Guess.Faux).text.contains("fragile"))
+        assertEquals(Tone.Near, quizFeedback("vrai", Guess.PlutotVrai).tone)
+        assertEquals(Tone.Ko, quizFeedback("trompeur", Guess.Vrai).tone)
+        assertEquals("Vous aviez dit « Faux ».", quizFeedback("vrai", Guess.Faux).text)
     }
 
     private fun c(theme: String, camp: String, v: String) = Claim(theme = theme, camp = camp, v = v)
-    // 0 T1/A solide, 1 T1/A faux, 2 T1/B faux, 3 T2/B trompeur, 4 T1/A non-documente, 5 T2/A partiel
-    private val claims = listOf(c("T1", "A", "solide"), c("T1", "A", "faux"), c("T1", "B", "faux"), c("T2", "B", "trompeur"), c("T1", "A", "non-documente"), c("T2", "A", "partiel"))
+    // 0 T1/A vrai, 1 T1/A faux, 2 T1/B faux, 3 T2/B trompeur, 4 T1/A non-documente, 5 T2/A plutot-vrai
+    private val claims = listOf(c("T1", "A", "vrai"), c("T1", "A", "faux"), c("T1", "B", "faux"), c("T2", "B", "trompeur"), c("T1", "A", "non-documente"), c("T2", "A", "plutot-vrai"))
 
     @Test fun deck_alternates_camps_and_skips_out_of_play() {
         assertEquals(listOf(0, 2, 1), quizDeck(claims, listOf("A", "B"), "T1"))

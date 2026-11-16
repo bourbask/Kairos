@@ -3,7 +3,17 @@ package app.kairos.mobile.ui.politique
 import app.kairos.mobile.ui.politique.kit.TableCard
 import app.kairos.mobile.ui.politique.model.Lecture
 import app.kairos.mobile.ui.politique.model.PolData
+import app.kairos.mobile.ui.politique.kit.quoted
+import app.kairos.mobile.ui.politique.screens.Owner
+import app.kairos.mobile.ui.politique.screens.Program
+import app.kairos.mobile.ui.politique.screens.VoteRow
+import app.kairos.mobile.ui.politique.screens.claimsOf
 import app.kairos.mobile.ui.politique.screens.declarationsOf
+import app.kairos.mobile.ui.politique.screens.fmtNum
+import app.kairos.mobile.ui.politique.screens.graviteLabel
+import app.kairos.mobile.ui.politique.screens.originDeck
+import app.kairos.mobile.ui.politique.screens.promessesOf
+import java.time.LocalDate
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.jsonPrimitive
@@ -12,6 +22,8 @@ import kotlinx.serialization.json.jsonPrimitive
 sealed interface PolRoute {
     data object Home : PolRoute
     data class Rubric(val id: String) : PolRoute
+    /** Page d'une porte de l'accueil ([Door.id]). */
+    data class Door(val id: String) : PolRoute
     data object Quiz : PolRoute
     data class Duel(val a: String? = null, val b: String? = null) : PolRoute
     data object Site : PolRoute
@@ -79,7 +91,7 @@ enum class HomeAction { Retry, OpenSite }
 /** Hors ligne : réessayer, et le site reste ouvrable. */
 fun homeActions(load: PolLoad): List<HomeAction> = if (load is PolLoad.Down) listOf(HomeAction.Retry, HomeAction.OpenSite) else emptyList()
 
-enum class TileKind { Tile, Wide, Link }
+enum class TileKind { Tile, Wide }
 
 /** Entrée de l'accueil vers une rubrique ; [count] : compte lisible tiré des données. */
 class RubricTile(val id: String, val title: String, val hook: String, val kind: TileKind = TileKind.Tile, val count: (PolData) -> String)
@@ -107,17 +119,49 @@ val RUBRICS: List<RubricTile> = listOf(
     RubricTile("votes", "Votes", "Ce qu'ils votent, pas ce qu'ils disent") { (it.size("votes", "AN_V") + it.size("votes", "PE_V")).or("scrutin", "scrutins") },
     RubricTile("dit-vote", "Dit / voté", "La parole face au vote, parti par parti") { it.size("dit-vote", "SCRUTINS").or("scrutin croisé", "scrutins croisés") },
     RubricTile("revirements", "Revirements", "Qui a changé d'avis, et sur quoi") { it.size("revirements", "RV").or("position suivie", "positions suivies") },
-    RubricTile("bilan", "Bilan sortant", "D'où vient la dette, qui continue la ligne") { it.size("bilan", "MATRIX").or("orientation", "orientations") },
+    RubricTile("bilan", "Bilans", "D'où vient la dette, qui continue la ligne") { it.size("bilan", "MATRIX").or("orientation", "orientations") },
     RubricTile("rhetorique", "Rhétorique", "Les procédés, en cartes à retourner") { it.size("rhetorique", "RHET").or("procédé", "procédés") },
     RubricTile("probite", "Probité", "Les affaires, étape par étape") { it.decode<kotlinx.serialization.json.JsonArray>("probite", "AFF").size.or("procédure", "procédures") },
     RubricTile("argent", "Argent", "Qui finance partis et campagnes") { it.size("argent", "FIN").or("dossier", "dossiers") },
     RubricTile("medias", "Médias", "Qui possède quoi, ce qui est prouvé") { it.size("medias", "OWNERS").or("propriétaire", "propriétaires") },
-    RubricTile("villes", "Villes", "La carte des mairies, et ce qu'ils y font", TileKind.Wide) { it.size("villes", "COMMUNES").or("ville suivie", "villes suivies") },
+    RubricTile("villes", "Résultats locaux", "La carte des mairies, et ce qu'ils y font", TileKind.Wide) { it.size("villes", "COMMUNES").or("ville suivie", "villes suivies") },
     RubricTile("declarations", "Paroles publiques", "Ce qu'ils ont dit, face aux faits", TileKind.Wide) { declarationsOf(it).size.or("déclaration", "déclarations") },
     RubricTile("bulle", "Hors de ma bulle", "Les mêmes thèmes, lus depuis chaque camp, côte à côte.", TileKind.Wide, ::bubbleLine),
-    RubricTile("phrases", "Phrases", "Ce que chaque phrase entendue cache vraiment.", TileKind.Link) { it.size("affirmations", "CLAIMS").or("phrase vérifiée", "phrases vérifiées") },
-    RubricTile("dossiers", "Dossiers", "Un contenu viral, repris phrase par phrase.", TileKind.Link) { it.size("dossiers", "DOSSIERS").or("dossier", "dossiers") },
-    RubricTile("evaluateurs", "Qui chiffre ?", "Les évaluateurs, leur argent, leur indépendance.", TileKind.Link) { it.evaluators.size.or("évaluateur", "évaluateurs") },
+    RubricTile("phrases", "Phrases vérifiées", "Ce que chaque phrase entendue cache vraiment.") { it.size("affirmations", "CLAIMS").or("phrase vérifiée", "phrases vérifiées") },
+    RubricTile("dossiers", "Dossiers", "Un contenu viral, repris phrase par phrase.") { it.size("dossiers", "DOSSIERS").or("dossier", "dossiers") },
+    RubricTile("evaluateurs", "Qui chiffre ?", "Les évaluateurs, leur argent, leur indépendance.") { it.evaluators.size.or("évaluateur", "évaluateurs") },
+    RubricTile("promesses", "Gravité des promesses", "De la simple divergence à l'atteinte aux droits.") { promessesOf(it).size.or("promesse", "promesses") },
+    RubricTile("origines", "Ça vient d'où ?", "D'où vient l'idée, ce qu'elle cache : une carte, trente secondes.") { originDeck(it, 0).size.or("carte", "cartes") },
 )
 
 fun rubricTitle(id: String): String = RUBRICS.firstOrNull { it.id == id }?.title ?: "Politique"
+
+/** Porte de l'accueil : [kicker] court, [question] en titre, ses rubriques (ids de [RUBRICS]) dans l'ordre des pastilles. */
+class Door(val id: String, val kicker: String, val question: String, val rubrics: List<String>)
+
+/** Toute rubrique est dans exactement une porte. */
+val DOORS: List<Door> = listOf(
+    Door("verifier", "Vérifier", "Cette phrase, vraie ?", listOf("phrases", "declarations", "dossiers", "rhetorique", "origines", "bulle")),
+    Door("chiffrer", "Chiffrer", "Ce programme, sérieux ?", listOf("budgets", "promesses", "niveau-de-vie", "evaluateurs")),
+    Door("bilan", "Bilan", "Ce qu'ils ont fait", listOf("bilan", "votes", "dit-vote", "revirements", "villes")),
+    Door("pouvoirs", "Pouvoirs", "Qui tire les ficelles", listOf("argent", "probite", "medias")),
+)
+
+fun doorOf(rubric: String): Door? = DOORS.firstOrNull { rubric in it.rubrics }
+
+/** Compteur d'une pastille : le nombre d'un compte simple (« 12 scrutins ») ; compte composé ou vide : aucun. */
+fun pillCount(count: String): Int? = count.takeIf { '·' !in it }?.substringBefore(' ')?.toIntOrNull()
+
+/** Accroches possibles d'une porte, tirées des données publiées. */
+private fun teasers(data: PolData, door: Door): List<String> = when (door.id) {
+    "verifier" -> claimsOf(data).filter { it.q.isNotBlank() && it.v != "non-documente" }.map { "${quoted(it.q)} Vrai ou faux ?" }
+    "chiffrer" -> promessesOf(data).filter { it.gravite in 1..4 }.map { p -> listOfNotNull(data.byId(p.qui)?.nom ?: p.qui.takeIf(String::isNotBlank), p.promesse.trim().trimEnd('.')).joinToString(" : ") + " · ${graviteLabel(p.gravite)}" }
+        .ifEmpty { data.decode<Program>("budgets", "PROGRAMS").filter { !it.ref && it.who.isNotBlank() && it.debt != null }.map { "${it.who} : dette publique à ${fmtNum(it.debt!!, 1)} % du PIB à l'horizon" } }
+    "bilan" -> (data.decode<VoteRow>("votes", "AN_V") + data.decode<VoteRow>("votes", "PE_V")).filter { it.t.isNotBlank() }.map { "Scrutin : ${it.t.trim()}" }
+    "pouvoirs" -> data.decode<Owner>("medias", "OWNERS").filter { it.o.isNotBlank() && it.m.isNotEmpty() }.map { "${it.o} : ${it.m.take(3).joinToString(", ")}" }
+    else -> emptyList()
+}
+
+/** Accroche « du jour » d'une porte : la même toute la journée, une autre le lendemain ; rien de publié : null. */
+fun dailyTeaser(data: PolData, door: Door, day: LocalDate): String? =
+    teasers(data, door).takeIf { it.isNotEmpty() }?.let { it[Math.floorMod(day.toEpochDay() + door.id.hashCode(), it.size.toLong()).toInt()] }

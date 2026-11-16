@@ -1,18 +1,19 @@
 package app.kairos.mobile.ui.politique.screens
 
 import app.kairos.mobile.ui.politique.model.Claim
+import app.kairos.mobile.ui.politique.model.normalizeVerdict
 import kotlin.math.abs
 
 /** Logique pure du jeu « Vrai ou faux ? » : réponses, gestes, retours, paquets. Les cartes sont désignées par leur rang dans [claimsOf]. */
 
-enum class Guess(val label: String) { Vrai("Vrai"), Mais("Vrai mais…"), Partiel("En partie"), Faux("Faux") }
+enum class Guess(val label: String) { Vrai("Vrai"), PlutotVrai("Plutôt vrai"), PlutotFaux("Plutôt faux"), Faux("Faux") }
 
 /** Réponse attendue ; null = hors jeu (non documenté, verdict inconnu). */
-fun expectedAnswer(verdict: String): Guess? = when (verdict) {
-    "solide" -> Guess.Vrai
-    "trompeur" -> Guess.Mais
-    "partiel" -> Guess.Partiel
-    "fragile", "faux" -> Guess.Faux
+fun expectedAnswer(verdict: String): Guess? = when (normalizeVerdict(verdict)) {
+    "vrai" -> Guess.Vrai
+    "plutot-vrai" -> Guess.PlutotVrai
+    "trompeur", "plutot-faux", "non-prouve" -> Guess.PlutotFaux
+    "faux" -> Guess.Faux
     else -> null
 }
 
@@ -24,8 +25,8 @@ fun swipeDirection(dx: Float, dy: Float, vx: Float, vy: Float): Guess? = when {
     dx > 100f || (vx > 0.5f && dx > 30f) -> Guess.Vrai
     dx < -100f || (vx < -0.5f && dx < -30f) -> Guess.Faux
     abs(dx) >= 80f -> null
-    dy < -90f || (vy < -0.5f && dy < -30f) -> Guess.Partiel
-    dy > 90f || (vy > 0.5f && dy > 30f) -> Guess.Mais
+    dy < -90f || (vy < -0.5f && dy < -30f) -> Guess.PlutotVrai
+    dy > 90f || (vy > 0.5f && dy > 30f) -> Guess.PlutotFaux
     else -> null
 }
 
@@ -35,12 +36,16 @@ fun swipeToNext(dx: Float, vx: Float): Boolean = abs(dx) > 90f || abs(vx) > 0.5f
 enum class Tone { Ok, Near, Ko }
 class Feedback(val tone: Tone, val text: String)
 
-fun quizFeedback(verdict: String, guess: Guess): Feedback = when {
-    guess == expectedAnswer(verdict) ->
-        Feedback(Tone.Ok, if (verdict == "fragile") "Bien vu : fragile, donc à ranger côté faux." else "Bien vu : c'était votre réponse.")
-    verdict == "trompeur" && guess == Guess.Vrai -> Feedback(Tone.Near, "Presque : c'est exact, mais trompeur. Lisez ce que la phrase cache.")
-    verdict == "solide" && guess == Guess.Mais -> Feedback(Tone.Near, "Prudent, mais pas de piège cette fois : la phrase tient.")
-    else -> Feedback(Tone.Ko, "Vous aviez dit « ${guess.label} ».")
+/** Même côté de l'échelle (vrai / plutôt vrai, faux / plutôt faux) : « presque ». */
+private fun Guess.trueSide() = this == Guess.Vrai || this == Guess.PlutotVrai
+
+fun quizFeedback(verdict: String, guess: Guess): Feedback {
+    val exp = expectedAnswer(verdict)
+    return when {
+        guess == exp -> Feedback(Tone.Ok, "Bien vu : c'était votre réponse.")
+        exp != null && guess.trueSide() == exp.trueSide() -> Feedback(Tone.Near, "Presque : c'était « ${exp.label} ».")
+        else -> Feedback(Tone.Ko, "Vous aviez dit « ${guess.label} ».")
+    }
 }
 
 /** Thèmes ayant au moins une phrase jouable, et nombre de phrases hors jeu. */

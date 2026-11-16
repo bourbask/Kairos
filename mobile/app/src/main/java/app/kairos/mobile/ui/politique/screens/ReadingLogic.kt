@@ -5,6 +5,7 @@ import app.kairos.mobile.ui.politique.kit.indLevel
 import app.kairos.mobile.ui.politique.kit.safeHttps
 import app.kairos.mobile.ui.politique.model.Evaluator
 import app.kairos.mobile.ui.politique.model.Lecture
+import app.kairos.mobile.ui.politique.model.normalizeVerdict
 import app.kairos.mobile.ui.politique.model.PolData
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonArray
@@ -94,6 +95,7 @@ data class ContentItem(
 data class ContentDossier(val id: String = "", val titre: String = "", val source: ContentSource = ContentSource(), val contexte: String = "", val items: List<ContentItem> = emptyList())
 
 fun contentDossiersOf(data: PolData): List<ContentDossier> = data.decode<ContentDossier>("dossiers", "DOSSIERS").filter { it.titre.isNotBlank() }
+        .map { d -> d.copy(items = d.items.map { it.copy(verdict = normalizeVerdict(it.verdict)) }) }
 
 private val SOURCE_TYPES = mapOf(
     "public" to "Organisme public", "academique" to "Recherche universitaire", "think-tank" to "Think tank",
