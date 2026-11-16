@@ -119,3 +119,8 @@ fun claimTableCard(c: Claim): TableCard = TableCard(
     lines = listOfNotNull(c.cache?.takeIf { it.isNotBlank() }?.let { "Ce que la phrase cache : $it" }) + c.facts,
     source = sourcesOf(c.src).joinToString(" ; ") { sourceName(it) }.takeIf { it.isNotBlank() },
 )
+
+// ---------- Ça vient d'où ? ----------
+
+/** Paquet « Ça vient d'où ? » : les phrases dont l'origine est publiée, mélangées par [seed] (une graine par session). */
+fun originDeck(data: PolData, seed: Long): List<Claim> = claimsOf(data).filter { it.origine.isNotBlank() }.shuffled(kotlin.random.Random(seed))

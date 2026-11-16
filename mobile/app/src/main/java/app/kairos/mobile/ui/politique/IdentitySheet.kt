@@ -62,6 +62,10 @@ import app.kairos.mobile.ui.politique.kit.frTypo
 import app.kairos.mobile.ui.politique.model.Claim
 import app.kairos.mobile.ui.politique.screens.CHAMBERS
 import app.kairos.mobile.ui.politique.screens.Declaration
+import app.kairos.mobile.ui.politique.screens.Promesse
+import app.kairos.mobile.ui.politique.screens.PromesseCard
+import app.kairos.mobile.ui.politique.screens.promessesOf
+import app.kairos.mobile.ui.politique.screens.promWho
 import app.kairos.mobile.ui.politique.screens.DeclarationCard
 import app.kairos.mobile.ui.politique.screens.campOf
 import app.kairos.mobile.ui.politique.screens.declTableCard
@@ -138,9 +142,11 @@ class IdentityLinks(
     val dv: List<DvItem>, val dvOf: String?, private val id: String,
     /** Paroles publiques : celles de l'identité, et pour un parti celles de ses membres. */
     val decls: List<Declaration> = emptyList(),
+    /** Promesses classées : celles de l'identité, et pour un parti celles de ses membres. */
+    val proms: List<Promesse> = emptyList(),
 ) {
     val size: Int get() = programs.size + gaps.size + measures.size + matrix.size + claims.size + coh.size + turns.size + cases.size +
-        money.size + aide.size + partis.size + c22.size + muni.size + villes.size + rhet.size + communes.size + votes.sumOf { it.third.size } + decls.size +
+        money.size + aide.size + partis.size + c22.size + muni.size + villes.size + rhet.size + communes.size + votes.sumOf { it.third.size } + decls.size + proms.size +
         if (dvOf == id) dv.size else 0
 }
 
@@ -177,6 +183,7 @@ fun identityLinks(data: PolData, id: String): IdentityLinks {
         dvOf = dvOf,
         id = id,
         decls = declarationsOf(data).filter { whoOf(data, it) == id || campOf(data, it) == id },
+        proms = promessesOf(data).filter { p -> promWho(data, p).let { it == id || (it != null && data.partyOf(it) == id) } },
     )
 }
 
@@ -505,6 +512,9 @@ private fun sections(data: PolData, id: String, l: IdentityLinks, nav: PolNaviga
     }
     if (l.decls.isNotEmpty()) out += Section("Paroles") {
         l.decls.forEachIndexed { i, d -> DeclarationCard(data, d, nav, self = id) { nav.table(l.decls.map { declTableCard(data, it) }, i) } }
+    }
+    if (l.proms.isNotEmpty()) out += Section("Promesses") {
+        l.proms.forEach { PromesseCard(data, it, nav, self = id) }
     }
     if (l.coh.isNotEmpty()) out += Section("Cohérence") {
         l.coh.flatMap { it.items }.forEach { item ->
