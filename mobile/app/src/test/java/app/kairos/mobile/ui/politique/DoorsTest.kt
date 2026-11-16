@@ -46,7 +46,8 @@ class DoorsTest {
         {"q":"Phrase 1","v":"vrai"},
         {"q":"Phrase 2","v":"trompeur","origine":"Un slogan fictif."},
         {"q":"Phrase 3","v":"faux","origine":"  "},
-        {"q":"Phrase 4","v":"plutot-faux","origine":"Une rumeur fictive."}
+        {"q":"Phrase 4","v":"plutot-faux","origine":"Une rumeur fictive."},
+        {"q":"Phrase 5","v":"non-documente","origine":"Une affirmation fictive invérifiable."}
     ]}"""
 
     private val data = PolData(mapOf("identites" to obj(identities), "promesses" to obj(proms), "affirmations" to obj(claims)))
@@ -79,7 +80,7 @@ class DoorsTest {
         // Sur une semaine, l'accroche change ; toujours une phrase vérifiée publiée.
         val week = (0L..6L).map { dailyTeaser(data, door, day.plusDays(it))!! }
         assertTrue(week.toSet().size > 1)
-        assertTrue(week.all { w -> listOf("Phrase 0", "Phrase 1", "Phrase 2", "Phrase 3", "Phrase 4").any { w.contains(it) } })
+        assertTrue(week.all { w -> listOf("Phrase 0", "Phrase 1", "Phrase 2", "Phrase 3", "Phrase 4", "Phrase 5").any { w.contains(it) } })
         // Gravité des promesses : accroche tirée des promesses.
         assertTrue(dailyTeaser(data, DOORS.single { it.id == "chiffrer" }, day)!!.contains("Promesse"))
         // Rien publié : pas d'accroche.

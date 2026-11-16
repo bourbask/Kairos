@@ -123,4 +123,4 @@ fun claimTableCard(c: Claim): TableCard = TableCard(
 // ---------- Ça vient d'où ? ----------
 
 /** Paquet « Ça vient d'où ? » : les phrases dont l'origine est publiée, mélangées par [seed] (une graine par session). */
-fun originDeck(data: PolData, seed: Long): List<Claim> = claimsOf(data).filter { it.origine.isNotBlank() }.shuffled(kotlin.random.Random(seed))
+fun originDeck(data: PolData, seed: Long): List<Claim> = claimsOf(data).filter { it.origine.isNotBlank() && it.v in VERDICT_SCALE && it.v != "non-documente" }.shuffled(kotlin.random.Random(seed))

@@ -21,6 +21,7 @@ import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.drawscope.translate
+import app.kairos.mobile.ui.politique.screens.claimsOf
 import app.kairos.mobile.ui.politique.kit.PolColors
 import kotlin.math.min
 import androidx.compose.foundation.layout.Arrangement
@@ -120,7 +121,7 @@ fun HomeScreen(data: PolData, nav: PolNavigator, bottom: Dp, grid: LazyGridState
     val linked by produceState(emptyMap<String, Int>(), data) {
         value = withContext(Dispatchers.Default) { data.identities.associate { it.id to identityLinks(data, it.id).size } }
     }
-    val claims = remember(data) { data.decode<Claim>("affirmations", "CLAIMS") }
+    val claims = remember(data) { claimsOf(data) }
     val bubble = remember(data) { bubbleLine(data) }
     val counts = remember(data) { RUBRICS.associate { it.id to it.count(data) } }
     // Accroches du jour : le jour d'ouverture de l'écran.
