@@ -155,7 +155,7 @@ fun pillCount(count: String): Int? = count.takeIf { '·' !in it }?.substringBefo
 /** Accroches possibles d'une porte, tirées des données publiées. */
 private fun teasers(data: PolData, door: Door): List<String> = when (door.id) {
     "verifier" -> claimsOf(data).filter { it.q.isNotBlank() && it.v != "non-documente" }.map { "${quoted(it.q)} Vrai ou faux ?" }
-    "chiffrer" -> promessesOf(data).filter { it.gravite in 1..4 }.map { "${it.promesse.trim().trimEnd('.')} : ${graviteLabel(it.gravite)}" }
+    "chiffrer" -> promessesOf(data).filter { it.gravite in 1..4 }.map { p -> listOfNotNull(data.byId(p.qui)?.nom ?: p.qui.takeIf(String::isNotBlank), p.promesse.trim().trimEnd('.')).joinToString(" : ") + " · ${graviteLabel(p.gravite)}" }
         .ifEmpty { data.decode<Program>("budgets", "PROGRAMS").filter { !it.ref && it.who.isNotBlank() && it.debt != null }.map { "${it.who} : dette publique à ${fmtNum(it.debt!!, 1)} % du PIB à l'horizon" } }
     "bilan" -> (data.decode<VoteRow>("votes", "AN_V") + data.decode<VoteRow>("votes", "PE_V")).filter { it.t.isNotBlank() }.map { "Scrutin : ${it.t.trim()}" }
     "pouvoirs" -> data.decode<Owner>("medias", "OWNERS").filter { it.o.isNotBlank() && it.m.isNotEmpty() }.map { "${it.o} : ${it.m.take(3).joinToString(", ")}" }
