@@ -84,6 +84,8 @@ import app.kairos.mobile.ui.politique.model.Lecture
 import app.kairos.mobile.ui.politique.model.PolData
 import app.kairos.mobile.ui.politique.model.Poste
 import app.kairos.mobile.ui.politique.model.SourceRef
+import app.kairos.mobile.ui.politique.model.normalizeVerdict
+import androidx.compose.ui.graphics.lerp
 import kotlinx.coroutines.launch
 
 // ---------------------------------------------------------------- logique pure (testée)
@@ -91,8 +93,8 @@ import kotlinx.coroutines.launch
 const val NEUTRAL_LABEL = "Non précisé"
 
 private val VERDICT_LABELS = mapOf(
-    "solide" to "Solide", "partiel" to "En partie vrai", "trompeur" to "Vrai mais trompeur",
-    "fragile" to "Fragile", "faux" to "Faux", "non-documente" to "Non documenté",
+    "vrai" to "Vrai", "plutot-vrai" to "Plutôt vrai", "trompeur" to "Trompeur", "plutot-faux" to "Plutôt faux",
+    "non-prouve" to "Non prouvé", "faux" to "Faux", "non-documente" to "Non documenté",
     // Paroles publiques face aux faits.
     "auto-contradiction" to "Auto-contradiction", "contredit-justice" to "Contredit par la justice",
     "contredit-document" to "Contredit par un document", "contredit-preuve" to "Contredit par une preuve",
@@ -117,7 +119,7 @@ private val PROMISES = linkedMapOf(
 val PROMISE_VERDICTS: List<String> = PROMISES.keys.toList()
 
 /** Valeur inconnue : libellé neutre, jamais d'erreur. */
-fun verdictLabel(v: String): String = VERDICT_LABELS[v] ?: NEUTRAL_LABEL
+fun verdictLabel(v: String): String = VERDICT_LABELS[normalizeVerdict(v)] ?: NEUTRAL_LABEL
 fun promiseLabel(v: String): String = PROMISES[v]?.label ?: NEUTRAL_LABEL
 fun promiseDefinition(v: String): String? = PROMISES[v]?.def
 
@@ -385,18 +387,21 @@ fun SourceList(srcs: List<SourceRef>, data: PolData, onOpenEv: (String) -> Unit,
 }
 
 // Verdicts de phrase : toujours le mot, la couleur l'appuie.
-private class VerdictLook(val fg: Color, val bg: Color, val ring: Color?)
+internal class VerdictLook(val fg: Color, val bg: Color, val ring: Color?)
 
 @Composable
-private fun verdictLook(v: String): VerdictLook {
+internal fun verdictLook(raw: String): VerdictLook {
     val pc = PolColors.current
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
-    return when (v) {
-        "solide", "exact" -> VerdictLook(pc.solide, pc.solideBg, null)
+    // Gradient vert (vrai) vers rouge (faux) ; trompeur, plutôt faux et non prouvé restent côté ambre/orange.
+    fun mix(t: Float) = VerdictLook(lerp(pc.partiel, pc.fragile, t), lerp(pc.partielBg, pc.fragileBg, t), null)
+    return when (normalizeVerdict(raw)) {
+        "vrai", "exact" -> VerdictLook(pc.solide, pc.solideBg, null)
         "auto-contradiction", "contredit-justice", "contredit-document", "contredit-preuve" -> VerdictLook(pc.fragile, pc.fragileBg, null)
-        "partiel" -> VerdictLook(pc.partiel, pc.partielBg, null)
-        "trompeur" -> VerdictLook(pc.trompeur, pc.trompeurBg, null)
-        "fragile" -> VerdictLook(pc.fragile, pc.fragileBg, null)
+        "plutot-vrai" -> VerdictLook(lerp(pc.solide, pc.partiel, 0.5f), lerp(pc.solideBg, pc.partielBg, 0.5f), null)
+        "trompeur" -> mix(0f)
+        "plutot-faux" -> mix(0.4f)
+        "non-prouve" -> mix(0.7f)
         "faux" -> VerdictLook(pc.faux, pc.fragileBg, pc.faux)
         else -> VerdictLook(muted, Color.Transparent, MaterialTheme.colorScheme.outlineVariant)
     }
@@ -420,20 +425,21 @@ fun VerdictChip(v: String, modifier: Modifier = Modifier, large: Boolean = false
     ChipBox(verdictLabel(v), l.fg, l.bg, l.ring, modifier, large)
 }
 
-/** Trois segments : plus ils sont pleins, plus la phrase tient ; le mot reste lu à côté. */
+/** Quatre segments : plus ils sont pleins, plus la phrase tient ; le mot reste lu à côté. */
 @Composable
 fun VerdictMeter(v: String, modifier: Modifier = Modifier) {
     val l = verdictLook(v)
     val line = MaterialTheme.colorScheme.outlineVariant
-    val filled = when (v) { "solide" -> 3; "partiel", "trompeur" -> 2; "fragile", "faux" -> 1; else -> 0 }
+    val nv = normalizeVerdict(v)
+    val filled = when (nv) { "vrai" -> 4; "plutot-vrai" -> 3; "trompeur", "plutot-faux" -> 2; "non-prouve", "faux" -> 1; else -> 0 }
     Row(modifier.clearAndSetSemantics { }, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        repeat(3) { i ->
+        repeat(4) { i ->
             val on = i < filled
             val seg = Modifier.size(26.dp, 8.dp).clip(CircleShape)
             Box(
                 when {
-                    v == "non-documente" || v !in VERDICT_LABELS -> seg.outline(l.fg)
-                    v == "trompeur" && on -> seg.background(l.fg.copy(alpha = 0.45f)).outline(l.fg)
+                    nv == "non-documente" || nv !in VERDICT_LABELS -> seg.outline(l.fg)
+                    (nv == "trompeur" || nv == "non-prouve") && on -> seg.background(l.fg.copy(alpha = 0.45f)).outline(l.fg)
                     on -> seg.background(l.fg)
                     else -> seg.background(line)
                 },

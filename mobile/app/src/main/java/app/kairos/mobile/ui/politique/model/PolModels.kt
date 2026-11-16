@@ -30,6 +30,13 @@ data class Lecture(
 )
 
 /** [src] : forme libre, à lire avec [sourcesOf]. */
+/** Échelle des verdicts de phrase, du plus au moins soutenu ; seule porte d'entrée des anciens ids (inconnu : inchangé). */
+val VERDICT_SCALE = listOf("vrai", "plutot-vrai", "trompeur", "plutot-faux", "non-prouve", "faux", "non-documente")
+
+private val LEGACY_VERDICTS = mapOf("solide" to "vrai", "fragile" to "non-prouve", "partiel" to "plutot-vrai")
+
+fun normalizeVerdict(v: String): String = LEGACY_VERDICTS[v] ?: v
+
 @Serializable
 data class Claim(
     val theme: String = "",

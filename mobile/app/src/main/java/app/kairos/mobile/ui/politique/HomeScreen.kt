@@ -1,6 +1,9 @@
 package app.kairos.mobile.ui.politique
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.material3.minimumInteractiveComponentSize
+import androidx.compose.ui.semantics.Role
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.StartOffset
@@ -18,6 +21,7 @@ import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.drawscope.translate
+import app.kairos.mobile.ui.politique.screens.claimsOf
 import app.kairos.mobile.ui.politique.kit.PolColors
 import kotlin.math.min
 import androidx.compose.foundation.layout.Arrangement
@@ -39,6 +43,8 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridScope
+import androidx.compose.foundation.lazy.grid.LazyGridState
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
@@ -106,24 +112,24 @@ fun verifiedLabel(raw: String?): String? {
 /** Phrase courte pour la carte du quiz : la première qui tient sur quelques lignes. */
 private fun quizQuote(claims: List<Claim>): String? = claims.firstOrNull { it.q.length in 1..60 }?.q
 
-/** Accueil : promesse, deux héros (Duel, Vrai ou faux ?), les visages, les rubriques, puis les lectures. */
+/** Accueil : promesse, deux héros (Duel, Vrai ou faux ?), les visages, puis les quatre portes vers les rubriques. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun HomeScreen(data: PolData, nav: PolNavigator, bottom: Dp) {
+fun HomeScreen(data: PolData, nav: PolNavigator, bottom: Dp, grid: LazyGridState = rememberLazyGridState()) {
     var kind by rememberSaveable { mutableStateOf(IdKind.Personne) }
     // Comptes par identité : calcul complet des rattachements, hors du fil d'affichage.
     val linked by produceState(emptyMap<String, Int>(), data) {
         value = withContext(Dispatchers.Default) { data.identities.associate { it.id to identityLinks(data, it.id).size } }
     }
-    val claims = remember(data) { data.decode<Claim>("affirmations", "CLAIMS") }
+    val claims = remember(data) { claimsOf(data) }
     val bubble = remember(data) { bubbleLine(data) }
     val counts = remember(data) { RUBRICS.associate { it.id to it.count(data) } }
-    val vizzes by produceState(emptyMap<String, TileViz?>(), data) {
-        value = withContext(Dispatchers.Default) { RUBRICS.associate { it.id to tileViz(data, it.id) } }
-    }
+    // Accroches du jour : le jour d'ouverture de l'écran.
+    val teasers = remember(data) { LocalDate.now().let { day -> DOORS.associate { it.id to dailyTeaser(data, it, day) } } }
     LazyVerticalGrid(
         GridCells.Fixed(2),
         Modifier.fillMaxSize(),
+        state = grid,
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = bottom),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -166,14 +172,10 @@ fun HomeScreen(data: PolData, nav: PolNavigator, bottom: Dp) {
             }
         }
 
-        val tiles = RUBRICS.filter { it.kind != TileKind.Link }
-        full { HeaderRow("Rubriques", plural(tiles.size, "entrée", "entrées")) }
-        tiles.forEach { t ->
-            item(span = { GridItemSpan(if (t.kind == TileKind.Wide) maxLineSpan else 1) }) { Tile(t, counts[t.id].orEmpty(), vizzes[t.id]) { nav.go(PolRoute.Rubric(t.id)) } }
+        full { HeaderRow("Explorer", plural(DOORS.size, "porte", "portes")) }
+        items(DOORS, span = { GridItemSpan(maxLineSpan) }, key = { it.id }) { d ->
+            DoorCard(d, counts, teasers[d.id], nav)
         }
-        val links = RUBRICS.filter { it.kind == TileKind.Link }
-        full { HeaderRow("Lire entre les lignes", plural(links.size, "entrée", "entrées")) }
-        items(links, span = { GridItemSpan(maxLineSpan) }) { t -> LinkRow(t, counts[t.id].orEmpty()) { nav.go(PolRoute.Rubric(t.id)) } }
         full {
             Text(
                 "Chaque verdict juge l'état des preuves, pas les personnes. Les chiffres provisoires peuvent être révisés.",
@@ -394,20 +396,93 @@ private fun VizCanvas(v: TileViz, modifier: Modifier) {
     }
 }
 
+/** Teinte d'une porte : fond et encre calmes, propres à chaque porte, jamais une couleur de parti. */
+private class DoorTint(val bg: Color, val ink: Color)
+
+private val DOOR_TINTS = mapOf(
+    // Bleu-gris, ocre, vert sauge, prune : clair puis sombre.
+    "verifier" to (DoorTint(Color(0xFFE3E9EF), Color(0xFF2B3E52)) to DoorTint(Color(0xFF212A33), Color(0xFFC3D3E2))),
+    "chiffrer" to (DoorTint(Color(0xFFF3E8D2), Color(0xFF5E4410)) to DoorTint(Color(0xFF302819), Color(0xFFE6CB93))),
+    "bilan" to (DoorTint(Color(0xFFE2EBDE), Color(0xFF34492F)) to DoorTint(Color(0xFF212B20), Color(0xFFBCD3B4))),
+    "pouvoirs" to (DoorTint(Color(0xFFEEE3EB), Color(0xFF52304A)) to DoorTint(Color(0xFF2D222D), Color(0xFFDCBCD4))),
+)
+
 @Composable
-private fun LinkRow(t: RubricTile, count: String, onClick: () -> Unit) {
+private fun doorTint(id: String): DoorTint {
+    val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
+    val scheme = MaterialTheme.colorScheme
+    return DOOR_TINTS[id]?.let { if (dark) it.second else it.first } ?: DoorTint(scheme.surface, scheme.onSurface)
+}
+
+/** Porte de l'accueil : sur-titre, question, rubriques en pastilles (raccourcis), accroche du jour ; la carte ouvre la page de la porte. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun DoorCard(d: Door, counts: Map<String, String>, teaser: String?, nav: PolNavigator) {
+    val t = doorTint(d.id)
+    val rubrics = d.rubrics.mapNotNull { id -> RUBRICS.firstOrNull { it.id == id } }
     Surface(
-        onClick,
-        Modifier.fillMaxWidth().semantics { contentDescription = "${t.title}. ${t.hook}. $count" },
-        shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surface, shadowElevation = 1.dp,
+        { nav.go(PolRoute.Door(d.id)) },
+        Modifier.fillMaxWidth().semantics { contentDescription = "${d.kicker} : ${d.question}. Ouvrir les ${plural(rubrics.size, "rubrique", "rubriques")}" },
+        shape = RoundedCornerShape(24.dp), color = t.bg, contentColor = t.ink,
     ) {
-        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(frTypo(t.title), fontSize = 17.sp, fontWeight = FontWeight.Bold)
-                Text(frTypo(t.hook), Modifier.padding(top = 3.dp), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
-                Text(count.uppercase(), Modifier.padding(top = 6.dp), color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = Mono, fontWeight = FontWeight.SemiBold, fontSize = 11.sp)
+        Column(Modifier.padding(18.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Kicker(d.kicker, color = t.ink.copy(alpha = 0.75f))
+                    Text(frTypo(d.question), fontSize = 25.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.02).em, lineHeight = 29.sp)
+                }
+                Icon(KairosIcons.ChevronForward, contentDescription = null, tint = t.ink)
             }
-            Icon(KairosIcons.ChevronForward, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            FlowRow(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                rubrics.forEach { r ->
+                    val n = pillCount(counts[r.id].orEmpty())
+                    Row(
+                        Modifier.minimumInteractiveComponentSize().clip(CircleShape).background(t.ink.copy(alpha = 0.1f))
+                            .clickable(role = Role.Button, onClickLabel = "Ouvrir la rubrique") { nav.go(PolRoute.Rubric(r.id)) }
+                            .heightIn(min = 34.dp).padding(horizontal = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Text(frTypo(r.title), fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                        if (n != null) Text("$n", color = t.ink.copy(alpha = 0.7f), fontFamily = Mono, fontWeight = FontWeight.SemiBold, fontSize = 11.sp)
+                    }
+                }
+            }
+            teaser?.let {
+                Kicker("Du jour", Modifier.padding(top = 10.dp), color = t.ink.copy(alpha = 0.75f))
+                Text(frTypo(it), Modifier.padding(top = 2.dp), fontSize = 14.sp, lineHeight = 19.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
+            }
+        }
+    }
+}
+
+/** Page d'une porte : sa question, puis ses rubriques en tuiles (les larges en dernier ; une tuile seule sur sa ligne prend la largeur). */
+@Composable
+fun DoorScreen(id: String, data: PolData, nav: PolNavigator, bottom: Dp) {
+    val d = DOORS.firstOrNull { it.id == id } ?: return
+    val t = doorTint(id)
+    val rubrics = remember(d) { d.rubrics.mapNotNull { r -> RUBRICS.firstOrNull { it.id == r } } }
+    val halves = rubrics.filter { it.kind != TileKind.Wide }
+    val tiles = halves + rubrics.filter { it.kind == TileKind.Wide }
+    val counts = remember(data, d) { rubrics.associate { it.id to it.count(data) } }
+    val vizzes by produceState(emptyMap<String, TileViz?>(), data, d) {
+        value = withContext(Dispatchers.Default) { rubrics.associate { it.id to tileViz(data, it.id) } }
+    }
+    LazyVerticalGrid(
+        GridCells.Fixed(2),
+        Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = bottom),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        full {
+            Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(t.bg).padding(18.dp)) {
+                Kicker(plural(rubrics.size, "rubrique", "rubriques"), color = t.ink.copy(alpha = 0.75f))
+                Text(frTypo(d.question), Modifier.semantics { heading() }, color = t.ink, fontSize = 26.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.02).em)
+            }
+        }
+        tiles.forEachIndexed { i, r ->
+            val full = r.kind == TileKind.Wide || (i == halves.size - 1 && halves.size % 2 == 1)
+            item(key = r.id, span = { GridItemSpan(if (full) maxLineSpan else 1) }) { Tile(r, counts[r.id].orEmpty(), vizzes[r.id]) { nav.go(PolRoute.Rubric(r.id)) } }
         }
     }
 }

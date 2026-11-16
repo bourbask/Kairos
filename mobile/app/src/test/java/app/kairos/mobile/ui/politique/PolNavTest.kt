@@ -65,11 +65,11 @@ class PolNavTest {
         assertEquals(listOf("Dette à l'horizon", "Phrases vérifiées"), a.map { it.label })
         assertEquals("98,5 %", a[0].value)
         assertEquals("sous la référence", a[0].sub)
-        assertEquals("1 solide · 0 fragile ou faux", a[1].sub)
+        assertEquals("1 vrai · 0 défavorable", a[1].sub)
         // Situation nette absente (null) : pas de chiffre ; le parti a sa phrase.
         val p = identityStats(data, "parti-bleu")
         assertEquals(listOf("Phrases vérifiées"), p.map { it.label })
-        assertEquals("0 solide · 1 fragile ou faux", p[0].sub)
+        assertEquals("0 vrai · 1 défavorable", p[0].sub)
         assertTrue(identityStats(data, "inconnu").isEmpty())
         assertTrue(identityStats(PolData(emptyMap()), "a").isEmpty())
         // Rattachements : programme + phrase pour la personne.

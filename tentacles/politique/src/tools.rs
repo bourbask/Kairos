@@ -72,6 +72,7 @@ const RUBRIQUES: &[(&str, &str, &str)] = &[
     ("medias", "Médias", "Propriété, audiences et encadrement des médias."),
     ("niveau-de-vie", "Niveau de vie", "Effet des mesures proposées sur le revenu des ménages."),
     ("probite", "Probité", "Affaires, influence et transparence."),
+    ("promesses", "Gravité des promesses", "Promesses classées de la simple divergence à l'atteinte aux droits."),
     ("revirements", "Revirements", "Positions qui ont changé dans le temps."),
     ("rhetorique", "Rhétorique", "Procédés rhétoriques : les repérer, les questionner."),
     ("villes", "Résultats locaux", "Bilans des exécutifs locaux."),
@@ -516,7 +517,7 @@ mod tests {
     #[test]
     fn nouvelles_rubriques_titrees() {
         let h = v(server().app_politique_accueil());
-        for (id, titre) in [("declarations", "Paroles publiques"), ("dit-vote", "Dit / voté"), ("dossiers", "Dossiers"), ("evaluateurs", "Qui chiffre ?")] {
+        for (id, titre) in [("declarations", "Paroles publiques"), ("dit-vote", "Dit / voté"), ("dossiers", "Dossiers"), ("evaluateurs", "Qui chiffre ?"), ("promesses", "Gravité des promesses")] {
             let r = h["rubriques"].as_array().unwrap().iter().find(|r| r["id"] == id).unwrap_or_else(|| panic!("{id} absente"));
             assert_eq!(r["titre"], titre);
             assert!(!r["resume"].as_str().unwrap().is_empty());
@@ -535,7 +536,7 @@ mod tests {
         assert!(h["identites"][0].get("alias").is_none());
         let rub = h["rubriques"].as_array().unwrap();
         let noms: Vec<&str> = rub.iter().map(|r| r["id"].as_str().unwrap()).collect();
-        assert_eq!(noms, ["affirmations", "argent", "budgets", "declarations", "dit-vote", "divers", "dossiers", "evaluateurs", "niveau-de-vie", "rhetorique", "votes"]);
+        assert_eq!(noms, ["affirmations", "argent", "budgets", "declarations", "dit-vote", "divers", "dossiers", "evaluateurs", "niveau-de-vie", "promesses", "rhetorique", "votes"]);
         let budgets = rub.iter().find(|r| r["id"] == "budgets").unwrap();
         assert_eq!(budgets["titre"], "Budgets");
         assert!(!budgets["resume"].as_str().unwrap().is_empty());
@@ -785,7 +786,7 @@ mod tests {
         // qui dépasse le budget d'une page.
         let tmp = copie("echantillons");
         std::fs::write(tmp.join("dit-vote.json"), gros_dit_vote()).unwrap();
-        for f in ["dit-vote", "evaluateurs", "carte", "identites", "declarations"] {
+        for f in ["dit-vote", "evaluateurs", "carte", "identites", "declarations", "promesses"] {
             date_fixe(&tmp.join(format!("{f}.json")));
         }
         let sp = server_sur(&tmp);
@@ -796,6 +797,7 @@ mod tests {
             ("fichier-evaluateurs", v(fichier(&sp, "evaluateurs", 0))),
             ("fichier-carte", v(fichier(&sp, "carte", 0))),
             ("fichier-declarations", v(fichier(&sp, "declarations", 0))),
+            ("fichier-promesses", v(fichier(&sp, "promesses", 0))),
         ];
         let _ = std::fs::remove_dir_all(&tmp);
         let ecrire = std::env::var("POLITIQUE_ECHANTILLONS").is_ok_and(|x| x == "1");
