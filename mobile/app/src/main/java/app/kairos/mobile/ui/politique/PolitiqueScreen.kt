@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -62,6 +63,8 @@ import app.kairos.mobile.ui.politique.screens.EvaluatorsScreen
 import app.kairos.mobile.ui.politique.screens.RhetSheetAt
 import app.kairos.mobile.ui.politique.screens.RhetoriqueScreen
 import app.kairos.mobile.ui.politique.screens.ClusterSheet
+import app.kairos.mobile.ui.politique.screens.OriginesScreen
+import app.kairos.mobile.ui.politique.screens.PromessesScreen
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.serialization.json.buildJsonObject
@@ -106,6 +109,8 @@ fun PolitiqueScreen(
     var table by remember { mutableStateOf<Pair<List<TableCard>, Int>?>(null) }
     var sharing by remember { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
+    // Position de l'accueil gardée pendant qu'une porte ou une rubrique est ouverte.
+    val homeGrid = rememberLazyGridState()
     val navigator = remember {
         object : PolNavigator {
             override fun go(r: PolRoute) { nav = nav.go(r) }
@@ -152,6 +157,7 @@ fun PolitiqueScreen(
         when (route) {
             PolRoute.Home, PolRoute.Site -> "Politique"
             is PolRoute.Rubric -> rubricTitle(route.id)
+            is PolRoute.Door -> DOORS.firstOrNull { it.id == route.id }?.kicker ?: "Politique"
             PolRoute.Quiz -> "Vrai ou faux ?"
             is PolRoute.Duel -> "Duel"
             PolRoute.Shares -> "Accès partagés"
@@ -185,7 +191,8 @@ fun PolitiqueScreen(
             PolLoad.Loading -> HomeLoading()
             is PolLoad.Down -> HomeDown(l, onRetry = { reload++ }, onSite = { navigator.go(PolRoute.Site) })
             is PolLoad.Ready -> when (route) {
-                PolRoute.Home -> HomeScreen(l.data, navigator, bottom)
+                PolRoute.Home -> HomeScreen(l.data, navigator, bottom, homeGrid)
+                is PolRoute.Door -> DoorScreen(route.id, l.data, navigator, bottom)
                 // Pas de marge basse sur la page : le contenu défile sous le dégradé du dock, comme sur l'accueil.
                 else -> CompositionLocalProvider(LocalPolBottom provides bottom) {
                     Box(Modifier.fillMaxSize()) {
@@ -228,6 +235,8 @@ fun RubricHost(id: String, data: PolData, nav: PolNavigator) {
         "dossiers" -> DossiersScreen(data, nav)
         "declarations" -> DeclarationsScreen(data, nav)
         "evaluateurs" -> EvaluatorsScreen(data, nav)
+        "promesses" -> PromessesScreen(data, nav)
+        "origines" -> OriginesScreen(data, nav)
         else -> Soon()
     }
 }
