@@ -4,7 +4,6 @@ import app.kairos.mobile.ui.politique.kit.TableCard
 import app.kairos.mobile.ui.politique.model.Lecture
 import app.kairos.mobile.ui.politique.model.PolData
 import app.kairos.mobile.ui.politique.kit.quoted
-import app.kairos.mobile.ui.politique.kit.verdictLabel
 import app.kairos.mobile.ui.politique.screens.Owner
 import app.kairos.mobile.ui.politique.screens.Program
 import app.kairos.mobile.ui.politique.screens.VoteRow
@@ -155,7 +154,7 @@ fun pillCount(count: String): Int? = count.takeIf { '·' !in it }?.substringBefo
 
 /** Accroches possibles d'une porte, tirées des données publiées. */
 private fun teasers(data: PolData, door: Door): List<String> = when (door.id) {
-    "verifier" -> claimsOf(data).filter { it.q.isNotBlank() && it.v != "non-documente" }.map { "${quoted(it.q)} : ${verdictLabel(it.v)}" }
+    "verifier" -> claimsOf(data).filter { it.q.isNotBlank() && it.v != "non-documente" }.map { "${quoted(it.q)} Vrai ou faux ?" }
     "chiffrer" -> promessesOf(data).filter { it.gravite in 1..4 }.map { "${it.promesse.trim().trimEnd('.')} : ${graviteLabel(it.gravite)}" }
         .ifEmpty { data.decode<Program>("budgets", "PROGRAMS").filter { !it.ref && it.who.isNotBlank() && it.debt != null }.map { "${it.who} : dette publique à ${fmtNum(it.debt!!, 1)} % du PIB à l'horizon" } }
     "bilan" -> (data.decode<VoteRow>("votes", "AN_V") + data.decode<VoteRow>("votes", "PE_V")).filter { it.t.isNotBlank() }.map { "Scrutin : ${it.t.trim()}" }
