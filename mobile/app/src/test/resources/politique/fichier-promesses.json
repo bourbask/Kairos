@@ -1,0 +1,57 @@
+{
+  "contenu": {
+    "PROMESSES": [
+      {
+        "gravite": 2,
+        "id": "a-impot",
+        "pourquoi": "Aucune recette fictive en face.",
+        "promesse": "Baisser l'impôt fictif de moitié.",
+        "qui": "a",
+        "src": [
+          [
+            "Chiffrage fictif",
+            "https://example.org/chiffrage",
+            "institut-fictif-1"
+          ]
+        ],
+        "theme": "Fiscalité"
+      },
+      {
+        "fondement": [
+          "Article fictif 55",
+          "https://example.org/article-55"
+        ],
+        "gravite": 3,
+        "id": "b-traite",
+        "pourquoi": "Le traité fictif lie l'État tant qu'il n'est pas dénoncé.",
+        "promesse": "Ne plus appliquer un traité fictif.",
+        "qui": "b",
+        "src": [
+          [
+            "Analyse fictive",
+            "https://example.org/analyse"
+          ]
+        ],
+        "theme": "Europe"
+      },
+      {
+        "gravite": 1,
+        "id": "c-retraite",
+        "pourquoi": "Arbitrage de valeurs, chiffrage contesté.",
+        "promesse": "Fixer l'âge de départ à un âge fictif.",
+        "qui": "c",
+        "src": [
+          [
+            "Note fictive",
+            "https://example.org/note"
+          ]
+        ],
+        "theme": "Retraites"
+      }
+    ]
+  },
+  "id": "promesses",
+  "page": 0,
+  "pages": 1,
+  "version": "18fae27693b40000-349"
+}
