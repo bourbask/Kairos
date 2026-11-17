@@ -19,21 +19,89 @@ class QuizTest {
         assertNull(expectedAnswer("bizarre"))
     }
 
-    @Test fun swipe_direction_thresholds() {
-        assertEquals(Guess.Vrai, swipeDirection(101f, 0f, 0f, 0f))
-        assertEquals(Guess.Faux, swipeDirection(-101f, 10f, 0f, 0f))
-        assertNull(swipeDirection(60f, 0f, 0f, 0f))
+    @Test fun sectors_match_the_four_directions_and_down_is_neutral() {
+        assertEquals(Guess.Vrai, quizSector(100f, 0f))
+        assertEquals(Guess.Vrai, quizSector(100f, 100f)) // −45°
+        assertEquals(Guess.PlutotVrai, quizSector(60f, -60f))
+        assertEquals(Guess.PlutotFaux, quizSector(-60f, -60f))
+        assertEquals(Guess.Faux, quizSector(-100f, 0f))
+        assertEquals(Guess.Faux, quizSector(-100f, 100f)) // −135°
+        assertNull(quizSector(0f, 100f))
+        assertNull(quizSector(30f, 100f))
+        // Bornes : 25° bascule à haut-droite, 155° à gauche.
+        assertEquals(Guess.Vrai, quizSector(100f, -46f))
+        assertEquals(Guess.PlutotVrai, quizSector(100f, -47f))
+        assertEquals(Guess.Faux, quizSector(-100f, -46f))
+    }
+
+    @Test fun levels_and_release_thresholds() {
+        assertEquals(0, quizLevel(10f, 10f))
+        assertEquals(1, quizLevel(30f, 0f))
+        assertEquals(2, quizLevel(0f, -60f))
+        assertEquals(3, quizLevel(-100f, 0f))
+        assertEquals(Guess.Vrai, quizRelease(101f, 0f, 0f, 0f))
+        assertEquals(Guess.PlutotFaux, quizRelease(-71f, -71f, 0f, 0f))
+        assertNull(quizRelease(60f, 0f, 0f, 0f))
         // Vitesse franche après un début de course ; sans course, rien.
-        assertEquals(Guess.Vrai, swipeDirection(40f, 0f, 0.6f, 0f))
-        assertNull(swipeDirection(20f, 0f, 0.9f, 0f))
-        assertEquals(Guess.Faux, swipeDirection(-40f, 0f, -0.6f, 0f))
-        assertEquals(Guess.PlutotVrai, swipeDirection(0f, -91f, 0f, 0f))
-        assertEquals(Guess.PlutotFaux, swipeDirection(10f, 91f, 0f, 0f))
-        assertEquals(Guess.PlutotFaux, swipeDirection(0f, 40f, 0f, 0.6f))
-        assertNull(swipeDirection(0f, 80f, 0f, 0f))
-        // Trop de côté pour monter ou descendre.
-        assertNull(swipeDirection(85f, -120f, 0f, 0f))
-        assertTrue(swipeToNext(91f, 0f)); assertTrue(swipeToNext(0f, -0.6f)); assertFalse(swipeToNext(50f, 0.2f))
+        assertEquals(Guess.PlutotVrai, quizRelease(25f, -25f, 0.5f, -0.5f))
+        assertNull(quizRelease(20f, 0f, 0.9f, 0f))
+        // Vers le bas : jamais de réponse, même loin et vite.
+        assertNull(quizRelease(0f, 200f, 0f, 2f))
+        assertTrue(swipeToNext(0f, 91f, 0f, 0f)); assertTrue(swipeToNext(0f, 0f, -0.6f, 0f)); assertFalse(swipeToNext(50f, 0f, 0.2f, 0f))
+    }
+
+    @Test fun verdict_note_only_when_it_differs_from_the_game_label() {
+        assertEquals("Trompeur", verdictNote("trompeur"))
+        assertEquals("Non prouvé", verdictNote("non-prouve"))
+        assertNull(verdictNote("plutot-faux"))
+        assertNull(verdictNote("vrai"))
+    }
+
+    @Test fun arrows_and_leds() {
+        val r = arrowCells(Arrow.R).toSet()
+        // Mirror exact : la gauche est la droite retournée.
+        assertEquals(r.map { (x, y) -> 8 - x to y }.toSet(), arrowCells(Arrow.L).toSet())
+        assertEquals(arrowCells(Arrow.UR).map { (x, y) -> 8 - x to y }.toSet(), arrowCells(Arrow.UL).toSet())
+        assertTrue((8 to 4) in r && (0 to 4) in r && (0 to 0) !in r)
+        val led = ledCells(Arrow.UR)
+        assertTrue(led.all { (x, y, _) -> x in 0 until LED_SIZE && y in 0 until LED_SIZE })
+        // Chaque cellule de flèche devient lentille ; bague, puis halos autour.
+        assertEquals(arrowCells(Arrow.UR).size, led.count { it.third in setOf(LedRole.Ln, LedRole.Lh, LedRole.Ls) })
+        assertTrue(LedRole.entries.all { k -> led.any { it.third == k } })
+        assertEquals(led.sortedBy { it.third }, led)
+    }
+
+    @Test fun rear_pile_pictogram_writes_left_aligned_lines() {
+        val w = 130; val h = 220
+        assertTrue(rearCells(w, h, 0, 0).all { it == -1 })
+        val g = rearCells(w, h, 3, 5)
+        val txt = RearInk.Txt.ordinal
+        val rows = (0 until h).filter { y -> (0 until w).any { g[y * w + it] == txt } }
+        assertTrue(rows.isNotEmpty())
+        // Fausse écriture alignée à gauche : départ à la marge du tract (25 dp, environ 8 cellules), fin avant la marge droite.
+        val (x0, _) = cardOrigin(w, h)
+        val xs = rows.flatMap { y -> (0 until w).filter { g[y * w + it] == txt } }.map { it - x0 }
+        assertTrue(xs.min().toString(), xs.min() in 4..12)
+        assertTrue(xs.max().toString(), xs.max() < TRACT_W - 4)
+        assertTrue(g.any { it == RearInk.Band.ordinal } && g.any { it == RearInk.Ear.ordinal } && g.any { it == RearInk.Shade.ordinal })
+    }
+
+    @Test fun turn_lands_flat_without_bounce() {
+        assertEquals(1.0, TURN_KEYS.last().first, 0.0)
+        assertEquals(TURN_KEYS.sortedBy { it.first }, TURN_KEYS)
+        val w = 318; val h = 441
+        val start = turnFrame(.05, w, h, TurnFace.Res)
+        val end = turnFrame(1.0, w, h, TurnFace.Res)
+        // Posée : à plat, sans soulèvement, face d'arrivée (pictogramme des faits) seule visible.
+        assertEquals((TURN_PAD / 3), end.runs.minOf { it.y })
+        assertTrue(end.runs.none { it.ink == TurnInk.Acc })
+        assertTrue(start.runs.any { it.ink == TurnInk.Acc })
+        // Coin corné : rabat sombre en haut à droite au départ comme à l'arrivée (le verso a aussi son coin).
+        val right = (TURN_PAD + w / 2) / 3
+        assertTrue(start.runs.any { it.ink == TurnInk.Ear && it.x > right })
+        assertTrue(end.runs.any { it.ink == TurnInk.Ear && it.x > right })
+        assertTrue(end.runs.none { it.ink == TurnInk.Ear && it.x < right })
+        assertEquals(.16f, end.shadowAlpha, 1e-6f)
     }
 
     @Test fun progress_reaches_end_on_last_answer() {
