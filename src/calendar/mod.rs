@@ -8,12 +8,15 @@ pub const USER_TZ: Tz = chrono_tz::Europe::Paris;
 /// Sources des événements : agenda personnel et agenda travail.
 pub const SOURCE_PERSONAL: &str = "calendar";
 pub const SOURCE_WORK: &str = "work";
-/// Source des agendas par abonnement (lecture seule) ; les suivants : `subscription-2`…
+/// Préfixe des sources d'agendas par abonnement (lecture seule).
 pub const SOURCE_SUBSCRIPTION: &str = "subscription";
 
 /// Source locale du `i`-ième abonnement (à partir de 0).
-pub fn subscription_source(i: usize) -> String {
-    if i == 0 { SOURCE_SUBSCRIPTION.to_string() } else { format!("{SOURCE_SUBSCRIPTION}-{}", i + 1) }
+/// Source locale d'un abonnement : hachage court (FNV-1a) de son adresse, stable
+/// quel que soit l'ordre de la liste.
+pub fn subscription_source(url: &str) -> String {
+    let h = url.bytes().fold(0x811c9dc5u32, |h, b| (h ^ u32::from(b)).wrapping_mul(0x01000193));
+    format!("{SOURCE_SUBSCRIPTION}-{h:08x}")
 }
 
 pub fn is_subscription(source: &str) -> bool {
@@ -39,17 +42,30 @@ struct RawEvent {
     exdates: Vec<(String, String)>,
     recurrence_id: Option<(String, String)>,
     cancelled: bool,
+    transparent: bool,
 }
+
+/// Plafond d'occurrences d'un flux, récurrences dépliées : au-delà, le flux est refusé.
+pub const OCCURRENCES_MAX: usize = 20_000;
+/// Jours parcourus au plus pour une série bornée par COUNT (son début peut être très ancien).
+const SERIES_SCAN_MAX: u32 = 5_000;
 
 /// Parse an ICS (iCalendar) string and extract VEVENT entries.
 /// Handles line folding (long lines continued with leading space/tab).
 /// Les récurrences quotidiennes et hebdomadaires sont dépliées autour d'aujourd'hui.
+/// Contenu illisible (composant non fermé, trop d'occurrences) : aucun événement.
 pub fn parse_ics(input: &str, source: &str) -> Vec<CalendarEvent> {
+    parse_ics_now(input, source).unwrap_or_default()
+}
+
+fn parse_ics_now(input: &str, source: &str) -> anyhow::Result<Vec<CalendarEvent>> {
     parse_ics_around(input, source, Utc::now().with_timezone(&USER_TZ).date_naive())
 }
 
-/// [`parse_ics`], récurrences dépliées autour de `today` (un mois avant, un an après).
-pub fn parse_ics_around(input: &str, source: &str, today: NaiveDate) -> Vec<CalendarEvent> {
+/// Événements d'un VCALENDAR, récurrences dépliées autour de `today` (un mois avant,
+/// un an après). Erreur : composant encore ouvert à la fin du calendrier, ou plus de
+/// [`OCCURRENCES_MAX`] occurrences.
+pub fn parse_ics_around(input: &str, source: &str, today: NaiveDate) -> anyhow::Result<Vec<CalendarEvent>> {
     let unfolded = unfold_lines(input);
     // (événement, remplace une occurrence) ; clés uid#début des occurrences remplacées ou annulées.
     let mut events: Vec<(CalendarEvent, bool)> = Vec::new();
@@ -65,7 +81,11 @@ pub fn parse_ics_around(input: &str, source: &str, today: NaiveDate) -> Vec<Cale
 
         match trimmed {
             "BEGIN:VCALENDAR" => { in_vcalendar = true; continue; }
-            "END:VCALENDAR" => { in_vcalendar = false; continue; }
+            "END:VCALENDAR" => {
+                if current.is_some() { anyhow::bail!("agenda : composant non fermé"); }
+                in_vcalendar = false;
+                continue;
+            }
             "BEGIN:VEVENT" if in_vcalendar && current.is_none() => {
                 current = Some(RawEvent::default());
                 nested = 0;
@@ -74,6 +94,7 @@ pub fn parse_ics_around(input: &str, source: &str, today: NaiveDate) -> Vec<Cale
             "END:VEVENT" if current.is_some() && nested == 0 => {
                 let raw = current.take().unwrap();
                 collect_event(raw, source, today, &mut events, &mut replaced);
+                if events.len() > OCCURRENCES_MAX { anyhow::bail!("agenda : trop d'occurrences"); }
                 continue;
             }
             _ => {}
@@ -103,11 +124,13 @@ pub fn parse_ics_around(input: &str, source: &str, today: NaiveDate) -> Vec<Cale
             "EXDATE" => raw.exdates.extend(val.split(',').map(|v| (v.trim().to_string(), param("TZID")))),
             "RECURRENCE-ID" => raw.recurrence_id = Some((val.to_string(), param("TZID"))),
             "STATUS" => raw.cancelled = val.eq_ignore_ascii_case("CANCELLED"),
+            "TRANSP" => raw.transparent = val.eq_ignore_ascii_case("TRANSPARENT"),
             _ => {}
         }
     }
 
-    events.into_iter().filter(|(e, overrides)| *overrides || !replaced.contains(&e.uid)).map(|(e, _)| e).collect()
+    if current.is_some() { anyhow::bail!("agenda : composant non fermé"); }
+    Ok(events.into_iter().filter(|(e, overrides)| *overrides || !replaced.contains(&e.uid)).map(|(e, _)| e).collect())
 }
 
 /// Range un VEVENT lu : occurrence remplacée, série dépliée ou événement simple.
@@ -219,8 +242,12 @@ fn expand(base: &CalendarEvent, rrule: &str, excluded: &[NaiveDateTime], today: 
     let monday = |d: NaiveDate| d - Duration::days(i64::from(d.weekday().num_days_from_monday()));
     let mut out = Vec::new();
     let mut n = 0u32;
-    let mut day = first;
+    // Sans COUNT, les occurrences avant la fenêtre ne comptent pas : on la rejoint d'un saut.
+    let mut day = if count.is_some() { first } else { first.max(from) };
+    let mut scanned = 0u32;
     while day <= to {
+        scanned += 1;
+        if count.is_some() && scanned > SERIES_SCAN_MAX { break; }
         let hit = match freq {
             "D" => (day - first).num_days() % interval == 0 && (byday.is_empty() || byday.contains(&day.weekday())),
             _ => ((monday(day) - monday(first)).num_days() / 7) % interval == 0 && byday.contains(&day.weekday()),
@@ -357,6 +384,7 @@ fn build_event(raw: &RawEvent, source: &str) -> Option<CalendarEvent> {
         all_day,
         source: source.into(),
         etag: None,
+        transparent: raw.transparent,
     })
 }
 
@@ -459,7 +487,7 @@ pub fn subscription_urls(raw: &str) -> Vec<String> {
             if lower.starts_with("webcal://") {
                 Some(format!("https://{}", &u["webcal://".len()..]))
             } else if lower.starts_with("https://") {
-                Some(u.to_string())
+                Some(format!("https://{}", &u["https://".len()..]))
             } else {
                 tracing::warn!("abonnement d'agenda ignoré : adresse non https");
                 None
@@ -478,11 +506,11 @@ pub struct Subscription {
 
 impl Subscription {
     pub fn new(url: String, user: Option<String>, pass: Option<String>) -> Self {
-        let https = url.starts_with("https://");
         let http = reqwest::Client::builder()
             .timeout(SUBSCRIPTION_TIMEOUT)
-            // une adresse https ne se laisse pas rediriger vers du clair
-            .https_only(https)
+            // https seul, redirections comprises (le clair n'est permis qu'aux tests)
+            .https_only(!cfg!(any(test, feature = "test-http")))
+            .redirect(redirect_policy())
             .build()
             .expect("client HTTP");
         Self { url, auth: user.map(|u| (u, pass.unwrap_or_default())), http }
@@ -495,8 +523,10 @@ impl Subscription {
         let (user, pass) = (var("CALENDAR_SUBSCRIPTION_USERNAME"), var("CALENDAR_SUBSCRIPTION_PASSWORD"));
         subscription_urls(&var("CALENDAR_SUBSCRIPTION_URLS").unwrap_or_default())
             .into_iter()
-            .enumerate()
-            .map(|(i, u)| (Subscription::new(u, user.clone(), pass.clone()), subscription_source(i)))
+            .map(|u| {
+                let source = subscription_source(&u);
+                (Subscription::new(u, user.clone(), pass.clone()), source)
+            })
             .collect()
     }
 
@@ -538,8 +568,55 @@ impl Subscription {
                 anyhow::bail!("réponse trop volumineuse");
             }
         }
-        let text = String::from_utf8_lossy(&body);
-        if report { parse_report(&text, source) } else { parse_feed(&text, source) }
+        let text = String::from_utf8_lossy(&body).into_owned();
+        let src = source.to_string();
+        // analyse et dépliage hors du fil asynchrone : leur coût dépend du flux
+        let mut events = tokio::task::spawn_blocking(move || {
+            if report { parse_report(&text, &src) } else { parse_feed(&text, &src) }
+        })
+        .await??;
+        // UID préfixé par la source : un abonnement n'écrase jamais l'événement d'une autre source
+        for e in &mut events {
+            e.uid = format!("{source}:{}", e.uid);
+        }
+        Ok(events)
+    }
+}
+
+/// Au plus 3 redirections, jamais vers une adresse privée ou de boucle locale.
+// ponytail: seules les adresses IP littérales sont contrôlées ; un nom résolu vers le
+// réseau privé passe. Résolution contrôlée si un abonnement non fiable arrive un jour.
+fn redirect_policy() -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::custom(|a| {
+        if a.previous().len() >= 3 {
+            a.error("trop de redirections")
+        } else if forbidden_host(a.url().host_str().unwrap_or("")) {
+            a.error("redirection refusée")
+        } else {
+            a.follow()
+        }
+    })
+}
+
+/// Hôte local ou privé : boucle locale, réseau privé, lien local, espace partagé (100.64/10).
+fn forbidden_host(host: &str) -> bool {
+    use std::net::IpAddr;
+    let host = host.trim_start_matches('[').trim_end_matches(']');
+    if host.is_empty() || host.eq_ignore_ascii_case("localhost") || host.to_ascii_lowercase().ends_with(".localhost") {
+        return true;
+    }
+    match host.parse::<IpAddr>() {
+        Ok(IpAddr::V4(ip)) => {
+            let o = ip.octets();
+            ip.is_private() || ip.is_loopback() || ip.is_link_local() || ip.is_unspecified() || ip.is_broadcast()
+                || (o[0] == 100 && (o[1] & 0xc0) == 64)
+        }
+        Ok(IpAddr::V6(ip)) => {
+            let seg = ip.segments()[0];
+            ip.is_loopback() || ip.is_unspecified() || (seg & 0xfe00) == 0xfc00 || (seg & 0xffc0) == 0xfe80
+                || ip.to_ipv4_mapped().is_some_and(|v4| forbidden_host(&v4.to_string()))
+        }
+        Err(_) => false,
     }
 }
 
@@ -550,7 +627,7 @@ pub fn parse_feed(text: &str, source: &str) -> anyhow::Result<Vec<CalendarEvent>
     if !(has("BEGIN:VCALENDAR") && has("END:VCALENDAR")) {
         anyhow::bail!("flux d'agenda : réponse inattendue");
     }
-    Ok(parse_ics(text, source))
+    parse_ics_now(text, source)
 }
 
 /// Événements d'une réponse REPORT. Refuse tout ce qui n'est pas un multistatus
@@ -564,7 +641,12 @@ fn parse_report(xml: &str, source: &str) -> anyhow::Result<Vec<CalendarEvent>> {
     if !is_multistatus {
         anyhow::bail!("Calendar server REPORT: unexpected response");
     }
-    Ok(extract_calendar_data(xml).iter().flat_map(|b| parse_ics(b, source)).collect())
+    let mut events = Vec::new();
+    for block in extract_calendar_data(xml) {
+        events.extend(parse_ics_now(&block, source)?);
+        if events.len() > OCCURRENCES_MAX { anyhow::bail!("agenda : trop d'occurrences"); }
+    }
+    Ok(events)
 }
 
 /// Extrait chaque bloc VCALENDAR d'une réponse multistatus.
@@ -817,12 +899,51 @@ END:VCALENDAR"#;
 
     #[test]
     fn subscription_urls_split_and_webcal() {
-        let urls = subscription_urls("webcal://agenda.example.com/a.ics, https://example.com/b.ics\nhttp://example.com/c.ics  ");
-        assert_eq!(urls, ["https://agenda.example.com/a.ics", "https://example.com/b.ics"]);
+        let urls = subscription_urls("WebCal://agenda.example.com/a.ics, HTTPS://example.com/B.ics\nhttp://example.com/c.ics  ");
+        assert_eq!(urls, ["https://agenda.example.com/a.ics", "https://example.com/B.ics"]);
         assert!(subscription_urls("").is_empty());
-        assert_eq!(subscription_source(0), SOURCE_SUBSCRIPTION);
-        assert_eq!(subscription_source(1), "subscription-2");
-        assert!(is_subscription("subscription-2") && !is_subscription("calendar"));
+        // source stable, dérivée de l'adresse, jamais de la position
+        let a = subscription_source("https://example.com/a.ics");
+        assert_eq!(a, subscription_source("https://example.com/a.ics"));
+        assert_ne!(a, subscription_source("https://example.com/b.ics"));
+        assert!(a.starts_with("subscription-") && a.len() == "subscription-".len() + 8, "{a}");
+        assert!(is_subscription(&a) && is_subscription("subscription") && !is_subscription("calendar"));
+    }
+
+    #[test]
+    fn unclosed_component_is_an_error() {
+        let ics = "BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:x\nDTSTART:20261103T120000\nBEGIN:VALARM\nTRIGGER:-PT5M\nEND:VEVENT\nEND:VCALENDAR\n";
+        assert!(parse_feed(ics, SOURCE_SUBSCRIPTION).is_err());
+        let xml = format!("<multistatus xmlns=\"DAV:\"><response><C:calendar-data>{}</C:calendar-data></response></multistatus>", ics.replace('\n', "\r\n"));
+        assert!(parse_report(&xml, SOURCE_SUBSCRIPTION).is_err());
+    }
+
+    #[test]
+    fn transparent_events_are_flagged() {
+        let ics = "BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:t\nDTSTART;VALUE=DATE:20261103\nTRANSP:TRANSPARENT\nEND:VEVENT\nBEGIN:VEVENT\nUID:o\nDTSTART;VALUE=DATE:20261103\nTRANSP:OPAQUE\nEND:VEVENT\nEND:VCALENDAR";
+        let e = parse_feed(ics, SOURCE_SUBSCRIPTION).unwrap();
+        assert!(e[0].transparent && !e[1].transparent);
+    }
+
+    #[test]
+    fn expansion_cost_is_bounded() {
+        let today = day(2026, 11, 17);
+        let series = |rule: &str| format!("BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:s\nDTSTART;VALUE=DATE:00010101\nRRULE:{rule}\nEND:VEVENT\nEND:VCALENDAR");
+        // début très ancien sans COUNT : seule la fenêtre est parcourue
+        let t0 = std::time::Instant::now();
+        let e = parse_ics_around(&series("FREQ=DAILY"), SOURCE_SUBSCRIPTION, today).unwrap();
+        assert!(e.len() > 350 && e.len() < 400, "{}", e.len());
+        assert!(t0.elapsed() < std::time::Duration::from_millis(500), "{:?}", t0.elapsed());
+        // avec COUNT : parcours plafonné, rien d'aussi ancien n'atteint la fenêtre
+        assert!(parse_ics_around(&series("FREQ=DAILY;COUNT=999999999"), SOURCE_SUBSCRIPTION, today).unwrap().is_empty());
+        // INTERVAL nul ou absurde : première occurrence seule, ou aucune dans la fenêtre
+        assert_eq!(parse_ics_around(&series("FREQ=DAILY;INTERVAL=0"), SOURCE_SUBSCRIPTION, today).unwrap().len(), 1);
+        assert_eq!(parse_ics_around(&series("FREQ=DAILY;INTERVAL=99999999999999999999"), SOURCE_SUBSCRIPTION, today).unwrap().len(), 1);
+        assert!(parse_ics_around(&series("FREQ=DAILY;INTERVAL=9223372036854775807"), SOURCE_SUBSCRIPTION, today).unwrap().len() <= 1);
+        // flux qui dépasse le plafond total : refusé en entier
+        let many: String = (0..60).map(|i| format!("BEGIN:VEVENT\nUID:s{i}\nDTSTART;VALUE=DATE:20261101\nRRULE:FREQ=DAILY\nEND:VEVENT\n")).collect();
+        let feed = format!("BEGIN:VCALENDAR\n{many}END:VCALENDAR\n");
+        assert!(parse_feed(&feed, SOURCE_SUBSCRIPTION).is_err());
     }
 
     #[test]
@@ -852,7 +973,7 @@ END:VCALENDAR"#;
     fn weekly_recurrence_with_exdate_and_override() {
         // tous les mardis et jeudis 12:00-13:00 depuis le 03/11, sauf le 05/11 ; le 10/11 déplacé à 18:00
         let ics = "BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:r1\nDTSTART:20261103T120000\nDTEND:20261103T130000\nRRULE:FREQ=WEEKLY;BYDAY=TU,TH;COUNT=6\nEXDATE:20261105T120000\nSUMMARY:Déjeuner Exemple\nEND:VEVENT\nBEGIN:VEVENT\nUID:r1\nRECURRENCE-ID:20261110T120000\nDTSTART:20261110T180000\nDTEND:20261110T190000\nSUMMARY:Déplacé\nEND:VEVENT\nEND:VCALENDAR";
-        let events = parse_ics_around(ics, SOURCE_SUBSCRIPTION, day(2026, 11, 17));
+        let events = parse_ics_around(ics, SOURCE_SUBSCRIPTION, day(2026, 11, 17)).unwrap();
         let starts: Vec<String> = events.iter().map(|e| e.start_time.format("%d %H").to_string()).collect();
         // 03, (05 exclu), 10 → remplacé, 12, 17, 19 : six occurrences au total, COUNT compris l'exclue
         assert_eq!(starts, ["03 12", "12 12", "17 12", "19 12", "10 18"]);
@@ -863,13 +984,13 @@ END:VCALENDAR"#;
     #[test]
     fn daily_recurrence_until_interval_and_window() {
         let ics = "BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:d1\nDTSTART;VALUE=DATE:20261101\nRRULE:FREQ=DAILY;INTERVAL=2;UNTIL=20261107\nSUMMARY:Garde\nEND:VEVENT\nEND:VCALENDAR";
-        let events = parse_ics_around(ics, SOURCE_SUBSCRIPTION, day(2026, 11, 17));
+        let events = parse_ics_around(ics, SOURCE_SUBSCRIPTION, day(2026, 11, 17)).unwrap();
         let days: Vec<u32> = events.iter().map(|e| chrono::Datelike::day(&e.start_time.date())).collect();
         assert_eq!(days, [1, 3, 5, 7]);
         assert!(events.iter().all(|e| e.all_day));
         // série sans fin : bornée autour d'aujourd'hui
         let ics = "BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:d2\nDTSTART:20200101T080000\nDTEND:20200101T090000\nRRULE:FREQ=DAILY\nEND:VEVENT\nEND:VCALENDAR";
-        let events = parse_ics_around(ics, SOURCE_SUBSCRIPTION, day(2026, 11, 17));
+        let events = parse_ics_around(ics, SOURCE_SUBSCRIPTION, day(2026, 11, 17)).unwrap();
         assert!(events.len() > 350 && events.len() < 400, "{}", events.len());
         assert!(events[0].start_time.date() >= day(2026, 10, 17));
     }
@@ -877,7 +998,7 @@ END:VCALENDAR"#;
     #[test]
     fn unsupported_recurrence_keeps_first_and_cancelled_dropped() {
         let ics = "BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:m\nDTSTART:20261103T120000\nRRULE:FREQ=MONTHLY\nEND:VEVENT\nBEGIN:VEVENT\nUID:c\nDTSTART:20261103T120000\nSTATUS:CANCELLED\nEND:VEVENT\nEND:VCALENDAR";
-        let events = parse_ics_around(ics, SOURCE_SUBSCRIPTION, day(2026, 11, 17));
+        let events = parse_ics_around(ics, SOURCE_SUBSCRIPTION, day(2026, 11, 17)).unwrap();
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].uid, "m");
     }

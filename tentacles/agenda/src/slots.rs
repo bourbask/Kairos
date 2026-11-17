@@ -49,7 +49,7 @@ mod tests {
             end_time: e,
             all_day,
             source: "t".into(),
-            etag: None,
+            etag: None, transparent: false,
         }
     }
 

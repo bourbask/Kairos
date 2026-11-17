@@ -382,7 +382,7 @@ impl AgendaServer {
             end_time: end,
             all_day,
             source: source.into(),
-            etag: None,
+            etag: None, transparent: false,
         };
         self.db()?.upsert_calendar_event(&event).map_err(err)?;
         json_out(json!({"message": "Événement ajouté.", "uid": uid}))
@@ -474,7 +474,7 @@ mod tests {
                 end_time: day.and_hms_opt(10, 0, 0).unwrap(),
                 all_day: false,
                 source: kairos::calendar::SOURCE_WORK.into(),
-                etag: None,
+                etag: None, transparent: false,
             })
             .unwrap();
         let srv = AgendaServer::new(Arc::new(Mutex::new(store)), Default::default());
@@ -498,7 +498,7 @@ mod tests {
             end_time: e,
             all_day: h.is_none(),
             source: kairos::calendar::SOURCE_PERSONAL.into(),
-            etag: None,
+            etag: None, transparent: false,
         }
     }
 
@@ -612,7 +612,7 @@ mod app_tests {
             end_time: parse_dt(end).unwrap(),
             all_day,
             source: source.into(),
-            etag: None,
+            etag: None, transparent: false,
         }
     }
 
@@ -791,8 +791,9 @@ mod app_tests {
 
     fn with_sub(url: String, user: Option<&str>) -> Calendars {
         let mut c = Calendars::default();
+        let source = kairos::calendar::subscription_source(&url);
         let sub = kairos::calendar::Subscription::new(url, user.map(Into::into), user.map(|_| "secret".into()));
-        c.subscriptions = vec![(sub, kairos::calendar::subscription_source(0))];
+        c.subscriptions = vec![(sub, source)];
         c
     }
 
@@ -815,7 +816,7 @@ mod app_tests {
         let v: Value = serde_json::from_str(&srv.app_agenda_sync().await.unwrap()).unwrap();
         assert_eq!(v["synced"], true);
         assert_eq!(seen.lock().unwrap().as_slice(), [("REPORT".to_string(), true)]);
-        assert_eq!(day(&srv, "2026-01-05")["events"][0]["uid"], "distant-1");
+        assert!(day(&srv, "2026-01-05")["events"][0]["uid"].as_str().unwrap().ends_with(":distant-1"));
     }
 
     #[tokio::test]
@@ -831,13 +832,13 @@ mod app_tests {
         let (url, _) = fake_sub((200, "<html>Connexion</html>"), (207, REPORT)).await;
         let srv = server(&[], with_sub(url, None));
         srv.app_agenda_sync().await.unwrap();
-        assert_eq!(day(&srv, "2026-01-05")["events"][0]["uid"], "distant-1");
+        assert!(day(&srv, "2026-01-05")["events"][0]["uid"].as_str().unwrap().ends_with(":distant-1"));
     }
 
     #[tokio::test]
     async fn subscription_invalid_answer_keeps_known_events() {
         let (url, _) = fake_sub((200, "<html>Connexion</html>"), (200, "<html>Connexion</html>")).await;
-        let known = event("abo-ancien", "2026-01-05 09:00", "2026-01-05 10:00", false, kairos::calendar::SOURCE_SUBSCRIPTION);
+        let known = event("abo-ancien", "2026-01-05 09:00", "2026-01-05 10:00", false, &kairos::calendar::subscription_source(&url));
         let srv = server(&[known], with_sub(url.clone(), None));
         let out = srv.app_agenda_sync().await.unwrap();
         assert!(!out.contains("127.0.0.1"), "adresse jamais exposée");
@@ -852,7 +853,54 @@ mod app_tests {
         let srv = server(&[old], with_sub(url, None));
         srv.app_agenda_sync().await.unwrap();
         let uids: Vec<Value> = day(&srv, "2026-01-05")["events"].as_array().unwrap().iter().map(|e| e["uid"].clone()).collect();
-        assert_eq!(uids, ["abo-1"]);
+        assert_eq!(uids.len(), 1);
+        assert!(uids[0].as_str().unwrap().ends_with(":abo-1"));
+    }
+
+    #[tokio::test]
+    async fn subscription_never_touches_other_sources() {
+        // même UID dans l'agenda perso et dans l'abonnement, puis abonnement retiré
+        let perso = event("abo-1", "2026-01-05 09:00", "2026-01-05 10:00", false, PERSO);
+        let store = Storage::open(":memory:").unwrap();
+        store.upsert_calendar_event(&perso).unwrap();
+        let store = Arc::new(Mutex::new(store));
+        let (url, _) = fake_sub((200, FEED), (405, "")).await;
+        let srv = AgendaServer::new(store.clone(), Arc::new(with_sub(url, None)));
+        srv.app_agenda_sync().await.unwrap();
+        let uids = |srv: &AgendaServer| -> Vec<String> {
+            day(srv, "2026-01-05")["events"].as_array().unwrap().iter().map(|e| e["uid"].as_str().unwrap().to_string()).collect()
+        };
+        let both = uids(&srv);
+        assert_eq!(both.len(), 2, "{both:?}");
+        assert!(both.contains(&"abo-1".to_string()));
+        let srv = AgendaServer::new(store, Arc::new(Calendars::default()));
+        srv.app_agenda_sync().await.unwrap();
+        assert_eq!(uids(&srv), ["abo-1"], "événement perso intact");
+    }
+
+    #[tokio::test]
+    async fn subscription_redirect_to_local_address_refused() {
+        let seen: Arc<Mutex<Vec<String>>> = Default::default();
+        let s = seen.clone();
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", l.local_addr().unwrap());
+        let target = format!("{base}/cible.ics");
+        let app = axum::Router::new().fallback(move |u: axum::http::Uri| {
+            let (s, target) = (s.clone(), target.clone());
+            async move {
+                s.lock().unwrap().push(u.path().to_string());
+                if u.path() == "/cible.ics" {
+                    (axum::http::StatusCode::OK, [(axum::http::header::LOCATION, String::new())], FEED.to_string())
+                } else {
+                    (axum::http::StatusCode::FOUND, [(axum::http::header::LOCATION, target)], String::new())
+                }
+            }
+        });
+        tokio::spawn(async move { axum::serve(l, app).await });
+        let srv = server(&[], with_sub(format!("{base}/abo.ics"), None));
+        let v: Value = serde_json::from_str(&srv.app_agenda_sync().await.unwrap()).unwrap();
+        assert_eq!(v["synced"], false);
+        assert!(!seen.lock().unwrap().contains(&"/cible.ics".to_string()), "redirection suivie");
     }
 
     /// Calendrier qui accepte la connexion mais ne répond jamais.

@@ -80,7 +80,10 @@ Agendas par abonnement, en lecture seule : `CALENDAR_SUBSCRIPTION_URLS` (une ou 
 webcal, séparées par des espaces ou des virgules), `CALENDAR_SUBSCRIPTION_USERNAME` et `CALENDAR_SUBSCRIPTION_PASSWORD`
 (facultatifs). Collection CalDAV (REPORT) ou flux iCalendar (GET), détecté automatiquement. Lus par la synchronisation
 de nuit et par `agenda` ; une réponse illisible garde les événements déjà connus. L'adresse est un secret : jamais
-journalisée. Récurrences dépliées : quotidiennes et hebdomadaires (mensuelles et annuelles : première occurrence seule).
+journalisée. Récurrences dépliées : quotidiennes et hebdomadaires (mensuelles et annuelles : première occurrence seule),
+20 000 occurrences au plus par abonnement (au-delà, rien n'est remplacé). Redirections : 3 au plus, jamais vers une
+adresse privée ou locale. Un calendrier valide mais **vide** vide la source : c'est l'état réel de l'abonnement.
+Chaque abonnement a sa source, dérivée de son adresse ; un abonnement retiré de la liste est purgé à la synchronisation suivante.
 
 Générer un jeton par service (`MEMOIRE_TOKEN`, `AGENDA_TOKEN`, `FINANCES_TOKEN`, `ALIMENTATION_TOKEN`) et les renseigner dans `kairos.env` :
 
