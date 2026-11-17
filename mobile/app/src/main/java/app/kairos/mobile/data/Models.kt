@@ -65,7 +65,7 @@ data class DoneChoices(
 data class Day(val day: String, val work: String? = null, val cards: List<Card> = emptyList())
 
 @Serializable
-data class DecisionOption(val id: String, val label: String, val reason: String? = null)
+data class DecisionOption(val id: String, val label: String, val reason: String? = null, val badge: String? = null)
 
 /** Question posée par un module ; disparaît d'elle-même après [expires]. */
 @Serializable
@@ -79,6 +79,10 @@ data class Decision(
     val proposal: DecisionOption? = null,
     val alternatives: List<DecisionOption> = emptyList(),
     val expires: String? = null,
+    /** Choix rapides ordonnés ; [alternatives] reste la liste complète. */
+    val suggestions: List<DecisionOption> = emptyList(),
+    /** Le module accepte un choix nouveau, créé à la demande. */
+    @SerialName("can_create") val canCreate: Boolean = false,
 )
 
 @Serializable

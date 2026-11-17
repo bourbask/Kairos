@@ -165,4 +165,87 @@ class DeckStateTest {
         assertEquals("Loisirs", otherLabel(card("a"), directLeft = true))
         assertEquals("Autre choix", otherLabel(card("a").copy(alternatives = emptyList()), directLeft = true))
     }
+
+    private val all = listOf(
+        DecisionOption("Courses", "Courses", badge = "budget"),
+        DecisionOption("Santé", "Santé"),
+        DecisionOption("Cadeaux", "Cadeaux"),
+        DecisionOption("Divers", "Divers"),
+        DecisionOption("Transport", "Transport"),
+    )
+
+    private fun categorised(suggestions: List<DecisionOption> = all.take(4), canCreate: Boolean = true) =
+        card("a").copy(alternatives = all, suggestions = suggestions, canCreate = canCreate)
+
+    @Test
+    fun quick_options_are_suggestions_else_alternatives() {
+        assertEquals(all.take(4), quickOptions(categorised()))
+        assertEquals(all, quickOptions(categorised(suggestions = emptyList())))
+    }
+
+    @Test
+    fun more_when_hidden_choices_or_creation() {
+        assertTrue(hasMore(categorised(canCreate = false)))
+        assertTrue(hasMore(categorised(suggestions = emptyList())))
+        assertFalse(hasMore(categorised(suggestions = emptyList(), canCreate = false)))
+        assertFalse(hasMore(card("a")))
+    }
+
+    @Test
+    fun picker_choice_is_sent_with_creation_flag_and_closes() {
+        val deck = DeckState(listOf(categorised(), card("b")))
+        deck.swipeLeft()
+        deck.openPicker()
+        assertTrue(deck.pickerOpen)
+        deck.choose("Voyages", create = true)
+        val sent = deck.outbox.single()
+        assertEquals("Voyages" to true, sent.option to sent.create)
+        assertFalse(deck.pickerOpen)
+        // l'annulation reste identique
+        assertTrue(deck.undo())
+        assertEquals("a", deck.current?.id)
+        assertTrue(deck.outbox.isEmpty())
+    }
+
+    @Test
+    fun filter_ignores_case_accents_and_spaces() {
+        assertEquals(listOf("Santé"), filterOptions(all, "  SANTE ").map { it.id })
+        assertEquals(all, filterOptions(all, " "))
+        assertTrue(filterOptions(all, "zz").isEmpty())
+    }
+
+    @Test
+    fun clean_name_strips_controls_and_invisibles() {
+        assertEquals("Bien être", cleanName(" Bien\u200b \n être\t"))
+    }
+
+    @Test
+    fun picker_creates_only_valid_new_names() {
+        val p = PickerState(all, canCreate = true)
+        p.query = "  voyages "
+        p.startCreate()
+        assertTrue(p.creating)
+        assertEquals("voyages", p.name)
+        assertEquals(Pick("voyages", true), p.create())
+        p.name = "   "
+        assertNull(p.create())
+        assertEquals("Indique un nom.", p.error)
+        p.name = "x".repeat(NAME_MAX + 1)
+        assertNull(p.create())
+        // nom existant à la casse près : l'option existante, jamais un doublon
+        p.name = "  sANTÉ "
+        assertEquals(Pick("Santé", false), p.create())
+        assertNull(p.error)
+        p.cancelCreate()
+        assertFalse(p.creating)
+    }
+
+    @Test
+    fun picker_without_creation_stays_a_list() {
+        val p = PickerState(all, canCreate = false)
+        p.startCreate()
+        assertFalse(p.creating)
+        p.query = "cad"
+        assertEquals(listOf("Cadeaux"), p.shown.map { it.id })
+    }
 }

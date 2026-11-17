@@ -11,6 +11,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
@@ -24,7 +26,14 @@ import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.systemGestures
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -176,10 +185,10 @@ fun DeckScreen(
     suspend fun flingTo(target: Offset) = offset.animateTo(target, Motion.fling())
     suspend fun back() = offset.animateTo(Offset.Zero, Motion.settle())
 
-    suspend fun commit(option: String, left: Boolean = false) {
+    suspend fun commit(option: String, left: Boolean = false, create: Boolean = false) {
         flingTo(Offset(width * (if (left) -1.4f else 1.4f), offset.value.y))
         haptic.performHapticFeedback(HapticFeedbackType.Confirm)
-        deck.choose(option)
+        deck.choose(option, create)
         offset.snapTo(Offset.Zero)
         deck.outbox.lastOrNull()?.let(::schedule)
     }
@@ -348,7 +357,12 @@ fun DeckScreen(
                     )
                 }
                 if (deck.alternativesOpen) {
-                    Alternatives(current, enabled = !offline, onChoose = { exclusive { commit(it) } })
+                    Alternatives(
+                        current,
+                        enabled = !offline,
+                        onChoose = { exclusive { commit(it) } },
+                        onMore = deck::openPicker,
+                    )
                 }
             }
         }
@@ -363,6 +377,14 @@ fun DeckScreen(
                 SecondaryAction("Plus tard", onClick = ::later)
             }
         }
+    }
+
+    if (deck.pickerOpen && current != null && !offline) {
+        Picker(
+            current,
+            onDismiss = deck::dismissPicker,
+            onPick = { pick -> exclusive { commit(pick.id, create = pick.create) } },
+        )
     }
 
     // Pile vide : écran de fin, puis retour (une annulation l'interrompt).
@@ -466,32 +488,121 @@ internal fun BoxScope.Stamp(
     )
 }
 
-/** Alternatives en grosses puces, juste sous la carte. */
+/** Choix rapides en grosses puces, juste sous la carte, et « Autre… » vers la liste complète. */
 @Composable
-private fun Alternatives(card: Decision, enabled: Boolean, onChoose: (String) -> Unit) {
+private fun Alternatives(card: Decision, enabled: Boolean, onChoose: (String) -> Unit, onMore: () -> Unit) {
+    val options = quickOptions(card)
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         FlowRow(
             horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
             verticalArrangement = Arrangement.spacedBy(10.dp),
             modifier = Modifier.fillMaxWidth(),
         ) {
-            card.alternatives.forEach { option ->
-                Surface(
-                    onClick = { onChoose(option.id) },
-                    enabled = enabled,
-                    shape = RoundedCornerShape(28.dp),
-                    color = MaterialTheme.colorScheme.surface,
-                    border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary),
-                    modifier = Modifier.heightIn(min = 56.dp),
-                ) {
-                    Box(Modifier.padding(horizontal = 22.dp, vertical = 14.dp), contentAlignment = Alignment.Center) {
-                        Text(option.label, style = MaterialTheme.typography.titleMedium)
-                    }
+            options.forEach { option ->
+                Pill(enabled, MaterialTheme.colorScheme.primary, onClick = { onChoose(option.id) }) {
+                    Text(option.label, style = MaterialTheme.typography.titleMedium)
+                    option.badge?.let { Badge(it) }
+                }
+            }
+            if (hasMore(card)) {
+                Pill(enabled, MaterialTheme.colorScheme.outline, onClick = onMore) {
+                    Text("Autre…", style = MaterialTheme.typography.titleMedium)
                 }
             }
         }
-        if (card.alternatives.isEmpty()) {
+        if (options.isEmpty() && !card.canCreate) {
             Text("Aucun autre choix proposé.", style = MaterialTheme.typography.bodyMedium)
+        }
+    }
+}
+
+@Composable
+private fun Pill(enabled: Boolean, border: Color, onClick: () -> Unit, content: @Composable () -> Unit) {
+    Surface(
+        onClick = onClick,
+        enabled = enabled,
+        shape = RoundedCornerShape(28.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.5.dp, border),
+        modifier = Modifier.heightIn(min = 56.dp),
+    ) {
+        Column(Modifier.padding(horizontal = 22.dp, vertical = 10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            content()
+        }
+    }
+}
+
+/** Marque d'une option (ex. poste du budget). */
+@Composable
+private fun Badge(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSecondaryContainer,
+        modifier = Modifier
+            .background(MaterialTheme.colorScheme.secondaryContainer, RoundedCornerShape(8.dp))
+            .padding(horizontal = 6.dp, vertical = 1.dp),
+    )
+}
+
+/** Liste complète des choix d'une carte : recherche et, si le module l'accepte, nouveau nom. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun Picker(card: Decision, onDismiss: () -> Unit, onPick: (Pick) -> Unit) {
+    val picker = remember(card.module, card.id) { PickerState(card.alternatives, card.canCreate) }
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+        Column(
+            Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            if (picker.creating) {
+                Text("Nouvelle catégorie", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                OutlinedTextField(
+                    value = picker.name,
+                    onValueChange = { picker.name = it },
+                    label = { Text("Nom") },
+                    singleLine = true,
+                    isError = picker.error != null,
+                    supportingText = picker.error?.let { { Text(it) } },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(onClick = picker::cancelCreate) { Text("Annuler") }
+                    TextButton(onClick = { picker.create()?.let(onPick) }) { Text("Créer et classer") }
+                }
+            } else {
+                OutlinedTextField(
+                    value = picker.query,
+                    onValueChange = { picker.query = it },
+                    label = { Text("Rechercher") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                LazyColumn(Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
+                    if (picker.canCreate) item {
+                        TextButton(onClick = picker::startCreate, modifier = Modifier.fillMaxWidth()) {
+                            Text("+ nouvelle catégorie", modifier = Modifier.fillMaxWidth())
+                        }
+                    }
+                    items(picker.shown, key = { it.id }) { option ->
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 48.dp)
+                                .clickable { onPick(Pick(option.id, false)) }
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text(option.label, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+                            option.badge?.let { Badge(it) }
+                        }
+                    }
+                    if (picker.shown.isEmpty()) item {
+                        Text("Aucun résultat.", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(12.dp))
+                    }
+                }
+            }
         }
     }
 }
