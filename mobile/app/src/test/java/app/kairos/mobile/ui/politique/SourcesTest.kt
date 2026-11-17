@@ -22,10 +22,17 @@ class SourcesTest {
         assertEquals("institut", p.ev?.id)
         assertEquals("rapport annuel", p.article)
         assertEquals("Institut X · rapport annuel", p.text)
-        // Adresse non https : plus de partie droite.
+        // Adresse non https : la partie droite reste, en texte sans lien ; aucune information perdue.
         val http = parts("Institut X, rapport annuel", "http://exemple.org/r")
-        assertNull(http.article); assertNull(http.url)
-        assertEquals("Institut X", http.text)
+        assertEquals("rapport annuel", http.article); assertNull(http.url)
+        assertEquals("Institut X · rapport annuel", http.text)
+        assertEquals("rapport annuel", parts("Institut X : rapport annuel").article)
+        // Libellé sans le nom de l'évaluateur en tête : gardé entier à droite.
+        assertEquals("Étude tierce", parts("Étude tierce", null, "institut").article)
+        // Ni adresse ni reste de libellé : pas de partie droite.
+        assertNull(parts("Institut X").article)
+        assertNull(parts("institut", null, "institut").article)
+        assertNull(parts("", "http://exemple.org/r", "institut").article)
         // Libellé réduit à l'id : la partie droite est le domaine, jamais l'id.
         assertEquals("Institut X · exemple.org", parts("institut", "https://exemple.org/r", "institut").text)
     }

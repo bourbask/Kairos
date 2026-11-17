@@ -202,14 +202,18 @@ fun evA11yLabel(ev: Evaluator): String {
  */
 fun sourceRest(src: SourceRef, ev: Evaluator?): String {
     if (ev == null) return sourceName(src)
+    return labelRest(src, ev) ?: safeHttps(src.url)?.let(::hostOf) ?: if (src.label.isBlank()) sourceName(src) else "Article"
+}
+
+/** Ce que le libellé dit de plus que le nom de [ev] ; libellé sans ce nom en tête : le libellé entier ; rien : null. */
+private fun labelRest(src: SourceRef, ev: Evaluator): String? {
+    val raw = src.label.trim()
     val l = fold(src.label)
     val k = (ev.alias + ev.nom).map(::fold).filter { it.isNotEmpty() }.sortedByDescending { it.length }
-        .firstOrNull { l.startsWith(it) && (l.length == it.length || !l[it.length].isLetterOrDigit()) } ?: return sourceName(src)
+        .firstOrNull { l.startsWith(it) && (l.length == it.length || !l[it.length].isLetterOrDigit()) }
     // Le libellé replié garde la longueur de l'original tant qu'aucune lettre n'est décomposée en plusieurs : sinon, libellé entier.
-    val raw = src.label.trim()
-    if (fold(raw).length != raw.length) return sourceName(src)
-    val rest = raw.substring(k.length).trimStart { it.isWhitespace() || it in ",;:·–—-" }.trim()
-    return rest.ifEmpty { safeHttps(src.url)?.let { runCatching { java.net.URI(it).host }.getOrNull() }?.removePrefix("www.") ?: "Article" }
+    if (k == null || fold(raw).length != raw.length) return raw.ifEmpty { null }
+    return raw.substring(k.length).trimStart { it.isWhitespace() || it in ",;:·–—-" }.trim().ifEmpty { null }
 }
 
 /** Libellé d'une source : son nom, à défaut le domaine de l'adresse. */
@@ -383,7 +387,7 @@ fun LevelTag(n: Int, modifier: Modifier = Modifier) = IndTag(
 
 /**
  * Les deux morceaux d'une source : à gauche qui la signe ([ev] s'il a une fiche, sinon [who] en texte),
- * à droite l'article, présent seulement avec une adresse https ([url]).
+ * à droite l'article : lien avec une adresse https ([url]), sinon le reste du libellé en texte ; rien à dire : null.
  */
 class SourceParts(val ev: Evaluator?, val who: String?, val article: String?, val url: String?) {
     /** Libellé texte de l'étiquette, pour les supports où rien ne se touche (mode « À table », partage). */
@@ -397,7 +401,7 @@ fun sourceParts(src: SourceRef, data: PolData): SourceParts {
     if (ev != null) {
         // Libellé réduit à l'id de l'évaluateur : rien d'autre à dire que l'adresse.
         val s = if (src.label.trim() == ev.id) src.copy(label = "") else src
-        return SourceParts(ev, evShortName(ev), url?.let { sourceRest(s, ev) }, url)
+        return SourceParts(ev, evShortName(ev), if (url != null) sourceRest(s, ev) else labelRest(s, ev), url)
     }
     val label = src.label.trim().takeIf { it.isNotEmpty() }
     val article = url?.let { hostOf(it) ?: "Article" }
@@ -412,7 +416,7 @@ private fun hostOf(url: String): String? = runCatching { java.net.URI(url).host 
 
 /**
  * Source : à gauche l'évaluateur (ouvre sa fiche) ou, sans fiche, le nom seul ; à droite l'article (ouvre l'adresse https).
- * Sans adresse https, pas de partie droite.
+ * Sans adresse https, la partie droite reste en texte non cliquable ; sans reste de libellé, elle disparaît.
  */
 @Composable
 fun SourceButton(src: SourceRef, data: PolData, onOpenEv: (String) -> Unit, modifier: Modifier = Modifier) {
@@ -420,7 +424,7 @@ fun SourceButton(src: SourceRef, data: PolData, onOpenEv: (String) -> Unit, modi
     val scheme = MaterialTheme.colorScheme
     val p = sourceParts(src, data)
     val left = p.ev != null || p.who != null
-    val right = p.article != null && p.url != null
+    val right = p.article != null
     val lShape = if (right) RoundedCornerShape(8.dp, 0.dp, 0.dp, 8.dp) else RoundedCornerShape(8.dp)
     val rShape = if (left) RoundedCornerShape(0.dp, 8.dp, 8.dp, 0.dp) else RoundedCornerShape(8.dp)
     val label = @Composable { t: String, c: Color ->
@@ -435,8 +439,8 @@ fun SourceButton(src: SourceRef, data: PolData, onOpenEv: (String) -> Unit, modi
         ) { label(p.who, scheme.onSurfaceVariant) }
         if (right) Row(
             Modifier.fillMaxHeight().clip(rShape).background(scheme.surface).outline(scheme.outlineVariant, 1f, rShape)
-                .clickable(role = Role.Button) { openUrl(context, p.url) }
-                .semantics { contentDescription = "Voir la source : ${p.article} (s'ouvre dans le navigateur)" }
+                .let { m -> if (p.url != null) m.clickable(role = Role.Button) { openUrl(context, p.url) } else m }
+                .semantics { contentDescription = if (p.url != null) "Voir la source : ${p.article} (s'ouvre dans le navigateur)" else "Source : ${p.article}, sans lien" }
                 .heightIn(min = 28.dp).padding(horizontal = 9.dp, vertical = 5.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) { label(p.article!!, scheme.onSurfaceVariant) }
