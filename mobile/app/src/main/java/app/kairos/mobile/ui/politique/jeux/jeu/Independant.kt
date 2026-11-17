@@ -1,5 +1,7 @@
 package app.kairos.mobile.ui.politique.jeux.jeu
 
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.unit.Dp
 import kotlinx.serialization.json.JsonObject
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -136,13 +138,16 @@ class Independant : PolJeu<CranD>("independant", CranD.serializer()) {
                     BoutonPixel("Valider", onClick = {
                         if (ok) { if (sel == d.bonne) c.juste() else c.faux(sel.toString(), "Pas le niveau $sel.") }
                     }, enabled = ok, cellule = 2.7.dp)
+                    // Une touche par cran, jamais plus large que l'écart entre deux crans (écrans étroits).
+                    val largeur = with(dens) { minOf(54.dp, (18 * s).toDp() - 2.dp) }
                     for (i in 1..4) {
                         val out = i.toString() in st.out
                         Touche(
                             i, appuyee = n == i, ecartee = out, enabled = !st.solved && !out,
                             label = "Niveau $i : ${niveaux.nom(i)}" + if (out) " (écarté)" else "",
                             onClick = { poser(i) },
-                            modifier = Modifier.offset(x = with(dens) { ((ROM_PX + ROM_D[i]) * s).toDp() } - 27.dp, y = 10.dp),
+                            modifier = Modifier.offset(x = with(dens) { ((ROM_PX + ROM_D[i]) * s).toDp() } - largeur / 2, y = 10.dp),
+                            largeur = largeur,
                         )
                     }
                 }
@@ -202,7 +207,7 @@ private fun Romaine(deg: Float, poids: Int, out: List<String>, s: Int, enabled: 
  * poids est sur ce cran, à plat et hachurée quand le niveau est écarté.
  */
 @Composable
-private fun Touche(n: Int, appuyee: Boolean, ecartee: Boolean, enabled: Boolean, label: String, onClick: () -> Unit, modifier: Modifier) {
+private fun Touche(n: Int, appuyee: Boolean, ecartee: Boolean, enabled: Boolean, label: String, onClick: () -> Unit, modifier: Modifier, largeur: Dp = 54.dp) {
     val sc = MaterialTheme.colorScheme
     val pc = PolColors.current
     val (kb0, ki0) = when (n) { 1 -> pc.ind1 to pc.ind1Ink; 2 -> pc.ind2 to pc.ind2Ink; 3 -> pc.ind3 to pc.ind3Ink; else -> sc.surface to sc.onSurface }
@@ -211,13 +216,13 @@ private fun Touche(n: Int, appuyee: Boolean, ecartee: Boolean, enabled: Boolean,
     val ki = if (ecartee) sc.surface else ki0
     val contour = n == 4 && !ecartee
     Box(
-        modifier.size(54.dp)
+        modifier.size(largeur, 54.dp)
             .clickable(remember { MutableInteractionSource() }, indication = null, enabled = enabled, role = Role.RadioButton, onClick = onClick)
             .semantics { contentDescription = label; selected = appuyee },
     ) {
-        Canvas(Modifier.size(54.dp)) {
+        Canvas(Modifier.fillMaxSize()) {
             val u = 1.dp.toPx()
-            val pw = 42 * u
+            val pw = minOf(42 * u, size.width - 4 * u)
             val ph = 36 * u
             val x0 = (size.width - pw) / 2
             val dy = when { ecartee -> 9 * u; appuyee -> 6 * u; else -> 0f }

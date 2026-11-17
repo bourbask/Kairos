@@ -158,8 +158,7 @@ private fun Fiche(o: String, i: Int, juste: Boolean, sortie: Boolean, st: Manche
         Modifier.zIndex(1f + i).padding(top = FICHES_HAUT[i].dp - 9.dp, start = FICHES_RETRAIT[i].dp, end = FICHES_RETRAIT[i].dp)
             .fillMaxWidth().height(85.dp)
             .offset(y = haut).graphicsLayer { translationX = tremble.value.dp.toPx() }
-            .clickable(src, indication = null, enabled = actif && !sortie, role = Role.Button, onClick = onClick)
-            .semantics { contentDescription = o + etat },
+            .semantics(mergeDescendants = true) { contentDescription = o + etat },
     ) {
         // Ombre portée en marches sur la fiche de derrière.
         if (i > 0) Box(
@@ -194,5 +193,8 @@ private fun Fiche(o: String, i: Int, juste: Boolean, sortie: Boolean, st: Manche
                 aplat(trait, size.width - e, 0f, e, size.height)
             },
         )
+        // Zone d'appui : la seule partie visible de la fiche, jusqu'à la suivante ou à la façade (qui ne déclenche rien).
+        val visible = ((FICHES_HAUT.getOrNull(i + 1) ?: (FACADE + 9)) - FICHES_HAUT[i]).dp
+        Box(Modifier.fillMaxWidth().height(visible).clickable(src, indication = null, enabled = actif && !sortie, role = Role.Button, onClick = onClick))
     }
 }

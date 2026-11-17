@@ -1,5 +1,11 @@
 package app.kairos.mobile.ui.politique.jeux.jeu
 
+import androidx.compose.foundation.text.TextAutoSize
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.LaunchedEffect
+import kotlinx.coroutines.delay
 import kotlinx.serialization.json.JsonObject
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Easing
@@ -17,7 +23,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -107,12 +112,15 @@ internal val TIRELIRE: List<String> = run {
 
 private val CELLULE = 3.dp
 
+/** Cellule effective : [CELLULE], réduite quand la manette est trop étroite pour les tirelires (écran de 360 dp). */
+private val LocalCellule = compositionLocalOf { CELLULE }
+
 /** Animation en trois crans (pixel). */
 private val Crans = Easing { floor(it * 3f) / 3f }
 
 @Composable
 private fun Grille(g: List<String>, couleurs: Map<Char, Color>, modifier: Modifier = Modifier) {
-    val s = cellPx(CELLULE)
+    val s = cellPx(LocalCellule.current)
     val d = LocalDensity.current
     Canvas(modifier.size(with(d) { (g[0].length * s).toDp() }, with(d) { (g.size * s).toDp() }).clearAndSetSemantics { }) {
         g.forEachIndexed { y, l -> l.forEachIndexed { x, k -> couleurs[k]?.let { cell(x, y, it, s) } } }
@@ -132,7 +140,7 @@ private fun metal(): Pair<Color, Map<Char, Color>> {
 
 /** Cellules d'un dessin en dp (la cellule est arrondie au pixel). */
 @Composable
-private fun cellsDp(n: Int): Dp = with(LocalDensity.current) { (n * cellPx(CELLULE)).toDp() }
+private fun cellsDp(n: Int): Dp = with(LocalDensity.current) { (n * cellPx(LocalCellule.current)).toDp() }
 
 /**
  * La tirelire : pièces en relief (montants) dans un plateau en creux, à glisser dans la fente de la bonne tirelire
@@ -172,11 +180,26 @@ class LeFinanceur : PolJeu<FinanceurD>("le-financeur", FinanceurD.serializer()) 
             true
         }
         val fait = { i: Int -> st.solved || i in faites }
+        // Voyant rouge le temps de l'erreur seulement.
+        var rouge by remember(st) { mutableStateOf(false) }
+        val react0 = remember(st) { st.react }
+        LaunchedEffect(st.react) {
+            if (st.react <= react0) return@LaunchedEffect
+            rouge = true
+            delay(900)
+            rouge = false
+        }
         val (encre, metaux) = metal()
         val sc = MaterialTheme.colorScheme
         val creux = mix(sc.surface, sc.onSurface, 0.08f)
         val creuxH = mix(sc.surface, sc.onSurface, 0.24f)
         val creuxB = mix(sc.surface, Color.White, 0.55f)
+        // Tirelires de 34 cellules côte à côte, 8 dp d'écart au moins : la cellule rétrécit pour tenir en largeur.
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val dens = LocalDensity.current
+        val n = d.tirelires.size.coerceAtLeast(1)
+        val cellMax = with(dens) { ((maxWidth - 8.dp * (n - 1)).toPx() / (34 * n)).toInt().coerceAtLeast(1).toDp() }
+        CompositionLocalProvider(LocalCellule provides minOf(CELLULE, cellMax)) {
         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             // Plateau en creux, au-dessus des tirelires pendant le glisser.
             Row(
@@ -200,7 +223,7 @@ class LeFinanceur : PolJeu<FinanceurD>("le-financeur", FinanceurD.serializer()) 
                         else PieceMobile("p$i", gd, somme(i), d.pieces[i].montantTexte, unite, metaux, encre, !st.solved, c.reduit)
                     }
                 }
-                Led(if (st.solved) LedEtat.Verte else if (st.react > 0) LedEtat.Rouge else LedEtat.Eteinte)
+                Led(if (st.solved) LedEtat.Verte else if (rouge) LedEtat.Rouge else LedEtat.Eteinte)
             }
             Row(Modifier.fillMaxWidth().padding(top = 16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                 d.tirelires.forEachIndexed { j, nom ->
@@ -208,6 +231,8 @@ class LeFinanceur : PolJeu<FinanceurD>("le-financeur", FinanceurD.serializer()) 
                     Tirelire("t$j", gd, nom, if (fait(i)) somme(i) else null, seat = just == i && !c.reduit, metaux, c.reduit, enabled = !st.solved)
                 }
             }
+        }
+        }
         }
     }
 }
@@ -268,10 +293,11 @@ private fun Tirelire(
             Modifier.offset(cellsDp(5), cellsDp(11)).size(cellsDp(24), cellsDp(8)).clearAndSetSemantics { },
             verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Text(nom, color = sc.onSurface, fontSize = if (nom.length > 9) 11.sp else 12.5.sp, lineHeight = 13.sp, fontWeight = FontWeight.Bold,
-                letterSpacing = (-0.01).em, maxLines = 1, softWrap = false, textAlign = TextAlign.Center)
-            if (montant != null) Text(montant, color = sc.onSurfaceVariant, fontSize = 10.sp, lineHeight = 12.sp, fontFamily = FontFamily.Monospace,
-                fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
+            Text(nom, Modifier.weight(1f, fill = false), color = sc.onSurface, fontWeight = FontWeight.Bold, lineHeight = 1.05.em,
+                letterSpacing = (-0.01).em, maxLines = 2, textAlign = TextAlign.Center,
+                autoSize = TextAutoSize.StepBased(minFontSize = 6.sp, maxFontSize = 12.5.sp, stepSize = 0.5.sp))
+            if (montant != null) Text(montant, color = sc.onSurfaceVariant, fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false, autoSize = TextAutoSize.StepBased(minFontSize = 6.sp, maxFontSize = 10.sp, stepSize = 0.5.sp))
         }
     }
 }
