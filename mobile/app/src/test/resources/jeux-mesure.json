@@ -1,0 +1,23 @@
+{"JEUX": {
+ "quelle-gravite": {"nom": "Exemple gravité", "theme": "chiffrer", "manette": "cadran",
+  "params": {"crans": [{"n": 1, "nom": "Cran un", "definition": "Exemple."}, {"n": 2, "nom": "Cran deux", "definition": "Exemple."}, {"n": 3, "nom": "Cran trois", "definition": "Exemple."}, {"n": 4, "nom": "Cran quatre", "definition": "Exemple."}]},
+  "manches": [
+   {"id": "g-ok", "kicker": "Salaires", "q": "Passer le salaire minimum à 2 000 € brut par mois.", "d": {"bonne": 1}, "reponse": {"titre": "Cran 1 · Cran un", "verdict": null, "texte": "Exemple.", "sources": [["Parti Exemple, projet", "https://example.com/projet"]]}},
+   {"id": "g-trop", "q": "x", "d": {"bonne": 5}},
+   {"id": "g-vide", "q": "x", "d": {}},
+   {"id": "g-texte", "q": "x", "d": {"bonne": "deux"}}
+  ]},
+ "le-juste-cout": {"nom": "Exemple somme", "theme": "chiffrer", "manette": "molette",
+  "params": {"unite": "Md€", "crans": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 16, 18, 20, 25, 30, 35, 40, 45, 50, 60, 70, 80, 90, 100, 120, 150, 200]},
+  "manches": [
+   {"id": "s-ok", "kicker": "Parti Exemple · coût par an", "q": "Revenir à la retraite à 60 ans.", "d": {"sens": "Coût", "valeur": 77.3, "valeurTexte": "77,3", "min": 60, "max": 100}, "reponse": {"titre": "77,3 Md€ par an", "verdict": null, "texte": "Exemple.", "sources": [["Évaluateur exemple, fiche", "https://example.com/fiche", "exemple"]]}},
+   {"id": "s-inverse", "q": "x", "d": {"sens": "Coût", "valeur": 5, "valeurTexte": "5", "min": 10, "max": 2}},
+   {"id": "s-sans-borne", "q": "x", "d": {"sens": "Coût", "valeur": 5, "valeurTexte": "5", "min": 1}}
+  ]},
+ "independant": {"nom": "Exemple indépendance", "theme": "chiffrer", "manette": "romaine",
+  "params": {"niveaux": [{"n": 1, "nom": "Niveau un"}, {"n": 2, "nom": "Niveau deux"}, {"n": 3, "nom": "Niveau trois"}, {"n": 4, "nom": "Niveau quatre"}]},
+  "manches": [
+   {"id": "institut-exemple", "kicker": "Think tank", "q": "Institut Exemple", "d": {"argent": "Subvention publique, mécénat d'entreprises.", "lien": "Créé avec le soutien d'un parti.", "bonne": 3}, "reponse": {"titre": "Niveau 3 · Niveau trois", "verdict": null, "texte": "Exemple.", "sources": [["Institut Exemple", "https://example.com/", "institut-exemple"]]}},
+   {"id": "i-zero", "q": "x", "d": {"argent": "a", "lien": "b", "bonne": 0}}
+  ]}
+}}
