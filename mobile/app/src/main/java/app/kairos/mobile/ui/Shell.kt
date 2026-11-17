@@ -30,11 +30,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -107,12 +110,17 @@ fun Shell(
     val top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val nav = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     val padding = PaddingValues(top = top, bottom = DockHeight + nav)
+    // Scène ponctuelle demandée par un écran via LocalPlayMoment, jouée une fois par le bouton Kairos.
+    var moment by remember { mutableStateOf<SceneKind?>(null) }
+    val play = remember { { s: SceneKind -> moment = s } }
 
     Box(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-        AnimatedContent(tab, transitionSpec = { Motion.fadeThrough() }, label = "onglet") {
-            when (it) {
-                Tab.Aujourdhui -> today(padding)
-                Tab.Espaces -> spaces(padding)
+        CompositionLocalProvider(LocalPlayMoment provides play) {
+            AnimatedContent(tab, transitionSpec = { Motion.fadeThrough() }, label = "onglet") {
+                when (it) {
+                    Tab.Aujourdhui -> today(padding)
+                    Tab.Espaces -> spaces(padding)
+                }
             }
         }
         Dock(
@@ -121,6 +129,8 @@ fun Shell(
             mascotState = mascotState,
             scene = scene,
             sceneDown = sceneDown,
+            moment = moment,
+            onMomentDone = { moment = null },
             kairosState = kairosState,
             onTap = onTap,
             onPressStart = onPressStart,
@@ -140,6 +150,8 @@ private fun Dock(
     mascotState: MascotState,
     scene: SceneKind?,
     sceneDown: Boolean,
+    moment: SceneKind?,
+    onMomentDone: () -> Unit,
     kairosState: String,
     onTap: () -> Unit,
     onPressStart: () -> Unit,
@@ -160,7 +172,7 @@ private fun Dock(
         verticalAlignment = Alignment.Bottom,
     ) {
         TabItem("Aujourd'hui", tab == Tab.Aujourdhui, { onTab(Tab.Aujourdhui) }) { TodayIcon(it) }
-        KairosButton(mascotState, onTap, onPressStart, onPressEnd, onDrag, onSpeak, kairosModifier, kairosState, scene, sceneDown)
+        KairosButton(mascotState, onTap, onPressStart, onPressEnd, onDrag, onSpeak, kairosModifier, kairosState, scene, sceneDown, moment, onMomentDone)
         TabItem("Espaces", tab == Tab.Espaces, { onTab(Tab.Espaces) }) { SpacesIcon(it) }
     }
 }
@@ -205,7 +217,29 @@ private fun SpacesIcon(color: Color) = Canvas(Modifier.size(22.dp)) {
     }
 }
 
-/** Bouton central : tap pour écrire, appui long pour parler. */
+/**
+ * Joue une fois une scène ponctuelle dans le bouton Kairos du dock (paliers :
+ * [SceneKind.PremierCoup], [SceneKind.Moitie], [SceneKind.Complet]), puis le
+ * bouton revient de lui-même à son état normal. Fourni par [Shell] aux contenus
+ * de ses onglets ; ailleurs (aperçus, panneaux hors coque), ne fait rien. Une
+ * scène lancée pendant qu'une autre se joue la remplace ; relancer la même scène
+ * en cours n'a pas d'effet.
+ *
+ * ```
+ * val play = LocalPlayMoment.current
+ * LaunchedEffect(theme.complete) { if (theme.complete) play(SceneKind.Complet) }
+ * ```
+ */
+val LocalPlayMoment = staticCompositionLocalOf<(SceneKind) -> Unit> { {} }
+
+/**
+ * Bouton central : tap pour écrire, appui long pour parler.
+ *
+ * [scene] : scène d'espace jouée en boucle. [moment] : scène ponctuelle jouée une
+ * fois par-dessus (prioritaire sur [scene]), puis [onMomentDone] est appelé et
+ * l'appelant remet [moment] à null. Une conversation (écoute, réflexion, réponse)
+ * passe avant les deux et met fin au moment en cours.
+ */
 @Composable
 fun KairosButton(
     state: MascotState,
@@ -219,6 +253,8 @@ fun KairosButton(
     stateText: String = mascotDescription(state, 0),
     scene: SceneKind? = null,
     sceneDown: Boolean = false,
+    moment: SceneKind? = null,
+    onMomentDone: () -> Unit = {},
 ) {
     val speak by rememberUpdatedState(onSpeak)
     val tap by rememberUpdatedState(onTap)
@@ -284,8 +320,15 @@ fun KairosButton(
     ) {
         // La scène d'un espace cède la place quand on parle à Kairos : écoute, réflexion, réponse.
         val conversing = state == MascotState.Ecoute || state == MascotState.Reflechit || state == MascotState.Agit
-        if (scene != null && !conversing) MascotScene(scene, sceneDown, Modifier.fillMaxSize().clip(shape))
-        else Mascot(state, size = 46.dp)
+        val momentDone by rememberUpdatedState(onMomentDone)
+        // Un moment interrompu par la conversation ne se rejoue pas après coup.
+        LaunchedEffect(conversing, moment) { if (conversing && moment != null) momentDone() }
+        when {
+            conversing -> Mascot(state, size = 46.dp)
+            moment != null -> MascotScene(moment, false, Modifier.fillMaxSize().clip(shape), onDone = { momentDone() })
+            scene != null -> MascotScene(scene, sceneDown, Modifier.fillMaxSize().clip(shape))
+            else -> Mascot(state, size = 46.dp)
+        }
     }
 }
 

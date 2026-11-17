@@ -43,7 +43,7 @@ private fun putMascot(l: Grid, m: MascotKind, at: Stage, pose: Pose, t: Int, hel
         hl?.let { p.line(arm.l[0], arm.l[1], it[0], it[1], arm.role) }
         hr?.let { p.line(arm.r[0], arm.r[1], it[0], it[1], arm.role) }
     }
-    m.draw(p, Pose(pose.state, pose.eyes, pose.look, hl, hr, pose.dx, pose.dy, pose.sit), t)
+    m.draw(p, Pose(pose.state, pose.eyes, pose.look, hl, hr, pose.dx, pose.dy, pose.sit, pose.eyeR), t)
     held?.invoke(Pen(l))
     val shape = m.hand.shape
     for (k in shape.indices step 2) {
@@ -509,6 +509,200 @@ enum class SceneKind(val ms: IntArray, val key: Int, private val lift: Int = 0) 
             }
         }
     },
+
+    /** Gravité 0 : debout, en attente d'un choix. */
+    Repos(intArrayOf(1000), 0) {
+        override fun draw(lb: Grid, lm: Grid, lf: Grid, m: MascotKind, i: Int, t: Int, down: Boolean) {
+            floorLine(Pen(lb), 3, 28, 26)
+            putMascot(lm, m, stage(m, 16, 26), Pose(), t)
+        }
+    },
+
+    /** Gravité 1 : assis sur un coussin, yeux clos, souffle ample, bulles qui montent. */
+    Zen(IntArray(8) { 450 }, 3) {
+        override fun draw(lb: Grid, lm: Grid, lf: Grid, m: MascotKind, i: Int, t: Int, down: Boolean) {
+            floorLine(Pen(lb), 3, 28, 26)
+            val f = Pen(lf)
+            f.rect(11, 24, 12, 1, 'A'); f.rect(10, 25, 14, 1, 'a')
+            val at = stage(m, 16, 26).also { it.oy = 24 - 12 }
+            val g = Geo(m, at)
+            val dy = intArrayOf(0, 0, -1, -1, -1, -1, 0, 0)[i]
+            val hy = g.hold + dy
+            putMascot(lm, m, at, Pose(sit = true, dy = dy, eyes = Eye.Blink, handL = xy(g.left - 1, hy), handR = xy(g.right, hy)), t) { h ->
+                for (k in intArrayOf(i, (i + 4) % 8)) {
+                    if (k == 7) continue
+                    val x = g.cx + 5 + intArrayOf(0, 1, 1, 0, 0, 1, 1, 0)[k]
+                    val y = g.crown + dy - 1 - k
+                    if (k < 3) h.set(x, y, 'm') else h.pts(xy(x, y - 1, x - 1, y, x + 1, y, x, y + 1), 'm')
+                }
+            }
+        }
+    },
+
+    /** Gravité 2 : lève les yeux, penche la tête, se gratte ; un « ? » surgit. */
+    Interrogation(intArrayOf(360, 220, 140, 120, 300, 260, 300, 260, 420), 4) {
+        override fun draw(lb: Grid, lm: Grid, lf: Grid, m: MascotKind, i: Int, t: Int, down: Boolean) {
+            floorLine(Pen(lb), 3, 28, 26)
+            val at = stage(m, 14, 26)
+            val g = Geo(m, at)
+            val tilt = i in 2..7
+            val p = when (i) {
+                0 -> Pose()
+                1 -> Pose(look = look(1, -1), eyes = Eye.Wide)
+                8 -> Pose(look = look(1, -1))
+                else -> Pose(look = look(1, -1), eyes = Eye.Open, eyeR = Eye.Wide, handR = if (tilt) xy(g.right, g.top + 1 + i % 2) else null)
+            }
+            putMascot(lm, m, at, p, t) { h ->
+                val qx = g.cx + 3
+                val qy = g.crown - 7
+                if (i == 2) h.pts(xy(qx + 1, qy + 4, qx + 2, qy + 2), 'A')
+                if (i == 3) h.rows(QMARK, qx, qy - 1)
+                if (i >= 4) h.rows(QMARK, qx, qy)
+            }
+            // Tête penchée : le haut du personnage glisse d'une case vers le « ? ».
+            if (tilt) lean(lm, g.crown, g.top - 1)
+        }
+    },
+
+    /** Gravité 3 : toque, robe noire et rabat blanc, marteau levé, coup sur le socle, verdict. */
+    Juge(intArrayOf(420, 260, 160, 90, 160, 200, 520), 4) {
+        override fun draw(lb: Grid, lm: Grid, lf: Grid, m: MascotKind, i: Int, t: Int, down: Boolean) {
+            floorLine(Pen(lb), 3, 28, 26)
+            val f = Pen(lf)
+            val knock = if (i == 4) 1 else 0
+            f.rect(21, 24 + knock, 7, 1, 'A'); f.rect(21, 25, 7, 1, 'a')
+            if (i == 4) f.pts(xy(20, 21, 27, 21, 19, 23, 28, 23, 23, 18), 'A')
+            if (i == 5) f.pts(xy(19, 20, 28, 20, 18, 22, 29, 22), 'A')
+            val at = stage(m, 11, 26)
+            val g = Geo(m, at)
+            val struck = i == 0 || i >= 4
+            val dy = knock
+            val p = Pose(
+                look = look(1, if (i == 1 || i == 2) -1 else 0),
+                eyes = when (i) { 6 -> Eye.Low; 4 -> Eye.Wide; else -> Eye.Focus },
+                dy = dy,
+                handR = if (struck) xy(18, 22) else if (i == 3) xy(18, 19) else xy(18, 17),
+            )
+            putMascot(lm, m, at, p, t) { h ->
+                // Toque à galon, posée juste au-dessus du corps.
+                val tx = g.cx - 4
+                val ty = g.top - 4 + dy
+                h.rect(tx, ty, 8, 4, 'D'); h.rect(tx, ty + 2, 8, 1, 'A')
+                // Robe noire sur le bas du corps, rabat blanc : deux bandes jointes au col, la droite ombrée.
+                val by = g.hold + dy
+                h.rect(g.left, by, g.right - g.left, 13 - m.anchor.hold, 'D')
+                h.rect(g.cx - 1, by, 2, 1, 'F'); h.rect(g.cx - 1, by + 1, 1, 2, 'F'); h.rect(g.cx, by + 1, 1, 2, 'h')
+                when {
+                    struck -> { h.rect(20, 22, 3, 1, 'a'); h.rect(23, 20 + knock, 2, 4, 'D') }
+                    i == 3 -> { h.line(20, 19, 21, 18, 'a'); h.rows(listOf("DD.", "DDD", ".DD"), 21, 15) }
+                    else -> { h.rect(19, 13, 1, 4, 'a'); h.rect(17, 11, 5, 2, 'D') }
+                }
+            }
+        }
+    },
+
+    /** Gravité 4 : court sur place, bras en l'air, gouttes de sueur, « ! » qui clignote. */
+    Panique(IntArray(8) { 130 }, 1) {
+        override fun draw(lb: Grid, lm: Grid, lf: Grid, m: MascotKind, i: Int, t: Int, down: Boolean) {
+            floorLine(Pen(lb), 3, 28, 26)
+            val at = stage(m, 16, 26)
+            val g = Geo(m, at)
+            val odd = i % 2 == 1
+            val dx = intArrayOf(0, 1, 0, -1, 0, 1, 0, -1)[i]
+            // ponytail: pieds qui courent dessinés pour Kairos seul ; les autres gardent les leurs et sautillent (état Agit).
+            val running = m == MascotKind.Kairos
+            val p = Pose(
+                state = MascotState.Agit, sit = running, dx = dx, eyes = Eye.Wide, look = look(0, -1),
+                handL = if (odd) null else xy(g.left - 2 + dx, g.top - 1),
+                handR = if (odd) xy(g.right + 1 + dx, g.top - 2) else null,
+            )
+            putMascot(lm, m, at, p, i) { h ->
+                // Pieds qui alternent : écartés au sol, puis rentrés sous le corps en l'air.
+                if (running) {
+                    val x = at.ox + dx
+                    val y = at.oy + 13
+                    if (odd) { h.rect(x + 5, y - 1, 2, 1, 'F'); h.rect(x + 9, y, 2, 1, 'F') } else { h.rect(x + 3, y, 2, 1, 'F'); h.rect(x + 10, y - 1, 2, 1, 'F') }
+                }
+                // Gouttes de sueur, de part et d'autre de la tête.
+                val r = g.top + 1 + (i % 4) * 2
+                val l = g.top + 1 + ((i + 2) % 4) * 2
+                h.pts(xy(g.right + 1 + dx, r, g.right + 1 + dx, r + 1, g.right + dx, r + 1), 'm')
+                h.pts(xy(g.left - 2 + dx, l, g.left - 2 + dx, l + 1, g.left - 1 + dx, l + 1), 'm')
+                if (i % 4 < 2) {
+                    val ex = g.cx - 1
+                    val ey = g.crown - 8
+                    h.rect(ex, ey, 2, 4, 'R'); h.rect(ex, ey + 5, 2, 1, 'R')
+                    h.pts(xy(ex - 3, ey + 1, ex - 2, ey + 2, ex + 4, ey + 1, ex + 3, ey + 2), 'A')
+                }
+            }
+        }
+    },
+
+    /** Palier, trouvé du premier coup : se ramasse, petit saut pouce levé, une étoile s'allume. */
+    PremierCoup(intArrayOf(140, 200, 260, 300, 300), 3) {
+        override fun draw(lb: Grid, lm: Grid, lf: Grid, m: MascotKind, i: Int, t: Int, down: Boolean) {
+            floorLine(Pen(lb), 3, 28, 26)
+            val at = stage(m, 16, 26)
+            val g = Geo(m, at)
+            val dy = intArrayOf(1, -2, 0, 0, 0)[i]
+            val thumb = if (i >= 1) xy(g.right + 1, g.top + 3 + dy) else null
+            val p = if (i == 0) Pose(dy = dy, eyes = Eye.Focus)
+            else Pose(state = if (i == 1) MascotState.Agit else MascotState.Repos, dy = dy, eyes = Eye.Happy, handR = thumb)
+            putMascot(lm, m, at, p, t) { h ->
+                thumb?.let { h.pts(xy(it[0], it[1] - 1, it[0], it[1] - 2), 'F') }
+                if (i >= 1) star(h, g.right + 5, g.crown - 1, intArrayOf(0, 0, 1, 2, 3)[i])
+            }
+        }
+    },
+
+    /** Palier, moitié d'un thème : bras levés, sautille sous une pluie de confettis. */
+    Moitie(intArrayOf(160, 220, 220, 220, 220, 220, 220, 300), 3) {
+        override fun draw(lb: Grid, lm: Grid, lf: Grid, m: MascotKind, i: Int, t: Int, down: Boolean) {
+            floorLine(Pen(lb), 3, 28, 26)
+            val f = Pen(lf)
+            val at = stage(m, 16, 26)
+            val g = Geo(m, at)
+            val dy = intArrayOf(1, -2, 0, -2, 0, -2, 0, 0)[i]
+            val up = i in 1..6
+            putMascot(
+                lm, m, at,
+                Pose(
+                    state = if (dy < 0) MascotState.Agit else MascotState.Repos, dy = dy, eyes = Eye.Happy,
+                    handL = if (up) xy(g.left - 2, g.top - 2 + dy) else null,
+                    handR = if (up) xy(g.right + 1, g.top - 2 + dy) else null,
+                ),
+                t,
+            )
+            if (i >= 1) for (k in CONFETTI_COLORS.indices) {
+                val x = CONFETTI[3 * k]
+                val y = CONFETTI[3 * k + 1] + (i - 1) * CONFETTI[3 * k + 2] + 4
+                val flat = (i + x) % 2 == 1
+                if (y in 0 until 25) f.rect(x + (i + x) % 2, y, if (flat) 2 else 1, if (flat) 1 else 2, CONFETTI_COLORS[k])
+            }
+        }
+    },
+
+    /** Palier, thème complet : brandit une coupe, saute, feux d'artifice en cascade. */
+    Complet(intArrayOf(200, 200, 250, 250, 250, 250, 250, 250, 250, 350), 4) {
+        override fun draw(lb: Grid, lm: Grid, lf: Grid, m: MascotKind, i: Int, t: Int, down: Boolean) {
+            val b = Pen(lb)
+            floorLine(b, 3, 28, 26)
+            val at = stage(m, 16, 26)
+            val g = Geo(m, at)
+            firework(b, 6, 7, i - 2, 'A')
+            firework(b, 26, 5, i - 3, 'R')
+            firework(b, 24, 13, i - 5, 'A')
+            val dy = intArrayOf(1, 0, -2, 0, -2, 0, -2, 0, 0, 0)[i]
+            val cx = g.cx - 3
+            val cy = g.crown - 7 + dy
+            val p = if (i == 0) Pose(dy = dy, eyes = Eye.Wide, look = look(0, -1))
+            else Pose(state = if (dy < 0) MascotState.Agit else MascotState.Repos, dy = dy, eyes = Eye.Happy, handL = xy(cx, cy + 3), handR = xy(cx + 6, cy + 3))
+            putMascot(lm, m, at, p, t) { h ->
+                if (i == 0) star(h, g.cx, g.crown - 5, 1)
+                else cup(h, cx, cy)
+            }
+        }
+    },
     ;
 
     protected abstract fun draw(lb: Grid, lm: Grid, lf: Grid, m: MascotKind, i: Int, t: Int, down: Boolean)
@@ -526,6 +720,11 @@ enum class SceneKind(val ms: IntArray, val key: Int, private val lift: Int = 0) 
     }
 }
 
+private val GRAVITY = listOf(SceneKind.Repos, SceneKind.Zen, SceneKind.Interrogation, SceneKind.Juge, SceneKind.Panique)
+
+/** Scène du jeu « Quelle gravité ? » : 0 = aucun choix (repos), 1 zen, 2 interrogation, 3 juge, 4 panique ; hors bornes, ramené dans [0, 4]. */
+fun gravityScene(level: Int): SceneKind = GRAVITY[level.coerceIn(0, 4)]
+
 /** Feuille : papier ombré d'encre à droite et en bas, pour se détacher des corps clairs. */
 private fun paper(p: Pen, x: Int, y: Int, w: Int, h: Int) {
     p.rect(x, y, w, h, 'D'); p.rect(x, y, w - 1, h - 1, 'F')
@@ -537,3 +736,51 @@ private val MEMOIRE_PROG = listOf(
     xy(0, 0, 0), xy(3, 0, 0), xy(7, 0, 0), xy(7, 2, 0), xy(7, 5, 0), xy(7, 5, 0), xy(7, 5, 0),
     xy(7, 5, 3), xy(7, 5, 6), xy(7, 5, 6), xy(7, 5, 6), xy(0, 0, 0), xy(0, 0, 0), xy(0, 0, 0), xy(0, 0, 0),
 )
+
+private val QMARK = listOf(".AA.", "A..A", "..A.", "....", "..A.")
+
+/** Décale d'une case vers la droite les lignes [y0, y1] du calque. */
+private fun lean(l: Grid, y0: Int, y1: Int) {
+    for (y in maxOf(0, y0)..minOf(SCENE_SIZE - 1, y1)) {
+        val row = y * SCENE_SIZE
+        System.arraycopy(l.cells, row, l.cells, row + 1, SCENE_SIZE - 1)
+        l.cells[row] = Grid.EMPTY
+    }
+}
+
+/** Étoile : 0 point, 1 petite croix, 2 grande croix scintillante, 3 éclats qui s'éteignent. */
+private fun star(h: Pen, x: Int, y: Int, k: Int) {
+    when (k) {
+        0 -> h.set(x, y, 'A')
+        1 -> { h.pts(xy(x - 1, y, x + 1, y, x, y - 1, x, y + 1), 'A'); h.set(x, y, 'F') }
+        2 -> {
+            h.pts(xy(x - 2, y, x - 1, y, x + 1, y, x + 2, y, x, y - 2, x, y - 1, x, y + 1, x, y + 2), 'A')
+            h.set(x, y, 'F'); h.pts(xy(x - 2, y - 2, x + 2, y - 2, x - 2, y + 2, x + 2, y + 2), 'a')
+        }
+        3 -> h.pts(xy(x - 2, y, x + 2, y, x, y - 2, x, y + 2), 'm')
+    }
+}
+
+/** Coupe 7×7 ; ([x], [y]) = coin haut gauche du bord. */
+private val CUP = listOf("AAAAAAA", "AFAAAAA", "AFAAAAA", ".AAAAA.", "..AAA..", "...a...", "..aaa..")
+
+private fun cup(h: Pen, x: Int, y: Int) {
+    h.rows(CUP, x, y); h.pts(xy(x - 1, y + 1, x - 1, y + 2, x + 7, y + 1, x + 7, y + 2), 'a')
+}
+
+/** Feu d'artifice : [s] < 0 rien, 0 traînée, 1 éclosion, 2 gerbe, 3 retombée. */
+private fun firework(h: Pen, x: Int, y: Int, s: Int, c: Char) {
+    when (s) {
+        0 -> h.pts(xy(x, y + 4, x, y + 6), 'm')
+        1 -> { h.pts(xy(x - 1, y, x + 1, y, x, y - 1, x, y + 1), c); h.set(x, y, 'F') }
+        2 -> {
+            h.pts(xy(x - 3, y, x + 3, y, x, y - 3, x, y + 3, x - 2, y - 2, x + 2, y - 2, x - 2, y + 2, x + 2, y + 2), c)
+            h.pts(xy(x - 1, y, x + 1, y, x, y - 1, x, y + 1), 'F')
+        }
+        3 -> h.pts(xy(x - 4, y + 1, x + 4, y + 1, x, y - 3, x - 3, y + 3, x + 3, y + 3, x, y + 5), 'm')
+    }
+}
+
+/** Confettis : x, y de départ, vitesse de chute (cases par image) ; couleur dans [CONFETTI_COLORS]. */
+private val CONFETTI = xy(4, -2, 3, 9, -6, 2, 14, -1, 3, 19, -5, 2, 24, -3, 3, 28, -7, 2, 6, -10, 3, 12, -12, 2, 21, -11, 2, 26, -9, 3, 2, -8, 2, 17, -14, 3)
+private const val CONFETTI_COLORS = "ARFARFFARARF"

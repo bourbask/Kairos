@@ -14,9 +14,14 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.MotionDurationScale
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.clipPath
+import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import app.kairos.mobile.ui.theme.KairosColors
@@ -24,6 +29,7 @@ import app.kairos.mobile.ui.theme.SceneColors
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.delay
 import kotlin.coroutines.coroutineContext
+import kotlin.math.floor
 import kotlin.math.roundToInt
 
 /** Personnage choisi dans les réglages. */
@@ -38,6 +44,7 @@ private const val PAD = 2
  * (quelques centaines de petites images au plus). Scène : seule la scène en cours
  * est gardée ; décor et premier plan par image, personnage par image et image de repos.
  */
+// ponytail: une seule scène gardée ; deux scènes affichées ensemble (bouton et jeu) recalculent leur image à chaque changement, un cache par scène si ça se mesure.
 internal object SpriteCache {
     private val mascots = ConcurrentHashMap<Int, IntArray>()
 
@@ -156,6 +163,11 @@ internal suspend fun animate(still: () -> Unit, tick: (elapsed: Long, now: Long)
  * Le personnage joue la scène d'un espace ouvert, sur toute la surface : décor,
  * personnage qui respire, premier plan. [down] : variante en baisse (Marchés).
  * Sans animation, l'image clé reste affichée.
+ *
+ * [onDone] non nul : la scène se joue une seule fois, s'arrête sur sa dernière
+ * image, puis [onDone] est appelé (après [REDUCED_ONE_SHOT_MS] sans animation).
+ * [snap] : cases d'un nombre entier de pixels, centrées, fond et coins du bouton
+ * Kairos ; sinon la scène s'étire sur toute la surface, sans fond.
  */
 @Composable
 fun MascotScene(
@@ -164,8 +176,11 @@ fun MascotScene(
     modifier: Modifier = Modifier,
     kind: MascotKind = LocalMascot.current,
     colors: SceneColors = KairosColors.current.scene,
+    onDone: (() -> Unit)? = null,
+    snap: Boolean = false,
 ) {
-    var frame by remember(scene, kind) { mutableIntStateOf(scene.key) }
+    val once = onDone != null
+    var frame by remember(scene, kind) { mutableIntStateOf(if (once) 0 else scene.key) }
     var rest by remember(scene, kind) { mutableLongStateOf(0) }
     var lift by remember { mutableIntStateOf(0) }
     // Taille d'une case, connue au dessin : le souffle s'arrondit au pixel avant d'être écrit.
@@ -174,20 +189,67 @@ fun MascotScene(
         val steps = Timing(scene.ms.size, scene.ms)
         val idle = kind.timing(MascotState.Repos)
         animate(still = { frame = scene.key; rest = 0; lift = 0 }) { elapsed, now ->
-            frame = (steps.countAt(elapsed, kind.tempo) % steps.n).toInt()
+            val count = steps.countAt(elapsed, kind.tempo)
+            frame = (if (once) minOf(count, steps.n - 1L) else count % steps.n).toInt()
             rest = restFrame(idle.countAt(elapsed), kind.restPeriod())
             lift = (kind.breath.at(now) * cell[0]).roundToInt()
         }
     }
+    val done by rememberUpdatedState(onDone)
+    if (once) LaunchedEffect(scene, kind) {
+        val still = coroutineContext[MotionDurationScale]?.scaleFactor == 0f
+        delay(if (still) REDUCED_ONE_SHOT_MS else (scene.ms.sum() * kind.tempo).toLong())
+        done?.invoke()
+    }
     val layers = SpriteCache.scene(scene, down, kind, frame, rest.toInt())
     Canvas(modifier) {
-        val side = this.size.minDimension / SCENE_SIZE
+        val fit = this.size.minDimension / SCENE_SIZE
+        val side = if (snap) floor(fit).coerceAtLeast(1f) else fit
         cell[0] = side
-        cells(layers[0], side, 0, 0f, colors)
-        cells(layers[1], side, 0, -lift.toFloat(), colors)
-        cells(layers[2], side, 0, 0f, colors)
+        if (!snap) return@Canvas drawLayers(layers, side, lift, colors)
+        val span = side * SCENE_SIZE
+        val left = floor((this.size.width - span) / 2)
+        val top = floor((this.size.height - span) / 2)
+        val frameShape = Path().apply {
+            addRoundRect(RoundRect(left, top, left + span, top + span, CornerRadius(span * BUTTON_CORNER_RATIO)))
+        }
+        clipPath(frameShape) {
+            drawRect(colors['B'], Offset(left, top), Size(span, span))
+            translate(left, top) { drawLayers(layers, side, lift, colors) }
+        }
     }
 }
+
+private fun DrawScope.drawLayers(layers: Array<IntArray>, side: Float, lift: Int, colors: SceneColors) {
+    cells(layers[0], side, 0, 0f, colors)
+    cells(layers[1], side, 0, -lift.toFloat(), colors)
+    cells(layers[2], side, 0, 0f, colors)
+}
+
+/** Durée d'une scène ponctuelle quand les animations sont coupées : son image clé reste affichée ce temps-là. */
+const val REDUCED_ONE_SHOT_MS = 1000L
+
+/** Coins du bouton Kairos (22 dp sur 68), repris autour d'une scène autonome. */
+private const val BUTTON_CORNER_RATIO = 22f / 68f
+
+/**
+ * Le personnage choisi par l'utilisateur joue la scène du jeu « Quelle gravité ? »
+ * pour le cran [level] : 0 = aucun choix (repos), 1 zen, 2 interrogation, 3 juge
+ * (toque, robe et rabat), 4 panique. Hors de [0, 4], le cran est ramené dans les bornes.
+ *
+ * Taille libre, donnée par [modifier] (par exemple `Modifier.size(96.dp)`) : la scène
+ * 32×32 prend le plus grand nombre entier de pixels par case qui tient, centrée, sur
+ * le fond et avec les coins du bouton Kairos. Animations coupées dans le système :
+ * l'image clé de la scène reste affichée. Purement décoratif : l'écran appelant porte
+ * le libellé du cran pour l'accessibilité.
+ */
+@Composable
+fun MascotGravity(
+    level: Int,
+    modifier: Modifier = Modifier,
+    kind: MascotKind = LocalMascot.current,
+    colors: SceneColors = KairosColors.current.scene,
+) = MascotScene(gravityScene(level), down = false, modifier = modifier, kind = kind, colors = colors, snap = true)
 
 /** Teintes d'un personnage posé sur le fond de l'écran plutôt que sur le bouton. */
 @Composable
