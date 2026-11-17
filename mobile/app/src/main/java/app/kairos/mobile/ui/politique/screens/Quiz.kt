@@ -193,7 +193,7 @@ private fun QuizStart(claims: List<Claim>, camps: List<String>, onPlay: (String)
         item { Text("Choisir un paquet", Modifier.padding(top = 12.dp).semantics { heading() }, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
         items(listOf("") + themes, key = { it }) { t ->
             val deck = quizDeck(claims, camps, t)
-            val nCamps = deck.map { claims[it].camp }.distinct().size
+            val nCamps = deck.map { claims[it].camp }.filter { it.isNotBlank() }.distinct().size
             Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), color = scheme.surface, tonalElevation = 1.dp) {
                 Row(Modifier.clickable(role = Role.Button) { onPlay(t) }.heightIn(min = 56.dp).padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
@@ -654,7 +654,7 @@ private fun TractFront(claim: Claim, w: Int, h: Int, s: Int, k: TractInks, peek:
                     .semantics(mergeDescendants = true) { },
             ) {
                 Kicker("Contexte")
-                listOf("Côté" to claim.camp, "Thème" to claim.theme, "Période" to (claim.date?.takeIf { it.isNotBlank() } ?: "—")).forEach { (t, d) ->
+                listOf("Côté" to campLabel(claim), "Thème" to claim.theme, "Période" to (claim.date?.takeIf { it.isNotBlank() } ?: "—")).forEach { (t, d) ->
                     Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.Top) {
                         Text(t.uppercase(), Modifier.width(72.dp), color = k.muted, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.SemiBold, fontSize = 11.sp, letterSpacing = 0.06.em, lineHeight = 18.sp)
                         Text(d, color = k.onPaper, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
