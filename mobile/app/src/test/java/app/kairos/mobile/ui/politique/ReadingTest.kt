@@ -84,7 +84,8 @@ class ReadingTest {
 
     @Test fun source_type_labels_with_neutral_fallback() {
         assertEquals("Organisation militante", sourceTypeLabel("militant"))
-        assertEquals("Parole de candidat", sourceTypeLabel("candidat"))
+        assertEquals("Candidat", sourceTypeLabel("candidat"))
+        assertEquals("Entreprise", sourceTypeLabel("entreprise"))
         assertEquals("Contenu", sourceTypeLabel("zzz"))
         assertEquals("Contenu", sourceTypeLabel(""))
     }

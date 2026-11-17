@@ -85,6 +85,7 @@ import app.kairos.mobile.ui.politique.model.PolData
 import app.kairos.mobile.ui.politique.model.Poste
 import app.kairos.mobile.ui.politique.model.SourceRef
 import app.kairos.mobile.ui.politique.model.normalizeVerdict
+import app.kairos.mobile.ui.politique.model.fold
 import androidx.compose.ui.graphics.lerp
 import kotlinx.coroutines.launch
 
@@ -99,6 +100,8 @@ private val VERDICT_LABELS = mapOf(
     "auto-contradiction" to "Auto-contradiction", "contredit-justice" to "Contredit par la justice",
     "contredit-document" to "Contredit par un document", "contredit-preuve" to "Contredit par une preuve",
     "exact" to "Exact", "non-verifiable" to "Non vérifiable",
+    // Cohérence entre parole et vote.
+    "coherent" to "Cohérent", "ecart" to "Incohérent", "ambigu" to "Flou",
 )
 
 /** Les sept verdicts de promesse (balance d'un chiffre) : libellé, famille de couleur, définition. */
@@ -120,6 +123,19 @@ val PROMISE_VERDICTS: List<String> = PROMISES.keys.toList()
 
 /** Valeur inconnue : libellé neutre, jamais d'erreur. */
 fun verdictLabel(v: String): String = VERDICT_LABELS[normalizeVerdict(v)] ?: NEUTRAL_LABEL
+
+private val VERDICT_SYNONYMS = mapOf(
+    "contredit par les documents" to "contredit-document", "contredit par les preuves" to "contredit-preuve",
+    "incoherent" to "ecart", "flou" to "ambigu",
+)
+
+/** Code de verdict depuis un code (ancien compris) ou un libellé (« Plutôt faux »), casse et accents ignorés ; inconnu : null. */
+fun verdictCode(raw: String): String? {
+    val f = fold(raw).replace('-', ' ')
+    if (f.isEmpty()) return null
+    VERDICT_LABELS.entries.firstOrNull { (c, l) -> f == c.replace('-', ' ') || f == fold(l) }?.let { return it.key }
+    return VERDICT_SYNONYMS[f] ?: normalizeVerdict(raw.trim()).takeIf { it in VERDICT_LABELS }
+}
 fun promiseLabel(v: String): String = PROMISES[v]?.label ?: NEUTRAL_LABEL
 fun promiseDefinition(v: String): String? = PROMISES[v]?.def
 
@@ -179,6 +195,22 @@ fun evShortName(ev: Evaluator): String =
 fun evA11yLabel(ev: Evaluator): String {
     val n = indLevel(ev)
     return "${ev.nom}, évaluateur. Indépendance " + (if (n > 0) "niveau $n sur 4 : ${indLabel(n)}" else "non qualifiée") + ". Ouvrir sa fiche"
+}
+
+/**
+ * Partie droite d'une source rattachée à [ev] : le libellé privé du nom (ou alias) de l'évaluateur qui l'ouvre,
+ * déjà affiché à gauche ; libellé réduit au seul nom : le domaine de l'adresse, à défaut « Article ».
+ */
+fun sourceRest(src: SourceRef, ev: Evaluator?): String {
+    if (ev == null) return sourceName(src)
+    val l = fold(src.label)
+    val k = (ev.alias + ev.nom).map(::fold).filter { it.isNotEmpty() }.sortedByDescending { it.length }
+        .firstOrNull { l.startsWith(it) && (l.length == it.length || !l[it.length].isLetterOrDigit()) } ?: return sourceName(src)
+    // Le libellé replié garde la longueur de l'original tant qu'aucune lettre n'est décomposée en plusieurs : sinon, libellé entier.
+    val raw = src.label.trim()
+    if (fold(raw).length != raw.length) return sourceName(src)
+    val rest = raw.substring(k.length).trimStart { it.isWhitespace() || it in ",;:·–—-" }.trim()
+    return rest.ifEmpty { safeHttps(src.url)?.let { runCatching { java.net.URI(it).host }.getOrNull() }?.removePrefix("www.") ?: "Article" }
 }
 
 /** Libellé d'une source : son nom, à défaut le domaine de l'adresse. */
@@ -360,7 +392,7 @@ fun SourceButton(src: SourceRef, data: PolData, onOpenEv: (String) -> Unit, modi
     val scheme = MaterialTheme.colorScheme
     val ev = data.evFor(src.label, src.ev)
     val url = safeHttps(src.url)
-    val name = sourceName(src)
+    val name = sourceRest(src, ev)
     val shape = if (ev != null) RoundedCornerShape(0.dp, 8.dp, 8.dp, 0.dp) else RoundedCornerShape(8.dp)
     // Les deux parties partagent la hauteur de la plus haute ; la cible tactile de 48 dp est réservée autour de l'ensemble.
     Row(modifier.minimumInteractiveComponentSize().height(IntrinsicSize.Min)) {
@@ -396,10 +428,10 @@ internal fun verdictLook(raw: String): VerdictLook {
     // Gradient vert (vrai) vers rouge (faux) ; trompeur, plutôt faux et non prouvé restent côté ambre/orange.
     fun mix(t: Float) = VerdictLook(lerp(pc.partiel, pc.fragile, t), lerp(pc.partielBg, pc.fragileBg, t), null)
     return when (normalizeVerdict(raw)) {
-        "vrai", "exact" -> VerdictLook(pc.solide, pc.solideBg, null)
-        "auto-contradiction", "contredit-justice", "contredit-document", "contredit-preuve" -> VerdictLook(pc.fragile, pc.fragileBg, null)
+        "vrai", "exact", "coherent" -> VerdictLook(pc.solide, pc.solideBg, null)
+        "auto-contradiction", "ecart", "contredit-justice", "contredit-document", "contredit-preuve" -> VerdictLook(pc.fragile, pc.fragileBg, null)
         "plutot-vrai" -> VerdictLook(lerp(pc.solide, pc.partiel, 0.5f), lerp(pc.solideBg, pc.partielBg, 0.5f), null)
-        "trompeur" -> mix(0f)
+        "trompeur", "ambigu" -> mix(0f)
         "plutot-faux" -> mix(0.4f)
         "non-prouve" -> mix(0.7f)
         "faux" -> VerdictLook(pc.faux, pc.fragileBg, pc.faux)
