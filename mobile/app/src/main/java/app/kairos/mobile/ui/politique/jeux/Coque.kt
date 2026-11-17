@@ -170,19 +170,19 @@ private fun MancheCarte(session: JeuxSession, g: JeuPret, nom: String, st: Manch
                 val palier = session.juste(g.slug, st)
                 view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
                 palier?.let { play(it.scene()) }
-                annonce = when (palier) {
+                annonce = annonceNeuve(annonce, when (palier) {
                     Palier.Complet -> "Juste. Thème complet."
                     Palier.Moitie -> "Juste. Moitié du thème."
                     Palier.PremierCoup -> "Juste, du premier coup."
                     null -> "Juste."
-                }
+                })
             }
             override fun faux(cle: String, msg: String) {
                 session.faux(st, cle)
                 view.performHapticFeedback(HapticFeedbackConstants.REJECT)
-                annonce = "$msg Réessayez."
+                annonce = annonceNeuve(annonce, "$msg Réessayez.")
             }
-            override fun annoncer(msg: String) { annonce = msg }
+            override fun annoncer(msg: String) { annonce = annonceNeuve(annonce, msg) }
             override fun cran() { view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK) }
             override val reduit = reduit
             override val params: JsonObject = g.jeu.params
@@ -398,7 +398,7 @@ private fun Pager(n: Int, total: Int, st: MancheEtat, onPage: (Page) -> Unit) {
             val on = st.page == p
             val enabled = p == Page.Question || st.solved
             Box(
-                Modifier.size(22.dp, 48.dp).clickable(enabled = enabled, onClickLabel = label) { onPage(p) }
+                Modifier.size(48.dp).clickable(enabled = enabled, onClickLabel = label) { onPage(p) }
                     .semantics { contentDescription = label + if (on) ", affichée" else "" },
                 contentAlignment = Alignment.Center,
             ) {

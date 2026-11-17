@@ -250,4 +250,12 @@ class JeuxTest {
         assertEquals(4, levierCran(500f, 300f, 5))
         assertEquals(0, levierCran(10f, 300f, 1))
     }
+
+    @Test fun repeated_announcement_changes() {
+        val a = app.kairos.mobile.ui.politique.jeux.annonceNeuve("", "Pas A. Réessayez.")
+        val b = app.kairos.mobile.ui.politique.jeux.annonceNeuve(a, "Pas A. Réessayez.")
+        val c = app.kairos.mobile.ui.politique.jeux.annonceNeuve(b, "Pas A. Réessayez.")
+        assertTrue(a != b && b != c && a == c)
+        assertEquals("Juste.", app.kairos.mobile.ui.politique.jeux.annonceNeuve(a, "Juste."))
+    }
 }

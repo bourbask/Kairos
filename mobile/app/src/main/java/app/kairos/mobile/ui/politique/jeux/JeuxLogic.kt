@@ -203,3 +203,9 @@ fun recommencer(p: Progression, slug: String, vivier: List<String>, rnd: Random 
 fun progressCells(a: Avance, cells: Int = 12): Int = if (a.m == 0) 0 else Math.round(a.n.toFloat() / a.m * cells)
 
 fun progressLabel(a: Avance): String = "${a.n} cartes sur ${a.m}" + if (a.f > 0) ", dont ${a.f} trouvées du premier coup" else ""
+
+/**
+ * Annonce à poser dans la région vivante : un message identique au précédent n'y changerait rien et ne serait pas relu ;
+ * il alterne donc avec une variante suivie d'un espace sans chasse, invisible et muet.
+ */
+fun annonceNeuve(precedente: String, msg: String): String = if (precedente == msg) msg + "\u200B" else msg
