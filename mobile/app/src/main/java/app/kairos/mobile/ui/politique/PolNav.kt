@@ -136,15 +136,15 @@ val RUBRICS: List<RubricTile> = listOf(
 
 fun rubricTitle(id: String): String = RUBRICS.firstOrNull { it.id == id }?.title ?: "Politique"
 
-/** Porte de l'accueil : [kicker] court, [question] en titre, ses rubriques (ids de [RUBRICS]) dans l'ordre des pastilles. */
+/** Thème de l'espace (nom de repli : [kicker], le nom publié dans `jeux` prime) : [kicker] court, [question] en titre, ses rubriques (ids de [RUBRICS]) dans l'ordre des pastilles. */
 class Door(val id: String, val kicker: String, val question: String, val rubrics: List<String>)
 
 /** Toute rubrique est dans exactement une porte. */
 val DOORS: List<Door> = listOf(
-    Door("verifier", "Vérifier", "Cette phrase, vraie ?", listOf("phrases", "declarations", "dossiers", "rhetorique", "origines", "bulle")),
-    Door("chiffrer", "Chiffrer", "Ce programme, sérieux ?", listOf("budgets", "promesses", "niveau-de-vie", "evaluateurs")),
-    Door("bilan", "Bilan", "Ce qu'ils ont fait", listOf("bilan", "votes", "dit-vote", "revirements", "villes")),
-    Door("pouvoirs", "Pouvoirs", "Qui tire les ficelles", listOf("argent", "probite", "medias")),
+    Door("verifier", "Démêle", "Cette phrase, vraie ?", listOf("phrases", "declarations", "dossiers", "rhetorique", "origines", "bulle")),
+    Door("chiffrer", "Mesure", "Ce programme, sérieux ?", listOf("budgets", "promesses", "niveau-de-vie", "evaluateurs")),
+    Door("bilan", "Retrace", "Ce qu'ils ont fait", listOf("bilan", "votes", "dit-vote", "revirements", "villes")),
+    Door("pouvoirs", "Relie", "Qui tire les ficelles", listOf("argent", "probite", "medias")),
 )
 
 fun doorOf(rubric: String): Door? = DOORS.firstOrNull { rubric in it.rubrics }
