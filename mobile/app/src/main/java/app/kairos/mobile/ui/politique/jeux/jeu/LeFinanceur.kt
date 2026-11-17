@@ -154,8 +154,10 @@ class LeFinanceur : PolJeu<FinanceurD>("le-financeur", FinanceurD.serializer()) 
     override fun Manette(m: Manche, d: FinanceurD, st: MancheEtat, c: Coque) {
         val unite = (c.params["unite"] as? JsonPrimitive)?.contentOrNull.orEmpty()
         val somme = { i: Int -> "${d.pieces[i].montantTexte} $unite".trim() }
-        val faites = remember(m.id) { mutableStateListOf<Int>() }
-        var just by remember(m.id) { mutableStateOf<Int?>(null) }
+        // Gardé dans l'état de la manche : survit au défilement de l'écran.
+        val e = remember(st) { st.jeu as? Tirelires ?: Tirelires().also { st.jeu = it } }
+        val faites = e.faites
+        var just by e.just
         val gd = rememberGlisserDeposer(c) { tuile, cible ->
             val i = tuile.removePrefix("p").toInt()
             val j = cible.removePrefix("t").toInt()
@@ -272,4 +274,10 @@ private fun Tirelire(
                 fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
         }
     }
+}
+
+/** Pièces logées dans la manche, et la dernière arrivée. */
+private class Tirelires {
+    val faites = mutableStateListOf<Int>()
+    val just = mutableStateOf<Int?>(null)
 }

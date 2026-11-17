@@ -92,8 +92,10 @@ class LesLiens : PolJeu<LiensD>("les-liens", LiensD.serializer()) {
     @Composable
     override fun Manette(m: Manche, d: LiensD, st: MancheEtat, c: Coque) {
         val p = d.paires
-        val ordre = remember(m.id) { ordreEmplacements(p.size) }
-        val loges = remember(m.id) { mutableStateListOf<Int>() }
+        // Gardé dans l'état de la manche : survit au défilement de l'écran.
+        val e = remember(st) { st.jeu as? Liens ?: Liens(ordreEmplacements(p.size)).also { st.jeu = it } }
+        val ordre = e.ordre
+        val loges = e.loges
         val gd = rememberGlisserDeposer(c) { tuile, cible ->
             val i = tuile.removePrefix("m").toInt()
             val o = cible.removePrefix("o").toInt()
@@ -148,3 +150,8 @@ class LesLiens : PolJeu<LiensD>("les-liens", LiensD.serializer()) {
 @Composable
 private fun Ligne(t: String) = Text(t, color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp, lineHeight = 16.sp,
     fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+
+/** Ordre mélangé des emplacements et médias logés, pour la manche. */
+private class Liens(val ordre: List<Int>) {
+    val loges = mutableStateListOf<Int>()
+}
