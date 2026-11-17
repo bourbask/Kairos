@@ -1425,6 +1425,17 @@ mod tests {
     }
 
     #[test]
+    fn hand_set_date_is_no_longer_estimated() {
+        let s = Store::memory();
+        s.add(&line("Carottes", 1.0, "kg", "frigo"), "achat", None).unwrap();
+        let id = s.lots(None, None).unwrap()[0].id;
+        assert!(s.lots(None, None).unwrap()[0].estimated);
+        assert_eq!(s.update_lot(id, None, None, Some("2030-01-20")).unwrap(), "Carottes : jusqu'au 2030-01-20");
+        let l = &s.lots(None, None).unwrap()[0];
+        assert_eq!((l.expiry.as_deref(), l.estimated), (Some("2030-01-20"), false));
+    }
+
+    #[test]
     fn opening_shortens_and_freezing_extends() {
         let s = Store::memory();
         s.add(&line("Lait de coco", 800.0, "ml", "placard"), "achat", None).unwrap();
