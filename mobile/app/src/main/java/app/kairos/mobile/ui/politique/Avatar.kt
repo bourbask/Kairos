@@ -21,6 +21,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
@@ -114,10 +115,11 @@ fun identityColor(hex: String?): Color? {
  * Vignette d'une identité : son personnage s'il est publié (images en boucle, figé quand les
  * animations du système sont coupées), sinon une pastille de sa couleur et son initiale.
  * Décorative : le nom est toujours écrit à côté. [ring] : contour à la couleur d'un côté, tracé à
- * l'intérieur de la même forme que le fond (mêmes arrondis), sans changer la taille.
+ * l'intérieur de la même forme que le fond (mêmes arrondis), sans changer la taille. [shape] : forme
+ * du fond du personnage (coins arrondis par défaut).
  */
 @Composable
-fun IdentityBadge(identity: PolIdentity, size: Dp, modifier: Modifier = Modifier, ring: Color? = null, ringWidth: Dp = 2.dp) {
+fun IdentityBadge(identity: PolIdentity, size: Dp, modifier: Modifier = Modifier, ring: Color? = null, ringWidth: Dp = 2.dp, shape: Shape? = null) {
     val avatar = remember(identity.avatar) { avatarOf(identity.avatar) }
     val tint = identityColor(identity.couleur) ?: MaterialTheme.colorScheme.primary
     if (avatar == null) {
@@ -142,7 +144,7 @@ fun IdentityBadge(identity: PolIdentity, size: Dp, modifier: Modifier = Modifier
         if (avatar.frames.size < 2) return@LaunchedEffect
         animate(still = { frame = 0 }) { elapsed, _ -> frame = ((elapsed / avatar.ms) % avatar.frames.size).toInt() }
     }
-    val shape = RoundedCornerShape(size * 0.3f)
+    val shape = shape ?: RoundedCornerShape(size * 0.3f)
     Box(
         modifier.size(size).clip(shape).background(KairosColors.current.btn).let { if (ring != null) it.border(ringWidth, ring, shape) else it },
         contentAlignment = Alignment.Center,

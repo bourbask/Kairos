@@ -108,12 +108,15 @@ fun fmtDate(d: String): String {
     return "$day$month ${m.groupValues[1]}"
 }
 
+/** Camp affiché : une affirmation sans auteur établi par ses sources n'a pas de camp. */
+fun campLabel(c: Claim): String = c.camp.ifBlank { "camp non établi" }
+
 fun claimKicker(c: Claim): String = listOf(c.theme, c.date?.takeIf { it.isNotBlank() }?.let(::fmtDate)).filterNotNull().filter { it.isNotBlank() }.joinToString(" · ")
 
 /** Carte du mode « À table » : phrase, verdict, ce qu'elle cache, faits, sources. */
 fun claimTableCard(c: Claim): TableCard = TableCard(
-    kicker = "${c.theme} · entendu côté ${c.camp}",
-    title = c.camp,
+    kicker = if (c.camp.isBlank()) "${c.theme} · ${campLabel(c)}" else "${c.theme} · entendu côté ${c.camp}",
+    title = campLabel(c),
     quote = c.q,
     verdict = c.v,
     lines = listOfNotNull(c.cache?.takeIf { it.isNotBlank() }?.let { "Ce que la phrase cache : $it" }) + c.facts,
