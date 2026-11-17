@@ -3,7 +3,7 @@
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, NaiveDate, Utc};
-use kairos::calendar::{SOURCE_PERSONAL, SOURCE_WORK, escape_ics};
+use kairos::calendar::{SOURCE_PERSONAL, SOURCE_WORK, Subscription, escape_ics};
 use reqwest::Method;
 use serde::Deserialize;
 
@@ -31,6 +31,8 @@ pub struct Calendars {
     work: Option<String>,
     user: String,
     pass: String,
+    /// Agendas par abonnement, en lecture seule, avec leur source locale.
+    pub subscriptions: Vec<(Subscription, String)>,
     http: reqwest::Client,
     pub last_sync: tokio::sync::Mutex<Option<LastSync>>,
 }
@@ -38,18 +40,20 @@ pub struct Calendars {
 impl Calendars {
     pub fn new(personal: Option<String>, work: Option<String>, user: String, pass: String) -> Calendars {
         let http = reqwest::Client::builder().timeout(TIMEOUT).build().expect("client HTTP");
-        Calendars { personal, work, user, pass, http, last_sync: Default::default() }
+        Calendars { personal, work, user, pass, subscriptions: Vec::new(), http, last_sync: Default::default() }
     }
 
     /// Mêmes variables que la synchronisation de nuit ; absentes : aucun calendrier distant.
     pub fn from_env() -> Calendars {
         let var = |k: &str| std::env::var(k).ok().filter(|v| !v.trim().is_empty());
-        Calendars::new(
+        let mut cal = Calendars::new(
             var("CALENDAR_URL"),
             var("CALENDAR_WORK_URL"),
             var("CALENDAR_USERNAME").unwrap_or_default(),
             var("CALENDAR_PASSWORD").unwrap_or_default(),
-        )
+        );
+        cal.subscriptions = Subscription::from_env();
+        cal
     }
 
     pub fn credentials(&self) -> (String, String) {

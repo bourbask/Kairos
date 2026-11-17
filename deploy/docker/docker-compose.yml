@@ -113,7 +113,7 @@ services:
     environment:
       AGENDA_BIND: 0.0.0.0:8092
       DATABASE_PATH: /app/data/kairos.db
-    env_file:   # CALENDAR_URL, CALENDAR_WORK_URL, CALENDAR_USERNAME, CALENDAR_PASSWORD (facultatives)
+    env_file:   # CALENDAR_URL, CALENDAR_WORK_URL, CALENDAR_USERNAME, CALENDAR_PASSWORD, CALENDAR_SUBSCRIPTION_* (facultatives)
       - path: kairos.env
         required: false
     volumes:

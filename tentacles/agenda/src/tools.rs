@@ -316,7 +316,7 @@ impl AgendaServer {
             return json_out(json!({"synced": l.ok, "at": l.at}));
         }
         let collections = self.cal.collections();
-        let mut ok = !collections.is_empty();
+        let mut ok = !collections.is_empty() || !self.cal.subscriptions.is_empty();
         let (user, pass) = self.cal.credentials();
         // une seule échéance pour toutes les collections : la réponse part avant le délai de la tête
         let deadline = tokio::time::Instant::now() + SYNC_BUDGET;
@@ -328,6 +328,14 @@ impl AgendaServer {
                 _ => false,
             };
         }
+        for (sub, source) in &self.cal.subscriptions {
+            ok &= match tokio::time::timeout_at(deadline, sub.sync(source)).await {
+                Ok(Ok(events)) => self.db().and_then(|db| db.replace_calendar_events(source, &events).map_err(err)).is_ok(),
+                _ => false,
+            };
+        }
+        let keep: Vec<String> = self.cal.subscriptions.iter().map(|(_, s)| s.clone()).collect();
+        let _ = self.db().and_then(|db| db.prune_subscriptions(&keep).map_err(err));
         let at = if ok {
             Some(Utc::now().with_timezone(&USER_TZ).to_rfc3339_opts(chrono::SecondsFormat::Secs, false))
         } else {
@@ -758,6 +766,93 @@ mod app_tests {
         let srv = server(&[], Calendars::new(Some("http://127.0.0.1:1/cal/".into()), None, "u".into(), "p".into()));
         let out = srv.app_agenda_sync().await.unwrap();
         assert!(!out.contains("127.0.0.1"));
+    }
+
+    const FEED: &str = "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:abo-1\r\nDTSTART;VALUE=DATE:20260105\r\nDTEND;VALUE=DATE:20260107\r\nSUMMARY:Week-end Exemple\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+
+    /// Faux abonnement : `get` / `report` = statut et corps rendus pour chaque méthode ;
+    /// note (méthode, en-tête d'authentification présent).
+    async fn fake_sub(get: (u16, &'static str), report: (u16, &'static str)) -> (String, Arc<Mutex<Vec<(String, bool)>>>) {
+        let seen: Arc<Mutex<Vec<(String, bool)>>> = Default::default();
+        let s = seen.clone();
+        let app = axum::Router::new().fallback(move |m: axum::http::Method, h: axum::http::HeaderMap| {
+            let s = s.clone();
+            async move {
+                s.lock().unwrap().push((m.to_string(), h.contains_key("authorization")));
+                let (st, body) = if m == axum::http::Method::GET { get } else { report };
+                (axum::http::StatusCode::from_u16(st).unwrap(), body)
+            }
+        });
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/abo.ics", l.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(l, app).await });
+        (url, seen)
+    }
+
+    fn with_sub(url: String, user: Option<&str>) -> Calendars {
+        let mut c = Calendars::default();
+        let sub = kairos::calendar::Subscription::new(url, user.map(Into::into), user.map(|_| "secret".into()));
+        c.subscriptions = vec![(sub, kairos::calendar::subscription_source(0))];
+        c
+    }
+
+    #[tokio::test]
+    async fn subscription_feed_by_get_without_credentials() {
+        let (url, seen) = fake_sub((200, FEED), (405, "")).await;
+        let srv = server(&[], with_sub(url, None));
+        let v: Value = serde_json::from_str(&srv.app_agenda_sync().await.unwrap()).unwrap();
+        assert_eq!(v["synced"], true);
+        assert_eq!(seen.lock().unwrap().as_slice(), [("GET".to_string(), false)]);
+        let ev = &day(&srv, "2026-01-06")["events"][0];
+        assert_eq!(ev["title"], "Week-end Exemple");
+        assert_eq!(ev["all_day"], true);
+    }
+
+    #[tokio::test]
+    async fn subscription_caldav_by_report_with_credentials() {
+        let (url, seen) = fake_sub((500, ""), (207, REPORT)).await;
+        let srv = server(&[], with_sub(url, Some("u")));
+        let v: Value = serde_json::from_str(&srv.app_agenda_sync().await.unwrap()).unwrap();
+        assert_eq!(v["synced"], true);
+        assert_eq!(seen.lock().unwrap().as_slice(), [("REPORT".to_string(), true)]);
+        assert_eq!(day(&srv, "2026-01-05")["events"][0]["uid"], "distant-1");
+    }
+
+    #[tokio::test]
+    async fn subscription_falls_back_to_other_method() {
+        // identifiants mais flux iCalendar : REPORT refusé, GET en repli
+        let (url, seen) = fake_sub((200, FEED), (405, "")).await;
+        let srv = server(&[], with_sub(url, Some("u")));
+        let v: Value = serde_json::from_str(&srv.app_agenda_sync().await.unwrap()).unwrap();
+        assert_eq!(v["synced"], true);
+        let methods: Vec<String> = seen.lock().unwrap().iter().map(|(m, _)| m.clone()).collect();
+        assert_eq!(methods, ["REPORT", "GET"]);
+        // sans identifiants mais collection CalDAV : GET illisible, REPORT en repli
+        let (url, _) = fake_sub((200, "<html>Connexion</html>"), (207, REPORT)).await;
+        let srv = server(&[], with_sub(url, None));
+        srv.app_agenda_sync().await.unwrap();
+        assert_eq!(day(&srv, "2026-01-05")["events"][0]["uid"], "distant-1");
+    }
+
+    #[tokio::test]
+    async fn subscription_invalid_answer_keeps_known_events() {
+        let (url, _) = fake_sub((200, "<html>Connexion</html>"), (200, "<html>Connexion</html>")).await;
+        let known = event("abo-ancien", "2026-01-05 09:00", "2026-01-05 10:00", false, kairos::calendar::SOURCE_SUBSCRIPTION);
+        let srv = server(&[known], with_sub(url.clone(), None));
+        let out = srv.app_agenda_sync().await.unwrap();
+        assert!(!out.contains("127.0.0.1"), "adresse jamais exposée");
+        assert_eq!(serde_json::from_str::<Value>(&out).unwrap()["synced"], false);
+        assert_eq!(day(&srv, "2026-01-05")["events"][0]["uid"], "abo-ancien");
+    }
+
+    #[tokio::test]
+    async fn removed_subscription_is_pruned() {
+        let old = event("abo-2", "2026-01-05 09:00", "2026-01-05 10:00", false, "subscription-2");
+        let (url, _) = fake_sub((200, FEED), (405, "")).await;
+        let srv = server(&[old], with_sub(url, None));
+        srv.app_agenda_sync().await.unwrap();
+        let uids: Vec<Value> = day(&srv, "2026-01-05")["events"].as_array().unwrap().iter().map(|e| e["uid"].clone()).collect();
+        assert_eq!(uids, ["abo-1"]);
     }
 
     /// Calendrier qui accepte la connexion mais ne répond jamais.

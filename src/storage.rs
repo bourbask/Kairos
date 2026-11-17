@@ -644,6 +644,20 @@ impl Storage {
         Ok(st)
     }
 
+    /// Retire les événements des abonnements qui ne figurent plus dans `keep`.
+    pub fn prune_subscriptions(&self, keep: &[String]) -> SqlResult<usize> {
+        let sources: Vec<String> = self
+            .conn
+            .prepare("SELECT DISTINCT source FROM calendar_events")?
+            .query_map([], |r| r.get(0))?
+            .collect::<SqlResult<_>>()?;
+        let mut n = 0;
+        for s in sources.iter().filter(|s| crate::calendar::is_subscription(s) && !keep.contains(s)) {
+            n += self.delete_calendar_events_by_source(s)?;
+        }
+        Ok(n)
+    }
+
     pub fn delete_calendar_events_by_source(&self, source: &str) -> SqlResult<usize> {
         let deleted = self.conn.execute("DELETE FROM calendar_events WHERE source = ?1", params![source])?;
         Ok(deleted)

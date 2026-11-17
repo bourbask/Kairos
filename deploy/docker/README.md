@@ -76,6 +76,12 @@ Services MCP (HTTP, chemin `/mcp`) : `memoire` (base dédiée, volume `memoire-d
 de `kairos.env` (celles de la synchronisation de nuit) pour resynchroniser à la demande de l'application
 (au plus une fois par minute) et y ajouter des événements. Absentes : lecture de la base locale seule, ajout refusé.
 
+Agendas par abonnement, en lecture seule : `CALENDAR_SUBSCRIPTION_URLS` (une ou plusieurs adresses https ou
+webcal, séparées par des espaces ou des virgules), `CALENDAR_SUBSCRIPTION_USERNAME` et `CALENDAR_SUBSCRIPTION_PASSWORD`
+(facultatifs). Collection CalDAV (REPORT) ou flux iCalendar (GET), détecté automatiquement. Lus par la synchronisation
+de nuit et par `agenda` ; une réponse illisible garde les événements déjà connus. L'adresse est un secret : jamais
+journalisée. Récurrences dépliées : quotidiennes et hebdomadaires (mensuelles et annuelles : première occurrence seule).
+
 Générer un jeton par service (`MEMOIRE_TOKEN`, `AGENDA_TOKEN`, `FINANCES_TOKEN`, `ALIMENTATION_TOKEN`) et les renseigner dans `kairos.env` :
 
 ```bash

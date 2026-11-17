@@ -382,28 +382,49 @@ async fn main() -> anyhow::Result<()> {
             let storage = Storage::open(&db_path)?;
             match action {
                 CalendarAction::Sync => {
-                    let calendar_url = std::env::var("CALENDAR_URL")
-                        .map_err(|_| anyhow::anyhow!("CALENDAR_URL not set in .env"))?;
-                    let username = std::env::var("CALENDAR_USERNAME")
-                        .map_err(|_| anyhow::anyhow!("CALENDAR_USERNAME not set in .env"))?;
-                    let password = std::env::var("CALENDAR_PASSWORD")
-                        .map_err(|_| anyhow::anyhow!("CALENDAR_PASSWORD not set in .env"))?;
-
+                    let subscriptions = calendar::Subscription::from_env();
                     // ponytail: deux collections nommées ; liste configurable si une troisième arrive.
-                    let mut collections = vec![(calendar_url, calendar::SOURCE_PERSONAL)];
-                    match std::env::var("CALENDAR_WORK_URL").ok().filter(|u| !u.is_empty()) {
-                        Some(u) => collections.push((u, calendar::SOURCE_WORK)),
-                        None => tracing::info!("CALENDAR_WORK_URL absent, agenda travail ignoré"),
+                    let mut collections = Vec::new();
+                    match std::env::var("CALENDAR_URL").ok().filter(|u| !u.is_empty()) {
+                        Some(u) => collections.push((u, calendar::SOURCE_PERSONAL)),
+                        None if subscriptions.is_empty() => anyhow::bail!("CALENDAR_URL not set in .env"),
+                        None => tracing::info!("CALENDAR_URL absent, agenda perso CalDAV ignoré"),
+                    }
+                    if !collections.is_empty() {
+                        match std::env::var("CALENDAR_WORK_URL").ok().filter(|u| !u.is_empty()) {
+                            Some(u) => collections.push((u, calendar::SOURCE_WORK)),
+                            None => tracing::info!("CALENDAR_WORK_URL absent, agenda travail ignoré"),
+                        }
                     }
 
                     let mut total = 0;
-                    for (url, source) in collections {
-                        println!("Syncing {}...", if source == calendar::SOURCE_WORK { "travail" } else { "perso" });
-                        let client = calendar::CalendarClient::new(url, username.clone(), password.clone());
-                        let events = client.sync(source).await?;
+                    // Abonnements d'abord, chacun isolé : un échec garde ses événements connus.
+                    let keep: Vec<String> = subscriptions.iter().map(|(_, s)| s.clone()).collect();
+                    for (i, (sub, source)) in subscriptions.iter().enumerate() {
+                        println!("Syncing abonnement {}...", i + 1);
+                        match sub.sync(source).await {
+                            Ok(events) => {
+                                storage.replace_calendar_events(source, &events)?;
+                                total += events.len();
+                            }
+                            Err(e) => tracing::warn!("abonnement {} : {e}", i + 1),
+                        }
+                    }
+                    storage.prune_subscriptions(&keep)?;
 
-                        storage.replace_calendar_events(source, &events)?;
-                        total += events.len();
+                    if !collections.is_empty() {
+                        let username = std::env::var("CALENDAR_USERNAME")
+                            .map_err(|_| anyhow::anyhow!("CALENDAR_USERNAME not set in .env"))?;
+                        let password = std::env::var("CALENDAR_PASSWORD")
+                            .map_err(|_| anyhow::anyhow!("CALENDAR_PASSWORD not set in .env"))?;
+                        for (url, source) in collections {
+                            println!("Syncing {}...", if source == calendar::SOURCE_WORK { "travail" } else { "perso" });
+                            let client = calendar::CalendarClient::new(url, username.clone(), password.clone());
+                            let events = client.sync(source).await?;
+
+                            storage.replace_calendar_events(source, &events)?;
+                            total += events.len();
+                        }
                     }
 
                     println!("Synced {} events.", total);
