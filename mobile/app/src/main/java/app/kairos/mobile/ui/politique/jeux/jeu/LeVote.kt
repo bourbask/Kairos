@@ -23,11 +23,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -64,7 +61,6 @@ import app.kairos.mobile.ui.politique.jeux.kit.mix
 import app.kairos.mobile.ui.politique.jeux.kit.pxButton
 import app.kairos.mobile.ui.politique.kit.Kicker
 import app.kairos.mobile.ui.politique.kit.frTypo
-import app.kairos.mobile.ui.politique.model.PolData
 import app.kairos.mobile.ui.politique.reducedMotion
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonArray
@@ -105,16 +101,12 @@ fun dateLongue(iso: String): String {
  */
 class LeVote : PolJeu<VoteD>("le-vote", VoteD.serializer()) {
 
-    // ponytail: la fenêtre ne reçoit pas les données de l'espace (avatar, nom du groupe) ; la manette les dépose ici.
-    // À retirer si `Fenetre` reçoit un jour la coque.
-    private var donnees by mutableStateOf<PolData?>(null)
-
-    override fun valide(d: VoteD) = d.bonne in VOTES && d.orateur.isNotBlank() && d.scrutin.isNotBlank()
+    override fun valide(d: VoteD, params: JsonObject) = d.bonne in VOTES && d.orateur.isNotBlank() && d.scrutin.isNotBlank()
 
     @Composable
-    override fun Fenetre(m: Manche, d: VoteD, st: MancheEtat) {
+    override fun Fenetre(m: Manche, d: VoteD, st: MancheEtat, c: Coque) {
         val sc = MaterialTheme.colorScheme
-        val id = donnees?.byId(d.parti)
+        val id = c.data.byId(d.parti)
         val reduit = reducedMotion()
         val saut = remember(m.id) { Animatable(0f) }
         LaunchedEffect(st.solved) {
@@ -145,8 +137,6 @@ class LeVote : PolJeu<VoteD>("le-vote", VoteD.serializer()) {
 
     @Composable
     override fun Manette(m: Manche, d: VoteD, st: MancheEtat, c: Coque) {
-        val data = c.data
-        SideEffect { donnees = data }
         val sc = MaterialTheme.colorScheme
         val forme = PixelShape(4.dp, 3)
         Column(

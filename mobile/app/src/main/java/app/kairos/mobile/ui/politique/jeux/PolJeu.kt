@@ -28,6 +28,12 @@ class MancheEtat(val manche: Manche) {
     var react by mutableIntStateOf(0)
         internal set
     val out = mutableStateListOf<String>()
+
+    /**
+     * État propre au jeu pour cette manche, nul au départ, perdu à la manche suivante. Champ simple (non observé) :
+     * y ranger un état observable (`mutableIntStateOf`…), créé une fois, par exemple dans `remember(st)`.
+     */
+    var jeu: Any? = null
 }
 
 /** Ce que la coque offre à la manette d'un jeu. */
@@ -63,17 +69,19 @@ interface Coque {
  */
 abstract class PolJeu<D : Any>(val slug: String, private val serializer: KSerializer<D>) {
 
-    fun decoder(d: JsonObject): D? = runCatching { PolJson.decodeFromJsonElement(serializer, d) }.getOrNull()?.takeIf(::valide)
+    /** `d` décodé et validé avec les [params] du jeu ; null : manche écartée. */
+    fun decoder(d: JsonObject, params: JsonObject = JsonObject(emptyMap())): D? =
+        runCatching { PolJson.decodeFromJsonElement(serializer, d) }.getOrNull()?.takeIf { valide(it, params) }
 
-    /** Manche jouable avec ces données. */
-    open fun valide(d: D): Boolean = true
+    /** Manche jouable avec ces données et ces `params`. */
+    open fun valide(d: D, params: JsonObject): Boolean = true
 
     /** Grand pictogramme « citation » translucide dans la fenêtre question. */
     open val glyphe: Boolean = false
 
-    /** Question, dans la fenêtre (fond blanc). Par défaut : sur-titre et question de la manche. */
+    /** Question, dans la fenêtre (fond blanc). Par défaut : sur-titre et question de la manche. [c] : données, `params`, `reduit`. */
     @Composable
-    open fun Fenetre(m: Manche, d: D, st: MancheEtat) = FenetreQuestion(m, citation = glyphe)
+    open fun Fenetre(m: Manche, d: D, st: MancheEtat, c: Coque) = FenetreQuestion(m, citation = glyphe)
 
     /** Manette : l'objet qu'on manipule, sous la fenêtre (≤ 260 dp de haut). Reste affichée après la bonne réponse, sans interaction. */
     @Composable
@@ -90,10 +98,10 @@ abstract class PolJeu<D : Any>(val slug: String, private val serializer: KSerial
     open fun ColumnScope.ReponseEnPlus(m: Manche, d: D, st: MancheEtat) {}
 
     // Ponts sans type, pour la coque.
-    internal fun ok(m: Manche): Boolean = decoder(m.d) != null
+    internal fun ok(m: Manche, params: JsonObject): Boolean = decoder(m.d, params) != null
 
     @Composable
-    internal fun FenetreBrute(m: Manche, d: Any, st: MancheEtat) = @Suppress("UNCHECKED_CAST") Fenetre(m, d as D, st)
+    internal fun FenetreBrute(m: Manche, d: Any, st: MancheEtat, c: Coque) = @Suppress("UNCHECKED_CAST") Fenetre(m, d as D, st, c)
 
     @Composable
     internal fun ManetteBrute(m: Manche, d: Any, st: MancheEtat, c: Coque) = @Suppress("UNCHECKED_CAST") Manette(m, d as D, st, c)

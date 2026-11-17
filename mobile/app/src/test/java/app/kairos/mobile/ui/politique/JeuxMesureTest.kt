@@ -39,7 +39,7 @@ import org.junit.Test
 class JeuxMesureTest {
     private val jeux = jeuxOf(PolData(mapOf("jeux" to PolJson.parseToJsonElement(javaClass.getResource("/jeux-mesure.json")!!.readText()).jsonObject)))
 
-    private fun jouables(slug: String) = jeux.getValue(slug).manches.filter { JEUX_REGISTRE.getValue(slug).decoder(it.d) != null }.map { it.id }
+    private fun jouables(slug: String) = jeux.getValue(slug).manches.filter { JEUX_REGISTRE.getValue(slug).decoder(it.d, jeux.getValue(slug).params) != null }.map { it.id }
 
     @Test fun registered() = listOf("quelle-gravite", "le-juste-cout", "independant").forEach { assertNotNull(it, JEUX_REGISTRE[it]) }
 

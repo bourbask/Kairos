@@ -1,5 +1,6 @@
 package app.kairos.mobile.ui.politique.jeux.jeu
 
+import kotlinx.serialization.json.JsonObject
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -79,7 +80,7 @@ private class HautEnMarches(private val step: androidx.compose.ui.unit.Dp = 3.dp
 /** Tiroir de classeur à fiches d'archive ; on tire la fiche de l'origine de l'idée. */
 class TrenteSecondes : PolJeu<FichesD>("trente-secondes", FichesD.serializer()) {
 
-    override fun valide(d: FichesD) = d.choix.size == 3 && d.bonne in d.choix.indices && d.choix.none { it.isBlank() }
+    override fun valide(d: FichesD, params: JsonObject) = d.choix.size == 3 && d.bonne in d.choix.indices && d.choix.none { it.isBlank() }
 
     override val glyphe = true
 

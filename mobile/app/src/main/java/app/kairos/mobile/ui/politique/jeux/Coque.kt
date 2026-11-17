@@ -162,7 +162,7 @@ private fun MancheCarte(session: JeuxSession, g: JeuPret, nom: String, st: Manch
     val reduit = reducedMotion()
     val play = LocalPlayMoment.current
     var annonce by remember { mutableStateOf("") }
-    val d = remember(st.manche) { g.impl.decoder(st.manche.d) } ?: return
+    val d = remember(st.manche) { g.impl.decoder(st.manche.d, g.jeu.params) } ?: return
     val coque = remember(st, g) {
         object : Coque {
             override fun juste() {
@@ -198,7 +198,7 @@ private fun MancheCarte(session: JeuxSession, g: JeuPret, nom: String, st: Manch
     Column(Modifier.fillMaxWidth().padding(bottom = 10.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Box(Modifier.fillMaxWidth().weight(1f, fill = true).heightIn(min = 150.dp)) {
             Fenetre(piste, st, session, g.slug, reduit,
-                question = { g.impl.FenetreBrute(st.manche, d, st) },
+                question = { g.impl.FenetreBrute(st.manche, d, st, coque) },
                 reponse = { Reponse(g, st, d, carte(g.slug, st.manche.id) in session.prog.premier, data, nav, onNext = { piste.go(Page.Suivant) }, reduit) },
             )
         }

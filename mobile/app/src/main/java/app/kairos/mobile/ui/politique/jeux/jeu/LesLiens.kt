@@ -1,5 +1,6 @@
 package app.kairos.mobile.ui.politique.jeux.jeu
 
+import kotlinx.serialization.json.JsonObject
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -80,13 +81,13 @@ internal fun FenetreRelie(m: Manche, picto: String? = null) {
 class LesLiens : PolJeu<LiensD>("les-liens", LiensD.serializer()) {
 
     // Trois rangées au plus pour tenir dans la manette ; propriétaires distincts, sinon une bonne paire serait refusée.
-    override fun valide(d: LiensD) = d.paires.size in 2..3 &&
+    override fun valide(d: LiensD, params: JsonObject) = d.paires.size in 2..3 &&
         d.paires.none { it.media.isBlank() || it.proprietaire.isBlank() } &&
         d.paires.distinctBy { it.media }.size == d.paires.size &&
         d.paires.distinctBy { it.proprietaire }.size == d.paires.size
 
     @Composable
-    override fun Fenetre(m: Manche, d: LiensD, st: MancheEtat) = FenetreRelie(m)
+    override fun Fenetre(m: Manche, d: LiensD, st: MancheEtat, c: Coque) = FenetreRelie(m)
 
     @Composable
     override fun Manette(m: Manche, d: LiensD, st: MancheEtat, c: Coque) {

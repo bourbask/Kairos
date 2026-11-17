@@ -1,5 +1,6 @@
 package app.kairos.mobile.ui.politique.jeux.jeu
 
+import kotlinx.serialization.json.JsonObject
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Easing
 import androidx.compose.animation.core.VectorConverter
@@ -155,14 +156,14 @@ private fun cellsDp(n: Int): Dp = with(LocalDensity.current) { (n * cellPx(CELLU
 class LeFinanceur : PolJeu<FinanceurD>("le-financeur", FinanceurD.serializer()) {
 
     // Correspondance une pièce pour une tirelire, sinon une bonne réponse serait refusée.
-    override fun valide(d: FinanceurD) = d.pieces.size in 2..3 &&
+    override fun valide(d: FinanceurD, params: JsonObject) = d.pieces.size in 2..3 &&
         d.tirelires.size == d.pieces.size &&
         d.tirelires.none { it.isBlank() } && d.tirelires.distinct().size == d.tirelires.size &&
         d.pieces.none { it.montantTexte.isBlank() } &&
         d.pieces.map { it.tirelire }.toSet() == d.tirelires.toSet()
 
     @Composable
-    override fun Fenetre(m: Manche, d: FinanceurD, st: MancheEtat) = FenetreRelie(m, picto = slug)
+    override fun Fenetre(m: Manche, d: FinanceurD, st: MancheEtat, c: Coque) = FenetreRelie(m, picto = slug)
 
     @Composable
     override fun Manette(m: Manche, d: FinanceurD, st: MancheEtat, c: Coque) {

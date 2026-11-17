@@ -50,7 +50,7 @@ data class ChoixD(val choix: List<JsonElement> = emptyList(), val bonne: Int = -
  */
 class Exemple(slug: String, private val citation: Boolean = false) : PolJeu<ChoixD>(slug, ChoixD.serializer()) {
 
-    override fun valide(d: ChoixD) = d.choix.size in 2..4 && d.bonne in d.choix.indices && d.libelles.none { it.isBlank() }
+    override fun valide(d: ChoixD, params: JsonObject) = d.choix.size in 2..4 && d.bonne in d.choix.indices && d.libelles.none { it.isBlank() }
 
     override val glyphe: Boolean get() = citation
 

@@ -1,5 +1,6 @@
 package app.kairos.mobile.ui.politique.jeux.jeu
 
+import kotlinx.serialization.json.JsonObject
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -56,7 +57,7 @@ data class PortraitsD(val choix: List<Personnalite> = emptyList(), val bonne: In
 /** Quatre personnages en boutons physiques pixel, avec leur avatar ; on désigne l'auteur de la phrase. */
 class QuiLaDit : PolJeu<PortraitsD>("qui-l-a-dit", PortraitsD.serializer()) {
 
-    override fun valide(d: PortraitsD) = d.choix.size == 4 && d.bonne in d.choix.indices && d.choix.none { it.nom.isBlank() }
+    override fun valide(d: PortraitsD, params: JsonObject) = d.choix.size == 4 && d.bonne in d.choix.indices && d.choix.none { it.nom.isBlank() }
 
     override val glyphe = true
 

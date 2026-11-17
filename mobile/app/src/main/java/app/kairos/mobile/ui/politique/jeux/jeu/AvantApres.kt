@@ -78,13 +78,13 @@ private val CROIX = listOf("............", "............", "..##....##..", "..##
  */
 class AvantApres : PolJeu<AvantApresD>("avant-apres", AvantApresD.serializer()) {
 
-    override fun valide(d: AvantApresD) = d.bonne in 0..2
+    override fun valide(d: AvantApresD, params: JsonObject) = d.bonne in 0..2
 
     override fun etiquette(m: Manche, d: AvantApresD, st: MancheEtat, params: JsonObject): String? =
         cransAA(params)[d.bonne].nom.takeIf { it.isNotBlank() }
 
     @Composable
-    override fun Fenetre(m: Manche, d: AvantApresD, st: MancheEtat) {
+    override fun Fenetre(m: Manche, d: AvantApresD, st: MancheEtat, c: Coque) {
         val sc = MaterialTheme.colorScheme
         Box(Modifier.fillMaxSize()) {
             PixelIcon("avant-apres", sc.primary.copy(alpha = 0.16f), Modifier.padding(12.dp).size(112.dp))

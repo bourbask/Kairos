@@ -47,7 +47,7 @@ class JeuxSession(data: PolData, private val save: (Progression) -> Unit) {
     /** Jeux jouables par slug ; un slug publié sans implémentation reste absent (carte « Bientôt »). */
     val prets: Map<String, JeuPret> = jeux.mapNotNull { (slug, j) ->
         val impl = JEUX_REGISTRE[slug] ?: return@mapNotNull null
-        val v = j.manches.filter { impl.ok(it) }
+        val v = j.manches.filter { impl.ok(it, j.params) }
         if (v.isEmpty()) null else slug to JeuPret(slug, j, impl, v)
     }.toMap()
 

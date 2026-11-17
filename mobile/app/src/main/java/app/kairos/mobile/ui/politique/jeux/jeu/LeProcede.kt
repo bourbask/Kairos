@@ -134,14 +134,14 @@ private val Claque = CubicBezierEasing(0.05f, 0.7f, 0.1f, 1f)
 /** Trois tampons encreurs ; on frappe le procédé, son empreinte claque en travers de la phrase. */
 class LeProcede : PolJeu<TamponsD>("le-procede", TamponsD.serializer()) {
 
-    override fun valide(d: TamponsD) = d.choix.size == 3 && d.bonne in d.choix.indices && d.choix.none { it.isBlank() }
+    override fun valide(d: TamponsD, params: JsonObject) = d.choix.size == 3 && d.bonne in d.choix.indices && d.choix.none { it.isBlank() }
 
     override val glyphe = true
 
     override fun etiquette(m: Manche, d: TamponsD, st: MancheEtat, params: JsonObject) = d.famille.takeIf { it.isNotBlank() }
 
     @Composable
-    override fun Fenetre(m: Manche, d: TamponsD, st: MancheEtat) {
+    override fun Fenetre(m: Manche, d: TamponsD, st: MancheEtat, c: Coque) {
         val sc = MaterialTheme.colorScheme
         Box(Modifier.fillMaxSize()) {
             PixelIcon("citation", sc.primary.copy(alpha = 0.16f), Modifier.padding(12.dp).size(112.dp))

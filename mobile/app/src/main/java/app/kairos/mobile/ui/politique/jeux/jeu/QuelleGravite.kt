@@ -1,5 +1,6 @@
 package app.kairos.mobile.ui.politique.jeux.jeu
 
+import kotlinx.serialization.json.JsonObject
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.ContentTransform
 import androidx.compose.animation.EnterTransition
@@ -60,10 +61,10 @@ import app.kairos.mobile.ui.politique.kit.frTypo
  */
 class QuelleGravite : PolJeu<CranD>("quelle-gravite", CranD.serializer()) {
 
-    override fun valide(d: CranD) = cranValide(d)
+    override fun valide(d: CranD, params: JsonObject) = cranValide(d)
 
     @Composable
-    override fun Fenetre(m: Manche, d: CranD, st: MancheEtat) = FenetreMesure(m)
+    override fun Fenetre(m: Manche, d: CranD, st: MancheEtat, c: Coque) = FenetreMesure(m)
 
     @Composable
     override fun Manette(m: Manche, d: CranD, st: MancheEtat, c: Coque) {

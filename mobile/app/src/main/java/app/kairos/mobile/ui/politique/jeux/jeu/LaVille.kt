@@ -1,5 +1,6 @@
 package app.kairos.mobile.ui.politique.jeux.jeu
 
+import kotlinx.serialization.json.JsonObject
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.VectorConverter
@@ -75,7 +76,7 @@ private val Glisse = CubicBezierEasing(0.05f, 0.7f, 0.1f, 1f)
  */
 class LaVille : PolJeu<VilleD>("la-ville", VilleD.serializer()) {
 
-    override fun valide(d: VilleD) = d.choix.size in 2..6 && d.bonne in d.choix.indices && d.choix.all(::epingleOk)
+    override fun valide(d: VilleD, params: JsonObject) = d.choix.size in 2..6 && d.bonne in d.choix.indices && d.choix.all(::epingleOk)
 
     @Composable
     override fun Manette(m: Manche, d: VilleD, st: MancheEtat, c: Coque) {

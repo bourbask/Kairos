@@ -60,7 +60,6 @@ import app.kairos.mobile.ui.politique.jeux.kit.cell
 import app.kairos.mobile.ui.politique.jeux.kit.cellPx
 import app.kairos.mobile.ui.politique.jeux.kit.mix
 import kotlinx.serialization.json.JsonObject
-import java.util.WeakHashMap
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -90,25 +89,26 @@ private val Decel = CubicBezierEasing(0.05f, 0.7f, 0.1f, 1f)
  */
 class LeJusteCout : PolJeu<SommeD>("le-juste-cout", SommeD.serializer()) {
 
-    override fun valide(d: SommeD) = sommeValide(d)
+    /** Fourchette lisible et atteignable par au moins un cran de la molette. */
+    override fun valide(d: SommeD, params: JsonObject) = sommeValide(d) && crans(params).any { sommeJuste(it, d) }
 
-    /** Cran choisi par manche, pour l'étiquette de la réponse. */
-    private val choix = WeakHashMap<MancheEtat, MutableIntState>()
+    /** Cran choisi, gardé dans l'état de la manche pour l'étiquette de la réponse. */
+    private fun choix(st: MancheEtat): MutableIntState = st.jeu as? MutableIntState ?: mutableIntStateOf(0).also { st.jeu = it }
 
     private fun crans(p: JsonObject) = p.params(MoletteParams.serializer(), MoletteParams()).crans
 
     @Composable
-    override fun Fenetre(m: Manche, d: SommeD, st: MancheEtat) = FenetreMesure(m)
+    override fun Fenetre(m: Manche, d: SommeD, st: MancheEtat, c: Coque) = FenetreMesure(m)
 
     override fun etiquette(m: Manche, d: SommeD, st: MancheEtat, params: JsonObject): String? =
-        crans(params).getOrNull(choix[st]?.intValue ?: -1)?.let { sommeEtiquette(it, d) }
+        crans(params).getOrNull((st.jeu as? MutableIntState)?.intValue ?: -1)?.let { sommeEtiquette(it, d) }
 
     @Composable
     override fun Manette(m: Manche, d: SommeD, st: MancheEtat, c: Coque) {
         val p = remember(c.params) { c.params.params(MoletteParams.serializer(), MoletteParams()) }
         val n = p.crans
         if (n.isEmpty()) return
-        val etat = remember(st) { choix.getOrPut(st) { mutableIntStateOf(0) } }
+        val etat = remember(st) { choix(st) }
         var i by etat
         val v = n[i.coerceIn(0, n.size - 1)]
         val essaye = !st.solved && fr(v) in st.out

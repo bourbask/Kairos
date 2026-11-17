@@ -20,9 +20,9 @@ parties de 6, fins de partie, progression persistée, paliers de la mascotte, an
 data class MonD(val choix: List<String> = emptyList(), val bonne: Int = -1)   // forme de `d`, tolérante
 
 class MonJeu : PolJeu<MonD>("mon-slug", MonD.serializer()) {
-    override fun valide(d: MonD) = d.bonne in d.choix.indices          // manche écartée sinon
+    override fun valide(d: MonD, params: JsonObject) = d.bonne in d.choix.indices   // manche écartée sinon
     override val glyphe = true                                          // facultatif : pictogramme citation
-    @Composable override fun Fenetre(m: Manche, d: MonD, st: MancheEtat) { … }   // facultatif : défaut = kicker + q
+    @Composable override fun Fenetre(m: Manche, d: MonD, st: MancheEtat, c: Coque) { … }   // facultatif : défaut = kicker + q
     @Composable override fun Manette(m: Manche, d: MonD, st: MancheEtat, c: Coque) { … }
     override fun etiquette(m: Manche, d: MonD, st: MancheEtat, params: JsonObject): String? = …  // si verdict null
     @Composable override fun ColumnScope.ReponseEnPlus(m: Manche, d: MonD, st: MancheEtat) { … } // rare
@@ -36,7 +36,9 @@ Référence minimale : `jeu/Exemple.kt` (touches physiques + voyants).
 
 `MancheEtat` (observable, neuf à chaque manche) : `manche`, `page` (`Question`/`Reponse`/`Suivant`), `solved`,
 `err`, `out` (clés refusées, dans l'ordre), `react` (incrémenté à chaque erreur : `LaunchedEffect(st.react)` pour
-animer `st.out.last()`). Lecture seule pour le jeu ; son état propre : `remember(m.id) { … }` dans `Manette`.
+animer `st.out.last()`). Lecture seule pour le jeu, sauf `jeu` : emplacement libre pour l'état propre au jeu
+(champ simple, à remplir d'un état observable créé une fois, ex. `st.jeu as? MutableIntState ?: mutableIntStateOf(0).also { st.jeu = it }`),
+lisible aussi depuis `Fenetre` et `etiquette`.
 
 `Coque` (`c`) :
 

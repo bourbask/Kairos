@@ -1,5 +1,6 @@
 package app.kairos.mobile.ui.politique.jeux.jeu
 
+import kotlinx.serialization.json.JsonObject
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
@@ -72,10 +73,10 @@ private val CHIFFRES = mapOf(
  */
 class Independant : PolJeu<CranD>("independant", CranD.serializer()) {
 
-    override fun valide(d: CranD) = cranValide(d)
+    override fun valide(d: CranD, params: JsonObject) = cranValide(d)
 
     @Composable
-    override fun Fenetre(m: Manche, d: CranD, st: MancheEtat) = FenetreMesure(m, grand = true, lignes = listOf(d.argent, d.lien))
+    override fun Fenetre(m: Manche, d: CranD, st: MancheEtat, c: Coque) = FenetreMesure(m, grand = true, lignes = listOf(d.argent, d.lien))
 
     @Composable
     override fun Manette(m: Manche, d: CranD, st: MancheEtat, c: Coque) {
