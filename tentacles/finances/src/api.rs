@@ -130,6 +130,35 @@ pub struct RuleResult {
     pub rule_id: String,
     pub created: bool,
     pub applied: bool,
+    /// Vrai si la catégorie visée vient d'être créée.
+    #[serde(default)]
+    pub category_created: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Category {
+    pub name: String,
+    #[serde(default)]
+    pub budget: bool,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct Categories {
+    pub categories: Lenient<Category>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Suggestion {
+    pub payee: String,
+    pub categories: Vec<String>,
+    /// Nombre de catégories tirées de l'historique du commerçant lui-même.
+    #[serde(default)]
+    pub matched: usize,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct Suggestions {
+    pub suggestions: Lenient<Suggestion>,
 }
 
 /// Liste tolérante : un élément illisible (champ requis nul ou mal typé) est écarté et compté,
@@ -319,6 +348,26 @@ impl FinanceApi {
             .post(format!("{}/api/rules", self.base))
             .json(&serde_json::json!({"payee": payee, "poste": poste}));
         self.send(req).await
+    }
+
+    /// Règle vers une catégorie quelconque ; `create` autorise sa création.
+    pub async fn classify_category(&self, payee: &str, category: &str, create: bool) -> Result<RuleResult, ApiError> {
+        let req = self
+            .http
+            .post(format!("{}/api/rules", self.base))
+            .json(&serde_json::json!({"payee": payee, "category": category, "create": create}));
+        self.send(req).await
+    }
+
+    pub async fn categories(&self) -> Result<Categories, ApiError> {
+        self.get("/api/categories", &[]).await
+    }
+
+    /// Catégories probables, `n` par commerçant, dans l'ordre des `payees`.
+    pub async fn suggest(&self, payees: &[String], n: usize) -> Result<Suggestions, ApiError> {
+        let mut q: Vec<(&str, String)> = payees.iter().map(|p| ("payee", p.clone())).collect();
+        q.push(("n", n.to_string()));
+        self.get("/api/categories/suggest", &q).await
     }
 
     pub async fn networth(&self) -> Result<NetWorth, ApiError> {

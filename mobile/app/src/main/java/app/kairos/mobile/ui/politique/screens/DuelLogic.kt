@@ -377,6 +377,7 @@ data class CampLine(val k: String, val id: String?) : Line
 data class Tiles(val ids: List<String>) : Line
 data class Big(val text: String) : Line
 data class Note(val text: String) : Line
+data class Srcs(val k: String, val refs: List<SourceRef>) : Line
 
 sealed interface CardBlock
 data class Cols(val title: String, val a: List<Line>, val b: List<Line>) : CardBlock
@@ -490,16 +491,13 @@ private fun milestones(f: PartiFiche?): List<Line> = f?.let {
     if (f.historique.isEmpty()) listOf(Note("Aucun jalon.")) else f.historique.map { Kv(slashDate(it.date) ?: NO_DATA, it.fait) }
 } ?: emptyList()
 
-/** Libellé d'une référence réduit à ses deux premiers éléments (auteur, titre). */
-private fun shortRef(label: String): String = label.split(",").take(2).joinToString(",")
-
 private fun position(f: PartiFiche?): List<Line> = f?.let {
     val r = f.rattachement
     val refs = sourcesOf(r?.src)
     val m = f.nuance_ministere
     buildList {
         if (refs.isEmpty()) add(CampLine("Camp retenu (classement non établi par la littérature)", r?.camp))
-        else { add(CampLine("Camp retenu", r?.camp)); add(Kv("Sources", refs.map { KvVal("", shortRef(it.label)) })) }
+        else { add(CampLine("Camp retenu", r?.camp)); add(Srcs("Sources", refs)) }
         r?.note?.takeIf { it.isNotBlank() && refs.isNotEmpty() }?.let { add(Kv("Note", "", it)) }
         add(Kv("Classement du ministère", m?.code?.takeIf { it.isNotBlank() }, m?.code?.let { "bloc ${BLOCS[m.bloc] ?: m.bloc ?: NOT_GIVEN}, pour information" }))
     }

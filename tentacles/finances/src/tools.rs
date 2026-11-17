@@ -46,8 +46,35 @@ impl FinanceServer {
         })
     }
 
+    /// Choix ramené à une catégorie existante (nom exact), à une catégorie à créer, ou à défaut à un poste.
+    async fn target(&self, choice: &str, create: bool) -> Result<Target, String> {
+        if create {
+            let name = clean_text(choice, CATEGORY_MAX + 1);
+            if name.is_empty() || name.chars().count() > CATEGORY_MAX {
+                return Err(format!("Le nom de catégorie doit faire entre 1 et {CATEGORY_MAX} caractères."));
+            }
+            return Ok(Target::Category(name, true));
+        }
+        let c = clean_text(choice, LONG).to_lowercase();
+        // Service sans catégories : seuls les postes sont reconnus.
+        let cats = self.api.categories().await;
+        if let Ok(cats) = &cats {
+            if let Some(k) = cats.categories.items.iter().find(|k| clean_text(&k.name, LONG).to_lowercase() == c) {
+                return Ok(Target::Category(k.name.clone(), false));
+            }
+        }
+        match self.poste(choice).await {
+            Ok(p) => Ok(Target::Poste(p)),
+            Err(_) if cats.is_ok() => Err(format!(
+                "Catégorie inconnue « {} » : choisis-en une de la liste ou crée-la.",
+                clean_payee(choice)
+            )),
+            Err(e) => Err(e),
+        }
+    }
+
     /// Chemin commun à `classify` et `decide` : mêmes garde-fous avant d'écrire la règle.
-    async fn classify_rule(&self, payee: &str, poste: &str, whole_group_ok: bool) -> Out {
+    async fn classify_rule(&self, payee: &str, choice: &str, create: bool, whole_group_ok: bool) -> Out {
         if !(3..=100).contains(&payee.trim().chars().count()) {
             return Err("Le motif doit faire entre 3 et 100 caractères.".to_string());
         }
@@ -55,7 +82,7 @@ impl FinanceServer {
         if is_generic(&pattern) {
             return Err("Motif trop générique (mots bancaires ou chiffres seuls) : indique le nom du commerçant.".to_string());
         }
-        let poste = self.poste(poste).await?;
+        let target = self.target(choice, create).await?;
         let ops = self.api.unclassified().await.map_err(api_err)?;
         let needle = pattern.to_lowercase();
         let n = matching(&ops, &needle);
@@ -65,8 +92,13 @@ impl FinanceServer {
         if !whole_group_ok && ops.len() >= 3 && n == ops.len() {
             return Err("Motif trop large : il couvrirait toutes les dépenses sans catégorie.".to_string());
         }
-        let r = self.api.create_rule(&pattern, &poste).await.map_err(api_err)?;
+        let (r, name) = match &target {
+            Target::Poste(p) => (self.api.create_rule(&pattern, p).await, p),
+            Target::Category(c, create) => (self.api.classify_category(&pattern, c, *create).await, c),
+        };
+        let r = r.map_err(api_err)?;
         let state = if r.created { "enregistrée" } else { "mise à jour" };
+        let made = if r.category_created { " (catégorie créée)" } else { "" };
         // Relecture : seul ce qui reste à classer prouve que la règle reconnaît le libellé.
         let left = match self.api.unclassified().await {
             Ok(ops) => match matching(&ops, &needle) {
@@ -77,8 +109,30 @@ impl FinanceServer {
             },
             Err(_) => " ; ⚠ opérations restantes non vérifiables.".to_string(),
         };
-        Ok(format!("Règle {state} : {pattern} → {poste}{left}"))
+        Ok(format!("Règle {state} : {pattern} → {}{made}{left}", clean_text(name, SHORT)))
     }
+}
+
+/// Destination d'une règle de classement.
+enum Target {
+    Poste(String),
+    /// Nom exact, et création demandée.
+    Category(String, bool),
+}
+
+/// Nom de catégorie : borne alignée sur le service de finances.
+const CATEGORY_MAX: usize = 60;
+
+/// Catégories proposées en tête de chaque décision.
+const SUGGESTED: usize = 4;
+
+/// Option d'une décision ; un poste du budget porte un badge.
+fn option(name: &str, budget: bool) -> serde_json::Value {
+    let mut o = json!({"id": name, "label": clean_text(name, SHORT)});
+    if budget {
+        o["badge"] = json!("budget");
+    }
+    o
 }
 
 /// Opérations dont le libellé contient le motif (`needle` en minuscules).
@@ -229,6 +283,9 @@ struct ClassifyArgs {
 struct DecideArgs {
     id: String,
     choice: String,
+    /// Crée la catégorie `choice` si elle n'existe pas.
+    #[serde(default)]
+    create: bool,
 }
 #[derive(Deserialize, schemars::JsonSchema)]
 struct BriefArgs {
@@ -270,36 +327,88 @@ impl FinanceServer {
         Ok(unclassified_text(&self.api.unclassified().await.map_err(api_err)?, usize::MAX))
     }
 
-    #[tool(description = "Enregistrer une règle de classement : un motif (nom du commerçant, 3 caractères au moins) présent dans un libellé de la liste des dépenses sans catégorie, vers un poste.")]
+    #[tool(description = "Enregistrer une règle de classement : un motif (nom du commerçant, 3 caractères au moins) présent dans un libellé de la liste des dépenses sans catégorie, vers un poste ou une catégorie existante.")]
     async fn classify(&self, Parameters(a): Parameters<ClassifyArgs>) -> Out {
-        self.classify_rule(&a.payee, &a.poste, false).await
+        self.classify_rule(&a.payee, &a.poste, false, false).await
     }
 
     #[tool(description = "Lister les décisions de classement en attente (une par commerçant), au format JSON, pour l'application.")]
     async fn decisions(&self) -> Out {
-        let cycle = self.api.cycle().await.map_err(api_err)?;
         let ops = self.api.unclassified().await.map_err(api_err)?;
-        let alternatives: Vec<_> =
-            cycle.envelopes.keys().map(|p| json!({"id": p, "label": p})).collect();
         let groups = merchant_groups(&ops);
+        let (alternatives, mut suggested, can_create) = match section("categories", self.api.categories().await) {
+            Some(c) => {
+                dropped("categories", c.categories.dropped);
+                let names: Vec<&str> = c.categories.items.iter().map(|k| k.name.as_str()).collect();
+                let alternatives: Vec<_> = c.categories.items.iter().map(|k| option(&k.name, k.budget)).collect();
+                let budget = |n: &str| c.categories.items.iter().any(|k| k.name == n && k.budget);
+                let patterns: Vec<String> = groups.iter().map(|g| g.0.clone()).collect();
+                let found = if patterns.is_empty() {
+                    Vec::new()
+                } else {
+                    section("suggest", self.api.suggest(&patterns, SUGGESTED).await)
+                        .map(|s| s.suggestions.items)
+                        .unwrap_or_default()
+                };
+                // Seules des catégories connues sont proposées : `decide` les accepte toutes.
+                let suggested = found
+                    .into_iter()
+                    .map(|s| {
+                        let opts: Vec<_> = s
+                            .categories
+                            .iter()
+                            .filter(|n| names.contains(&n.as_str()))
+                            .take(SUGGESTED)
+                            .map(|n| option(n, budget(n)))
+                            .collect();
+                        (s.payee.to_lowercase(), s.matched, opts)
+                    })
+                    .collect();
+                (alternatives, suggested, true)
+            }
+            // Service sans catégories : postes du cycle, sans proposition.
+            None => {
+                let cycle = self.api.cycle().await.map_err(api_err)?;
+                let alternatives = cycle.envelopes.keys().map(|p| json!({"id": p, "label": p})).collect();
+                (alternatives, Vec::new(), false)
+            }
+        };
         let items: Vec<_> = groups
             .iter()
             .map(|(pattern, total, n, last)| {
-                json!({
+                let found = suggested.iter_mut().find(|s| s.0 == pattern.to_lowercase());
+                let (matched, opts) = found.map(|s| (s.1, std::mem::take(&mut s.2))).unwrap_or_default();
+                let proposal = opts.first().map(|o| {
+                    let mut o = o.clone();
+                    o["reason"] = json!(if matched > 0 {
+                        "Déjà utilisée pour ce commerçant."
+                    } else {
+                        "Parmi les plus utilisées."
+                    });
+                    o
+                });
+                let mut d = json!({
                     "id": pattern,
                     "title": "Dépense à classer",
                     "headline": format!("{:.2} €", total.abs()).replace('.', ","),
                     "subtitle": format!("{pattern} · {n} opération(s) · {}", last.format("%d/%m")),
-                    "proposal": null,
+                    "proposal": proposal,
                     "alternatives": alternatives,
                     "expires": (*last + Duration::days(30)).format("%Y-%m-%d").to_string(),
-                })
+                });
+                if !opts.is_empty() {
+                    d["suggestions"] = json!(opts);
+                }
+                if can_create {
+                    d["can_create"] = json!(true);
+                }
+                d
             })
             .collect();
         serde_json::to_string(&items).map_err(|e| e.to_string())
     }
 
-    #[tool(description = "Classer une décision de l'application : id = motif de la décision, choice = poste existant.")]
+    #[tool(description = "Classer une décision de l'application : id = motif de la décision, choice = catégorie existante ou poste ; create = vrai pour créer la catégorie choice.")]
     async fn decide(&self, Parameters(a): Parameters<DecideArgs>) -> Out {
         let ops = self.api.unclassified().await.map_err(api_err)?;
         let id = clean_payee(&a.id).to_lowercase();
@@ -307,7 +416,7 @@ impl FinanceServer {
             return Err("Décision inconnue ou déjà traitée.".to_string());
         }
         // L'id vient de `decisions` : un commerçant unique peut couvrir toutes les opérations.
-        self.classify_rule(&a.id, &a.choice, true).await
+        self.classify_rule(&a.id, &a.choice, a.create, true).await
     }
 
     #[tool(description = "Obtenir le résumé du budget avec le lien du tableau de bord s'il existe.")]

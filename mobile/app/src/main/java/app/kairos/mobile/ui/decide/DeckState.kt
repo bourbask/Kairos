@@ -6,6 +6,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
 import app.kairos.mobile.data.Decision
+import app.kairos.mobile.data.DecisionOption
+import java.text.Normalizer
+import java.util.Locale
 import kotlin.math.abs
 
 enum class Swipe { Right, Left, Up, Down }
@@ -38,7 +41,7 @@ fun swipeOf(offset: Offset, velocity: Offset, threshold: Float, flingSpeed: Floa
  * Réponse donnée à une carte, pas encore confirmée par le serveur.
  * Comparée par identité : refaire le même choix après une annulation en crée un nouveau.
  */
-class Choice(val card: Decision, val option: String)
+class Choice(val card: Decision, val option: String, val create: Boolean = false)
 
 /**
  * Pile de décisions, sans réseau ni horloge : l'écran envoie chaque [Choice]
@@ -54,6 +57,10 @@ class DeckState(cards: List<Decision>) {
     var done by mutableIntStateOf(0)
         private set
     var alternativesOpen by mutableStateOf(false)
+        private set
+
+    /** Liste complète des choix (« Autre… »), ouverte par-dessus la carte. */
+    var pickerOpen by mutableStateOf(false)
         private set
 
     /** Raison du dernier refus, affichée sur la carte revenue en tête. */
@@ -86,14 +93,24 @@ class DeckState(cards: List<Decision>) {
         alternativesOpen = false
     }
 
-    fun choose(option: String) {
+    fun openPicker() {
+        if (current != null) pickerOpen = true
+    }
+
+    fun dismissPicker() {
+        pickerOpen = false
+    }
+
+    /** Avec [create], le module crée le choix [option] s'il ne le connaît pas. */
+    fun choose(option: String, create: Boolean = false) {
         val card = current ?: return
-        val choice = Choice(card, option)
+        val choice = Choice(card, option, create)
         last = Undo(cards, done, choice)
         cards = cards.drop(1)
         done++
         outbox = outbox + choice
         alternativesOpen = false
+        pickerOpen = false
         message = null
     }
 
@@ -103,6 +120,7 @@ class DeckState(cards: List<Decision>) {
         last = Undo(cards, done, null)
         cards = cards.drop(1) + card
         alternativesOpen = false
+        pickerOpen = false
         message = null
     }
 
@@ -115,6 +133,7 @@ class DeckState(cards: List<Decision>) {
         u.choice?.let { outbox = outbox - it }
         last = null
         alternativesOpen = false
+        pickerOpen = false
         return true
     }
 
@@ -153,3 +172,78 @@ fun acceptLabel(card: Decision): String = card.proposal?.let { "Oui · ${it.labe
 /** Bouton ← : avec [directLeft], la première alternative retenue d'emblée ; sinon les choix. */
 fun otherLabel(card: Decision, directLeft: Boolean): String =
     card.alternatives.firstOrNull()?.takeIf { directLeft }?.label ?: "Autre choix"
+
+/** Choix rapides sous la carte : les suggestions du module, à défaut toutes les alternatives. */
+fun quickOptions(card: Decision): List<DecisionOption> = card.suggestions.ifEmpty { card.alternatives }
+
+/** « Autre… » : des choix hors des choix rapides, ou la création d'un nouveau. */
+fun hasMore(card: Decision): Boolean {
+    val quick = quickOptions(card).map { it.id }.toSet()
+    return card.canCreate || card.alternatives.any { it.id !in quick }
+}
+
+/** Borne d'un nom saisi, alignée sur les modules. */
+const val NAME_MAX = 60
+
+/** Nom saisi : contrôles en espaces, caractères invisibles retirés, espaces réduites. */
+fun cleanName(s: String): String =
+    s.map { if (it.isISOControl()) ' ' else it }
+        .filter { Character.getType(it) != Character.FORMAT.toInt() }
+        .joinToString("")
+        .split(Regex("\\s+"))
+        .filter { it.isNotEmpty() }
+        .joinToString(" ")
+
+private fun fold(s: String): String =
+    Normalizer.normalize(s.lowercase(Locale.FRENCH), Normalizer.Form.NFD).replace(Regex("\\p{M}"), "")
+
+/** Options dont le libellé contient [query], sans tenir compte de la casse ni des accents. */
+fun filterOptions(options: List<DecisionOption>, query: String): List<DecisionOption> {
+    val q = fold(cleanName(query))
+    return if (q.isEmpty()) options else options.filter { fold(it.label).contains(q) }
+}
+
+/** Choix issu de la liste complète ; [create] : nom nouveau, à créer par le module. */
+data class Pick(val id: String, val create: Boolean)
+
+/**
+ * Feuille « Autre… » : recherche dans [options] et, si [canCreate], saisie d'un nom nouveau.
+ * Un nom déjà présent, à la casse près, désigne l'option existante : jamais de doublon.
+ */
+class PickerState(private val options: List<DecisionOption>, val canCreate: Boolean) {
+    var query by mutableStateOf("")
+    var creating by mutableStateOf(false)
+        private set
+    var name by mutableStateOf("")
+    var error by mutableStateOf<String?>(null)
+        private set
+
+    val shown: List<DecisionOption> get() = filterOptions(options, query)
+
+    /** Ouvre la saisie, préremplie avec la recherche. */
+    fun startCreate() {
+        if (!canCreate) return
+        creating = true
+        name = cleanName(query)
+        error = null
+    }
+
+    fun cancelCreate() {
+        creating = false
+        error = null
+    }
+
+    /** Choix à envoyer, ou null avec la raison dans [error]. */
+    fun create(): Pick? {
+        val n = cleanName(name)
+        error = when {
+            n.isEmpty() -> "Indique un nom."
+            n.length > NAME_MAX -> "$NAME_MAX caractères au plus."
+            else -> null
+        }
+        if (error != null) return null
+        val key = n.lowercase(Locale.ROOT)
+        val existing = options.firstOrNull { it.label.lowercase(Locale.ROOT) == key || it.id.lowercase(Locale.ROOT) == key }
+        return existing?.let { Pick(it.id, false) } ?: Pick(n, true)
+    }
+}
