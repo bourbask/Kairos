@@ -279,6 +279,9 @@ struct Choice {
     label: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     reason: Option<String>,
+    /// Marque courte affichée à côté du choix.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    badge: Option<String>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -294,6 +297,12 @@ struct Decision {
     proposal: Option<Choice>,
     #[serde(default)]
     alternatives: Vec<Choice>,
+    /// Choix rapides, dans l'ordre ; les `alternatives` restent la liste complète.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    suggestions: Vec<Choice>,
+    /// Le module accepte un choix nouveau, créé à la demande.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    can_create: bool,
     expires: NaiveDate,
     #[serde(skip_deserializing)]
     module: String,
@@ -303,6 +312,9 @@ fn tidy_choice(c: &mut Choice) {
     cut(&mut c.id, TITLE_MAX);
     cut(&mut c.label, TITLE_MAX);
     cut_opt(&mut c.reason, BODY_MAX);
+    if let Some(b) = &mut c.badge {
+        cut(b, TITLE_MAX);
+    }
 }
 
 /// Éléments valides de chaque tentacule ; un résultat en erreur ou illisible
@@ -373,7 +385,7 @@ async fn fetch_decisions(d: &AppDeps) -> Vec<Decision> {
         cut(&mut x.headline, TITLE_MAX);
         cut(&mut x.subtitle, TITLE_MAX);
         cut_opt(&mut x.body, BODY_MAX);
-        x.proposal.iter_mut().chain(x.alternatives.iter_mut()).for_each(tidy_choice);
+        x.proposal.iter_mut().chain(x.alternatives.iter_mut()).chain(x.suggestions.iter_mut()).for_each(tidy_choice);
     });
     out.retain(|x| x.expires >= today);
     out.sort_by_key(|x| x.expires);
@@ -388,6 +400,9 @@ async fn decisions(Deps(d): Deps<AppDeps>) -> Json<Vec<Decision>> {
 #[derive(Deserialize)]
 struct DecideIn {
     choice: String,
+    /// Créer le choix s'il n'existe pas ; transmis au module seulement s'il est demandé.
+    #[serde(default)]
+    create: bool,
 }
 
 fn unreachable_reply(u: Unreachable) -> (StatusCode, String) {
@@ -467,8 +482,18 @@ async fn app_apk(Deps(d): Deps<AppDeps>) -> Response {
     }
 }
 
+/// Arguments de l'outil `decide` ; `create` n'est transmis que s'il est demandé,
+/// les modules qui l'ignorent reçoivent l'appel d'avant.
+fn decide_args(id: &str, b: DecideIn) -> Value {
+    let mut args = json!({"id": id, "choice": b.choice});
+    if b.create {
+        args["create"] = json!(true);
+    }
+    args
+}
+
 async fn decide(Deps(d): Deps<AppDeps>, Path((module, id)): Path<(String, String)>, Json(b): Json<DecideIn>) -> Response {
-    let (code, mut message) = match d.modules.call_one(&module, "decide", json!({"id": id, "choice": b.choice})).await {
+    let (code, mut message) = match d.modules.call_one(&module, "decide", decide_args(&id, b)).await {
         Err(u) => unreachable_reply(u),
         Ok(Ok(m)) => {
             d.set_count(None);
@@ -736,6 +761,28 @@ mod tests {
             assert!(v[i].get("headline").is_none() && v[i].get("subtitle").is_none(), "{}", v[i]);
         }
         assert_eq!((&v[2]["headline"], &v[2]["subtitle"]), (&json!("12 €"), &json!("s")));
+    }
+
+    #[tokio::test]
+    async fn decisions_relay_suggestions_badges_and_creation() {
+        let list = json!([{"id": "a", "title": "t", "proposal": {"id": "A", "label": "A", "badge": "budget"},
+            "alternatives": [{"id": "A", "label": "A", "badge": "budget"}, {"id": "B", "label": "B"}],
+            "suggestions": [{"id": "B", "label": "B"}], "can_create": true, "expires": "2999-01-01"},
+            {"id": "b", "title": "t", "proposal": null, "expires": "2999-01-02"}]);
+        let (d, _rx) = deps_with(fake(vec![("f", "decisions", Ok(list.to_string()))]), 4);
+        let (_, v) = get(&d, "/app/v1/decisions").await;
+        assert_eq!(v[0]["proposal"]["badge"], "budget");
+        assert_eq!(v[0]["alternatives"][0]["badge"], "budget");
+        assert_eq!(v[0]["suggestions"], json!([{"id": "B", "label": "B"}]));
+        assert_eq!(v[0]["can_create"], true);
+        assert!(v[1].get("suggestions").is_none() && v[1].get("can_create").is_none(), "{}", v[1]);
+    }
+
+    #[test]
+    fn decide_forwards_create_only_when_asked() {
+        let a = |create| decide_args("x", DecideIn { choice: "A".into(), create });
+        assert_eq!(a(false), json!({"id": "x", "choice": "A"}));
+        assert_eq!(a(true), json!({"id": "x", "choice": "A", "create": true}));
     }
 
     #[tokio::test]

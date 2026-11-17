@@ -181,6 +181,11 @@ déjà et ce qu'il attend de l'utilisateur, accessible en un geste.
 - Glisser → = accepter la proposition ; ← = refuser, les alternatives
   s'affichent sous le pouce ; ↑ = plus tard ; ↓ = fermer la pile. Réponse
   vocale possible (« non, c'est des loisirs »).
+- Champs facultatifs d'une carte : `suggestions` (choix rapides ordonnés, montrés
+  sous le pouce à la place des `alternatives`, qui restent la liste complète,
+  ouverte par « Autre… » avec recherche), `can_create` (le module accepte un
+  choix nouveau : `decide` reçoit alors `create: true`) et, sur une option,
+  `badge` (marque courte, ex. poste du budget).
 - Une carte a une **date d'expiration** fixée par le module ; passée cette
   date, elle disparaît sans relance.
 - « Plus tard » remet la carte en fin de pile **sans repousser son
