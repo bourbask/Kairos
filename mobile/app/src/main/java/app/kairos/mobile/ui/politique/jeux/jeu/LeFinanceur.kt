@@ -221,7 +221,7 @@ class LeFinanceur : PolJeu<FinanceurD>("le-financeur", FinanceurD.serializer()) 
                 Row(Modifier.weight(1f), horizontalArrangement = Arrangement.SpaceAround) {
                     d.pieces.indices.forEach { i ->
                         if (fait(i)) Spacer(Modifier.size(cellsDp(22), cellsDp(24)))
-                        else PieceMobile("p$i", gd, somme(i), d.pieces[i].montantTexte, unite, metaux, encre, !st.solved, c.reduit)
+                        else PieceMobile("p$i", gd, somme(i), d.pieces[i].montantTexte, unite, metaux, encre, !st.solved)
                     }
                 }
                 Led(if (st.solved) LedEtat.Verte else if (rouge) LedEtat.Rouge else LedEtat.Eteinte)
@@ -229,7 +229,7 @@ class LeFinanceur : PolJeu<FinanceurD>("le-financeur", FinanceurD.serializer()) 
             Row(Modifier.fillMaxWidth().padding(top = 16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                 d.tirelires.forEachIndexed { j, nom ->
                     val i = d.pieceDe(j)
-                    Tirelire("t$j", gd, nom, if (fait(i)) somme(i) else null, seat = just == i && !c.reduit, metaux, c.reduit, enabled = !st.solved)
+                    Tirelire("t$j", gd, nom, if (fait(i)) somme(i) else null, seat = just == i && !c.reduit, metaux, enabled = !st.solved)
                 }
             }
         }
@@ -242,7 +242,7 @@ class LeFinanceur : PolJeu<FinanceurD>("le-financeur", FinanceurD.serializer()) 
 @Composable
 private fun PieceMobile(
     id: String, gd: GlisserDeposer, label: String, texte: String, unite: String,
-    metaux: Map<Char, Color>, encre: Color, enabled: Boolean, reduit: Boolean,
+    metaux: Map<Char, Color>, encre: Color, enabled: Boolean,
 ) {
     val ombre = app.kairos.mobile.ui.politique.jeux.kit.Teintes.ombre
     val haut = gd.leve(id)
@@ -264,7 +264,7 @@ private fun PieceMobile(
 @Composable
 private fun Tirelire(
     id: String, gd: GlisserDeposer, nom: String, montant: String?, seat: Boolean,
-    metaux: Map<Char, Color>, reduit: Boolean, enabled: Boolean,
+    metaux: Map<Char, Color>, enabled: Boolean,
 ) {
     val sc = MaterialTheme.colorScheme
     val ink = { n: Float -> mix(sc.surface, sc.onSurface, n) }

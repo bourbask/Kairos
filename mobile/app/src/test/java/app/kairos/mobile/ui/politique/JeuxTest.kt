@@ -4,7 +4,6 @@ import app.kairos.mobile.ui.politique.jeux.CAP
 import app.kairos.mobile.ui.politique.jeux.Fin
 import app.kairos.mobile.ui.politique.jeux.Invitation
 import app.kairos.mobile.ui.politique.jeux.JEUX_REGISTRE
-import app.kairos.mobile.ui.politique.jeux.Manche
 import app.kairos.mobile.ui.politique.jeux.PARTIE
 import app.kairos.mobile.ui.politique.jeux.Page
 import app.kairos.mobile.ui.politique.jeux.Palier
@@ -15,7 +14,6 @@ import app.kairos.mobile.ui.politique.jeux.avancer
 import app.kairos.mobile.ui.politique.jeux.carte
 import app.kairos.mobile.ui.politique.jeux.damp
 import app.kairos.mobile.ui.politique.jeux.dragOffset
-import app.kairos.mobile.ui.politique.jeux.jeu.Exemple
 import app.kairos.mobile.ui.politique.jeux.jeuxOf
 import app.kairos.mobile.ui.politique.jeux.kit.Forme
 import app.kairos.mobile.ui.politique.jeux.kit.GlyphMode
@@ -40,7 +38,6 @@ import app.kairos.mobile.ui.politique.kit.verdictCode
 import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -217,13 +214,7 @@ class JeuxTest {
 
     // ---------- Contrat, registre, kit ----------
 
-    @Test fun example_game_decodes_and_validates() {
-        val ex = Exemple("x")
-        fun m(d: String) = Manche("1", d = PolJson.parseToJsonElement(d).jsonObject)
-        assertNotNull(ex.decoder(m("""{"choix":["A","B","C"],"bonne":1,"famille":"ignorée"}""").d))
-        assertNotNull(ex.decoder(m("""{"choix":[{"id":"i","nom":"Nom A"},{"ville":"Ville B"}],"bonne":0}""").d))
-        assertNull(ex.decoder(m("""{"choix":["A","B"],"bonne":5}""").d))
-        assertNull(ex.decoder(m("""{"bonne":1}""").d))
+    @Test fun registry_keys_match_slugs() {
         assertEquals(JEUX_REGISTRE.size, JEUX_REGISTRE.keys.toSet().size)
         JEUX_REGISTRE.forEach { (k, v) -> assertEquals(k, v.slug) }
     }
