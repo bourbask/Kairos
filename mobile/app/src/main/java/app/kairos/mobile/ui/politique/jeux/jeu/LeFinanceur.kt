@@ -1,5 +1,6 @@
 package app.kairos.mobile.ui.politique.jeux.jeu
 
+import app.kairos.mobile.ui.politique.jeux.kit.CouleursJeux
 import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.runtime.CompositionLocalProvider
@@ -130,7 +131,7 @@ private fun Grille(g: List<String>, couleurs: Map<Char, Color>, modifier: Modifi
 /** Métal des pièces : l'ambre de l'app éclairci, comme les boutons. */
 @Composable
 private fun metal(): Pair<Color, Map<Char, Color>> {
-    val co = mix(MaterialTheme.colorScheme.tertiary, Color.White, 0.22f)
+    val co = mix(CouleursJeux.current.ambre, Color.White, 0.22f)
     val or = { n: Float -> mix(co, Color.Black, n) }
     return or(0.66f) to mapOf(
         'f' to co, 'r' to or(0.1f), 'h' to mix(co, Color.White, 0.4f), 'd' to or(0.3f), 'i' to or(0.2f),
@@ -220,7 +221,7 @@ class LeFinanceur : PolJeu<FinanceurD>("le-financeur", FinanceurD.serializer()) 
                 Row(Modifier.weight(1f), horizontalArrangement = Arrangement.SpaceAround) {
                     d.pieces.indices.forEach { i ->
                         if (fait(i)) Spacer(Modifier.size(cellsDp(22), cellsDp(24)))
-                        else PieceMobile("p$i", gd, somme(i), d.pieces[i].montantTexte, unite, metaux, encre, !st.solved, c.reduit)
+                        else PieceMobile("p$i", gd, somme(i), d.pieces[i].montantTexte, unite, metaux, encre, !st.solved)
                     }
                 }
                 Led(if (st.solved) LedEtat.Verte else if (rouge) LedEtat.Rouge else LedEtat.Eteinte)
@@ -228,7 +229,7 @@ class LeFinanceur : PolJeu<FinanceurD>("le-financeur", FinanceurD.serializer()) 
             Row(Modifier.fillMaxWidth().padding(top = 16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                 d.tirelires.forEachIndexed { j, nom ->
                     val i = d.pieceDe(j)
-                    Tirelire("t$j", gd, nom, if (fait(i)) somme(i) else null, seat = just == i && !c.reduit, metaux, c.reduit, enabled = !st.solved)
+                    Tirelire("t$j", gd, nom, if (fait(i)) somme(i) else null, seat = just == i && !c.reduit, metaux, enabled = !st.solved)
                 }
             }
         }
@@ -241,7 +242,7 @@ class LeFinanceur : PolJeu<FinanceurD>("le-financeur", FinanceurD.serializer()) 
 @Composable
 private fun PieceMobile(
     id: String, gd: GlisserDeposer, label: String, texte: String, unite: String,
-    metaux: Map<Char, Color>, encre: Color, enabled: Boolean, reduit: Boolean,
+    metaux: Map<Char, Color>, encre: Color, enabled: Boolean,
 ) {
     val ombre = app.kairos.mobile.ui.politique.jeux.kit.Teintes.ombre
     val haut = gd.leve(id)
@@ -263,7 +264,7 @@ private fun PieceMobile(
 @Composable
 private fun Tirelire(
     id: String, gd: GlisserDeposer, nom: String, montant: String?, seat: Boolean,
-    metaux: Map<Char, Color>, reduit: Boolean, enabled: Boolean,
+    metaux: Map<Char, Color>, enabled: Boolean,
 ) {
     val sc = MaterialTheme.colorScheme
     val ink = { n: Float -> mix(sc.surface, sc.onSurface, n) }

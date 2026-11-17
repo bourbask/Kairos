@@ -1,5 +1,6 @@
 package app.kairos.mobile.ui.politique.jeux.jeu
 
+import app.kairos.mobile.ui.politique.jeux.kit.CouleursJeux
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.keyframes
 import androidx.compose.foundation.background
@@ -105,9 +106,9 @@ class LeVote : PolJeu<VoteD>("le-vote", VoteD.serializer()) {
                 if (id != null) Box(Modifier.offset { IntOffset(0, saut.value.dp.roundToPx()) }) {
                     IdentityBadge(id, 64.dp)
                     if (st.solved) Box(
-                        Modifier.align(Alignment.TopEnd).offset(6.dp, (-6).dp).size(20.dp).clip(PixelShape(3.dp, 1)).background(sc.primary),
+                        Modifier.align(Alignment.TopEnd).offset(6.dp, (-6).dp).size(20.dp).clip(PixelShape(3.dp, 1)).background(CouleursJeux.current.juste),
                         contentAlignment = Alignment.Center,
-                    ) { Text("✓", color = sc.onPrimary, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold) }
+                    ) { Text("✓", color = CouleursJeux.current.surJuste, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold) }
                 }
                 Column {
                     Text(frTypo(d.orateur), color = sc.onSurface, fontWeight = FontWeight.Bold, fontSize = 15.sp)

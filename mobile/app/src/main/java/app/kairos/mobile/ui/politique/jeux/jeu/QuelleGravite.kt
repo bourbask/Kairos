@@ -1,5 +1,6 @@
 package app.kairos.mobile.ui.politique.jeux.jeu
 
+import app.kairos.mobile.ui.politique.jeux.kit.CouleursJeux
 import kotlinx.serialization.json.JsonObject
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.ContentTransform
@@ -73,7 +74,7 @@ class QuelleGravite : PolJeu<CranD>("quelle-gravite", CranD.serializer()) {
         val lv = if (st.solved) d.bonne else choix
         val ecartes = st.out.mapNotNull { it.toIntOrNull() }.toSet()
         val sc = MaterialTheme.colorScheme
-        val gc = listOf(sc.primary, sc.tertiary, mix(sc.tertiary, sc.error, 0.5f), sc.error)[lv - 1]
+        val gc = CouleursJeux.current.echelle(lv)
         val fond by animateColorAsState(mix(sc.surface, gc, lv * 0.05f), tween(if (c.reduit) 0 else 250), label = "fond")
         val bord by animateColorAsState(mix(sc.outlineVariant, gc, lv * 0.14f), tween(if (c.reduit) 0 else 250), label = "bord")
         // Frémissement du haut selon le cran atteint ; secousse franche à l'erreur.

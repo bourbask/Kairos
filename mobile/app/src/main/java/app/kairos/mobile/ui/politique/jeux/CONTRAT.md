@@ -29,8 +29,8 @@ class MonJeu : PolJeu<MonD>("mon-slug", MonD.serializer()) {
 }
 ```
 
-Registre : `MonJeu(),` dans la liste de `JEUX_REGISTRE` (remplace la ligne `Exemple("mon-slug")` si elle existe).
-Référence minimale : `jeu/Exemple.kt` (touches physiques + voyants).
+Registre : `MonJeu(),` dans la liste de `JEUX_REGISTRE`.
+Référence courte : `jeu/LeVote.kt` (touches physiques du kit + voyants, fenêtre qui lit `c.data`).
 
 ## État et réponses
 

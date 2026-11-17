@@ -1,5 +1,6 @@
 package app.kairos.mobile.ui.politique.jeux.jeu
 
+import app.kairos.mobile.ui.politique.jeux.kit.CouleursJeux
 import app.kairos.mobile.ui.politique.model.PolData
 import androidx.compose.runtime.MutableIntState
 import kotlinx.serialization.json.JsonObject
@@ -66,7 +67,6 @@ import app.kairos.mobile.ui.politique.screens.RegionShape
 import app.kairos.mobile.ui.politique.screens.boundsOf
 import app.kairos.mobile.ui.politique.screens.one
 import app.kairos.mobile.ui.politique.screens.parsePath
-import app.kairos.mobile.ui.theme.KairosColors
 import kotlin.math.roundToInt
 
 private val Glisse = CubicBezierEasing(0.05f, 0.7f, 0.1f, 1f)
@@ -90,7 +90,6 @@ class LaVille : PolJeu<VilleD>("la-ville", VilleD.serializer()) {
     @Composable
     override fun Manette(m: Manche, d: VilleD, st: MancheEtat, c: Coque) {
         val sc = MaterialTheme.colorScheme
-        val kc = KairosColors.current
         val density = LocalDensity.current
         val data = c.data
         val proj = remember(data) { data.one("carte", "projection", Projection.serializer()) ?: PROJ_DEFAUT }
@@ -139,7 +138,10 @@ class LaVille : PolJeu<VilleD>("la-ville", VilleD.serializer()) {
             fun inkP(p: Float) = mix(surf, ink, p)
             val tintes = listOf(inkP(0.09f), inkP(0.14f), inkP(0.19f), inkP(0.24f))
             val bord = inkP(0.34f)
-            val cote = mix(kc.ciel, kc.nuit, 0.22f)
+            val cj = CouleursJeux.current
+            val mer = cj.suivant
+            val merEncre = cj.suivantEncre
+            val cote = mix(mer, merEncre, 0.22f)
             val allume = mix(surf, sc.primary, 0.30f)
             val allumeBord = mix(surf, sc.primary, 0.55f)
             val reg = e.region
@@ -184,7 +186,7 @@ class LaVille : PolJeu<VilleD>("la-ville", VilleD.serializer()) {
                         },
                 ) {
                     // Métropole : mer, régions, frontières, ombre de côte.
-                    bloc(0, 0, mapW, mapH, s, kc.ciel)
+                    bloc(0, 0, mapW, mapH, s, mer)
                     for (y in 0 until CARTE_H) for (x in 0 until CARTE_W) {
                         val code = grille[y * CARTE_W + x]
                         val px = x * s
@@ -200,12 +202,12 @@ class LaVille : PolJeu<VilleD>("la-ville", VilleD.serializer()) {
                     }
                     // Encarts d'outre-mer.
                     val top = mapH + vGap
-                    val lisere = mix(kc.ciel, kc.nuit, 0.14f)
+                    val lisere = mix(mer, merEncre, 0.14f)
                     ENCARTS.forEachIndexed { k, m2 ->
                         val x0 = medX[k]
                         val l = (s / 3f).roundToInt().coerceAtLeast(1)
                         bloc(x0, top, m2.w * s, ENCART_H * s, s, lisere)
-                        bloc(x0 + l, top + l, m2.w * s - 2 * l, ENCART_H * s - 2 * l, s, kc.ciel)
+                        bloc(x0 + l, top + l, m2.w * s - 2 * l, ENCART_H * s - 2 * l, s, mer)
                         val on = m2.code == reg
                         m2.g.forEachIndexed { y, row ->
                             row.forEachIndexed { x, ch ->
@@ -224,7 +226,7 @@ class LaVille : PolJeu<VilleD>("la-ville", VilleD.serializer()) {
                     sprite(LOUPE, lx, ly + s, s) { k -> if (k == 'v' || k == 'h') null else ombre }
                     sprite(LOUPE, lx, ly, s) { k ->
                         when (k) {
-                            'v' -> mix(kc.ciel, Color.White, 0.4f).copy(alpha = 0.28f)
+                            'v' -> mix(mer, Color.White, 0.4f).copy(alpha = 0.28f)
                             'h' -> Color.White.copy(alpha = 0.6f)
                             'r' -> inkP(0.70f)
                             'D' -> inkP(0.85f)
@@ -235,8 +237,8 @@ class LaVille : PolJeu<VilleD>("la-ville", VilleD.serializer()) {
                     // Épingles : la pointe sur la ville.
                     d.choix.indices.forEach { j ->
                         val pc = when {
-                            st.solved && j == d.bonne -> sc.primary
-                            "$j" in st.out -> sc.error
+                            st.solved && j == d.bonne -> cj.juste
+                            "$j" in st.out -> cj.faux
                             j == i -> att
                             else -> inkP(0.58f)
                         }
@@ -260,7 +262,7 @@ class LaVille : PolJeu<VilleD>("la-ville", VilleD.serializer()) {
                     Text(
                         m2.nom.uppercase(),
                         Modifier.offset { IntOffset(medX[k] + 5.dp.roundToPx(), mapH + vGap + 4.dp.roundToPx()) }.clearAndSetSemantics { },
-                        color = mix(kc.nuit, kc.ciel, 0.25f), fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold,
+                        color = mix(merEncre, mer, 0.25f), fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold,
                         fontSize = 8.sp, lineHeight = 8.sp, letterSpacing = 0.03.em, maxLines = 1, softWrap = false,
                     )
                 }

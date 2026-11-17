@@ -1,5 +1,6 @@
 package app.kairos.mobile.ui.politique.jeux
 
+import app.kairos.mobile.ui.politique.jeux.kit.CouleursJeux
 import android.view.HapticFeedbackConstants
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.animate
@@ -87,7 +88,6 @@ import app.kairos.mobile.ui.politique.kit.quoted
 import app.kairos.mobile.ui.politique.kit.verdictCode
 import app.kairos.mobile.ui.politique.model.PolData
 import app.kairos.mobile.ui.politique.reducedMotion
-import app.kairos.mobile.ui.theme.KairosColors
 import app.kairos.mobile.ui.theme.Motion
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -121,7 +121,7 @@ fun FenetreQuestion(m: Manche, citation: Boolean = false) {
 
 /** Étoile pixel « du premier coup ». */
 @Composable
-fun Etoile(modifier: Modifier = Modifier.size(12.dp), color: Color = MaterialTheme.colorScheme.tertiary) = PixelGrid(Glyphes.star, color, modifier)
+fun Etoile(modifier: Modifier = Modifier.size(12.dp), color: Color = CouleursJeux.current.ambre) = PixelGrid(Glyphes.star, color, modifier)
 
 private fun Palier.scene(): SceneKind = when (this) {
     Palier.PremierCoup -> SceneKind.PremierCoup
@@ -193,10 +193,9 @@ private fun MancheCarte(session: JeuxSession, g: JeuPret, nom: String, st: Manch
     // Carte déjà faite dans un cycle précédent : signalée tant qu'elle n'est pas résolue.
     val deja = remember(st) { carte(g.slug, st.manche.id) in session.prog.faites }
     val piste = rememberPiste(session, g.slug, st, reduit)
-    Row(Modifier.fillMaxWidth().padding(start = 2.dp, bottom = 10.dp).heightIn(min = 40.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(frTypo(nom), Modifier.weight(1f).semantics { heading() }, fontSize = 18.sp, lineHeight = 21.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-        Pager(n, total, st, onPage = { piste.go(it) })
-    }
+    // Titre sur toute la largeur (une ligne, même à 360 dp), pager dessous : ses cibles de 48 dp ne le rognent plus.
+    Text(frTypo(nom), Modifier.fillMaxWidth().padding(start = 2.dp).semantics { heading() }, fontSize = 18.sp, lineHeight = 22.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    Pager(n, total, st, Modifier.fillMaxWidth().padding(start = 2.dp, bottom = 2.dp), onPage = { piste.go(it) })
     Column(Modifier.fillMaxWidth().padding(bottom = 10.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Box(Modifier.fillMaxWidth().weight(1f, fill = true).heightIn(min = 150.dp)) {
             Fenetre(piste, st, session, g.slug, reduit,
@@ -261,7 +260,7 @@ private fun Fenetre(
     question: @Composable () -> Unit, reponse: @Composable () -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
-    val kc = KairosColors.current
+    val cj = CouleursJeux.current
     val density = LocalDensity.current
     val view = LocalView.current
     val scope = rememberCoroutineScope()
@@ -319,11 +318,11 @@ private fun Fenetre(
         val at = { base: Float -> Modifier.offset { IntOffset((base + piste.x).roundToInt(), 0) }.width(wDp).fillMaxHeight() }
         Box(at(0f).let { if (st.page != Page.Question) it.clearAndSetSemantics { } else it }) { question() }
         if (st.solved) {
-            Box(Modifier.offset { IntOffset((w + piste.x).roundToInt(), 0) }.width(GAP_DP.dp).fillMaxHeight().background(Brush.horizontalGradient(listOf(scheme.surface, scheme.primaryContainer))))
-            Box(at(w + gap).background(scheme.primaryContainer).let { if (st.page != Page.Reponse) it.clearAndSetSemantics { } else it }) { reponse() }
+            Box(Modifier.offset { IntOffset((w + piste.x).roundToInt(), 0) }.width(GAP_DP.dp).fillMaxHeight().background(Brush.horizontalGradient(listOf(scheme.surface, cj.justeFond))))
+            Box(at(w + gap).background(cj.justeFond).let { if (st.page != Page.Reponse) it.clearAndSetSemantics { } else it }) { reponse() }
             // Panneau « suivant » : flèche fixe au centre du quart révélé à la butée.
-            Box(at(2 * w + gap).background(kc.ciel).clearAndSetSemantics { }) {
-                PixelGrid(Glyphes.fleche, kc.nuit, Modifier.align(Alignment.CenterStart).offset(x = with(density) { (w * CAP / 2).toDp() } - 24.dp + if (armed) 1.dp else 0.dp).size(48.dp))
+            Box(at(2 * w + gap).background(cj.suivant).clearAndSetSemantics { }) {
+                PixelGrid(Glyphes.fleche, cj.suivantEncre, Modifier.align(Alignment.CenterStart).offset(x = with(density) { (w * CAP / 2).toDp() } - 24.dp + if (armed) 1.dp else 0.dp).size(48.dp))
             }
         }
     }
@@ -336,9 +335,10 @@ private fun Fenetre(
 private fun Reponse(g: JeuPret, st: MancheEtat, d: Any, first: Boolean, data: PolData, nav: PolNavigator, onNext: () -> Unit, reduit: Boolean) {
     val r = st.manche.reponse
     val scheme = MaterialTheme.colorScheme
-    val ink = scheme.onPrimaryContainer
+    val cj = CouleursJeux.current
+    val ink = cj.justeEncre
     Box(Modifier.fillMaxSize()) {
-        PixelIcon("coche", scheme.primary.copy(alpha = 0.22f), Modifier.align(Alignment.BottomEnd).padding(end = 40.dp, bottom = 64.dp).size(112.dp))
+        PixelIcon("coche", cj.juste.copy(alpha = 0.22f), Modifier.align(Alignment.BottomEnd).padding(end = 40.dp, bottom = 64.dp).size(112.dp))
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             if (first) Row(Modifier.align(Alignment.End), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 Etoile(Modifier.size(14.dp))
@@ -360,8 +360,8 @@ private fun Reponse(g: JeuPret, st: MancheEtat, d: Any, first: Boolean, data: Po
             }
         }
         // Mouvements réduits : pas d'invitation, une flèche compacte mène à la suivante.
-        if (reduit) IconButton(onNext, Modifier.align(Alignment.BottomEnd).padding(10.dp).clip(CircleShape).background(KairosColors.current.ciel)) {
-            Icon(KairosIcons.ChevronForward, contentDescription = "Question suivante", tint = KairosColors.current.nuit)
+        if (reduit) IconButton(onNext, Modifier.align(Alignment.BottomEnd).padding(10.dp).clip(CircleShape).background(cj.suivant)) {
+            Icon(KairosIcons.ChevronForward, contentDescription = "Question suivante", tint = cj.suivantEncre)
         }
     }
 }
@@ -387,10 +387,10 @@ private fun NeutralChip(text: String) {
 // ---------- Pager ----------
 
 @Composable
-private fun Pager(n: Int, total: Int, st: MancheEtat, onPage: (Page) -> Unit) {
+private fun Pager(n: Int, total: Int, st: MancheEtat, modifier: Modifier, onPage: (Page) -> Unit) {
     val scheme = MaterialTheme.colorScheme
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text("$n/$total", Modifier.padding(end = 4.dp).clearAndSetSemantics { }, color = scheme.onSurfaceVariant, fontFamily = Mono, fontSize = 11.sp)
+    Row(modifier, verticalAlignment = Alignment.CenterVertically) {
+        Text("$n/$total", Modifier.weight(1f).clearAndSetSemantics { }, color = scheme.onSurfaceVariant, fontFamily = Mono, fontSize = 11.sp)
         IconButton({ onPage(Page.Question) }, enabled = st.page != Page.Question) {
             Icon(KairosIcons.ChevronBack, contentDescription = "Question $n", tint = scheme.onSurfaceVariant)
         }

@@ -1,5 +1,6 @@
 package app.kairos.mobile.ui.politique.jeux.jeu
 
+import app.kairos.mobile.ui.politique.jeux.kit.CouleursJeux
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.keyframes
 import androidx.compose.foundation.layout.Arrangement
@@ -124,7 +125,7 @@ class AvantApres : PolJeu<AvantApresD>("avant-apres", AvantApresD.serializer()) 
                 (0..2).forEach { i ->
                     val ecarte = "$i" in st.out
                     val col = when {
-                        ecarte -> sc.error.copy(alpha = 0.75f)
+                        ecarte -> CouleursJeux.current.faux.copy(alpha = 0.75f)
                         i == v -> sc.onSurface
                         else -> mix(sc.onSurfaceVariant, sc.surface, 0.3f)
                     }

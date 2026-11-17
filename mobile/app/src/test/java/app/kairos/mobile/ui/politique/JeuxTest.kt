@@ -4,7 +4,6 @@ import app.kairos.mobile.ui.politique.jeux.CAP
 import app.kairos.mobile.ui.politique.jeux.Fin
 import app.kairos.mobile.ui.politique.jeux.Invitation
 import app.kairos.mobile.ui.politique.jeux.JEUX_REGISTRE
-import app.kairos.mobile.ui.politique.jeux.Manche
 import app.kairos.mobile.ui.politique.jeux.PARTIE
 import app.kairos.mobile.ui.politique.jeux.Page
 import app.kairos.mobile.ui.politique.jeux.Palier
@@ -15,7 +14,6 @@ import app.kairos.mobile.ui.politique.jeux.avancer
 import app.kairos.mobile.ui.politique.jeux.carte
 import app.kairos.mobile.ui.politique.jeux.damp
 import app.kairos.mobile.ui.politique.jeux.dragOffset
-import app.kairos.mobile.ui.politique.jeux.jeu.Exemple
 import app.kairos.mobile.ui.politique.jeux.jeuxOf
 import app.kairos.mobile.ui.politique.jeux.kit.Forme
 import app.kairos.mobile.ui.politique.jeux.kit.GlyphMode
@@ -40,7 +38,6 @@ import app.kairos.mobile.ui.politique.kit.verdictCode
 import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -106,10 +103,14 @@ class JeuxTest {
         assertEquals(-100f, dragOffset(Page.Question, -100f, w, gap).offset)
         assertEquals(-325f, dragOffset(Page.Question, -900f, w, gap).offset)
         assertEquals(35f, dragOffset(Page.Question, 100f, w, gap).offset, 0.01f)
-        // Réponse vers « suivant » : 0,35 du doigt, butée dure à 1/4 de largeur, armée à la butée.
+        // Réponse vers « suivant » : 0,525 du doigt, butée dure à 1/4 de largeur, armée à la butée.
         val cap = CAP * w
         val small = dragOffset(Page.Reponse, -100f, w, gap)
-        assertEquals(-35f, small.offset, 0.01f)
+        assertEquals(-52.5f, small.offset, 0.01f)
+        // Armement à la moitié de la fenêtre (2/3 de l'ancienne course, 0,75) : armé juste après, pas juste avant.
+        assertEquals(150f, app.kairos.mobile.ui.politique.jeux.courseArmement(w), 0.01f)
+        assertTrue(dragOffset(Page.Reponse, -151f, w, gap).armed)
+        assertFalse(dragOffset(Page.Reponse, -145f, w, gap).armed)
         assertFalse(small.armed)
         val far = dragOffset(Page.Reponse, -2000f, w, gap)
         assertEquals(-cap, far.offset, 0.01f)
@@ -213,13 +214,7 @@ class JeuxTest {
 
     // ---------- Contrat, registre, kit ----------
 
-    @Test fun example_game_decodes_and_validates() {
-        val ex = Exemple("x")
-        fun m(d: String) = Manche("1", d = PolJson.parseToJsonElement(d).jsonObject)
-        assertNotNull(ex.decoder(m("""{"choix":["A","B","C"],"bonne":1,"famille":"ignorée"}""").d))
-        assertNotNull(ex.decoder(m("""{"choix":[{"id":"i","nom":"Nom A"},{"ville":"Ville B"}],"bonne":0}""").d))
-        assertNull(ex.decoder(m("""{"choix":["A","B"],"bonne":5}""").d))
-        assertNull(ex.decoder(m("""{"bonne":1}""").d))
+    @Test fun registry_keys_match_slugs() {
         assertEquals(JEUX_REGISTRE.size, JEUX_REGISTRE.keys.toSet().size)
         JEUX_REGISTRE.forEach { (k, v) -> assertEquals(k, v.slug) }
     }

@@ -11,6 +11,11 @@ import kotlin.random.Random
 const val GAP_DP = 25f
 /** Au-delà de la réponse, la piste suit cette part du doigt. */
 const val RESIST = 0.35f
+/**
+ * Tirage vers « suivant » : part du doigt suivie. Butée atteinte après 1,05 × [CAP] / [SUIVI] de la largeur,
+ * soit la moitié de la fenêtre (150 dp sur un écran de 360 dp, 176 dp sur 412 dp).
+ */
+const val SUIVI = 0.525f
 /** Butée dure du tirage vers « suivant » : part de la largeur de la fenêtre ; seuil = butée. */
 const val CAP = 0.25f
 /** Changement de panneau : distance, ou lancer plus court mais rapide. */
@@ -48,7 +53,7 @@ fun dragOffset(page: Page, dx: Float, width: Float, gap: Float): Drag {
         dx > 0 -> Drag(minOf(dx, span), false, 0f)
         else -> {
             val cap = CAP * width
-            val o = damp(-dx * RESIST, cap)
+            val o = damp(-dx * SUIVI, cap)
             Drag(-o, o >= cap - 0.01f, if (cap > 0) o / cap else 0f)
         }
     }
@@ -209,3 +214,6 @@ fun progressLabel(a: Avance): String = "${a.n} cartes sur ${a.m}" + if (a.f > 0)
  * il alterne donc avec une variante suivie d'un espace sans chasse, invisible et muet.
  */
 fun annonceNeuve(precedente: String, msg: String): String = if (precedente == msg) msg + "\u200B" else msg
+
+/** Course du doigt (même unité que [width]) pour armer le passage à la suivante. */
+fun courseArmement(width: Float): Float = 1.05f * CAP * width / SUIVI

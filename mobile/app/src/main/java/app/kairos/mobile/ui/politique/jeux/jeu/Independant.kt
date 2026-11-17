@@ -1,5 +1,6 @@
 package app.kairos.mobile.ui.politique.jeux.jeu
 
+import app.kairos.mobile.ui.politique.jeux.kit.CouleursJeux
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.unit.Dp
 import kotlinx.serialization.json.JsonObject
@@ -169,7 +170,7 @@ private fun Romaine(deg: Float, poids: Int, out: List<String>, s: Int, enabled: 
     val outs by rememberUpdatedState(out)
     val cells = remember(deg, poids, out.toList()) { romaine(deg, poids, out) }
     val on = sc.onSurfaceVariant
-    val att = sc.tertiary
+    val att = CouleursJeux.current.ambre
     val k = Color.Black
     val b = Color.White
     val cols = mapOf(
