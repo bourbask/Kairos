@@ -119,7 +119,7 @@ fun Cadran(
                     if (!enabled) disabled()
                     else setProgress { v -> set(v.roundToInt().coerceIn(1, 4)); true }
                 }
-                .pointerInput(enabled) {
+                .pointerInput(enabled, s) {
                     if (!enabled) return@pointerInput
                     awaitEachGesture {
                         val down = awaitFirstDown()

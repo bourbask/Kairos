@@ -114,7 +114,8 @@ class Independant : PolJeu<CranD>("independant", CranD.serializer()) {
             if (!c.reduit) for (a in listOf(3f, -9f, ROM_REPOS)) angle.animateTo(a, tween(100, easing = FastOutSlowInEasing))
             delay(if (c.reduit) 0 else 120)
             dir = 0
-            sel = premierLibre(st.out)
+            // Le joueur a pu choisir un autre cran pendant la secousse : on ne le déplace que s'il reste sur un cran écarté.
+            if (sel.toString() in st.out) sel = premierLibre(st.out)
             poids = sel
         }
         // Juste : le fléau remonte d'aplomb, léger dépassement.
