@@ -51,6 +51,22 @@ class PolDataTest {
     }
 
     @Test
+    fun merge_pages_restores_lists_split_at_depth() {
+        // Forme du serveur quand la masse est au 3ᵉ niveau : page 0 = squelette, suivantes = chemins seuls.
+        fun p(n: Int, json: String) = PolPage("jeux", n, 3, "v", Json.parseToJsonElement(json))
+        val m = mergePages(listOf(
+            p(2, """{"JEUX":{"b":{"manches":[3]}}}"""),
+            p(0, """{"THEMES":[{"id":"t"}],"JEUX":{"a":{"nom":"A","manches":[1]},"b":{"nom":"B","manches":[]}}}"""),
+            p(1, """{"JEUX":{"a":{"manches":[2]},"b":{"manches":[]}}}"""),
+        ))
+        val attendu = Json.parseToJsonElement(
+            """{"THEMES":[{"id":"t"}],"JEUX":{"a":{"nom":"A","manches":[1,2]},"b":{"nom":"B","manches":[3]}}}""",
+        )
+        assertEquals(attendu, m)
+        assertEquals(listOf("a", "b"), m["JEUX"]!!.jsonObject.keys.toList())
+    }
+
+    @Test
     fun loader_restarts_when_version_changes() = runBlocking {
         val p0 = page("fichier-dit-vote-p0")
         val p1 = page("fichier-dit-vote-p1")
