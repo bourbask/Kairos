@@ -1,6 +1,6 @@
 package app.kairos.mobile.ui.politique.screens
 
-import app.kairos.mobile.ui.politique.kit.sourceName
+import app.kairos.mobile.ui.politique.kit.sourcesText
 import app.kairos.mobile.ui.politique.kit.TableCard
 import app.kairos.mobile.ui.politique.model.Claim
 import app.kairos.mobile.ui.politique.model.VERDICT_SCALE
@@ -114,13 +114,13 @@ fun campLabel(c: Claim): String = c.camp.ifBlank { "camp non établi" }
 fun claimKicker(c: Claim): String = listOf(c.theme, c.date?.takeIf { it.isNotBlank() }?.let(::fmtDate)).filterNotNull().filter { it.isNotBlank() }.joinToString(" · ")
 
 /** Carte du mode « À table » : phrase, verdict, ce qu'elle cache, faits, sources. */
-fun claimTableCard(c: Claim): TableCard = TableCard(
+fun claimTableCard(data: PolData, c: Claim): TableCard = TableCard(
     kicker = if (c.camp.isBlank()) "${c.theme} · ${campLabel(c)}" else "${c.theme} · entendu côté ${c.camp}",
     title = campLabel(c),
     quote = c.q,
     verdict = c.v,
     lines = listOfNotNull(c.cache?.takeIf { it.isNotBlank() }?.let { "Ce que la phrase cache : $it" }) + c.facts,
-    source = sourcesOf(c.src).joinToString(" ; ") { sourceName(it) }.takeIf { it.isNotBlank() },
+    source = sourcesText(sourcesOf(c.src), data),
 )
 
 // ---------- Ça vient d'où ? ----------

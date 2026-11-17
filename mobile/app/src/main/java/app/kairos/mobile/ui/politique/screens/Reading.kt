@@ -59,7 +59,6 @@ import app.kairos.mobile.ui.politique.PolNavigator
 import app.kairos.mobile.ui.politique.PolSheetState
 import app.kairos.mobile.ui.politique.kit.BalanceBlock
 import app.kairos.mobile.ui.politique.kit.EmptyState
-import app.kairos.mobile.ui.politique.kit.EvaluatorTag
 import app.kairos.mobile.ui.politique.kit.IdentityChip
 import app.kairos.mobile.ui.politique.kit.Kicker
 import app.kairos.mobile.ui.politique.kit.opensBalance
@@ -114,7 +113,7 @@ private fun Examples(data: PolData, r: Rhet, nav: PolNavigator, onDark: Boolean)
         Column(Modifier.padding(top = 9.dp)) {
             WhoTag(data, e.who, nav, onDark)
             Text(frTypo(e.text), Modifier.padding(top = 4.dp), fontSize = 13.5.sp, lineHeight = 19.sp)
-            e.url?.let { SourceButton(SourceRef("", it), data, {}, Modifier.padding(top = 6.dp)) }
+            e.url?.let { SourceButton(SourceRef("", it), data, { id -> nav.sheet(PolSheetState.Evaluator(id)) }, Modifier.padding(top = 6.dp)) }
         }
     }
 }
@@ -275,9 +274,7 @@ private fun DossierBlock(data: PolData, d: ContentDossier, startOpen: Boolean, n
         if (open) {
             FlowRow(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp), itemVerticalAlignment = Alignment.CenterVertically) {
                 Kicker("Source")
-                val ev = s.ev?.let { data.evaluators[it] }
-                if (ev != null) EvaluatorTag(ev, onEv)
-                else Text(s.nom.ifBlank { "non identifiée" }, Modifier.clip(CircleShape).background(scheme.surfaceVariant).padding(horizontal = 10.dp, vertical = 5.dp), fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold)
+                SourceButton(SourceRef(s.nom.ifBlank { "non identifiée" }, null, s.ev), data, onEv)
                 if (relay != null) {
                     Kicker("Relayé par")
                     IdentityChip(data, relay, onClick = { nav.sheet(PolSheetState.Identity(relay)) })

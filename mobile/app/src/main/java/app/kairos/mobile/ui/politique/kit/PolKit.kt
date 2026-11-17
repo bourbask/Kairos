@@ -42,7 +42,6 @@ import androidx.compose.material3.TooltipDefaults
 import androidx.compose.material3.rememberTooltipState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -203,14 +202,18 @@ fun evA11yLabel(ev: Evaluator): String {
  */
 fun sourceRest(src: SourceRef, ev: Evaluator?): String {
     if (ev == null) return sourceName(src)
+    return labelRest(src, ev) ?: safeHttps(src.url)?.let(::hostOf) ?: if (src.label.isBlank()) sourceName(src) else "Article"
+}
+
+/** Ce que le libellé dit de plus que le nom de [ev] ; libellé sans ce nom en tête : le libellé entier ; rien : null. */
+private fun labelRest(src: SourceRef, ev: Evaluator): String? {
+    val raw = src.label.trim()
     val l = fold(src.label)
     val k = (ev.alias + ev.nom).map(::fold).filter { it.isNotEmpty() }.sortedByDescending { it.length }
-        .firstOrNull { l.startsWith(it) && (l.length == it.length || !l[it.length].isLetterOrDigit()) } ?: return sourceName(src)
+        .firstOrNull { l.startsWith(it) && (l.length == it.length || !l[it.length].isLetterOrDigit()) }
     // Le libellé replié garde la longueur de l'original tant qu'aucune lettre n'est décomposée en plusieurs : sinon, libellé entier.
-    val raw = src.label.trim()
-    if (fold(raw).length != raw.length) return sourceName(src)
-    val rest = raw.substring(k.length).trimStart { it.isWhitespace() || it in ",;:·–—-" }.trim()
-    return rest.ifEmpty { safeHttps(src.url)?.let { runCatching { java.net.URI(it).host }.getOrNull() }?.removePrefix("www.") ?: "Article" }
+    if (k == null || fold(raw).length != raw.length) return raw.ifEmpty { null }
+    return raw.substring(k.length).trimStart { it.isWhitespace() || it in ",;:·–—-" }.trim().ifEmpty { null }
 }
 
 /** Libellé d'une source : son nom, à défaut le domaine de l'adresse. */
@@ -383,29 +386,64 @@ fun LevelTag(n: Int, modifier: Modifier = Modifier) = IndTag(
 )
 
 /**
- * Source : étiquette de l'évaluateur reconnu (id explicite, sinon alias en tête du libellé) collée au bouton.
- * Le bouton n'ouvre qu'une adresse https ; sans elle, le nom reste lisible.
+ * Les deux morceaux d'une source : à gauche qui la signe ([ev] s'il a une fiche, sinon [who] en texte),
+ * à droite l'article : lien avec une adresse https ([url]), sinon le reste du libellé en texte ; rien à dire : null.
+ */
+class SourceParts(val ev: Evaluator?, val who: String?, val article: String?, val url: String?) {
+    /** Libellé texte de l'étiquette, pour les supports où rien ne se touche (mode « À table », partage). */
+    val text: String get() = listOfNotNull(who, article).joinToString(" · ")
+}
+
+/** Seule lecture d'une source pour l'affichage : évaluateur, nom, article, adresse. */
+fun sourceParts(src: SourceRef, data: PolData): SourceParts {
+    val ev = data.evFor(src.label, src.ev)
+    val url = safeHttps(src.url)
+    if (ev != null) {
+        // Libellé réduit à l'id de l'évaluateur : rien d'autre à dire que l'adresse.
+        val s = if (src.label.trim() == ev.id) src.copy(label = "") else src
+        return SourceParts(ev, evShortName(ev), if (url != null) sourceRest(s, ev) else labelRest(s, ev), url)
+    }
+    val label = src.label.trim().takeIf { it.isNotEmpty() }
+    val article = url?.let { hostOf(it) ?: "Article" }
+    return SourceParts(null, label ?: "Source".takeIf { article == null }, article, url)
+}
+
+/** Libellés texte de [srcs], joints par « ; » ; aucune : null. */
+fun sourcesText(srcs: List<SourceRef>, data: PolData): String? =
+    srcs.map { sourceParts(it, data).text }.filter { it.isNotBlank() }.joinToString(" ; ").takeIf { it.isNotBlank() }
+
+private fun hostOf(url: String): String? = runCatching { java.net.URI(url).host }.getOrNull()?.removePrefix("www.")
+
+/**
+ * Source : à gauche l'évaluateur (ouvre sa fiche) ou, sans fiche, le nom seul ; à droite l'article (ouvre l'adresse https).
+ * Sans adresse https, la partie droite reste en texte non cliquable ; sans reste de libellé, elle disparaît.
  */
 @Composable
 fun SourceButton(src: SourceRef, data: PolData, onOpenEv: (String) -> Unit, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val scheme = MaterialTheme.colorScheme
-    val ev = data.evFor(src.label, src.ev)
-    val url = safeHttps(src.url)
-    val name = sourceRest(src, ev)
-    val shape = if (ev != null) RoundedCornerShape(0.dp, 8.dp, 8.dp, 0.dp) else RoundedCornerShape(8.dp)
+    val p = sourceParts(src, data)
+    val left = p.ev != null || p.who != null
+    val right = p.article != null
+    val lShape = if (right) RoundedCornerShape(8.dp, 0.dp, 0.dp, 8.dp) else RoundedCornerShape(8.dp)
+    val rShape = if (left) RoundedCornerShape(0.dp, 8.dp, 8.dp, 0.dp) else RoundedCornerShape(8.dp)
+    val label = @Composable { t: String, c: Color ->
+        Text(t, color = c, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, lineHeight = 16.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+    }
     // Les deux parties partagent la hauteur de la plus haute ; la cible tactile de 48 dp est réservée autour de l'ensemble.
     Row(modifier.minimumInteractiveComponentSize().height(IntrinsicSize.Min)) {
-        if (ev != null) IndTag(indLevel(ev), evShortName(ev), Modifier.fillMaxHeight().opensEvaluator(ev, onOpenEv), RoundedCornerShape(8.dp, 0.dp, 0.dp, 8.dp))
-        Row(
-            Modifier.fillMaxHeight().clip(shape).background(scheme.surface).outline(scheme.outlineVariant, 1f, shape)
-                .let { if (url != null) it.clickable(role = Role.Button) { openUrl(context, url) } else it }
-                .semantics { if (url != null) contentDescription = "Voir la source : $name (s'ouvre dans le navigateur)" }
+        if (p.ev != null) IndTag(indLevel(p.ev), evShortName(p.ev), Modifier.fillMaxHeight().opensEvaluator(p.ev, onOpenEv), lShape)
+        else if (p.who != null) Row(
+            Modifier.fillMaxHeight().clip(lShape).background(scheme.surfaceVariant).heightIn(min = 28.dp).padding(horizontal = 9.dp, vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) { label(p.who, scheme.onSurfaceVariant) }
+        if (right) Row(
+            Modifier.fillMaxHeight().clip(rShape).background(scheme.surface).outline(scheme.outlineVariant, 1f, rShape)
+                .let { m -> if (p.url != null) m.clickable(role = Role.Button) { openUrl(context, p.url) } else m }
+                .semantics { contentDescription = if (p.url != null) "Voir la source : ${p.article} (s'ouvre dans le navigateur)" else "Source : ${p.article}, sans lien" }
                 .heightIn(min = 28.dp).padding(horizontal = 9.dp, vertical = 5.dp),
             verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(name, color = scheme.onSurfaceVariant, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, lineHeight = 16.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-        }
+        ) { label(p.article!!, scheme.onSurfaceVariant) }
     }
 }
 
@@ -557,7 +595,6 @@ private fun Labeled(label: String, text: String) {
 /** Feuille complète d'une balance : verdict et sa définition, contrepartie entière, mesure, angle mort, ordre de grandeur, avis signés. */
 @Composable
 fun BalanceSheet(lecture: Lecture, title: String, who: String?, data: PolData, onOpenEv: (String) -> Unit, onDismiss: () -> Unit) {
-    val context = LocalContext.current
     val scheme = MaterialTheme.colorScheme
     PolSheet(full = true, onDismiss = onDismiss) {
         Column(Modifier.fillMaxWidth().verticalScrollPad()) {
@@ -578,11 +615,7 @@ fun BalanceSheet(lecture: Lecture, title: String, who: String?, data: PolData, o
                 Kicker("Avis signés", Modifier.padding(top = 18.dp))
                 lecture.avis.forEach { a ->
                     Column(Modifier.fillMaxWidth().padding(vertical = 10.dp)) {
-                        val ev = data.evFor(a.ev, a.ev.takeIf { data.evaluators.containsKey(it) })
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                            if (ev != null) EvaluatorTag(ev, onOpenEv) else Text(a.ev, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                            if (safeHttps(a.url) != null) TextButton({ openUrl(context, a.url) }) { Text("Source") }
-                        }
+                        SourceButton(SourceRef(a.ev, a.url, a.ev), data, onOpenEv)
                         Text(frTypo(a.dit), fontSize = 14.sp, lineHeight = 20.sp)
                     }
                 }

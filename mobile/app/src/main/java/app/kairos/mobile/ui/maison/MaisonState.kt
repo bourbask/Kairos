@@ -65,8 +65,17 @@ sealed class LotAction(val lot: Lot) {
     /** Consommé en entier. */
     class Use(lot: Lot) : LotAction(lot)
 
-    /** Déplacé ([location]) ou recompté ([qty], unité de base). */
-    class Update(lot: Lot, val location: String? = null, val qty: Double? = null) : LotAction(lot)
+    /**
+     * Déplacé ([location]), recompté ([qty], unité de base) ou redaté ([expiry], AAAA-MM-JJ,
+     * avec l'urgence [tone] qu'elle donne, affichée en attendant le serveur).
+     */
+    class Update(
+        lot: Lot,
+        val location: String? = null,
+        val qty: Double? = null,
+        val expiry: String? = null,
+        val tone: Tone? = null,
+    ) : LotAction(lot)
 
     val tool: String get() = if (this is Use) "app_lot_use" else "app_lot_update"
 
@@ -75,6 +84,7 @@ sealed class LotAction(val lot: Lot) {
         if (this@LotAction is Update) {
             location?.let { put("location", it) }
             qty?.let { put("qty", it) }
+            expiry?.let { put("expiry", it) }
         }
     }
 }
@@ -106,7 +116,10 @@ class MaisonState(snapshot: MaisonSnapshot = MaisonSnapshot()) {
     /** Le serveur a répondu au moins une fois (ici ou lors d'une session précédente). */
     val known: Boolean get() = base.fetchedAt != null
 
-    val lots: List<Lot> get() = pending.fold(base.inventory.lots, ::applied)
+    /** Triés par urgence comme le serveur (urgent, attention, neutre ; puis date) ; tri stable : son ordre départage les égalités. */
+    val lots: List<Lot>
+        get() = pending.fold(base.inventory.lots, ::applied)
+            .sortedWith(compareBy<Lot>({ -it.tone.ordinal }, { it.expiry == null }, { it.expiry }))
     val total: Int get() = lots.size
 
     /** Commandes qui ont encore des lignes à ranger. */
@@ -197,6 +210,12 @@ class MaisonState(snapshot: MaisonSnapshot = MaisonSnapshot()) {
         return update(LotAction.Update(lot, qty = qty))
     }
 
+    /** Date corrigée à la main : plus estimée. Rien si elle ne change rien. */
+    fun setExpiry(lot: Lot, date: LocalDate, today: LocalDate): LotAction? {
+        if (!canAct || (date.toString() == lot.expiry && !lot.estimated)) return null
+        return update(LotAction.Update(lot, expiry = date.toString(), tone = toneAt(lot, date, today)))
+    }
+
     private fun update(a: LotAction): LotAction {
         pending = pending + a
         message = null
@@ -269,6 +288,9 @@ private fun applied(lots: List<Lot>, a: LotAction): List<Lot> = when (a) {
                 location = a.location ?: l.location,
                 qty = a.qty ?: l.qty,
                 label = a.qty?.let { formatQty(it, l.unit) } ?: l.label,
+                expiry = a.expiry ?: l.expiry,
+                estimated = l.estimated && a.expiry == null,
+                tone = a.tone ?: l.tone,
             )
         }
     }
@@ -297,11 +319,37 @@ fun formatQty(qty: Double, unit: String): String = when (unit) {
     else -> "${num(qty)} $unit".trim()
 }
 
-private val DAY_MONTH = DateTimeFormatter.ofPattern("dd/MM")
+internal val DAY_MONTH: DateTimeFormatter = DateTimeFormatter.ofPattern("dd/MM")
+
+/** Raccourcis « encore bon » : libellé court, libellé lu, jours ajoutés. */
+val EXTENSIONS = listOf(Triple("+2 j", "2 jours", 2L), Triple("+1 sem", "1 semaine", 7L), Triple("+2 sem", "2 semaines", 14L))
+
+/** Échéance passée (avant aujourd'hui). */
+fun overdue(lot: Lot, today: LocalDate): Boolean = dateOf(lot)?.isBefore(today) == true
+
+/** Point de départ d'une prolongation : la date actuelle, ou aujourd'hui si elle est passée ou absente. */
+fun extendFrom(lot: Lot, today: LocalDate): LocalDate = dateOf(lot)?.takeUnless { it.isBefore(today) } ?: today
+
+/**
+ * Urgence d'un lot redaté, aux seuils du serveur (≤ 1 j urgent, ≤ 3 j attention).
+ * Seuls les périssables pressent, ce que l'app ne sait que par le ton : un lot neutre reste neutre.
+ */
+// ponytail: un périssable lointain avancé à demain reste neutre jusqu'à l'état suivant du serveur.
+fun toneAt(lot: Lot, date: LocalDate, today: LocalDate): Tone {
+    if (lot.tone == Tone.Neutre) return Tone.Neutre
+    val n = ChronoUnit.DAYS.between(today, date)
+    return when {
+        n <= 1 -> Tone.Urgent
+        n <= 3 -> Tone.Attention
+        else -> Tone.Neutre
+    }
+}
+
+private fun dateOf(lot: Lot): LocalDate? = lot.expiry?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
 
 /** Échéance courte (« demain », « 2 j », « 19/11 ») ; « ~ » = date estimée. Rien sans date. */
 fun expiryText(lot: Lot, today: LocalDate): String? {
-    val d = lot.expiry?.let { runCatching { LocalDate.parse(it) }.getOrNull() } ?: return null
+    val d = dateOf(lot) ?: return null
     val n = ChronoUnit.DAYS.between(today, d)
     val text = when {
         n < 0 -> return "passée"

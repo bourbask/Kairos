@@ -1,6 +1,6 @@
 package app.kairos.mobile.ui.politique.screens
 
-import app.kairos.mobile.ui.politique.kit.sourceName
+import app.kairos.mobile.ui.politique.kit.sourcesText
 import app.kairos.mobile.ui.politique.model.Row
 import app.kairos.mobile.ui.politique.kit.TableCard
 import app.kairos.mobile.ui.politique.model.PolData
@@ -65,11 +65,11 @@ fun affaireTableCard(a: Affaire): TableCard = TableCard(
     lines = listOf(a.factsText, a.etat, PRESUMPTION).filter { it.isNotBlank() },
 )
 
-fun dossierTableCard(kind: String, d: Dossier): TableCard = TableCard(
+fun dossierTableCard(data: PolData, kind: String, d: Dossier): TableCard = TableCard(
     kicker = listOf(kind, d.label).filter { it.isNotBlank() }.joinToString(" · "),
     title = d.t,
     lines = listOf(d.p).filter { it.isNotBlank() },
-    source = sourcesOf(d.s).joinToString(" ; ") { sourceName(it) }.takeIf { it.isNotBlank() },
+    source = sourcesText(sourcesOf(d.s), data),
 )
 
 // ---------- Agenda ----------

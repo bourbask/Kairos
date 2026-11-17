@@ -137,8 +137,8 @@ import app.kairos.mobile.ui.politique.kit.EmptyState
 import app.kairos.mobile.ui.politique.kit.LocalPolBottom
 import app.kairos.mobile.ui.politique.kit.PolColors
 import app.kairos.mobile.ui.politique.kit.frTypo
-import app.kairos.mobile.ui.politique.kit.openUrl
 import app.kairos.mobile.ui.politique.kit.safeHttps
+import app.kairos.mobile.ui.politique.kit.SourceButton
 import app.kairos.mobile.ui.politique.model.IdKind
 import app.kairos.mobile.ui.politique.model.Lecture
 import app.kairos.mobile.ui.politique.model.PolData
@@ -442,7 +442,8 @@ private fun Slot(data: PolData, i: Int, st: DuelPickState, k: DuelInk, roster: L
     val lit = blink(act && !full, still)
     val fc = when {
         c != null -> c
-        act -> if (lit) k.att else Color.Transparent
+        // Clignotement discret : le contour ambre alterne entre 70 % et 35 %, sans jamais disparaître.
+        act -> k.att.copy(alpha = if (lit) 0.7f else 0.35f)
         else -> k.ink.copy(alpha = 0.24f)
     }
     val inner = if (c != null) mix(k.surf, c, 0.24f) else k.surf.copy(alpha = 0.55f)
@@ -715,7 +716,9 @@ private class Sides(val ids: List<String>, val names: List<String>, val subs: Li
 private class Fight(
     val data: PolData, val nav: PolNavigator, val k: DuelInk, val s: Sides, val still: Boolean,
     val help: MutableMap<Int, Boolean>, val wins: MutableMap<String, Int>, val grown: List<Int>, val say: (String) -> Unit,
-)
+) {
+    val onEv: (String) -> Unit = { nav.sheet(PolSheetState.Evaluator(it)) }
+}
 
 @Composable
 private fun DuelFight(data: PolData, nav: PolNavigator, a: String, b: String, st: DuelPickState) {
@@ -1072,55 +1075,19 @@ private fun Drawer(f: Fight, round: DuelRound, shown: Boolean) {
     }
 }
 
-/** Pied : toujours les sources ; évaluateur reconnu → sa fiche, adresse https → l'article. */
+/** Pied : toujours les sources, chacune par l'étiquette commune. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun SourceFoot(f: Fight, list: List<SourceRef>) {
     if (list.isEmpty()) return
     val k = f.k
-    val context = LocalContext.current
     FlowRow(
         Modifier.padding(start = 14.dp, end = 14.dp, top = 10.dp).fillMaxWidth()
             .drawBehind { val u = 2.dp.toPx(); drawLine(k.line, Offset(0f, u / 2), Offset(size.width, u / 2), u, pathEffect = PathEffect.dashPathEffect(floatArrayOf(u, u))) }
             .padding(top = 2.dp, bottom = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        list.forEach { s ->
-            val ev = f.data.evFor(s.label, s.ev)
-            val url = safeHttps(s.url)
-            val name = ev?.nom?.replace(Regex("""\s*\(.*\)$"""), "") ?: s.label.split(Regex(", (?=[«A-Z0-9])"))[0]
-            val host = url?.let { runCatching { java.net.URI(it).host }.getOrNull() }?.removePrefix("www.")
-            val txt = ev == null && url == null
-            // Cibles de 48 dp de haut ; l'étiquette visible (28 dp) est dessinée au centre.
-            val band = 10.dp
-            Row(
-                Modifier.heightIn(min = 48.dp).height(IntrinsicSize.Min).drawBehind {
-                    val m = band.toPx()
-                    translate(0f, m) { drawOutline(Cut2.createOutline(Size(size.width, size.height - 2 * m), layoutDirection, this), k.inked(0.07f)) }
-                },
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Box(
-                    Modifier.weight(1f, fill = false).fillMaxHeight()
-                        .let { m -> if (ev != null) m.clickable(role = Role.Button, onClickLabel = "Fiche : ${ev.nom}") { f.nav.sheet(PolSheetState.Evaluator(ev.id)) } else m }
-                        .padding(horizontal = 8.dp, vertical = if (txt) band + 4.dp else 0.dp),
-                    contentAlignment = Alignment.CenterStart,
-                ) {
-                    Text(
-                        frTypo(name), fontSize = 12.sp, lineHeight = if (txt) 15.6.sp else 16.sp, fontWeight = if (txt) FontWeight.Normal else FontWeight.SemiBold,
-                        color = if (txt) k.onsv else k.ink, maxLines = if (txt) Int.MAX_VALUE else 1, overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                if (url != null && host != null) Row(
-                    Modifier.fillMaxHeight().clickable(role = Role.Button, onClickLabel = "Article : $host") { openUrl(context, url) }
-                        .drawBehind { val m = band.toPx(); drawRect(k.surf, Offset(0f, m), Size(2.dp.toPx(), size.height - 2 * m)) }.padding(horizontal = 8.dp).widthIn(max = 150.dp),
-                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    Text(host, Modifier.weight(1f, fill = false), fontSize = 12.sp, color = k.onsv, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    PxIcon("ext", k.onsv, 9.dp)
-                }
-            }
-        }
+        list.forEach { SourceButton(it, f.data, f.onEv) }
     }
 }
 
@@ -1524,20 +1491,13 @@ private fun GapBody(f: Fight, r: GapRound) {
 @Composable
 private fun VotesBody(f: Fight, r: VotesRound) {
     val k = f.k
-    val context = LocalContext.current
     Row(Modifier.padding(top = 10.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("${r.clash} / ${r.both}", fontFamily = Mono, fontWeight = FontWeight.ExtraBold, fontSize = 30.sp, lineHeight = 30.sp, letterSpacing = (-0.04).em, softWrap = false, color = k.ink)
         Text("oppositions nettes (pour contre contre) sur les scrutins où les deux groupes ont voté", fontSize = 13.5.sp, lineHeight = 18.sp, color = k.ink)
     }
     r.lines.forEach { l ->
         Column(Modifier.fillMaxWidth().dashedBottom(k.line).padding(vertical = 8.dp)) {
-            val url = safeHttps(l.u)
-            Text(
-                frTypo(l.t), Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(top = 0.dp)
-                    .let { if (url != null) it.clickable(role = Role.Button, onClickLabel = "Ouvrir le scrutin") { openUrl(context, url) } else it }
-                    .wrapCenter(),
-                fontSize = 13.sp, lineHeight = 17.sp, fontWeight = FontWeight.SemiBold, color = k.ink,
-            )
+            Text(frTypo(l.t), fontSize = 13.sp, lineHeight = 17.sp, fontWeight = FontWeight.SemiBold, color = k.ink)
             Row(Modifier.fillMaxWidth().padding(top = 5.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) { Vote(l.a, k) }
                 Box(Modifier.width(28.dp), contentAlignment = Alignment.Center) {
@@ -1545,15 +1505,9 @@ private fun VotesBody(f: Fight, r: VotesRound) {
                 }
                 Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) { Vote(l.b, k) }
             }
+            if (safeHttps(l.u) != null) SourceButton(SourceRef("Scrutin officiel", l.u), f.data, f.onEv)
         }
     }
-}
-
-/** Texte centré verticalement dans sa cible de 48 dp. */
-private fun Modifier.wrapCenter() = layout { m, c ->
-    val p = m.measure(c.copy(minHeight = 0))
-    val h = max(p.height, c.minHeight)
-    layout(p.width, h) { p.place(0, (h - p.height) / 2) }
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -1692,6 +1646,10 @@ private fun LineView(f: Fight, l: Line, first: Boolean) {
             }
         }
         is Big -> Text(l.text, Modifier.padding(top = 4.dp), fontSize = 12.5.sp, fontWeight = FontWeight.Bold, color = k.ink)
+        is Srcs -> {
+            dt(l.k)
+            FlowRow(Modifier.padding(top = 1.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) { l.refs.forEach { SourceButton(it, f.data, f.onEv) } }
+        }
         is Note -> Na(l.text, k)
     }
 }

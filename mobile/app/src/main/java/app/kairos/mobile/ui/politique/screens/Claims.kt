@@ -368,7 +368,7 @@ fun ClaimSheet(data: PolData, claim: Claim, nav: PolNavigator, onDismiss: () -> 
                 VerdictMeter(claim.v)
                 VerdictChip(claim.v, large = true)
                 Spacer(Modifier.weight(1f))
-                FullscreenButton({ nav.table(listOf(claimTableCard(claim)), 0) })
+                FullscreenButton({ nav.table(listOf(claimTableCard(data, claim)), 0) })
             }
             verdictDefinition(claim.v)?.let { Text("Verdict : $it.", Modifier.padding(top = 4.dp), fontSize = 13.sp, color = scheme.onSurfaceVariant) }
             CacheBox(claim.cache)
