@@ -884,7 +884,7 @@ private fun KairosRoot(model: AppModel, dark: Boolean) {
                 decisions = snapshot.decisions,
                 offline = snapshot.offline,
                 appScope = model.viewModelScope,
-                decide = { session.api.decide(it.card.module, it.card.id, it.option) },
+                decide = { session.api.decide(it.card.module, it.card.id, it.option, it.create) },
                 onDispatch = { session.repository.drop(it.card.module, it.card.id) },
                 onDecided = conversation::refreshStatus,
                 onFinished = {
