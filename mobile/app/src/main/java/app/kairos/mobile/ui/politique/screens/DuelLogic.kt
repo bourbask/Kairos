@@ -333,12 +333,20 @@ data class VsLine(val t: String, val u: String?, val a: String, val b: String) {
     val case get() = vcase(a, b)
 }
 
+/** Liste des scrutins de l'Assemblée, quand les données n'en donnent pas. */
+const val AN_VOTES = "https://www.assemblee-nationale.fr/dyn/scrutins"
+
+/** Lien de la liste des scrutins : celui d'un scrutin des données, sans son numéro ; sinon [AN_VOTES]. */
+private fun votesList(lines: List<VsLine>): String =
+    lines.firstNotNullOfOrNull { l -> l.u?.trim()?.takeIf { Regex("""https://[^\s"'<>]+/\d+/?""").matches(it) } }
+        ?.trimEnd('/')?.substringBeforeLast('/') ?: AN_VOTES
+
 /** [viaParty] : groupes des partis des deux candidats. */
 class VotesRound(val groupA: String, val groupB: String, val viaParty: Boolean, val lines: List<VsLine>) : DuelRound {
     override val title = "Votes à l'Assemblée"
     override val help = listOf("Groupes $groupA et $groupB : ${if (viaParty) "le groupe du parti de chaque candidat" else "le groupe de chaque parti"}.")
     override val rubric = VOTES
-    override val sources = listOf(SourceRef("Assemblée nationale", "https://www.assemblee-nationale.fr/dyn/16/scrutins", "assemblee-nationale"))
+    override val sources = listOf(SourceRef("Assemblée nationale", votesList(lines), "assemblee-nationale"))
     override val avail get() = true to true
     /** Scrutins où les deux groupes ont voté. */
     val both get() = lines.count { it.case != VCase.None }
@@ -441,7 +449,9 @@ private fun PolData.votesRound(a: String?, b: String?, viaParty: Boolean): Votes
     val gb = b?.let { groupOf("AN", it) } ?: return null
     if (ga.second == gb.second) return null
     fun code(v: VoteRow, g: Pair<Int, String>) = v.c.getOrNull(g.first)?.getOrNull(0)?.takeIf { it in VOTE_WORDS } ?: "N"
+    // Aucun scrutin où les deux groupes ont voté : rien à comparer, jamais « 0 / 0 ».
     return VotesRound(ga.second, gb.second, viaParty, decode<VoteRow>("votes", "AN_V").map { v -> VsLine(v.t, v.u, code(v, ga), code(v, gb)) })
+        .takeIf { it.both > 0 }
 }
 
 private val BLOCS = mapOf("EXG" to "extrême gauche", "GAU" to "gauche", "DIV" to "divers", "CENT" to "centre", "DTE" to "droite", "EXD" to "extrême droite")
@@ -488,8 +498,8 @@ private fun position(f: PartiFiche?): List<Line> = f?.let {
     val refs = sourcesOf(r?.src)
     val m = f.nuance_ministere
     buildList {
-        add(CampLine("Camp retenu", r?.camp))
-        add(if (refs.isEmpty()) Kv("Sources", null, nr = "classement non établi par la littérature") else Kv("Sources", refs.map { KvVal("", shortRef(it.label)) }))
+        if (refs.isEmpty()) add(CampLine("Camp retenu (classement non établi par la littérature)", r?.camp))
+        else { add(CampLine("Camp retenu", r?.camp)); add(Kv("Sources", refs.map { KvVal("", shortRef(it.label)) })) }
         r?.note?.takeIf { it.isNotBlank() && refs.isNotEmpty() }?.let { add(Kv("Note", "", it)) }
         add(Kv("Classement du ministère", m?.code?.takeIf { it.isNotBlank() }, m?.code?.let { "bloc ${BLOCS[m.bloc] ?: m.bloc ?: NOT_GIVEN}, pour information" }))
     }

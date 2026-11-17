@@ -43,7 +43,7 @@ class DuelTest {
                        "GAPS":[{"who":"Beta","what":"Mesure","claimed":10,"credited":5,"unit":"Md€","src":"Chiffrage fictif"}]}""",
         "niveau-de-vie" to """{"MEASURES":[{"who":"Alpha","hh":999}]}""",
         "bilan" to """{"MATRIX":[{"o":"Orientation 1","s":"Mandat fictif","c":{"Alpha":["keep","Garde"]}},{"o":"Orientation 2","c":{}}]}""",
-        "votes" to """{"AN_G":["Groupe Bleu","Groupe Vert"],"AN_V":[{"t":"Loi 1","u":"https://example.com/s1","c":[["P","10 pour"],["P","8 pour"]]},{"t":"Loi 2","c":[["C",""],["P",""]]},{"t":"Loi 3","c":[["N",""],["P",""]]},{"t":"Loi 4","c":[["A",""],["P",""]]}]}""",
+        "votes" to """{"AN_G":["Groupe Bleu","Groupe Vert"],"AN_V":[{"t":"Loi 1","u":"https://example.com/dyn/16/scrutins/12","c":[["P","10 pour"],["P","8 pour"]]},{"t":"Loi 2","c":[["C",""],["P",""]]},{"t":"Loi 3","c":[["N",""],["P",""]]},{"t":"Loi 4","c":[["A",""],["P",""]]}]}""",
         "revirements" to """{"RV":[{"p":"Bleu","camp":"Camp A","s":"Sujet","a":"Avant fictif","b":"Après fictif","k":"R","src":[["Journal fictif","https://example.com/r"]]}]}""",
         "partis" to """{"PARTIS":[
           {"id":"b","nom":"Parti Bleu","rattachement":{"camp":"ca","src":[["Auteur fictif, « Titre », Éditeur, 2020","https://example.com/l","ev1"]]},
@@ -71,7 +71,7 @@ class DuelTest {
         val bare = data("identites" to ids, "votes" to """{"AN_G":["Groupe Bleu","Groupe Vert"],"AN_V":[]}""")
         assertNull(duelKind(bare, "ca"))
         assertEquals(listOf("b", "v"), duelRoster(bare, IdKind.Parti))
-        assertTrue(duelRounds(bare, "b", "v").single() is VotesRound)
+        assertTrue("aucun scrutin : pas de « 0 / 0 »", duelRounds(bare, "b", "v").isEmpty())
     }
 
     @Test fun duel_kinds_and_rosters() {
@@ -125,6 +125,9 @@ class DuelTest {
         assertTrue(votes.viaParty)
         assertEquals("Groupe Bleu" to "Groupe Vert", votes.groupA to votes.groupB)
         assertEquals("tête : oppositions nettes sur scrutins comparables", 1 to 3, votes.clash to votes.both)
+        assertEquals("lien tiré des données", "https://example.com/dyn/16/scrutins", votes.sources.single().url)
+        assertEquals(AN_VOTES, VotesRound("A", "B", false, listOf(VsLine("t", null, "P", "C"))).sources.single().url)
+        assertEquals(AN_VOTES, VotesRound("A", "B", false, listOf(VsLine("t", "http://example.com/1", "P", "C"))).sources.single().url)
         val turn = r[5] as TurnRound
         assertEquals("revirements du parti du candidat", true to false, turn.avail)
         assertEquals(listOf("Journal fictif"), turn.sources.map { it.label })
@@ -185,9 +188,10 @@ class DuelTest {
         assertEquals(CampLine("Camp retenu", "ca"), pos.a[0])
         assertEquals("Auteur fictif, « Titre »", (pos.a[1] as Kv).vals.single().small)
         assertEquals(KvVal("BLE", "bloc centre, pour information"), (pos.a[2] as Kv).vals.single())
-        assertEquals(CampLine("Camp retenu", null), pos.b[0])
-        assertEquals("classement non établi par la littérature", (pos.b[1] as Kv).vals.single().nr)
-        assertNull("pas de code : non renseigné", (pos.b[2] as Kv).vals.single().v)
+        // Sans littérature : le camp reste, le libellé le dit, sans ligne « Sources » contradictoire.
+        assertEquals(CampLine("Camp retenu (classement non établi par la littérature)", null), pos.b[0])
+        assertTrue(pos.b.none { it is Kv && it.k == "Sources" })
+        assertNull("pas de code : non renseigné", (pos.b[1] as Kv).vals.single().v)
         // Une fiche manquante : « Fiche absente. » de ce côté, couverture fausse.
         val half = duelRounds(full, "b", "v")[0] as CardRound
         assertEquals(true to false, half.avail)

@@ -398,7 +398,7 @@ private fun DuelPick(data: PolData, nav: PolNavigator, st: DuelPickState) {
         }
         Say(say)
     }
-    vs?.let { (a, b) -> VsScreen(data, a, b, still) { vs = null; nav.go(PolRoute.Duel(a, b)) } }
+    vs?.let { (a, b) -> VsScreen(data, a, b, still, onBack = { vs = null }) { vs = null; nav.go(PolRoute.Duel(a, b)) } }
 }
 
 @Composable
@@ -656,7 +656,7 @@ private fun stairShape(left: Boolean) = GenericShape { s, _ ->
 }
 
 @Composable
-private fun VsScreen(data: PolData, a: String, b: String, still: Boolean, onDone: () -> Unit) {
+private fun VsScreen(data: PolData, a: String, b: String, still: Boolean, onBack: () -> Unit, onDone: () -> Unit) {
     var done by remember { mutableStateOf(false) }
     val end = { if (!done) { done = true; onDone() } }
     val slide = remember { Animatable(if (still) 0f else 1f) }
@@ -669,7 +669,8 @@ private fun VsScreen(data: PolData, a: String, b: String, still: Boolean, onDone
         delay(if (still) 1400 else 1900)
         end()
     }
-    Dialog(onDismissRequest = end, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+    // Retour arrière : le VS se ferme sans lancer le duel.
+    Dialog(onDismissRequest = { if (!done) { done = true; onBack() } }, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
         BoxWithConstraints(
             Modifier.fillMaxSize().background(Night).clickable(remember { MutableInteractionSource() }, null, onClickLabel = "Passer") { end() }
                 .semantics { contentDescription = "${data.byId(a)?.nom} contre ${data.byId(b)?.nom}. Aucun vainqueur ne sera désigné." },
@@ -1453,7 +1454,7 @@ private fun Vote(code: String, k: DuelInk, modifier: Modifier = Modifier) {
         "P" -> Tag(w, k.pour, k.pourBg, k, modifier)
         "C" -> Tag(w, k.contre, k.contreBg, k, modifier)
         "A" -> Tag(w, k.attTx, k.partBg, k, modifier)
-        "S" -> Tag(w, k.ink, k.pourBg, k, modifier)
+        "S" -> Tag(w, k.ink, k.inked(0.1f), k, modifier)
         else -> Tag(w, k.onsv, null, k, modifier)
     }
 }
@@ -1664,7 +1665,7 @@ private fun LineView(f: Fight, l: Line, first: Boolean) {
         is CampLine -> {
             dt(l.k)
             val x = l.id?.let { f.data.byId(it) }
-            if (x == null) Text("aucun camp", Modifier.padding(top = 1.dp), fontSize = 12.5.sp, color = k.ink)
+            if (x == null) Text(if (l.id == null) "aucun camp" else "camp non référencé", Modifier.padding(top = 1.dp), fontSize = 12.5.sp, color = k.ink)
             else Row(Modifier.padding(top = 1.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 val c = f.data.colorOf(x.id)
                 Box(Modifier.size(12.dp).background(c).drawBehind { insetBands(k.cd(c), 2.dp.toPx(), 2.dp.toPx(), 2.dp.toPx(), 2.dp.toPx()) })
