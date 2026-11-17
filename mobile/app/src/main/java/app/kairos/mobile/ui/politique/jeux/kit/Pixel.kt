@@ -23,6 +23,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -180,7 +181,8 @@ private fun pxColors(kc: Color): Map<Px, Color> {
 
 /**
  * Bouton physique pixel : platine, flanc, dessus ombré en marches qui descend de deux cellules à l'appui
- * (retour automatique) ; [maintenu] le garde enfoncé (choix écarté, touche verrouillée).
+ * (retour automatique) ; [maintenu] le garde enfoncé (choix écarté). [enabled] faux : grisé et inerte ;
+ * [verrouille] : inerte mais garde sa teinte (touche d'une manche résolue).
  * Cible tactile d'au moins 48 dp ; [label] lu par le lecteur d'écran.
  */
 @Composable
@@ -194,19 +196,21 @@ fun BoutonPixel(
     mode: GlyphMode = GlyphMode.Grave,
     enabled: Boolean = true,
     maintenu: Boolean = false,
+    verrouille: Boolean = false,
     cellule: Dp = 3.dp,
 ) {
+    val actif = enabled && !verrouille
     val b = remember(forme, glyphe, mode) { pxButton(forme.w, forme.h, forme.r, glyphe, mode) }
     val src = remember { MutableInteractionSource() }
     val pressed by src.collectIsPressedAsState()
     val s = cellPx(cellule)
     val colors = pxColors(if (enabled) couleur else Teintes.eteint)
-    val down = if ((pressed && enabled) || maintenu) 2 else 0
+    val down = if ((pressed && actif) || maintenu) 2 else 0
     val sizeDp = with(LocalDensity.current) { (b.w * s).toDp() to (b.h * s).toDp() }
     Box(
         modifier.minimumInteractiveComponentSize()
-            .clickable(src, indication = null, enabled = enabled, role = Role.Button, onClick = onClick)
-            .semantics { contentDescription = label },
+            .clickable(src, indication = null, enabled = actif, role = Role.Button, onClick = onClick)
+            .semantics { contentDescription = label; if (!actif) disabled() },
         contentAlignment = Alignment.Center,
     ) {
         Canvas(Modifier.size(sizeDp.first, sizeDp.second)) {

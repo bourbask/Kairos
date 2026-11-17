@@ -2,11 +2,7 @@ package app.kairos.mobile.ui.politique.jeux.jeu
 
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.keyframes
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,7 +16,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -28,12 +23,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -53,12 +43,9 @@ import app.kairos.mobile.ui.politique.jeux.kit.Glyphes
 import app.kairos.mobile.ui.politique.jeux.kit.Led
 import app.kairos.mobile.ui.politique.jeux.kit.LedEtat
 import app.kairos.mobile.ui.politique.jeux.kit.PixelShape
-import app.kairos.mobile.ui.politique.jeux.kit.Px
 import app.kairos.mobile.ui.politique.jeux.kit.Teintes
-import app.kairos.mobile.ui.politique.jeux.kit.cell
-import app.kairos.mobile.ui.politique.jeux.kit.cellPx
 import app.kairos.mobile.ui.politique.jeux.kit.mix
-import app.kairos.mobile.ui.politique.jeux.kit.pxButton
+import app.kairos.mobile.ui.politique.jeux.kit.BoutonPixel
 import app.kairos.mobile.ui.politique.kit.Kicker
 import app.kairos.mobile.ui.politique.kit.frTypo
 import app.kairos.mobile.ui.politique.reducedMotion
@@ -166,10 +153,7 @@ class LeVote : PolJeu<VoteD>("le-vote", VoteD.serializer()) {
     }
 }
 
-/**
- * Touche de vote : bouton physique du kit qui garde sa teinte une fois verrouillée (écartée ou manche résolue) ;
- * verrouillée, elle ne s'enfonce plus. Retour automatique après l'appui.
- */
+/** Touche de vote : rond rouge (contre), carré bleu (pour), large neutre (abstention) ; verrouillée, elle garde sa teinte. */
 @Composable
 private fun Touche(label: String, vote: String, actif: Boolean, onClick: () -> Unit) {
     val (forme, glyphe, kc) = when (vote) {
@@ -177,30 +161,5 @@ private fun Touche(label: String, vote: String, actif: Boolean, onClick: () -> U
         "pour" -> Triple(Forme.Carre, Glyphes.plus, Teintes.bleu)
         else -> Triple(Forme.Large, Glyphes.zero, Teintes.neutre)
     }
-    val b = remember(forme, glyphe) { pxButton(forme.w, forme.h, forme.r, glyphe, GlyphMode.Blanc) }
-    val src = remember { MutableInteractionSource() }
-    val pressed by src.collectIsPressedAsState()
-    val s = cellPx(3.dp)
-    val sc = MaterialTheme.colorScheme
-    val k = Color.Black
-    val w = Color.White
-    val col = mapOf(
-        Px.Pl to mix(sc.surface, sc.onSurface, 0.11f), Px.Pld to mix(sc.surface, sc.onSurface, 0.24f),
-        Px.Fl to mix(kc, k, 0.42f), Px.Fld to mix(kc, k, 0.58f),
-        Px.T to kc, Px.Tl to mix(kc, w, 0.26f), Px.Td to mix(kc, k, 0.2f),
-        Px.Ic to mix(kc, k, 0.5f), Px.Icl to mix(kc, w, 0.38f), Px.Iw to w, Px.Rf to w.copy(alpha = 0.85f),
-    )
-    val down = if (pressed && actif) 2 else 0
-    val size = with(LocalDensity.current) { (b.w * s).toDp() to (b.h * s).toDp() }
-    Box(
-        Modifier.minimumInteractiveComponentSize()
-            .clickable(src, indication = null, enabled = actif, role = Role.Button, onClick = onClick)
-            .semantics { contentDescription = label; if (!actif) disabled() },
-        contentAlignment = Alignment.Center,
-    ) {
-        Canvas(Modifier.size(size.first, size.second).clearAndSetSemantics { }) {
-            b.base.forEach { cell(it.x, it.y, col.getValue(it.k), s) }
-            b.top.forEach { cell(it.x, it.y, col.getValue(it.k), s, dy = down) }
-        }
-    }
+    BoutonPixel(label, onClick, glyphe = glyphe, couleur = kc, forme = forme, mode = GlyphMode.Blanc, verrouille = !actif)
 }
