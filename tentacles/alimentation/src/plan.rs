@@ -165,7 +165,7 @@ pub fn recipe_text(r: &crate::store::Recipe, portions: Option<String>) -> String
     if let Some(t) = r.timing() {
         infos.push(t);
     }
-    infos.push(portions.unwrap_or_else(|| format!("Portions : {}", r.portions)));
+    infos.push(portions.unwrap_or_else(|| r.portions_line()));
     let mut out = format!("INFOS\n{}", infos.join("\n"));
     if !r.ingredients.is_empty() {
         out.push_str(&format!("\n\nINGRÉDIENTS\n{}", r.ingredients_list()));
@@ -204,8 +204,8 @@ pub fn event(
                 Some(r) => {
                     let portions = (!after.is_empty()).then(|| {
                         format!(
-                            "Portions : {} (ce repas + {})",
-                            r.portions,
+                            "{} (ce repas + {})",
+                            r.portions_line(),
                             after.iter().map(|f| follower(f)).collect::<Vec<_>>().join(", ")
                         )
                     });
@@ -343,6 +343,7 @@ mod tests {
                 crate::store::Ingredient { name: "sel".into(), qty: None, unit: None },
             ],
             steps: vec!["Rincer.".into(), "Cuire, puis servir.".into()],
+            observed: None,
         };
         let cook = m(d(11), MealKind::Cook);
         let rest = Meal { day: d(12), slot: Slot::Midi, dish: "Dhal".into(), kind: MealKind::Box, from: d(11), note: None };

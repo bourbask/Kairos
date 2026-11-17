@@ -270,6 +270,18 @@ struct Done {
     args: serde_json::Map<String, Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     choices: Option<DoneChoices>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    count: Option<DoneCount>,
+}
+
+/// Nombre facultatif saisi au pas à pas, ajouté à `args` sous `key` seulement s'il est saisi.
+#[derive(Deserialize, Serialize)]
+struct DoneCount {
+    label: String,
+    key: String,
+    default: u32,
+    min: u32,
+    max: u32,
 }
 
 /// Valeur demandée à l'utilisateur, ajoutée à `args` sous `key`.
@@ -294,6 +306,13 @@ fn valid_done(v: Value) -> Option<Value> {
         c.options.truncate(CHOICES_MAX);
         if serde_json::to_string(&(&c.options, &c.default)).ok()?.len() > DONE_ARGS_MAX {
             return None;
+        }
+    }
+    if let Some(c) = &mut d.count {
+        cut(&mut c.label, TITLE_MAX);
+        cut(&mut c.key, TITLE_MAX);
+        if c.min > c.max || !(c.min..=c.max).contains(&c.default) {
+            d.count = None;
         }
     }
     serde_json::to_value(d).ok()
@@ -928,6 +947,12 @@ mod tests {
                           "choices": {"label": "Portions mangées", "key": "portions", "options": [1, 2, 3], "default": 1}});
         let c = first_card(card_with_done(done.clone())).await;
         assert_eq!(c["done"], done);
+        let counted = json!({"tool": "app_meal_done", "args": {"day": "2026-11-12", "slot": "soir"},
+                             "count": {"label": "Portions obtenues", "key": "made", "default": 4, "min": 1, "max": 100}});
+        assert_eq!(first_card(card_with_done(counted.clone())).await["done"], counted);
+        // Bornes incohérentes : le nombre tombe, l'action reste.
+        let bad = json!({"tool": "app_meal_done", "args": {}, "count": {"label": "l", "key": "made", "default": 0, "min": 1, "max": 100}});
+        assert_eq!(first_card(card_with_done(bad)).await["done"], json!({"tool": "app_meal_done", "args": {}}));
         // Sans `choices` : omis à la sortie.
         let c = first_card(card_with_done(json!({"tool": "app_lot_use", "args": {"lot": 3}}))).await;
         assert_eq!(c["done"], json!({"tool": "app_lot_use", "args": {"lot": 3}}));

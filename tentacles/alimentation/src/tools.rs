@@ -125,6 +125,9 @@ struct MealArgs {
     ingredients: Option<Vec<Line>>,
     /// Remarque libre (portions restantes, ressenti…).
     notes: Option<String>,
+    /// Plat cuisiné d'après une recette du carnet : portions réellement obtenues
+    /// (facultatif). Recale le rendement de la recette.
+    made: Option<u32>,
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
@@ -258,6 +261,14 @@ struct AppMealDoneArgs {
     slot: String,
     /// Portions mangées (1 par défaut).
     portions: Option<u32>,
+    /// Plat cuisiné : portions réellement obtenues (facultatif), de 1 à 100.
+    made: Option<u32>,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+struct AppRecipeScaleArgs {
+    /// Nom de la recette du carnet.
+    recipe: String,
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
@@ -429,6 +440,19 @@ fn plan_line(m: &crate::plan::Meal) -> String {
     format!("- {} {} : {}{suffix}", day_label(m.day), m.slot.as_str(), m.dish)
 }
 
+/// Portions obtenues : absentes, ou de 1 à 100.
+fn check_made(made: Option<u32>) -> Result<(), String> {
+    match made {
+        Some(n) if !(1..=DISH_PORTIONS_MAX).contains(&n) => Err(format!("Portions obtenues : de 1 à {DISH_PORTIONS_MAX}.")),
+        _ => Ok(()),
+    }
+}
+
+/// « 0,67 ».
+fn factor_label(k: f64) -> String {
+    format!("{k:.2}").replace('.', ",")
+}
+
 const STALE_MAX: usize = 5;
 /// Cartes « à finir » du jour, une par produit.
 const URGENT_CARDS: usize = 3;
@@ -530,12 +554,16 @@ impl FoodServer {
             }
             let mut done = json!({"tool": "app_meal_done", "args": {"day": d.to_string(), "slot": slot}});
             let options: Vec<u32> = match (m.kind, &recipe) {
-                (crate::plan::MealKind::Cook, Some(r)) => (1..=r.portions).collect(),
+                (crate::plan::MealKind::Cook, Some(r)) => (1..=r.planned()).collect(),
                 (crate::plan::MealKind::Cook, None) => vec![],
                 _ => vec![1, 2, 3],
             };
             if options.len() > 1 {
                 done["choices"] = json!({"label": "Portions mangées", "key": "portions", "options": options, "default": 1});
+            }
+            if let (crate::plan::MealKind::Cook, Some(r)) = (m.kind, &recipe) {
+                // Facultatif : l'application ne l'envoie que si l'utilisateur l'a saisi.
+                done["count"] = json!({"label": "Portions obtenues", "key": "made", "default": r.planned(), "min": 1, "max": DISH_PORTIONS_MAX});
             }
             // Repas déjà noté (ici ou ailleurs) : la carte se montre faite, quelle que soit la marque locale.
             if noted.iter().any(|n| n == slot) {
@@ -560,6 +588,17 @@ impl FoodServer {
         }
         // ponytail: l'urgence se calcule depuis aujourd'hui, donc seulement pour le jour courant.
         if d == self.today() {
+            // Rendement nettement au-dessus de l'annoncé : baisse des quantités proposée, jamais appliquée seule.
+            // ponytail: reproposée chaque jour tant qu'elle n'est pas acceptée ; « plus tard » la masque localement.
+            for r in self.store.recipes().map_err(|e| e.to_string())? {
+                let Some(k) = r.shrink().filter(|_| r.ingredients.iter().any(|i| i.qty.is_some())) else { continue };
+                cards.push(json!({
+                    "id": format!("ajuster-{}", crate::units::fold(&r.title)), "kind": "info",
+                    "title": format!("{} : annoncé {} · constaté {}", r.title, r.portions, r.planned()),
+                    "body": format!("Cuisiner pour {} : réduire les quantités ×{} ?", r.portions, factor_label(k)),
+                    "actions": [{"label": format!("Réduire ×{}", factor_label(k)), "tool": "app_recipe_scale", "args": {"recipe": r.title}}],
+                }));
+            }
             let mut seen = std::collections::HashSet::new();
             for l in self.urgent(1)?.iter().filter(|l| seen.insert(l.product.clone())).take(URGENT_CARDS) {
                 cards.push(json!({
@@ -570,6 +609,16 @@ impl FoodServer {
             }
         }
         serde_json::to_string(&cards).map_err(|e| e.to_string())
+    }
+
+    /// Note le rendement d'une recette du carnet : ligne pour le retour d'outil.
+    fn note_yield(&self, dish: &str, made: u32) -> Result<String, String> {
+        let Some(r) = self.store.recipe(dish).map_err(|e| e.to_string())? else {
+            return Ok(format!("- pas de recette « {dish} » au carnet : rendement non noté"));
+        };
+        self.store.add_yield(&r.title, made).map_err(|e| e.to_string())?;
+        let now = self.store.recipe(&r.title).map_err(|e| e.to_string())?.unwrap_or(r);
+        Ok(format!("- rendement noté : {made} portion(s) ; {}", now.portions_line().to_lowercase()))
     }
 
     /// Lots de nature `plat` de ce nom exact : frigo d'abord, puis les plus anciens.
@@ -1016,6 +1065,16 @@ impl FoodServer {
         if !extras.is_empty() {
             out.push(format!("Dans le placard aussi : {}.", extras.join(", ")));
         }
+        let yields: Vec<String> = self
+            .store
+            .recipes()
+            .map_err(|e| e.to_string())?
+            .iter()
+            .filter_map(|r| r.observed.map(|o| format!("{} {o} (annoncé {})", r.title, r.portions)))
+            .collect();
+        if !yields.is_empty() {
+            out.push(format!("Rendements constatés des recettes, en portions : {}.", yields.join(", ")));
+        }
         let prefs = self.store.prefs().map_err(|e| e.to_string())?;
         if !prefs.is_empty() {
             out.push(format!(
@@ -1030,6 +1089,7 @@ impl FoodServer {
         description = "Noter un repas (habitudes alimentaires) ; les ingrédients donnés sont retirés du stock. Repas pris au bureau ou au restaurant : sans ingrédients."
     )]
     async fn meal_log(&self, Parameters(a): Parameters<MealArgs>) -> Out {
+        check_made(a.made)?;
         let slot = match crate::units::fold(a.slot.trim()).as_str() {
             s if s.starts_with("petit") || s == "matin" => "petit-dejeuner",
             "midi" | "dejeuner" => "midi",
@@ -1052,6 +1112,9 @@ impl FoodServer {
             self.store.add_meal(&day, slot, a.name.trim(), &place, a.notes.as_deref()).map_err(|e| e.to_string())?
         };
         let mut out = vec![format!("Repas noté : {} — {}, {slot}, {place}", day, a.name.trim())];
+        if let Some(n) = a.made {
+            out.push(self.note_yield(a.name.trim(), n)?);
+        }
         for l in a.ingredients.unwrap_or_default() {
             match self.store.take(&l, "repas", Some(id)) {
                 Ok((s, _)) => out.push(format!("- {s}")),
@@ -1162,12 +1225,24 @@ impl FoodServer {
         let start = parse_day(&a.start)?;
         let days = a.days.unwrap_or(7).clamp(1, 14);
         let mut cooks = Vec::new();
+        let mut observed = Vec::new();
         for m in &a.meals {
             let slot = match Slot::parse(&m.slot) {
                 Some(s @ (Slot::Midi | Slot::Soir)) => s,
                 _ => return Err(format!("Créneau « {} » : midi ou soir.", m.slot)),
             };
-            cooks.push(Cook { day: parse_day(&m.day)?, slot, dish: m.dish.trim().to_string(), portions: m.portions.unwrap_or(1).clamp(1, 12) });
+            let dish = m.dish.trim().to_string();
+            let mut portions = m.portions.unwrap_or(1).clamp(1, 12);
+            // Portions demandées en unités de la recette : le rendement constaté les recale.
+            if m.portions.is_some()
+                && let Some(r) = self.store.recipe(&dish).map_err(|e| e.to_string())?
+                && r.planned() != r.portions
+            {
+                let real = (f64::from(portions) * f64::from(r.planned()) / f64::from(r.portions)).round().clamp(1.0, 24.0) as u32;
+                observed.push(format!("{dish} : {real} portion(s) au lieu de {portions} ({})", r.portions_line().to_lowercase()));
+                portions = real;
+            }
+            cooks.push(Cook { day: parse_day(&m.day)?, slot, dish, portions });
         }
         let prefs = self.store.prefs().map_err(|e| e.to_string())?;
         let office = prefs.iter().find(|(k, _)| crate::units::fold(k.trim()) == "bureau").map(|(_, v)| office_days(v)).unwrap_or_default();
@@ -1282,6 +1357,9 @@ impl FoodServer {
                 outside.iter().map(|w| format!("- {} {} : {}", day_label(w.day), w.slot.as_str(), w.reason())).collect::<Vec<_>>().join("\n")
             ));
         }
+        if !observed.is_empty() {
+            out.push(format!("Rendement constaté utilisé :\n{}", observed.iter().map(|o| format!("- {o}")).collect::<Vec<_>>().join("\n")));
+        }
         if !warnings.is_empty() {
             out.push(format!("À noter :\n{}", warnings.iter().map(|w| format!("- {w}")).collect::<Vec<_>>().join("\n")));
         }
@@ -1356,6 +1434,7 @@ impl FoodServer {
             cook_minutes: a.cook_minutes,
             ingredients: a.ingredients.into_iter().filter(|i| !i.name.trim().is_empty()).collect(),
             steps,
+            observed: None,
         };
         self.store.set_recipe(&r).map_err(|e| e.to_string())?;
         Ok(format!("Recette enregistrée : {} ({} portions).", r.title, r.portions))
@@ -1376,7 +1455,10 @@ impl FoodServer {
                 Ok(format!(
                     "Carnet ({}) :\n{}",
                     all.len(),
-                    all.iter().map(|r| format!("- {} ({} portions)", r.title, r.portions)).collect::<Vec<_>>().join("\n")
+                    all.iter().map(|r| match r.observed {
+                        Some(_) => format!("- {} ({})", r.title, r.portions_line().trim_start_matches("Portions : ")),
+                        None => format!("- {} ({} portions)", r.title, r.portions),
+                    }).collect::<Vec<_>>().join("\n")
                 ))
             }
         }
@@ -1505,6 +1587,7 @@ impl FoodServer {
             .find(|m| m.slot == slot)
             .ok_or_else(|| format!("Aucun repas prévu le {day} ({}).", slot.as_str()))?;
         let eaten = a.portions.unwrap_or(1).max(1);
+        check_made(a.made)?;
         // Un seul repas par jour et créneau : un second « fait » (double tap, renvoi) ne décompte rien.
         let note = |place: &str| -> Result<Option<i64>, String> {
             self.store.add_meal_once(&day, slot.as_str(), &m.dish, place, None).map_err(|e| e.to_string())
@@ -1524,7 +1607,10 @@ impl FoodServer {
                         Err(e) => format!("- {} non déduit : {e}", i.name),
                     });
                 }
-                let left = r.portions.saturating_sub(eaten);
+                if let Some(n) = a.made {
+                    out.push(self.note_yield(&r.title, n)?);
+                }
+                let left = a.made.unwrap_or(r.planned()).saturating_sub(eaten);
                 if left > 0 {
                     // Repas déjà noté et ingrédients déduits : un échec ici se signale, il n'annule rien.
                     out.push(match self.store.add_dish(&m.dish, f64::from(left)) {
@@ -1560,6 +1646,22 @@ impl FoodServer {
             }
         }
         message(out.join("\n"))
+    }
+
+    #[tool(
+        description = "Application : ramener les quantités d'une recette à ses portions annoncées quand le rendement constaté les dépasse nettement. Seulement sur accord explicite de l'utilisateur."
+    )]
+    async fn app_recipe_scale(&self, Parameters(a): Parameters<AppRecipeScaleArgs>) -> Out {
+        let r = self.store.recipe(&a.recipe).map_err(|e| e.to_string())?.ok_or_else(|| format!("Aucune recette « {} » au carnet.", a.recipe))?;
+        // Recalculé ici : un second geste (double tap, carte périmée) ne réduit pas deux fois.
+        let Some(k) = r.shrink() else {
+            return Ok(serde_json::json!({"message": format!("{} : quantités déjà au bon niveau.", r.title), "outcome": "done"}).to_string());
+        };
+        let r = self.store.scale_recipe(&r, k).map_err(|e| e.to_string())?;
+        Ok(serde_json::json!({
+            "message": format!("{} : quantités ×{} pour {} portions.", r.title, factor_label(k), r.portions), "outcome": "done",
+        })
+        .to_string())
     }
 
     #[tool(description = "Application : corriger un lot (zone, quantité, date).")]
@@ -1917,6 +2019,7 @@ mod tests {
                 cook_minutes: None,
                 ingredients: Vec::<Ingredient>::new(),
                 steps: vec!["Mijoter.".into()],
+                observed: None,
             })
             .unwrap();
         let day = "2026-11-08";
@@ -2300,7 +2403,7 @@ mod tests {
     }
 
     async fn done(s: &FoodServer, day: &str, slot: &str, portions: Option<u32>) -> Result<String, String> {
-        s.app_meal_done(Parameters(super::AppMealDoneArgs { day: day.into(), slot: slot.into(), portions })).await
+        s.app_meal_done(Parameters(super::AppMealDoneArgs { day: day.into(), slot: slot.into(), portions, made: None })).await
     }
 
     /// Dhal pour 4 : 300 g de lentilles, 2 oignons, sel (sans quantité).
@@ -2317,6 +2420,7 @@ mod tests {
                     Ingredient { name: "Sel".into(), qty: None, unit: None },
                 ],
                 steps: vec![],
+                observed: None,
             })
             .unwrap();
         s.store.replace_plan(day, day, &[meal(day, Slot::Soir, "Dhal", MealKind::Cook, None)]).unwrap();
@@ -2373,6 +2477,80 @@ mod tests {
         let c = cards(&s, day);
         assert_eq!(c[0]["state"], "fait");
         assert!(c[0].get("done").is_none(), "repas déjà noté : rien à renvoyer");
+    }
+
+    #[tokio::test]
+    async fn real_portions_recalibrate_recipe() {
+        let s = server();
+        let day = "2026-11-08";
+        dhal(&s, day);
+        let c = cards(&s, day);
+        assert_eq!(c[0]["done"]["count"], serde_json::json!({"label": "Portions obtenues", "key": "made", "default": 4, "min": 1, "max": 100}));
+        let a = super::AppMealDoneArgs { day: day.into(), slot: "soir".into(), portions: Some(1), made: Some(6) };
+        let j = v(s.app_meal_done(Parameters(a)).await);
+        assert!(j["message"].as_str().unwrap().contains("rendement noté : 6 portion(s) ; portions : annoncé 4 · constaté 6"), "{j}");
+        assert_eq!(dish_lots(&s, "dhal")[0].qty, 5.0, "6 obtenues, 1 mangée");
+        // Hors bornes : refusé avant de noter quoi que ce soit.
+        let bad = super::AppMealDoneArgs { day: day.into(), slot: "soir".into(), portions: None, made: Some(0) };
+        assert!(s.app_meal_done(Parameters(bad)).await.is_err());
+        // Depuis la conversation aussi.
+        let log = serde_json::json!({"slot": "midi", "name": "Dhal", "day": "2026-11-09", "made": 6});
+        let out = s.meal_log(args(log)).await.unwrap();
+        assert!(out.contains("constaté 6"), "{out}");
+        let r = s.store.recipe("Dhal").unwrap().unwrap();
+        assert_eq!(r.planned(), 6);
+        let list = s.recipes(args(serde_json::json!({}))).await.unwrap();
+        assert!(list.contains("- Dhal (annoncé 4 · constaté 6)"), "{list}");
+    }
+
+    #[tokio::test]
+    async fn plan_uses_observed_yield() {
+        let s = server();
+        dhal(&s, "2026-11-08");
+        let a = serde_json::json!({"start": "2026-11-20", "days": 7, "meals": [{"day": "2026-11-20", "slot": "soir", "dish": "Dhal", "portions": 4}]});
+        let plan = async |s: &FoodServer| s.meal_plan_set(args(a.clone())).await;
+        // Sans mesure : la valeur annoncée.
+        let out = plan(&s).await.unwrap();
+        assert!(!out.contains("Rendement constaté"), "{out}");
+        assert_eq!(s.store.plan("2026-11-20", "2026-11-26").unwrap().len(), 4);
+        s.store.add_yield("Dhal", 6).unwrap();
+        s.store.add_yield("Dhal", 6).unwrap();
+        let out = plan(&s).await.unwrap();
+        assert!(out.contains("Rendement constaté utilisé :\n- Dhal : 6 portion(s) au lieu de 4"), "{out}");
+        assert_eq!(s.store.plan("2026-11-20", "2026-11-26").unwrap().len(), 6, "deux restes de plus");
+        s.store.add(&item("Lentilles corail", 500.0, "g", "placard", None), "achat", None).unwrap();
+        let opts = s.cook_options(args(serde_json::json!({"slot": "soir"}))).await.unwrap();
+        assert!(opts.contains("Rendements constatés des recettes, en portions : Dhal 6 (annoncé 4)."), "{opts}");
+    }
+
+    #[tokio::test]
+    async fn shrink_card_needs_consent() {
+        let s = server();
+        let today = s.today().to_string();
+        dhal(&s, "2026-11-08");
+        let adjust = |s: &FoodServer| cards(s, &today).into_iter().find(|c| c["id"] == "ajuster-dhal");
+        assert!(adjust(&s).is_none(), "sans mesure, rien à proposer");
+        s.store.add_yield("Dhal", 5).unwrap();
+        assert!(adjust(&s).is_none(), "+25 % : sous le seuil");
+        s.store.add_yield("Dhal", 6).unwrap();
+        s.store.add_yield("Dhal", 6).unwrap();
+        let c = adjust(&s).expect("carte d'ajustement");
+        assert_eq!(c["title"], "Dhal : annoncé 4 · constaté 6");
+        assert_eq!(c["body"], "Cuisiner pour 4 : réduire les quantités ×0,67 ?");
+        assert_eq!(c["actions"][0]["tool"], "app_recipe_scale");
+        // Rien ne change tant que l'action n'est pas lancée.
+        assert_eq!(s.store.recipe("Dhal").unwrap().unwrap().ingredients[0].qty, Some(300.0));
+        let j = v(s.app_recipe_scale(args(c["actions"][0]["args"].clone())).await);
+        assert_eq!(j["outcome"], "done");
+        let r = s.store.recipe("Dhal").unwrap().unwrap();
+        assert_eq!(r.ingredients[0].qty, Some(200.0));
+        assert_eq!(r.ingredients[2].qty, None, "sans quantité : intact");
+        assert_eq!(r.planned(), 4);
+        assert!(adjust(&s).is_none());
+        // Second geste : rien de plus.
+        let again = v(s.app_recipe_scale(args(serde_json::json!({"recipe": "Dhal"}))).await);
+        assert!(again["message"].as_str().unwrap().contains("déjà"), "{again}");
+        assert_eq!(s.store.recipe("Dhal").unwrap().unwrap().ingredients[0].qty, Some(200.0));
     }
 
     #[tokio::test]
