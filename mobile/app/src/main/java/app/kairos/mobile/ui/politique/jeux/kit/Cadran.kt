@@ -32,6 +32,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
+import app.kairos.mobile.ui.theme.KairosColors
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalDensity
@@ -299,14 +301,17 @@ fun Levier(
 // ---------- Banderole LED ----------
 
 /**
- * Banderole LED : lettres ambrées sur fond sombre tramé, défilement pas à pas (4 dp toutes les 110 ms) en boucle.
+ * Banderole LED : voile d'encre translucide tramé qui prend la teinte de la console, lettres au ton « attention » du thème
+ * (assombri en clair), défilement pas à pas (4 dp toutes les 110 ms) en boucle.
  * Animations réduites : texte fixe sur deux lignes. Le texte est lu tel quel par le lecteur d'écran.
  */
 @Composable
 fun Banderole(texte: String, modifier: Modifier = Modifier) {
     val sc = MaterialTheme.colorScheme
-    val lb = mix(sc.surface, sc.onSurface, 0.62f)
-    val amber = mix(Color(0xFFF2B04A), lb, 0.18f)
+    val lb = sc.onSurface.copy(alpha = 0.11f)
+    val trame = sc.onSurface.copy(alpha = 0.07f)
+    val att = KairosColors.current.attentionText
+    val amber = if (sc.background.luminance() < 0.5f) att else mix(att, sc.onSurface, 0.22f)
     val reduit = reducedMotion()
     val density = LocalDensity.current
     var x by remember { mutableIntStateOf(8) }
@@ -336,13 +341,14 @@ fun Banderole(texte: String, modifier: Modifier = Modifier) {
             color = amber, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, fontSize = 14.sp, letterSpacing = 0.08.em,
             maxLines = if (reduit) 2 else 1, softWrap = reduit, overflow = if (reduit) TextOverflow.Ellipsis else TextOverflow.Visible,
         )
-        // Trame de points : lignes de 1 px toutes les 3 dp.
+        // Liseré haut, puis trame de points : lignes de 1 px toutes les 3 dp.
         Canvas(Modifier.matchParentSize().clearAndSetSemantics { }) {
+            drawRect(sc.onSurface.copy(alpha = 0.09f), Offset.Zero, androidx.compose.ui.geometry.Size(size.width, 3.dp.toPx()))
             val p = 3.dp.toPx()
             var i = 0f
-            while (i < size.width) { drawRect(lb.copy(alpha = 0.55f), Offset(i, 0f), androidx.compose.ui.geometry.Size(1f, size.height)); i += p }
+            while (i < size.width) { drawRect(trame, Offset(i, 0f), androidx.compose.ui.geometry.Size(1f, size.height)); i += p }
             var j = 0f
-            while (j < size.height) { drawRect(lb.copy(alpha = 0.55f), Offset(0f, j), androidx.compose.ui.geometry.Size(size.width, 1f)); j += p }
+            while (j < size.height) { drawRect(trame, Offset(0f, j), androidx.compose.ui.geometry.Size(size.width, 1f)); j += p }
         }
     }
 }
