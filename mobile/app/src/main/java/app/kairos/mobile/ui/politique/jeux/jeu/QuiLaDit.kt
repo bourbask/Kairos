@@ -1,5 +1,6 @@
 package app.kairos.mobile.ui.politique.jeux.jeu
 
+import app.kairos.mobile.ui.politique.jeux.kit.rememberTremblement
 import kotlinx.serialization.json.JsonObject
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -83,7 +84,7 @@ private fun Portrait(p: Personnalite, cle: String, juste: Boolean, st: MancheEta
     val actif = !st.solved && !ecarte
     val src = remember { MutableInteractionSource() }
     val presse by src.collectIsPressedAsState()
-    val tremble = rememberTremblement(st, cle, c.reduit)
+    val tremble = rememberTremblement(st.react, c.reduit, st.out.lastOrNull() == cle)
     val saut = rememberSaut(juste, c.reduit)
     val kc = when {
         juste -> sc.primaryContainer

@@ -63,6 +63,8 @@ Après `solved`, la manette reste affichée, figée sur l'état final (bonne ré
 | Teintes | `Teintes.valid`, `rouge`, `bleu`, `neutre`, `eteint`, `ombre` (clair/sombre) ; `mix(a, b, t)` |
 | Voyant | `Led(LedEtat.Eteinte / Rouge / Verte)` |
 | Tuiles | `val gd = rememberGlisserDeposer(c) { tuile, cible -> ok }` ; `Tuile(id, gd, label) { Text(…) }` ; `Emplacement(id, gd, label, plein = { … }) { Text(…) }` ; refus (false) : la tuile revient, l'emplacement tremble ; appui-appui inclus |
+| Formes libres | `Modifier.glissable(id, gd, label, enabled)` (élément attrapable ; `gd.leve(id)` : levé) et `Modifier.cible(id, gd, label, enabled)` (`gd.survol == id` : survolée) |
+| Tremblement | `val a = rememberTremblement(st.react, c.reduit, ici = st.out.lastOrNull() == cle)` puis `Modifier.tremble(a)` |
 | Cadran | `Cadran(niveau 0..4, onNiveau, ecartes, description, libelle)` |
 | Levier | `Levier(crans, valeur, onValeur, libelle, onCran = c::cran)` |
 | Banderole | `Banderole(texte)` |

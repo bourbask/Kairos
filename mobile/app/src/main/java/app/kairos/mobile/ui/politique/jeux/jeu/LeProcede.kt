@@ -1,5 +1,6 @@
 package app.kairos.mobile.ui.politique.jeux.jeu
 
+import app.kairos.mobile.ui.politique.jeux.kit.rememberTremblement
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.keyframes
@@ -261,7 +262,7 @@ private fun Tampon(t: String, cle: String, juste: Boolean, enfonce: Boolean, st:
     val actif = !st.solved && !ecarte
     val src = remember { MutableInteractionSource() }
     val presse by src.collectIsPressedAsState()
-    val tremble = rememberTremblement(st, cle, c.reduit)
+    val tremble = rememberTremblement(st.react, c.reduit, st.out.lastOrNull() == cle)
     val gris = mix(sc.outlineVariant, sc.onSurfaceVariant, 0.3f)
     val rouge = Teintes.rouge
     val kc = when { juste -> sc.primaryContainer; ecarte -> mix(sc.surface, gris, 0.5f); else -> sc.tertiaryContainer }

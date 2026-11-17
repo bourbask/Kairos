@@ -16,7 +16,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.unit.Dp
 import app.kairos.mobile.ui.politique.jeux.Coque
-import app.kairos.mobile.ui.politique.jeux.MancheEtat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -44,16 +43,6 @@ internal fun DrawScope.cadre(c: Color, e: Float) {
     aplat(c, 0f, size.height - e, size.width, e)
     aplat(c, 0f, 0f, e, size.height)
     aplat(c, size.width - e, 0f, e, size.height)
-}
-
-/** Tremblement (dp) de la pièce [cle] quand elle vient d'être refusée ; immobile en animations réduites. */
-@Composable
-internal fun rememberTremblement(st: MancheEtat, cle: String, reduit: Boolean): Animatable<Float, AnimationVector1D> {
-    val a = remember { Animatable(0f) }
-    LaunchedEffect(st.react) {
-        if (!reduit && st.react > 0 && st.out.lastOrNull() == cle) a.animateTo(0f, keyframes { durationMillis = 350; -5f at 87; 5f at 175; -3f at 262 })
-    }
-    return a
 }
 
 /** Petit saut de joie (dp, vers le haut négatif) quand [actif] devient vrai. */

@@ -3,13 +3,8 @@ package app.kairos.mobile.ui.politique.jeux.jeu
 import kotlinx.serialization.json.JsonObject
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Easing
-import androidx.compose.animation.core.VectorConverter
-import androidx.compose.animation.core.keyframes
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,29 +22,19 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.boundsInRoot
-import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.selected
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -69,9 +54,9 @@ import app.kairos.mobile.ui.politique.jeux.kit.PixelShape
 import app.kairos.mobile.ui.politique.jeux.kit.cell
 import app.kairos.mobile.ui.politique.jeux.kit.cellPx
 import app.kairos.mobile.ui.politique.jeux.kit.mix
+import app.kairos.mobile.ui.politique.jeux.kit.cible
+import app.kairos.mobile.ui.politique.jeux.kit.glissable
 import app.kairos.mobile.ui.politique.jeux.kit.rememberGlisserDeposer
-import app.kairos.mobile.ui.theme.Motion
-import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
@@ -231,47 +216,11 @@ private fun PieceMobile(
     id: String, gd: GlisserDeposer, label: String, texte: String, unite: String,
     metaux: Map<Char, Color>, encre: Color, enabled: Boolean, reduit: Boolean,
 ) {
-    val density = LocalDensity.current
-    val scope = rememberCoroutineScope()
-    val off = remember { Animatable(Offset.Zero, Offset.VectorConverter) }
-    var lifted by remember { mutableStateOf(false) }
-    var bounds by remember { mutableStateOf(Rect.Zero) }
-    val sel = gd.selection == id
-    val en by rememberUpdatedState(enabled)
     val ombre = app.kairos.mobile.ui.politique.jeux.kit.Teintes.ombre
-    val haut = lifted || sel
+    val haut = gd.leve(id)
     Box(
-        Modifier.zIndex(if (haut) 1f else 0f).size(cellsDp(22), cellsDp(24))
-            .onGloballyPositioned { bounds = it.boundsInRoot() }
-            .graphicsLayer {
-                translationX = off.value.x
-                translationY = off.value.y - if (haut) 6.dp.toPx() else 0f
-            }
-            .pointerInput(id) {
-                val marge = with(density) { 8.dp.toPx() }
-                detectDragGestures(
-                    onDragStart = { if (en) lifted = true },
-                    onDrag = { ch, dv ->
-                        if (!en) return@detectDragGestures
-                        ch.consume()
-                        scope.launch { off.snapTo(off.value + dv) }
-                        gd.survol = gd.cibleSous(bounds.center + off.value + dv, marge)
-                    },
-                    onDragEnd = {
-                        val hot = gd.survol
-                        gd.survol = null
-                        lifted = false
-                        val ok = hot != null && gd.poser(id, hot)
-                        scope.launch {
-                            if (ok || reduit) off.snapTo(Offset.Zero)
-                            else off.animateTo(Offset.Zero, tween(250, easing = Motion.EmphasizedDecelerate))
-                        }
-                    },
-                    onDragCancel = { gd.survol = null; lifted = false; scope.launch { off.snapTo(Offset.Zero) } },
-                )
-            }
-            .clickable(remember { MutableInteractionSource() }, null, enabled = enabled, role = Role.Button, onClickLabel = if (sel) "Reposer" else "Saisir") { gd.saisir(id) }
-            .semantics { contentDescription = label + if (sel) ", saisie : choisissez une tirelire" else ""; selected = sel },
+        Modifier.size(cellsDp(22), cellsDp(24))
+            .glissable(id, gd, label, enabled),
     ) {
         // Ombre portée dure, plus longue quand la pièce est levée.
         Grille(PIECE, metaux.mapValues { ombre }, Modifier.offset(y = if (haut) 9.dp else 3.dp))
@@ -299,24 +248,13 @@ private fun Tirelire(
         'p' to if (hot) mix(sc.surface, sc.primary, 0.22f) else ink(0.03f), 'q' to ink(0.24f), 'P' to sc.surface,
     )
     val plein = montant != null
-    val shake = remember { Animatable(0f) }
-    val refus = gd.refus[id] ?: 0
-    LaunchedEffect(refus) {
-        if (refus > 0 && !reduit) shake.animateTo(0f, keyframes { durationMillis = 350; -5f at 87; 5f at 175; -3f at 262 })
-    }
     val enfonce = remember { Animatable(0f) }
     LaunchedEffect(plein, seat) {
         if (plein && seat) { enfonce.snapTo(-14f); enfonce.animateTo(0f, tween(200, easing = Crans)) }
     }
     Box(
         Modifier.size(cellsDp(34), cellsDp(25))
-            .onGloballyPositioned { if (!plein && enabled) gd.cibles[id] = it.boundsInRoot() else gd.cibles.remove(id) }
-            .graphicsLayer { translationX = shake.value.dp.toPx() }
-            .clickable(enabled = enabled && !plein, role = Role.Button, onClickLabel = "Glisser ici") {
-                val t = gd.selection
-                if (t != null) gd.poser(t, id) else gd.annoncerVide()
-            }
-            .semantics { contentDescription = "Tirelire $nom" + (montant?.let { " : $it" } ?: "") },
+            .cible(id, gd, "Tirelire $nom" + (montant?.let { " : $it" } ?: ""), enabled = enabled && !plein),
     ) {
         if (plein) Box(
             Modifier.align(Alignment.TopCenter).offset(y = (-15).dp).size(cellsDp(22), 30.dp).clipToBounds()

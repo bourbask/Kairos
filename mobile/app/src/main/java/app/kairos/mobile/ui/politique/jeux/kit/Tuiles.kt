@@ -1,6 +1,7 @@
 package app.kairos.mobile.ui.politique.jeux.kit
 
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.VectorConverter
 import androidx.compose.animation.core.keyframes
 import androidx.compose.animation.core.tween
@@ -25,6 +26,9 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
+import androidx.compose.ui.zIndex
+import app.kairos.mobile.ui.theme.Motion
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
@@ -73,20 +77,30 @@ private fun DrawScope.outlinePath(shape: Shape, size: Size = this.size): Path =
     (shape.createOutline(size, layoutDirection, this) as Outline.Generic).path
 
 /**
- * Glisser-déposer des tuiles dans les emplacements d'une manette, avec l'alternative appui-appui (toucher la tuile,
- * puis l'emplacement). [deposer] renvoie false pour refuser : la tuile revient, l'emplacement tremble.
+ * Glisser-déposer d'une manette, avec l'alternative appui-appui (toucher l'élément, puis la cible) : [Tuile] et
+ * [Emplacement], ou toute forme via [glissable] et [cible]. [deposer] renvoie false pour refuser : l'élément revient,
+ * la cible tremble. Animations réduites (`coque.reduit`) : ni retour animé ni tremblement.
  */
 @Stable
 class GlisserDeposer internal constructor(private val coque: Coque, deposer: (tuile: String, cible: String) -> Boolean) {
     internal var deposer = deposer
-    /** Tuile saisie par appui (alternative au glisser). */
+    /** Élément saisi par appui (alternative au glisser). */
     var selection by mutableStateOf<String?>(null)
-        internal set
-    /** Emplacement survolé par la tuile tenue. */
+        private set
+    /** Élément tenu au doigt. */
+    var tenue by mutableStateOf<String?>(null)
+        private set
+    /** Cible survolée par l'élément tenu. */
     var survol by mutableStateOf<String?>(null)
-        internal set
-    internal val cibles = HashMap<String, Rect>()
-    internal val refus = mutableStateMapOf<String, Int>()
+        private set
+    /** Refus par cible : compteur, clé de [rememberTremblement]. */
+    val refus = mutableStateMapOf<String, Int>()
+    val reduit: Boolean get() = coque.reduit
+
+    private val cibles = HashMap<String, Rect>()
+
+    /** Élément [id] levé (tenu ou saisi). */
+    fun leve(id: String): Boolean = tenue == id || selection == id
 
     internal fun poser(tuile: String, cible: String): Boolean {
         selection = null
@@ -100,15 +114,87 @@ class GlisserDeposer internal constructor(private val coque: Coque, deposer: (tu
         coque.annoncer(if (selection != null) "Saisi. Choisissez un emplacement." else "Reposé.")
     }
 
-    internal fun annoncerVide() = coque.annoncer("Touchez d'abord une tuile.")
+    internal fun appuiCible(id: String) {
+        val t = selection
+        if (t != null) poser(t, id) else coque.annoncer("Touchez d'abord une tuile.")
+    }
 
-    internal fun cibleSous(p: Offset, marge: Float): String? =
-        cibles.entries.firstOrNull { (_, r) -> p.x > r.left && p.x < r.right && p.y > r.top - marge && p.y < r.bottom + marge }?.key
+    internal fun inscrire(id: String, r: Rect?) { if (r == null) cibles.remove(id) else cibles[id] = r }
+
+    internal fun tenir(id: String?) { tenue = id; if (id == null) survol = null }
+
+    internal fun survoler(p: Offset, marge: Float) {
+        survol = cibles.entries.firstOrNull { (_, r) -> p.x > r.left && p.x < r.right && p.y > r.top - marge && p.y < r.bottom + marge }?.key
+    }
 }
 
 @Composable
 fun rememberGlisserDeposer(coque: Coque, deposer: (tuile: String, cible: String) -> Boolean): GlisserDeposer =
     remember(coque) { GlisserDeposer(coque, deposer) }.also { it.deposer = deposer }
+
+/**
+ * Rend l'élément [id] attrapable : il suit le doigt (soulevé de 6 dp), se dépose sur la cible survolée, revient s'il est
+ * refusé ; appui = saisie. Le dessin reste au jeu : `gd.leve(id)` dit s'il est levé, `gd.survol` quelle cible s'éclaire.
+ */
+fun Modifier.glissable(id: String, gd: GlisserDeposer, label: String, enabled: Boolean = true): Modifier = composed {
+    val density = LocalDensity.current
+    val scope = rememberCoroutineScope()
+    val off = remember { Animatable(Offset.Zero, Offset.VectorConverter) }
+    var bounds by remember { mutableStateOf(Rect.Zero) }
+    val en by rememberUpdatedState(enabled)
+    val sel = gd.selection == id
+    val retour: suspend () -> Unit = { if (gd.reduit) off.snapTo(Offset.Zero) else off.animateTo(Offset.Zero, tween(250, easing = Motion.EmphasizedDecelerate)) }
+    this.zIndex(if (gd.leve(id)) 1f else 0f)
+        .onGloballyPositioned { bounds = it.boundsInRoot() }
+        .graphicsLayer {
+            translationX = off.value.x
+            translationY = off.value.y - if (gd.leve(id)) 6.dp.toPx() else 0f
+        }
+        .pointerInput(id) {
+            val marge = with(density) { 8.dp.toPx() }
+            detectDragGestures(
+                onDragStart = { if (en) gd.tenir(id) },
+                onDrag = { ch, d ->
+                    if (!en || gd.tenue != id) return@detectDragGestures
+                    ch.consume()
+                    scope.launch { off.snapTo(off.value + d) }
+                    gd.survoler(bounds.center + off.value + d, marge)
+                },
+                onDragEnd = {
+                    val hot = gd.survol
+                    gd.tenir(null)
+                    val ok = hot != null && gd.poser(id, hot)
+                    scope.launch { if (ok) off.snapTo(Offset.Zero) else retour() }
+                },
+                onDragCancel = { gd.tenir(null); scope.launch { retour() } },
+            )
+        }
+        .clickable(remember { MutableInteractionSource() }, null, enabled = enabled, role = Role.Button, onClickLabel = if (sel) "Reposer" else "Saisir") { gd.saisir(id) }
+        .semantics { contentDescription = label + if (sel) ", saisi : choisissez un emplacement" else ""; selected = sel }
+}
+
+/** Cible [id] : reçoit les éléments [glissable] (survol, dépôt, appui avec un élément saisi), tremble au refus. Pleine : [enabled] faux. */
+fun Modifier.cible(id: String, gd: GlisserDeposer, label: String, enabled: Boolean = true): Modifier = composed {
+    val shake = rememberTremblement(gd.refus[id] ?: 0, gd.reduit)
+    this.onGloballyPositioned { gd.inscrire(id, if (enabled) it.boundsInRoot() else null) }
+        .tremble(shake)
+        .let { m -> if (enabled) m.clickable(role = Role.Button, onClickLabel = "Déposer ici") { gd.appuiCible(id) } else m }
+        .semantics { contentDescription = label }
+}
+
+/** Tremblement horizontal (dp) rejoué à chaque hausse de [compteur] quand [ici] ; immobile en animations réduites. */
+@Composable
+fun rememberTremblement(compteur: Int, reduit: Boolean, ici: Boolean = true): Animatable<Float, AnimationVector1D> {
+    val a = remember { Animatable(0f) }
+    val depart = remember { compteur }
+    LaunchedEffect(compteur) {
+        if (compteur > depart && ici && !reduit) a.animateTo(0f, keyframes { durationMillis = 350; -5f at 87; 5f at 175; -3f at 262 })
+    }
+    return a
+}
+
+/** Décalage horizontal d'un [rememberTremblement]. */
+fun Modifier.tremble(a: Animatable<Float, AnimationVector1D>): Modifier = graphicsLayer { translationX = a.value.dp.toPx() }
 
 /** Hauteur d'une tuile : dessus 48 dp, flanc 9 dp. */
 val TUILE_HAUTEUR = 57.dp
@@ -147,45 +233,12 @@ fun Tuile(
 ) {
     val ink = MaterialTheme.colorScheme.onSurface
     val ombre = Teintes.ombre
-    val density = LocalDensity.current
-    val scope = rememberCoroutineScope()
-    val off = remember { Animatable(Offset.Zero, Offset.VectorConverter) }
-    var lifted by remember { mutableStateOf(false) }
-    var bounds by remember { mutableStateOf(Rect.Zero) }
-    val sel = gd.selection == id
-    val en by rememberUpdatedState(enabled)
+    val haut = gd.leve(id)
     Box(
         modifier.fillMaxWidth().height(TUILE_HAUTEUR)
-            .onGloballyPositioned { bounds = it.boundsInRoot() }
-            .graphicsLayer {
-                translationX = off.value.x
-                translationY = off.value.y - if (lifted || sel) 6.dp.toPx() else 0f
-                val k = if (lifted) 0.92f else 1f
-                scaleX = k; scaleY = k
-            }
-            .drawBehind { tuile(couleur, ink, ombre, if (lifted || sel) 1f else 0f, false) }
-            .pointerInput(id) {
-                val marge = with(density) { 8.dp.toPx() }
-                detectDragGestures(
-                    onDragStart = { if (en) lifted = true },
-                    onDrag = { ch, d ->
-                        if (!en) return@detectDragGestures
-                        ch.consume()
-                        scope.launch { off.snapTo(off.value + d) }
-                        gd.survol = gd.cibleSous(bounds.center + off.value + d, marge)
-                    },
-                    onDragEnd = {
-                        val hot = gd.survol
-                        gd.survol = null
-                        lifted = false
-                        val ok = hot != null && gd.poser(id, hot)
-                        scope.launch { if (ok) off.snapTo(Offset.Zero) else off.animateTo(Offset.Zero, tween(250, easing = app.kairos.mobile.ui.theme.Motion.EmphasizedDecelerate)) }
-                    },
-                    onDragCancel = { gd.survol = null; lifted = false; scope.launch { off.animateTo(Offset.Zero) } },
-                )
-            }
-            .clickable(remember { MutableInteractionSource() }, null, enabled = enabled, role = Role.Button, onClickLabel = if (sel) "Reposer" else "Saisir") { gd.saisir(id) }
-            .semantics { contentDescription = label + if (sel) ", saisi : choisissez un emplacement" else ""; selected = sel },
+            .glissable(id, gd, label, enabled)
+            .graphicsLayer { val k = if (gd.tenue == id) 0.92f else 1f; scaleX = k; scaleY = k }
+            .drawBehind { tuile(couleur, ink, ombre, if (haut) 1f else 0f, false) },
     ) {
         Box(Modifier.fillMaxWidth().height(48.dp).padding(horizontal = 12.dp), contentAlignment = Alignment.CenterStart, content = content)
     }
@@ -207,10 +260,12 @@ fun Emplacement(
 ) {
     val sc = MaterialTheme.colorScheme
     val hot = gd.survol == id
-    val shake = remember { Animatable(0f) }
-    val refus = gd.refus[id] ?: 0
-    LaunchedEffect(refus) {
-        if (refus > 0) shake.animateTo(0f, keyframes { durationMillis = 350; -5f at 87; 5f at 175; -3f at 262 })
+    // La tuile se loge : elle descend d'un cran en arrivant (pas au premier affichage d'un emplacement déjà plein).
+    val loge = remember { Animatable(0f) }
+    var etaitPlein by remember { mutableStateOf(plein != null) }
+    LaunchedEffect(plein != null) {
+        if (plein != null && !etaitPlein && !gd.reduit) { loge.snapTo(-6f); loge.animateTo(0f, tween(160, easing = { t -> if (t < 0.5f) 0f else 1f })) }
+        etaitPlein = plein != null
     }
     val bg = if (hot) mix(sc.surface, sc.primary, 0.34f) else mix(sc.surface, sc.onSurface, 0.1f)
     val dark = if (hot) mix(sc.primary, Color.Black, 0.2f) else mix(sc.surface, sc.onSurface, 0.28f)
@@ -218,8 +273,7 @@ fun Emplacement(
     val ink = sc.onSurface
     Box(
         modifier.fillMaxWidth().height(TUILE_HAUTEUR)
-            .onGloballyPositioned { if (plein == null) gd.cibles[id] = it.boundsInRoot() else gd.cibles.remove(id) }
-            .graphicsLayer { translationX = shake.value.dp.toPx() }
+            .cible(id, gd, label, enabled = plein == null)
             .drawBehind {
                 val c = 3.dp.toPx().roundToInt().toFloat()
                 clipPath(outlinePath(PixelShape(steps = 1))) {
@@ -227,17 +281,10 @@ fun Emplacement(
                     drawRect(dark, size = Size(size.width, c)); drawRect(dark, size = Size(c, size.height))
                     drawRect(light, Offset(0f, size.height - c), Size(size.width, c)); drawRect(light, Offset(size.width - c, 0f), Size(c, size.height))
                 }
-            }
-            .let { m ->
-                if (plein != null) m.semantics { contentDescription = label }
-                else m.clickable(role = Role.Button, onClickLabel = "Déposer ici") {
-                    val t = gd.selection
-                    if (t != null) gd.poser(t, id) else gd.annoncerVide()
-                }.semantics { contentDescription = label }
             },
         contentAlignment = Alignment.Center,
     ) {
-        if (plein != null) Box(Modifier.padding(3.dp).fillMaxWidth().height(51.dp).drawBehind { tuile(couleurPleine, ink, Color.Transparent, 0f, true) }, contentAlignment = Alignment.TopStart) {
+        if (plein != null) Box(Modifier.padding(3.dp).fillMaxWidth().height(51.dp).graphicsLayer { translationY = loge.value.dp.toPx() }.drawBehind { tuile(couleurPleine, ink, Color.Transparent, 0f, true) }, contentAlignment = Alignment.TopStart) {
             Box(Modifier.fillMaxWidth().height(48.dp).padding(horizontal = 12.dp), contentAlignment = Alignment.CenterStart, content = plein)
         }
         else content()

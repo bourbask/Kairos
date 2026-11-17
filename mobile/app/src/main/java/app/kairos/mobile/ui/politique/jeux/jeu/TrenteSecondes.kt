@@ -1,5 +1,6 @@
 package app.kairos.mobile.ui.politique.jeux.jeu
 
+import app.kairos.mobile.ui.politique.jeux.kit.rememberTremblement
 import kotlinx.serialization.json.JsonObject
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -146,7 +147,7 @@ private fun Fiche(o: String, i: Int, juste: Boolean, sortie: Boolean, st: Manche
     val actif = !st.solved && !ecarte
     val src = remember { MutableInteractionSource() }
     val presse by src.collectIsPressedAsState()
-    val tremble = rememberTremblement(st, cle, c.reduit)
+    val tremble = rememberTremblement(st.react, c.reduit, st.out.lastOrNull() == cle)
     val pap = when { juste -> sc.primaryContainer; ecarte -> mix(sc.surface, sc.onSurfaceVariant, 0.22f); else -> papier }
     val onglet = when { juste -> sc.primary; ecarte -> sc.error; else -> mix(sc.tertiary, sc.surface, 0.25f) }
     val encre = when { juste -> sc.onPrimaryContainer; ecarte -> sc.onSurfaceVariant; else -> sc.onSurface }
