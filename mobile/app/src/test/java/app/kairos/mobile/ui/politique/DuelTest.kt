@@ -186,11 +186,11 @@ class DuelTest {
         assertTrue(bare.all { kv -> kv.vals.all { it.v == null && it.nr == NOT_GIVEN } })
         val pos = (r[1] as CardRound).blocks.filterIsInstance<Cols>().single()
         assertEquals(CampLine("Camp retenu", "ca"), pos.a[0])
-        assertEquals("Auteur fictif, « Titre »", (pos.a[1] as Kv).vals.single().small)
+        assertEquals(SourceRef("Auteur fictif, « Titre », Éditeur, 2020", "https://example.com/l", "ev1"), (pos.a[1] as Srcs).refs.single())
         assertEquals(KvVal("BLE", "bloc centre, pour information"), (pos.a[2] as Kv).vals.single())
         // Sans littérature : le camp reste, le libellé le dit, sans ligne « Sources » contradictoire.
         assertEquals(CampLine("Camp retenu (classement non établi par la littérature)", null), pos.b[0])
-        assertTrue(pos.b.none { it is Kv && it.k == "Sources" })
+        assertTrue(pos.b.none { it is Srcs })
         assertNull("pas de code : non renseigné", (pos.b[1] as Kv).vals.single().v)
         // Une fiche manquante : « Fiche absente. » de ce côté, couverture fausse.
         val half = duelRounds(full, "b", "v")[0] as CardRound

@@ -544,7 +544,7 @@ private fun sections(data: PolData, id: String, l: IdentityLinks, nav: PolNaviga
                 Title(a.factsText)
                 StageLadder(a.stg)
                 Body(a.etat)
-                a.url.takeIf { it.isNotBlank() }?.let { SourceList(listOf(SourceRef("Source", it)), data, onEv) }
+                a.url.takeIf { it.isNotBlank() }?.let { SourceList(listOf(SourceRef("", it)), data, onEv) }
             }
         }
     }
