@@ -98,7 +98,78 @@ fn taille(v: &Value) -> usize {
 /// Découpe un fichier en pages de `budget` caractères au plus. La plus grande liste (premier niveau,
 /// ou second niveau d'un objet) est découpée en tranches consécutives : la page 0 garde toutes les
 /// autres clés, les suivantes ne portent que la clé découpée. Un élément trop gros fait sa page seul.
+/// Si la page 0 dépasse encore le budget, repli sur [`paginer_profond`].
 fn paginer(v: &Value, budget: usize) -> Vec<Value> {
+    let pages = paginer_une_liste(v, budget);
+    if taille(&pages[0]) > budget { paginer_profond(v, budget) } else { pages }
+}
+
+/// Repli quand la page 0 déborde encore (masse répartie dans plusieurs listes, à n'importe quelle
+/// profondeur d'objets) : les listes sont vidées de la plus lourde à la plus légère jusqu'à ce que le
+/// squelette tienne, puis leurs éléments sont répartis dans l'ordre. Une page suivante ne porte que
+/// les chemins de ses éléments ; l'application concatène les listes de même chemin.
+fn paginer_profond(v: &Value, budget: usize) -> Vec<Value> {
+    fn plus_lourde(v: &Value, chemin: &mut Vec<String>, best: &mut Option<(usize, Vec<String>)>) {
+        let Value::Object(o) = v else { return };
+        for (k, x) in o {
+            chemin.push(k.clone());
+            match x {
+                Value::Array(a) if !a.is_empty() => {
+                    let t = taille(x);
+                    if best.as_ref().is_none_or(|b| t > b.0) {
+                        *best = Some((t, chemin.clone()));
+                    }
+                }
+                Value::Object(_) => plus_lourde(x, chemin, best),
+                _ => {}
+            }
+            chemin.pop();
+        }
+    }
+    // Valeur sous `chemin`, objets intermédiaires créés au besoin.
+    fn sous<'a>(v: &'a mut Value, chemin: &[String]) -> &'a mut Value {
+        chemin.iter().fold(v, |cur, k| &mut cur[k.as_str()])
+    }
+    let mut squelette = v.clone();
+    let mut extraites = Vec::new();
+    while taille(&squelette) > budget {
+        let mut best = None;
+        plus_lourde(&squelette, &mut Vec::new(), &mut best);
+        let Some((_, chemin)) = best else { break };
+        if let Value::Array(a) = std::mem::replace(sous(&mut squelette, &chemin), json!([])) {
+            extraites.push((chemin, a));
+        }
+    }
+    fn ajouter(page: &mut Value, chemin: &[String], e: Value) {
+        let l = sous(page, chemin);
+        if !l.is_array() {
+            *l = json!([]);
+        }
+        if let Value::Array(a) = l {
+            a.push(e);
+        }
+    }
+    let mut pages = Vec::new();
+    let mut page = squelette;
+    for (chemin, liste) in extraites {
+        for e in liste {
+            let mut essai = page.clone();
+            ajouter(&mut essai, &chemin, e.clone());
+            if taille(&essai) <= budget {
+                page = essai;
+            } else {
+                // Page pleine : l'élément ouvre la suivante, seul s'il est trop gros.
+                pages.push(std::mem::replace(&mut page, json!({})));
+                ajouter(&mut page, &chemin, e);
+            }
+        }
+    }
+    pages.push(page);
+    pages
+}
+
+/// Découpe d'une seule liste (premier ou second niveau), voir [`paginer`].
+fn paginer_une_liste(v: &Value, budget: usize) -> Vec<Value> {
     if taille(v) <= budget {
         return vec![v.clone()];
     }
@@ -140,7 +211,7 @@ fn paginer(v: &Value, budget: usize) -> Vec<Value> {
         let (base, ouverture) = if pages.is_empty() { (&squelette_page0, taille(&squelette_page0)) } else { (&squelette_suite, taille(&squelette_suite)) };
         let mut fin = debut;
         let mut total = ouverture;
-        while fin < liste.len() && total + taille(&liste[fin]) + 1 <= budget {
+        while fin < liste.len() && total + taille(&liste[fin]) < budget {
             total += taille(&liste[fin]) + 1;
             fin += 1;
         }
@@ -478,6 +549,69 @@ mod tests {
             tout.extend(r["contenu"]["SCRUTINS"].as_array().unwrap().clone());
         }
         assert_eq!(Value::Array(tout), brut["SCRUTINS"]);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Fichier `jeux` fictif : la masse est au 3ᵉ niveau (`JEUX.<slug>.manches`), aucune liste seule ne suffit.
+    fn gros_jeux() -> Value {
+        let jeux: serde_json::Map<String, Value> = (0..11)
+            .map(|j| {
+                let manches: Vec<Value> = (0..12)
+                    .map(|m| json!({"q": format!("Question fictive {j}-{m}"), "choix": ["Exemple A", "Exemple B"], "explication": "Texte inventé pour les tests. ".repeat(20)}))
+                    .collect();
+                (format!("jeu-{j}"), json!({"nom": format!("Jeu {j}"), "theme": "t", "params": {"n": j}, "manches": manches}))
+            })
+            .collect();
+        json!({"THEMES": [{"id": "t", "titre": "Thème fictif"}], "JEUX": jeux})
+    }
+    /// Recollage tel que le fait l'application (`mergePages`) : listes concaténées, objets fusionnés, scalaires de la page 0.
+    fn recoller(a: &mut Value, b: &Value) {
+        match (a, b) {
+            (Value::Array(x), Value::Array(y)) => x.extend(y.iter().cloned()),
+            (Value::Object(x), Value::Object(y)) => {
+                for (k, v) in y {
+                    match x.get_mut(k) {
+                        Some(prev) => recoller(prev, v),
+                        None => {
+                            x.insert(k.clone(), v.clone());
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn fichier_liste_profonde_decoupe_sans_perte() {
+        let brut = gros_jeux();
+        assert!(taille(&brut) > MAX_REPONSE);
+        // La découpe d'une seule liste ne suffit pas : c'est bien le repli qui joue.
+        assert!(taille(&paginer_une_liste(&brut, BUDGET_PAGE)[0]) > BUDGET_PAGE);
+        let dir = copie("jeux");
+        ecrire(&dir.join("jeux.json"), &brut.to_string(), 10);
+        let s = server_sur(&dir);
+        let n = v(fichier(&s, "jeux", 0))["pages"].as_u64().unwrap() as u32;
+        assert!(n >= 2);
+        let mut tout = Value::Null;
+        for page in 0..n {
+            let txt = fichier(&s, "jeux", page).unwrap();
+            assert!(txt.chars().count() <= MAX_REPONSE);
+            let r: Value = serde_json::from_str(&txt).unwrap();
+            assert!(taille(&r["contenu"]) <= BUDGET_PAGE);
+            if page == 0 {
+                tout = r["contenu"].clone();
+            } else {
+                assert!(r["contenu"].get("THEMES").is_none());
+                recoller(&mut tout, &r["contenu"]);
+            }
+        }
+        assert_eq!(tout, brut);
+        // Petit budget : un élément trop gros fait sa page seul, rien ne se perd.
+        let pages = paginer(&brut, 2_000);
+        let mut tout = pages[0].clone();
+        pages[1..].iter().for_each(|p| recoller(&mut tout, p));
+        assert_eq!(tout, brut);
         let _ = std::fs::remove_dir_all(dir);
     }
 
