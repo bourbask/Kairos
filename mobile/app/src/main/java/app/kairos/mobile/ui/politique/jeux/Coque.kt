@@ -309,7 +309,8 @@ private fun Fenetre(
     ) {
         val w = constraints.maxWidth.toFloat()
         val gap = with(density) { GAP_DP.dp.toPx() }
-        LaunchedEffect(w) {
+        // Clé sur la piste aussi : une piste neuve (retour à un jeu entamé) reçoit sa largeur.
+        LaunchedEffect(w, piste) {
             piste.width = w
             piste.gap = gap
             piste.x = restX(st.page, w, gap)

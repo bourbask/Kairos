@@ -30,6 +30,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -92,7 +93,8 @@ fun ThemeScreen(session: JeuxSession, id: String, data: PolData, nav: PolNavigat
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             if (slug != null) item(key = "hero") {
-                CarteJeu(session, slug, data, nav, Modifier.fillMaxWidth().height((visible * 0.92f - 20.dp).coerceAtLeast(420.dp)))
+                // Une carte par jeu : changer de jeu ne réutilise pas l'état (piste, annonces) du précédent.
+                key(slug) { CarteJeu(session, slug, data, nav, Modifier.fillMaxWidth().height((visible * 0.92f - 20.dp).coerceAtLeast(420.dp))) }
             }
             if (t.jeux.size > 1) item(key = "jeux") {
                 Carrousel(session, t, game) { game = it; scope.launch { list.animateScrollToItem(0) } }
