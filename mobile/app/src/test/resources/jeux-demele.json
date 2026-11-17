@@ -1,0 +1,37 @@
+{
+ "JEUX": {
+  "qui-l-a-dit": {
+   "nom": "Jeu A", "theme": "verifier", "manette": "portraits",
+   "manches": [
+    {"id": "decl-exemple-1", "kicker": "6 mai 2026", "q": "Une phrase d'exemple.",
+     "d": {"choix": [{"id": "personne-a", "nom": "Personne A", "parti": "Parti A"}, {"id": "personne-b", "nom": "Personne B", "parti": null}, {"id": "personne-c", "nom": "Personne C", "parti": "Parti C"}, {"id": "personne-d", "nom": "Personne D", "parti": "Parti D"}], "bonne": 0},
+     "reponse": {"titre": "C'était Personne A", "verdict": "exact", "texte": "Texte d'exemple.", "sources": [["Exemple, 7 mai 2026", "https://example.com/a"]]}},
+    {"id": "decl-exemple-2", "kicker": "9 septembre 2026", "q": "Autre phrase.",
+     "d": {"choix": [{"id": "personne-a", "nom": "Personne A", "parti": "Parti A"}, {"id": "personne-b", "nom": "Personne B", "parti": "Parti B"}, {"id": "personne-c", "nom": "Personne C"}], "bonne": 1},
+     "reponse": {"titre": "C'était Personne B", "verdict": "exact", "texte": "", "sources": [["Exemple", "https://example.com/b"]]}}
+   ]
+  },
+  "le-procede": {
+   "nom": "Jeu B", "theme": "verifier", "manette": "tampons",
+   "manches": [
+    {"id": "exemple-procede-1", "kicker": "Personne A · Exemple, 07/06/2022", "q": "Une phrase d'exemple.",
+     "d": {"choix": ["L'euphémisme", "L'homme de paille", "La victimisation"], "bonne": 1, "famille": "Déformer l'adversaire"},
+     "reponse": {"titre": "L'homme de paille", "verdict": null, "texte": "Définition.\n\nExplication.", "sources": [["Exemple, 07/06/2022", "https://example.com/c"]]}},
+    {"id": "exemple-procede-2", "kicker": "Personne B · 05/04/2018", "q": "Autre phrase.",
+     "d": {"contexte": "Contexte d'exemple.", "choix": ["Il n'y a pas d'alternative", "Le gros chiffre rond", "L'appel au peuple"], "bonne": 0, "famille": "Cadrer le débat"},
+     "reponse": {"titre": "Il n'y a pas d'alternative", "verdict": null, "texte": "Définition.", "sources": [["Exemple", "https://example.com/d"]]}}
+   ]
+  },
+  "trente-secondes": {
+   "nom": "Jeu C", "theme": "verifier", "manette": "fiches",
+   "manches": [
+    {"id": "exemple-origine-1", "kicker": "D'où vient l'idée ? · Entreprises", "q": "Une affirmation d'exemple.",
+     "d": {"choix": ["Des think tanks libéraux", "Une commission d'enquête du Sénat", "Le gouvernement"], "bonne": 1},
+     "reponse": {"titre": "Une commission d'enquête du Sénat", "verdict": "plutot-vrai", "texte": "", "cache": "Ce qu'elle cache, exemple.", "sources": [["Exemple", "https://example.com/e"]]}},
+    {"id": "exemple-origine-2", "kicker": "D'où vient l'idée ? · Europe", "q": "Autre affirmation.",
+     "d": {"choix": ["La Commission européenne", "", "Le Conseil d'État"], "bonne": 1},
+     "reponse": {"titre": "?", "verdict": "faux", "texte": "", "cache": "Exemple.", "sources": [["Exemple", "https://example.com/f"]]}}
+   ]
+  }
+ }
+}

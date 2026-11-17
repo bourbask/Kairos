@@ -66,6 +66,7 @@ import app.kairos.mobile.data.KairosApi
 import app.kairos.mobile.data.Repository
 import app.kairos.mobile.data.SecureStore
 import app.kairos.mobile.ui.KairosButtonCorner
+import app.kairos.mobile.ui.ContextDock
 import app.kairos.mobile.ui.Shell
 import app.kairos.mobile.ui.Tab
 import app.kairos.mobile.ui.overlay.Origin
@@ -574,6 +575,8 @@ private fun KairosRoot(model: AppModel, dark: Boolean) {
     var mediasOpen by rememberSaveable { mutableStateOf(false) }
     var documentsOpen by rememberSaveable { mutableStateOf(false) }
     var politiqueOpen by rememberSaveable { mutableStateOf(false) }
+    // Dock propre à l'espace Politique (ses thèmes), publié par l'espace tant qu'il est ouvert.
+    var politiqueDock by remember { mutableStateOf<ContextDock?>(null) }
     var unpackOrder by rememberSaveable { mutableStateOf<Long?>(null) }
     var adding by rememberSaveable { mutableStateOf(false) }
     var focusInput by remember { mutableStateOf(false) }
@@ -668,6 +671,7 @@ private fun KairosRoot(model: AppModel, dark: Boolean) {
             kairosState = mascotDescription(mascot, conversation.decisions),
             tab = tab,
             onTab = { tab = it },
+            contextDock = politiqueDock.takeIf { tab == Tab.Espaces && politiqueOpen },
             onTap = {
                 focusInput = false
                 chatOpen = true
@@ -841,6 +845,7 @@ private fun KairosRoot(model: AppModel, dark: Boolean) {
                             appScope = model.viewModelScope,
                             onClose = { politiqueOpen = false },
                             onUnauthorized = model::unauthorized,
+                            onDock = { politiqueDock = it },
                             // Site complet : lien enregistré sur l'appareil ; la tête n'émet que les liens de partage.
                             site = { back ->
                                 MimirScreen(

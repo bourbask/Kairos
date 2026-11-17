@@ -81,7 +81,8 @@ internal class EyeRig(val lx: Int, val ly: Int, val rx: Int, val ry: Int, val w:
 /**
  * Pose imposée par une scène ; sans scène, tout est nul et le personnage suit son état.
  * [look] = regard (décalage d'une case) ; [handL] / [handR] = mains posées, en
- * coordonnées locales au personnage pour [MascotKind.draw].
+ * coordonnées locales au personnage pour [MascotKind.draw] ; [eyeR] = expression
+ * propre à l'œil droit, quand elle diffère de [eyes].
  */
 class Pose(
     val state: MascotState = MascotState.Repos,
@@ -92,6 +93,7 @@ class Pose(
     val dx: Int = 0,
     val dy: Int = 0,
     val sit: Boolean = false,
+    val eyeR: Eye? = null,
 )
 
 internal fun drawEyes(p: Pen, rig: EyeRig, modes: Pair<Eye, Eye>, look: IntArray?) {
@@ -128,7 +130,7 @@ internal fun drawEyes(p: Pen, rig: EyeRig, modes: Pair<Eye, Eye>, look: IntArray
  * des deux côtés cligne quand [blink].
  */
 internal fun eyeMode(p: Pose, auto: Pair<Eye, Eye>, blink: Boolean): Pair<Eye, Eye> {
-    val m = p.eyes?.let { it to it } ?: auto
+    val m = p.eyes?.let { it to (p.eyeR ?: it) } ?: auto
     return if (m.first == Eye.Open && m.second == Eye.Open && blink) Eye.Blink to Eye.Blink else m
 }
 

@@ -51,6 +51,22 @@ class PolDataTest {
     }
 
     @Test
+    fun merge_pages_restores_lists_split_at_depth() {
+        // Forme du serveur quand la masse est au 3ᵉ niveau : page 0 = squelette, suivantes = chemins seuls.
+        fun p(n: Int, json: String) = PolPage("jeux", n, 3, "v", Json.parseToJsonElement(json))
+        val m = mergePages(listOf(
+            p(2, """{"JEUX":{"b":{"manches":[3]}}}"""),
+            p(0, """{"THEMES":[{"id":"t"}],"JEUX":{"a":{"nom":"A","manches":[1]},"b":{"nom":"B","manches":[]}}}"""),
+            p(1, """{"JEUX":{"a":{"manches":[2]},"b":{"manches":[]}}}"""),
+        ))
+        val attendu = Json.parseToJsonElement(
+            """{"THEMES":[{"id":"t"}],"JEUX":{"a":{"nom":"A","manches":[1,2]},"b":{"nom":"B","manches":[3]}}}""",
+        )
+        assertEquals(attendu, m)
+        assertEquals(listOf("a", "b"), m["JEUX"]!!.jsonObject.keys.toList())
+    }
+
+    @Test
     fun loader_restarts_when_version_changes() = runBlocking {
         val p0 = page("fichier-dit-vote-p0")
         val p1 = page("fichier-dit-vote-p1")
@@ -71,6 +87,25 @@ class PolDataTest {
             loadPolData({ _, n -> p0.copy(version = "v${k++}", pages = 2, page = n) }, listOf("dit-vote"))
             fail()
         } catch (_: PolLoadException) {}
+    }
+
+    @Test
+    fun games_file_failure_never_takes_the_space_down() = runBlocking {
+        val p0 = page("fichier-dit-vote-p0")
+        for (err in listOf<Exception>(ApiError.Server(422, "Réponse trop volumineuse."), ApiError.NoReply, IllegalStateException("illisible"))) {
+            val d = loadPolData({ id, n -> if (id == "jeux") throw err else p0.copy(version = "v", pages = 1, page = n) }, listOf("dit-vote", "jeux"))
+            assertNotNull(d.file("dit-vote"))
+            assertNull(d.file("jeux"))
+        }
+        // Instable deux fois : absent aussi.
+        var k = 0
+        val d = loadPolData({ id, n -> if (id == "jeux") p0.copy(version = "v${k++}", pages = 2, page = n) else p0.copy(version = "v", pages = 1, page = n) }, listOf("dit-vote", "jeux"))
+        assertNull(d.file("jeux"))
+        // Session expirée : remonte toujours.
+        try {
+            loadPolData({ _, _ -> throw ApiError.Unauthorized }, listOf("jeux"))
+            fail()
+        } catch (_: ApiError.Unauthorized) {}
     }
 
     @Test

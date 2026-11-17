@@ -114,4 +114,15 @@ class PolKitTest {
         assertEquals("Source", sourceName(SourceRef(" ", "http://exemple.org")))
         assertEquals("Rapport", sourceName(SourceRef("Rapport")))
     }
+
+    @Test fun source_rest_drops_the_evaluator_name() {
+        val ev = app.kairos.mobile.ui.politique.model.Evaluator(id = "o", nom = "Office Exemple", alias = listOf("OE"))
+        assertEquals("rapport 2025", sourceRest(SourceRef("Office Exemple, rapport 2025", "https://example.org/r"), ev))
+        assertEquals("rapport", sourceRest(SourceRef("OE : rapport"), ev))
+        assertEquals("example.org", sourceRest(SourceRef("Office Exemple", "https://www.example.org/r"), ev))
+        assertEquals("Article", sourceRest(SourceRef("Office Exemple"), ev))
+        // Libellé qui ne commence pas par l'évaluateur, ou évaluateur absent : libellé entier.
+        assertEquals("Étude tierce", sourceRest(SourceRef("Étude tierce"), ev))
+        assertEquals("Office Exemple, x", sourceRest(SourceRef("Office Exemple, x"), null))
+    }
 }

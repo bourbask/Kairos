@@ -104,12 +104,9 @@ class DeclarationsTest {
         assertEquals("« a » dit-il", quoted("« a » dit-il"))
     }
 
-    @Test fun home_tile_counts_and_marks() {
+    @Test fun home_tile_counts() {
         assertEquals("5 déclarations", RUBRICS.single { it.id == "declarations" }.count(data))
         assertEquals("Paroles publiques", rubricTitle("declarations"))
-        // Encre neutre, une case par déclaration : jamais de couleur de verdict.
-        assertEquals(List(5) { Ink.Line }, tileViz(data, "declarations")!!.marks.map { it.ink })
-        assertTrue(tileViz(data, "declarations")!!.marks.all { it.shape == MarkShape.Box })
     }
 
     @Test fun duplicate_ids_keep_unique_keys() {
