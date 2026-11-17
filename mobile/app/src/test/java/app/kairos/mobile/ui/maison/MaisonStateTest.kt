@@ -259,6 +259,47 @@ class MaisonStateTest {
     }
 
     @Test
+    fun extensions_start_from_today_when_overdue() {
+        val today = LocalDate.of(2026, 11, 12)
+        // Dépassé : depuis aujourd'hui ; encore valable : depuis sa date ; sans date : aujourd'hui.
+        assertTrue(overdue(champignons, today))
+        assertEquals(today, extendFrom(champignons, today))
+        assertEquals(LocalDate.of(2026, 11, 20), extendFrom(champignons.copy(expiry = "2026-11-20"), today))
+        assertEquals(today, extendFrom(riz, today))
+        assertFalse(overdue(riz, today))
+        assertEquals(listOf(2L, 7L, 14L), EXTENSIONS.map { it.third })
+        // Seuils du serveur ; un lot neutre (peut-être non périssable) le reste.
+        assertEquals(Tone.Urgent, toneAt(champignons, today.plusDays(1), today))
+        assertEquals(Tone.Attention, toneAt(champignons, today.plusDays(3), today))
+        assertEquals(Tone.Neutre, toneAt(champignons, today.plusDays(4), today))
+        assertEquals(Tone.Neutre, toneAt(riz, today, today))
+    }
+
+    @Test
+    fun new_date_resorts_and_rolls_back() {
+        val today = LocalDate.of(2026, 11, 12)
+        val s = MaisonState(snapshot())
+        val a = s.setExpiry(champignons, today.plusDays(14), today) as LotAction.Update
+        assertEquals("app_lot_update", a.tool)
+        assertEquals("""{"lot":1,"expiry":"2026-11-26"}""", a.args.toString())
+        // Tout de suite : plus urgent, plus estimé, passé derrière la soupe.
+        val shown = s.lots.first { it.id == 1L }
+        assertEquals(Tone.Neutre to false, shown.tone to shown.estimated)
+        assertEquals("2026-11-26", shown.expiry)
+        assertEquals(listOf("Soupe carcasse", "Champignons"), s.lotsIn("frigo").map { it.name })
+        assertEquals(0, s.zones.first { it.id == "frigo" }.urgent)
+        // Refusé : tout revient.
+        assertTrue(s.dispatch(a))
+        s.refused(a, "Refusé.")
+        assertEquals(champignons, s.lots.first { it.id == 1L })
+        assertEquals(listOf("Champignons", "Soupe carcasse"), s.lotsIn("frigo").map { it.name })
+        // Même date, déjà ferme : rien à envoyer ; une date estimée se confirme.
+        assertNull(s.setExpiry(champignons, LocalDate.parse(champignons.expiry), today))
+        assertTrue(MaisonState(snapshot()).setExpiry(champignons.copy(estimated = true), LocalDate.parse(champignons.expiry), today) != null)
+        assertNull(MaisonState(snapshot(offline = true)).setExpiry(champignons, today, today))
+    }
+
+    @Test
     fun readable_quantities_and_dates() {
         assertEquals("950 g", formatQty(950.0, "g"))
         assertEquals("1,25 kg", formatQty(1250.0, "g"))
