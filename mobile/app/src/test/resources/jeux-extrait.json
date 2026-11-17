@@ -1,0 +1,126 @@
+{
+ "THEMES": [
+  {
+   "id": "verifier",
+   "nom": "Démêle",
+   "question": "Cette phrase, vraie ?",
+   "jeux": [
+    "qui-l-a-dit",
+    "le-procede",
+    "trente-secondes"
+   ]
+  },
+  {
+   "id": "chiffrer",
+   "nom": "Mesure",
+   "question": "Ce programme, sérieux ?",
+   "jeux": [
+    "quelle-gravite",
+    "le-juste-cout",
+    "independant"
+   ]
+  },
+  {
+   "id": "bilan",
+   "nom": "Retrace",
+   "question": "Ce qu'ils ont fait",
+   "jeux": [
+    "le-vote",
+    "avant-apres",
+    "la-ville"
+   ]
+  },
+  {
+   "id": "pouvoirs",
+   "nom": "Relie",
+   "question": "Qui tire les ficelles",
+   "jeux": [
+    "les-liens",
+    "le-financeur"
+   ]
+  }
+ ],
+ "JEUX": {
+  "independant": {
+   "nom": "Indépendant ?",
+   "sousTitre": "Pesez l'indépendance de ceux qui chiffrent",
+   "theme": "chiffrer",
+   "manette": "romaine",
+   "params": {
+    "niveaux": [
+     {
+      "n": 1,
+      "nom": "Indépendance statutaire et contrôlée"
+     },
+     {
+      "n": 2,
+      "nom": "Indépendant, orientation connue"
+     },
+     {
+      "n": 3,
+      "nom": "Lié à un intérêt économique ou à un camp"
+     },
+     {
+      "n": 4,
+      "nom": "Partisan ou militant"
+     }
+    ]
+   },
+   "manches": [
+    {
+     "id": "fondapol",
+     "kicker": "Think tank",
+     "q": "Fondapol",
+     "d": {
+      "argent": "Subvention du Premier ministre (80 % des revenus en 2023), mécénat d'entreprises.",
+      "lien": "Créée en 2004 avec le soutien de l'UMP ; se dit libérale, progressiste et européenne.",
+      "bonne": 3
+     },
+     "reponse": {
+      "titre": "Niveau 3 · Lié à un intérêt économique ou à un camp",
+      "verdict": null,
+      "texte": "Aujourd'hui financée surtout par l'État.",
+      "sources": [
+       [
+        "Fondapol, la fondation",
+        "https://www.fondapol.org/la-fondation/",
+        "fondapol"
+       ]
+      ]
+     }
+    }
+   ]
+  },
+  "quelle-gravite": {
+   "nom": "Le gravitomètre",
+   "sousTitre": "Jaugez la gravité de chaque promesse",
+   "theme": "chiffrer",
+   "manette": "cadran",
+   "params": {
+    "crans": [
+     {
+      "n": 1,
+      "nom": "Désaccord normal",
+      "definition": "Arbitrage de valeurs, chiffrage contesté."
+     },
+     {
+      "n": 2,
+      "nom": "Promesse creuse",
+      "definition": "Non financée, irréaliste, ou déjà tentée sans résultat."
+     },
+     {
+      "n": 3,
+      "nom": "Contraire au droit",
+      "definition": "Exige une révision constitutionnelle, ou la sortie ou la violation d'un traité ou de la CEDH."
+     },
+     {
+      "n": 4,
+      "nom": "Atteinte aux droits fondamentaux",
+      "definition": "Touche aux libertés fondamentales ou à l'État de droit."
+     }
+    ]
+   },
+   "manches": []
+  }
+ }
+}

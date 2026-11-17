@@ -5,7 +5,9 @@ import app.kairos.mobile.ui.politique.model.PolData
 import app.kairos.mobile.ui.politique.model.SourceRef
 import app.kairos.mobile.ui.politique.model.sourcesOf
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import app.kairos.mobile.ui.politique.model.PolJson
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
@@ -59,13 +61,16 @@ class Theme(val id: String, val nom: String, val question: String, val jeux: Lis
 fun jeuxOf(data: PolData): Map<String, Jeu> {
     val raw = data.file(JEUX_FILE)?.get("JEUX") as? JsonObject ?: return emptyMap()
     return raw.mapNotNull { (slug, v) ->
-        val j = (v as? JsonObject)?.let { runCatching { app.kairos.mobile.ui.politique.model.PolJson.decodeFromJsonElement(Jeu.serializer(), it) }.getOrNull() }
-        j?.let { slug to it.copy(manches = it.manches.filter { m -> m.id.isNotBlank() }.distinctBy { m -> m.id }) }
+        val o = v as? JsonObject ?: return@mapNotNull null
+        val j = runCatching { PolJson.decodeFromJsonElement(Jeu.serializer(), JsonObject(o - "manches")) }.getOrNull() ?: return@mapNotNull null
+        // Manches une à une : une invalide n'emporte pas le jeu.
+        val manches = (o["manches"] as? JsonArray).orEmpty().mapNotNull { runCatching { PolJson.decodeFromJsonElement(Manche.serializer(), it) }.getOrNull() }
+        slug to j.copy(manches = manches.filter { m -> m.id.isNotBlank() }.distinctBy { m -> m.id })
     }.toMap()
 }
 
 private fun JsonElement.slug(): String? = when (this) {
-    is JsonPrimitive -> contentOrNull
+    is JsonPrimitive -> takeIf { it.isString }?.contentOrNull
     is JsonObject -> (this["slug"] as? JsonPrimitive)?.contentOrNull
     else -> null
 }?.takeIf { it.isNotBlank() }
