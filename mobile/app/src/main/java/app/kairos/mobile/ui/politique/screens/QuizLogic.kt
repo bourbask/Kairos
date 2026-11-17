@@ -153,7 +153,7 @@ enum class RearInk { Shade, Flank, Edge, Face, Alt, Band, Txt, Dot, Ear }
 const val TRACT_W = 106
 const val TRACT_H = 147
 
-/** Pseudo-aléatoire stable par carte, celui de la maquette. */
+/** Pseudo-aléatoire stable par carte. */
 fun quizRnd(k: Double): Double { val x = sin(k * 12.9898 + 78.233) * 43758.5453; return x - floor(x) }
 
 /** Coin supérieur gauche de la carte en main, en cellules : centrée dans la zone [w] × [h]. */
@@ -315,3 +315,18 @@ fun turnFrame(t: Double, w: Int, h: Int, from: TurnFace): TurnFrame {
 
 /** Face « faits et sources » : seul un glissé surtout horizontal est pris par la carte ; le vertical reste au défilement. */
 fun backDragTakes(dx: Float, dy: Float): Boolean = abs(dx) > abs(dy)
+
+/** Carte en main dans une zone [w] × [h] cellules dont [reserve] rangées du haut vont au score et aux voyants : taille et coin. */
+class DeckFit(val cw: Int, val ch: Int, val x0: Int, val y0: Int)
+
+/** La pile occupe la zone sous la réserve, centrée, réduite au besoin (40 cellules de large au moins). */
+fun deckFit(w: Int, h: Int, reserve: Int): DeckFit {
+    val area = h - reserve
+    val cw = minOf(TRACT_W, w - 8, ((area - 4) * TRACT_W / TRACT_H.toFloat()).toInt()).coerceAtLeast(40)
+    val ch = jsRound(cw * TRACT_H / TRACT_W.toDouble())
+    val (x0, y0) = cardOrigin(w, area, cw, ch)
+    return DeckFit(cw, ch, x0, max(0, y0) + reserve)
+}
+
+/** Haut de la rangée de voyants : centrée dans l'écart [gap] sous le score ([bar]), jamais au-dessus de sa limite basse. */
+fun ledOffset(gap: Float, bar: Float, led: Float, raise: Float): Float = bar + max(0f, (gap - (led + raise)) / 2) + raise

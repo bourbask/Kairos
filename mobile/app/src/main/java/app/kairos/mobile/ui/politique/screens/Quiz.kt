@@ -328,25 +328,28 @@ private fun QuizGame(data: PolData, nav: PolNavigator, claims: List<Claim>, camp
         val cd = with(density) { s.toDp() }
         val wC = constraints.maxWidth / s
         val hC = constraints.maxHeight / s
-        // Carte au plus 318 × 441 dp ; réduite pour garder la place du score et des voyants au-dessus d'elle.
+        // Carte au plus 318 × 441 dp, dans la zone sous la réserve du score et des voyants (réservée au-dessus seulement).
         val reserve = ((BAR_H + LED_H + LED_RAISE + 12.dp) / cd).toInt() + 1
-        val cw = minOf(TRACT_W, wC - 8, ((hC - 2 * reserve) * TRACT_W / TRACT_H.toFloat()).toInt()).coerceAtLeast(40)
-        val ch = (cw * TRACT_H / TRACT_W.toFloat()).roundToInt()
-        val (x0, y0) = cardOrigin(wC, hC, cw, ch)
+        val fit = deckFit(wC, hC, reserve)
+        val cw = fit.cw
+        val ch = fit.ch
+        val x0 = fit.x0
+        val y0 = fit.y0
+        val area = (hC - reserve).coerceAtLeast(0)
         val left = n - i - 1
-        val cells = remember(wC, hC, i, left, cw, ch) { rearCells(wC, hC, i, left, cw, ch) }
+        val cells = remember(wC, area, i, left, cw, ch) { rearCells(wC, area, i, left, cw, ch) }
         val rearInk = listOf(ink.shade, ink.flank, ink.edge, ink.paper, ink.alt, ink.pri, ink.txt, ink.dot, ink.ear)
 
         // Pile du dessous.
         Canvas(Modifier.fillMaxSize().clearAndSetSemantics { }) {
-            for (y in 0 until hC) {
+            for (y in 0 until area) {
                 var x = 0
                 while (x < wC) {
                     val k = cells[y * wC + x]
                     if (k < 0) { x++; continue }
                     var e = x + 1
                     while (e < wC && cells[y * wC + e] == k) e++
-                    cell(x, y, rearInk[k], s, w = e - x)
+                    cell(x, y + reserve, rearInk[k], s, w = e - x)
                     x = e
                 }
             }
@@ -354,7 +357,7 @@ private fun QuizGame(data: PolData, nav: PolNavigator, claims: List<Claim>, camp
 
         // Voyants, centrés dans l'écart entre le score et la pile.
         val gap = cd * y0 - BAR_H
-        val ledTop = BAR_H + (gap - (LED_H + LED_RAISE)) / 2 + LED_RAISE
+        val ledTop = ledOffset(gap.value, BAR_H.value, LED_H.value, LED_RAISE.value).dp
         Row(
             Modifier.fillMaxWidth().offset(y = ledTop).padding(horizontal = 12.dp).semantics { isTraversalGroup = true },
             horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.Bottom,

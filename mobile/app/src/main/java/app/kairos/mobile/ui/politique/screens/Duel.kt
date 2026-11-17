@@ -164,7 +164,7 @@ private val PipInk = Color(0xFF1A1A12)
 private val Neutral = Color(0xFF8A938A)
 private val Glide = CubicBezierEasing(0.05f, 0.7f, 0.1f, 1f)
 
-/** Jetons de la maquette, tirés du thème courant. */
+/** Jetons du duel, tirés du thème courant. */
 @Immutable
 internal class DuelInk(
     val dark: Boolean, val pri: Color, val onPri: Color, val pc: Color, val onPc: Color, val surf: Color, val ink: Color,

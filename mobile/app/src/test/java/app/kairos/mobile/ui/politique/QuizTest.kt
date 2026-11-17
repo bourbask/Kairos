@@ -146,4 +146,18 @@ class QuizTest {
         assertEquals("Des réflexes justes, et quelques surprises.", quizEndMessage(4, 10))
         assertEquals("Les données surprennent souvent : c'est le but.", quizEndMessage(0, 10))
     }
+
+    @Test fun deck_stays_below_score_on_low_screens() {
+        // Écran bas (paysage) : la carte ne remonte jamais dans la réserve du score et des voyants.
+        listOf(120 to 90, 130 to 150, 200 to 260).forEach { (w, h) ->
+            val d = deckFit(w, h, reserve = 40)
+            assertTrue("$w×$h", d.y0 >= 40)
+            assertTrue("$w×$h", d.y0 + d.ch <= h || d.cw == 40)
+            assertTrue(d.cw <= TRACT_W && d.cw <= w - 8)
+        }
+        assertEquals("grand écran : taille pleine", TRACT_W, deckFit(140, 260, 40).cw)
+        // Voyants : jamais au-dessus de la limite sous le score.
+        assertEquals(32f + 14f, ledOffset(gap = 10f, bar = 32f, led = 60f, raise = 14f), 0f)
+        assertEquals(32f + 10f + 14f, ledOffset(gap = 94f, bar = 32f, led = 60f, raise = 14f), 0f)
+    }
 }
