@@ -1,5 +1,6 @@
 package app.kairos.mobile.ui.politique
 
+import app.kairos.mobile.ui.politique.jeux.themesOf
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.material3.minimumInteractiveComponentSize
@@ -162,8 +163,11 @@ fun HomeScreen(data: PolData, nav: PolNavigator, bottom: Dp, grid: LazyGridState
         }
 
         full { HeaderRow("Explorer", plural(DOORS.size, "thème", "thèmes")) }
+        // Nom et accroche publiés dans les données des jeux priment sur les valeurs par défaut.
+        val themes = themesOf(data).associateBy { it.id }
         items(DOORS, span = { GridItemSpan(maxLineSpan) }, key = { it.id }) { d ->
-            DoorCard(d, counts, teasers[d.id], nav)
+            val th = themes[d.id]
+            DoorCard(d, th?.nom ?: d.kicker, th?.question ?: d.question, counts, teasers[d.id], nav)
         }
         full {
             Text(
@@ -323,19 +327,19 @@ private fun doorTint(id: String): DoorTint {
 /** Porte de l'accueil : sur-titre, question, rubriques en pastilles (raccourcis), accroche du jour ; la carte ouvre la page de la porte. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun DoorCard(d: Door, counts: Map<String, String>, teaser: String?, nav: PolNavigator) {
+private fun DoorCard(d: Door, kicker: String, question: String, counts: Map<String, String>, teaser: String?, nav: PolNavigator) {
     val t = doorTint(d.id)
     val rubrics = d.rubrics.mapNotNull { id -> RUBRICS.firstOrNull { it.id == id } }
     Surface(
         { nav.go(PolRoute.Door(d.id)) },
-        Modifier.fillMaxWidth().semantics { contentDescription = "${d.kicker} : ${d.question}. Ouvrir les ${plural(rubrics.size, "rubrique", "rubriques")}" },
+        Modifier.fillMaxWidth().semantics { contentDescription = "$kicker : $question. Ouvrir les ${plural(rubrics.size, "rubrique", "rubriques")}" },
         shape = RoundedCornerShape(24.dp), color = t.bg, contentColor = t.ink,
     ) {
         Column(Modifier.padding(18.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Kicker(d.kicker, color = t.ink.copy(alpha = 0.75f))
-                    Text(frTypo(d.question), fontSize = 25.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.02).em, lineHeight = 29.sp)
+                    Kicker(kicker, color = t.ink.copy(alpha = 0.75f))
+                    Text(frTypo(question), fontSize = 25.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.02).em, lineHeight = 29.sp)
                 }
                 Icon(KairosIcons.ChevronForward, contentDescription = null, tint = t.ink)
             }

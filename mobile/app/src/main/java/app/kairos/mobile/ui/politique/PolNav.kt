@@ -139,10 +139,10 @@ class Door(val id: String, val kicker: String, val question: String, val rubrics
 
 /** Toute rubrique est dans exactement une porte. */
 val DOORS: List<Door> = listOf(
-    Door("verifier", "Démêle", "Cette phrase, vraie ?", listOf("phrases", "declarations", "dossiers", "rhetorique", "origines", "bulle")),
-    Door("chiffrer", "Mesure", "Ce programme, sérieux ?", listOf("budgets", "promesses", "niveau-de-vie", "evaluateurs")),
-    Door("bilan", "Retrace", "Ce qu'ils ont fait", listOf("bilan", "votes", "dit-vote", "revirements", "villes")),
-    Door("pouvoirs", "Relie", "Qui tire les ficelles", listOf("argent", "probite", "medias")),
+    Door("verifier", "Démêle", "Le vrai du faux dans les discours", listOf("phrases", "declarations", "dossiers", "rhetorique", "origines", "bulle")),
+    Door("chiffrer", "Mesure", "Le poids réel des promesses", listOf("budgets", "promesses", "niveau-de-vie", "evaluateurs")),
+    Door("bilan", "Retrace", "Leurs actes, face à leurs paroles", listOf("bilan", "votes", "dit-vote", "revirements", "villes")),
+    Door("pouvoirs", "Relie", "Qui possède, qui finance", listOf("argent", "probite", "medias")),
 )
 
 fun doorOf(rubric: String): Door? = DOORS.firstOrNull { rubric in it.rubrics }
