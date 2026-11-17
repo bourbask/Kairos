@@ -161,14 +161,17 @@ class LaVille : PolJeu<VilleD>("la-ville", VilleD.serializer()) {
                                     lachee[0] = q
                                     choisir(plusProche(pts, q.x, q.y, tete))
                                 }
-                                at(down.position)
-                                while (true) {
-                                    val ch = awaitPointerEvent().changes.firstOrNull { it.id == down.id } ?: break
-                                    if (!ch.pressed) break
-                                    ch.consume()
-                                    at(ch.position)
+                                try {
+                                    at(down.position)
+                                    while (true) {
+                                        val ch = awaitPointerEvent().changes.firstOrNull { it.id == down.id } ?: break
+                                        if (!ch.pressed) break
+                                        ch.consume()
+                                        at(ch.position)
+                                    }
+                                } finally {
+                                    drag = null
                                 }
-                                drag = null
                                 c.annoncer(d.choix[sel].ville + if ("$sel" in st.out) ", déjà écarté." else ".")
                             }
                         },

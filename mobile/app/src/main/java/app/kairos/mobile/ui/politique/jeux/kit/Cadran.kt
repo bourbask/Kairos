@@ -226,6 +226,7 @@ fun Levier(
     val sc = MaterialTheme.colorScheme
     val set by rememberUpdatedState(onValeur)
     val tick by rememberUpdatedState(onCran)
+    val courante by rememberUpdatedState(valeur)
     val knob = remember { pxButton(8, 12, 2, emptyList(), GlyphMode.Grave) }
     val s = cellPx(3.dp)
     val kc = if (enabled) couleur else Teintes.eteint
@@ -246,27 +247,31 @@ fun Levier(
                 progressBarRangeInfo = ProgressBarRangeInfo(valeur.coerceAtLeast(0).toFloat(), 0f..(crans - 1).toFloat(), (crans - 2).coerceAtLeast(0))
                 if (!enabled) disabled() else setProgress { v -> set(v.roundToInt().coerceIn(0, crans - 1)); true }
             }
-            .pointerInput(enabled, crans) {
+            .pointerInput(enabled, crans, s) {
                 if (!enabled) return@pointerInput
                 val margin = knob.w * s / 2f
                 val track = size.width - 2 * margin
-                var last = valeur
                 awaitEachGesture {
                     val down = awaitFirstDown()
                     down.consume()
+                    // Valeur relue à chaque geste : elle a pu changer entre deux (accessibilité, nouvelle manche).
+                    var last = courante
                     fun at(x: Float) {
                         dragX = (x - margin).coerceIn(0f, track)
                         val c = levierCran(x - margin, track, crans)
                         if (c != last) { last = c; tick(); set(c) }
                     }
-                    at(down.position.x)
-                    while (true) {
-                        val ch = awaitPointerEvent().changes.firstOrNull { it.id == down.id } ?: break
-                        if (!ch.pressed) break
-                        ch.consume()
-                        at(ch.position.x)
+                    try {
+                        at(down.position.x)
+                        while (true) {
+                            val ch = awaitPointerEvent().changes.firstOrNull { it.id == down.id } ?: break
+                            if (!ch.pressed) break
+                            ch.consume()
+                            at(ch.position.x)
+                        }
+                    } finally {
+                        dragX = null
                     }
-                    dragX = null
                 }
             },
     ) {

@@ -153,7 +153,8 @@ fun Modifier.glissable(id: String, gd: GlisserDeposer, label: String, enabled: B
         .pointerInput(id) {
             val marge = with(density) { 8.dp.toPx() }
             detectDragGestures(
-                onDragStart = { if (en) gd.tenir(id) },
+                // Un seul élément tenu à la fois : un second doigt n'en vole pas la main.
+                onDragStart = { if (en && gd.tenue == null) gd.tenir(id) },
                 onDrag = { ch, d ->
                     if (!en || gd.tenue != id) return@detectDragGestures
                     ch.consume()
@@ -161,12 +162,13 @@ fun Modifier.glissable(id: String, gd: GlisserDeposer, label: String, enabled: B
                     gd.survoler(bounds.center + off.value + d, marge)
                 },
                 onDragEnd = {
+                    if (gd.tenue != id) { scope.launch { retour() }; return@detectDragGestures }
                     val hot = gd.survol
                     gd.tenir(null)
                     val ok = hot != null && gd.poser(id, hot)
                     scope.launch { if (ok) off.snapTo(Offset.Zero) else retour() }
                 },
-                onDragCancel = { gd.tenir(null); scope.launch { retour() } },
+                onDragCancel = { if (gd.tenue == id) gd.tenir(null); scope.launch { retour() } },
             )
         }
         .clickable(remember { MutableInteractionSource() }, null, enabled = enabled, role = Role.Button, onClickLabel = if (sel) "Reposer" else "Saisir") { gd.saisir(id) }
