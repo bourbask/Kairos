@@ -2,6 +2,8 @@ use chrono::{NaiveDate, NaiveDateTime, Duration, TimeZone, Utc};
 use chrono_tz::Tz;
 use crate::models::{CalendarEvent, Task};
 
+pub mod export;
+
 // ponytail: fuseau par défaut codé en dur ; passer en config si multi-fuseau un jour.
 pub const USER_TZ: Tz = chrono_tz::Europe::Paris;
 

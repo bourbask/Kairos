@@ -31,6 +31,8 @@ fi
 
 echo "==> [1/4] Envoi du working tree vers l'hôte"
 ssh "$VPS_HOST" "mkdir -p '$KAIROS_DIR'"
+# Créé par l'utilisateur ssh : monté seul (lecture) par alimentation, sinon créé en root.
+ssh "$VPS_HOST" "mkdir -p '$KAIROS_DIR/data/agenda-export'"
 # Liste établie par git (suivis + non suivis non ignorés) : configuration et
 # secrets propres à une machine restent sur leur hôte, les fichiers d'exemple
 # suivent. Un fichier suivi supprimé localement est sauté.

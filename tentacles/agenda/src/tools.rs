@@ -335,7 +335,10 @@ impl AgendaServer {
             };
         }
         let keep: Vec<String> = self.cal.subscriptions.iter().map(|(_, s)| s.clone()).collect();
-        let _ = self.db().and_then(|db| db.prune_subscriptions(&keep).map_err(err));
+        if let Ok(db) = self.db() {
+            let _ = db.prune_subscriptions(&keep);
+            kairos::calendar::export::export_from_env(&db);
+        }
         let at = if ok {
             Some(Utc::now().with_timezone(&USER_TZ).to_rfc3339_opts(chrono::SecondsFormat::Secs, false))
         } else {

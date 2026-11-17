@@ -427,6 +427,7 @@ async fn main() -> anyhow::Result<()> {
                         }
                     }
 
+                    calendar::export::export_from_env(&storage);
                     println!("Synced {} events.", total);
                 }
                 CalendarAction::Today => {
