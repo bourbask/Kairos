@@ -54,13 +54,13 @@ class JeuxTest {
 
     @Test fun jeux_file_is_loaded() = assertTrue("jeux" in POL_FILES)
 
-    @Test fun real_extract_decodes() {
+    @Test fun extract_decodes() {
         val jeux = jeuxOf(extrait)
         val m = jeux.getValue("independant").manches.single()
-        assertEquals("fondapol", m.id)
+        assertEquals("institut-exemple", m.id)
         assertEquals(3, (m.d["bonne"] as kotlinx.serialization.json.JsonPrimitive).content.toInt())
         assertNull(m.reponse.verdict)
-        assertEquals("fondapol", m.reponse.refs.single().ev)
+        assertEquals("institut-exemple", m.reponse.refs.single().ev)
         assertTrue(jeux.getValue("quelle-gravite").params.containsKey("crans"))
         val themes = themesOf(extrait, jeux)
         assertEquals(listOf("Démêle", "Mesure", "Retrace", "Relie"), themes.map { it.nom })

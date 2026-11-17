@@ -68,23 +68,23 @@
    },
    "manches": [
     {
-     "id": "fondapol",
+     "id": "institut-exemple",
      "kicker": "Think tank",
-     "q": "Fondapol",
+     "q": "Institut Exemple",
      "d": {
-      "argent": "Subvention du Premier ministre (80 % des revenus en 2023), mécénat d'entreprises.",
-      "lien": "Créée en 2004 avec le soutien de l'UMP ; se dit libérale, progressiste et européenne.",
+      "argent": "Subvention publique fictive (60 % des revenus), dons d'entreprises fictives.",
+      "lien": "Créé par un parti fictif ; se dit indépendant.",
       "bonne": 3
      },
      "reponse": {
       "titre": "Niveau 3 · Lié à un intérêt économique ou à un camp",
       "verdict": null,
-      "texte": "Aujourd'hui financée surtout par l'État.",
+      "texte": "Exemple fictif : financé surtout par des fonds publics.",
       "sources": [
        [
-        "Fondapol, la fondation",
-        "https://www.fondapol.org/la-fondation/",
-        "fondapol"
+        "Institut Exemple, présentation",
+        "https://example.com/institut",
+        "institut-exemple"
        ]
       ]
      }
