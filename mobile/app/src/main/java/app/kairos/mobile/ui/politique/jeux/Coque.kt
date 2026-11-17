@@ -190,6 +190,8 @@ private fun MancheCarte(session: JeuxSession, g: JeuPret, nom: String, st: Manch
         }
     }
     val (n, total) = session.position(g.slug)
+    // Carte déjà faite dans un cycle précédent : signalée tant qu'elle n'est pas résolue.
+    val deja = remember(st) { carte(g.slug, st.manche.id) in session.prog.faites }
     val piste = rememberPiste(session, g.slug, st, reduit)
     Row(Modifier.fillMaxWidth().padding(start = 2.dp, bottom = 10.dp).heightIn(min = 40.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(frTypo(nom), Modifier.weight(1f).semantics { heading() }, fontSize = 18.sp, lineHeight = 21.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -198,7 +200,12 @@ private fun MancheCarte(session: JeuxSession, g: JeuPret, nom: String, st: Manch
     Column(Modifier.fillMaxWidth().padding(bottom = 10.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Box(Modifier.fillMaxWidth().weight(1f, fill = true).heightIn(min = 150.dp)) {
             Fenetre(piste, st, session, g.slug, reduit,
-                question = { g.impl.FenetreBrute(st.manche, d, st, coque) },
+                question = {
+                    Box(Modifier.fillMaxSize()) {
+                        g.impl.FenetreBrute(st.manche, d, st, coque)
+                        if (deja && !st.solved) DejaVu(Modifier.align(Alignment.TopEnd).padding(10.dp))
+                    }
+                },
                 reponse = { Reponse(g, st, d, carte(g.slug, st.manche.id) in session.prog.premier, data, nav, onNext = { piste.go(Page.Suivant) }, reduit) },
             )
         }
@@ -356,6 +363,15 @@ private fun Reponse(g: JeuPret, st: MancheEtat, d: Any, first: Boolean, data: Po
             Icon(KairosIcons.ChevronForward, contentDescription = "Question suivante", tint = KairosColors.current.nuit)
         }
     }
+}
+
+@Composable
+private fun DejaVu(modifier: Modifier) {
+    val scheme = MaterialTheme.colorScheme
+    Text(
+        "DÉJÀ VU", modifier.border(1.dp, scheme.outlineVariant, RoundedCornerShape(6.dp)).padding(horizontal = 5.dp, vertical = 3.dp),
+        color = scheme.onSurfaceVariant, fontFamily = Mono, fontSize = 10.5.sp, letterSpacing = 0.06.em,
+    )
 }
 
 @Composable
