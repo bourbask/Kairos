@@ -100,7 +100,7 @@ fun contentDossiersOf(data: PolData): List<ContentDossier> = data.decode<Content
 private val SOURCE_TYPES = mapOf(
     "public" to "Organisme public", "academique" to "Recherche universitaire", "think-tank" to "Think tank",
     "patronal" to "Organisation patronale", "syndical" to "Syndicat", "militant" to "Organisation militante",
-    "candidat" to "Parole de candidat", "media" to "Média", "sondage" to "Institut de sondage", "international" to "Organisation internationale",
+    "candidat" to "Candidat", "entreprise" to "Entreprise", "media" to "Média", "sondage" to "Institut de sondage", "international" to "Organisation internationale",
 )
 
 /** Nature d'une source ou d'un évaluateur : libellé de la table, [fallback] si le type est vide ou inconnu. */

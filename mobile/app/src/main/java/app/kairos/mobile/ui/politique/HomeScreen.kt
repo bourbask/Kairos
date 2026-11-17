@@ -11,18 +11,8 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.PathEffect
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.drawscope.scale
-import androidx.compose.ui.graphics.drawscope.translate
 import app.kairos.mobile.ui.politique.screens.claimsOf
-import app.kairos.mobile.ui.politique.kit.PolColors
 import kotlin.math.min
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -68,7 +58,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
@@ -172,7 +161,7 @@ fun HomeScreen(data: PolData, nav: PolNavigator, bottom: Dp, grid: LazyGridState
             }
         }
 
-        full { HeaderRow("Explorer", plural(DOORS.size, "porte", "portes")) }
+        full { HeaderRow("Explorer", plural(DOORS.size, "thème", "thèmes")) }
         items(DOORS, span = { GridItemSpan(maxLineSpan) }, key = { it.id }) { d ->
             DoorCard(d, counts, teasers[d.id], nav)
         }
@@ -313,89 +302,6 @@ private fun IdCard(data: PolData, id: String, count: Int?, onClick: () -> Unit) 
     }
 }
 
-@Composable
-private fun Tile(t: RubricTile, count: String, viz: TileViz?, onClick: () -> Unit) {
-    val wide = t.kind == TileKind.Wide
-    val bubble = t.id == "bulle"
-    val bg = if (bubble) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface
-    val ink = if (bubble) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurface
-    val muted = if (bubble) ink.copy(alpha = 0.8f) else MaterialTheme.colorScheme.onSurfaceVariant
-    Surface(
-        onClick,
-        Modifier.fillMaxWidth().heightIn(min = if (wide) 0.dp else 172.dp).semantics { contentDescription = "${t.title}. ${t.hook}. $count" },
-        shape = RoundedCornerShape(20.dp), color = bg, contentColor = ink, shadowElevation = 1.dp,
-    ) {
-        val texts: @Composable () -> Unit = {
-            Text(t.title, fontSize = 17.sp, fontWeight = FontWeight.Bold)
-            Text(frTypo(t.hook), Modifier.padding(top = 3.dp), color = muted, fontSize = 13.sp, lineHeight = 17.sp)
-        }
-        val cnt: @Composable () -> Unit = {
-            Text(count.uppercase(), Modifier.padding(top = 8.dp), color = muted, fontFamily = Mono, fontWeight = FontWeight.SemiBold, fontSize = 11.sp, letterSpacing = 0.04.em)
-        }
-        if (wide) Row(Modifier.padding(14.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
-            viz?.let { VizCanvas(it, if (bubble) Modifier.size(104.dp, 64.dp) else Modifier.size(92.dp, 84.dp)) }
-            Column(Modifier.weight(1f)) { texts(); cnt() }
-        } else Column(Modifier.padding(14.dp)) {
-            viz?.let { VizCanvas(it, Modifier.fillMaxWidth().height(54.dp)) }
-            Spacer(Modifier.height(if (viz != null) 10.dp else 0.dp))
-            texts()
-            Spacer(Modifier.weight(1f, fill = false))
-            cnt()
-        }
-    }
-}
-
-/** Mini-graphique dessiné à l'échelle, posé en bas et centré ; décoratif (les chiffres sont dans le texte de la tuile). */
-@Composable
-private fun VizCanvas(v: TileViz, modifier: Modifier) {
-    val pc = PolColors.current
-    val scheme = MaterialTheme.colorScheme
-    val night = duelNight()
-    val neutral = scheme.onSurfaceVariant
-    val paths = remember(v) { v.regions.map { ring -> Path().apply { ring.firstOrNull()?.let { moveTo(it.x, it.y) }; ring.drop(1).forEach { lineTo(it.x, it.y) }; close() } } }
-    fun color(m: Mark): Color = when (m.ink) {
-        Ink.Identity -> identityColor(m.hex) ?: neutral
-        Ink.Muted -> scheme.onSurfaceVariant
-        Ink.Line -> scheme.outlineVariant
-        Ink.Ink -> scheme.onSurface
-        Ink.Pour -> pc.pour
-        Ink.Contre -> pc.contre
-        Ink.Partiel -> pc.partiel
-        Ink.PartielBg -> pc.partielBg
-        Ink.Solide -> pc.solide
-        Ink.Fragile -> pc.fragile
-        Ink.Low -> pc.low
-        Ink.High -> pc.high
-        Ink.Night -> night
-    }
-    // Une marque hors du repère ne déborde jamais sur la tuile voisine.
-    Canvas(modifier.clipToBounds().clearAndSetSemantics { }) {
-        val s = min(size.width / v.w, size.height / v.h)
-        val unit = v.w / 140f
-        translate((size.width - v.w * s) / 2, size.height - v.h * s) {
-            scale(s, pivot = Offset.Zero) {
-                paths.forEach {
-                    drawPath(it, scheme.surfaceVariant)
-                    drawPath(it, scheme.onSurfaceVariant.copy(alpha = 0.5f), style = Stroke(unit * 0.7f))
-                }
-                v.marks.forEach { m ->
-                    val c = color(m)
-                    val r = CornerRadius(2f * unit)
-                    when (m.shape) {
-                        MarkShape.Box -> drawRoundRect(c, Offset(m.x, m.y), Size(m.w, m.h), r)
-                        MarkShape.Hollow -> drawRoundRect(c, Offset(m.x, m.y), Size(m.w, m.h), r, style = Stroke(unit * 0.8f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(2f * unit, 1.5f * unit))))
-                        MarkShape.Dot -> {
-                            drawCircle(c, m.w, Offset(m.x, m.y))
-                            drawCircle(scheme.onSurface.copy(alpha = 0.3f), m.w, Offset(m.x, m.y), style = Stroke(unit))
-                        }
-                        MarkShape.Dash -> drawLine(c, Offset(m.x, m.y), Offset(m.x + m.w, m.y + m.h), unit, pathEffect = PathEffect.dashPathEffect(floatArrayOf(3f * unit, 3f * unit)))
-                    }
-                }
-            }
-        }
-    }
-}
-
 /** Teinte d'une porte : fond et encre calmes, propres à chaque porte, jamais une couleur de parti. */
 private class DoorTint(val bg: Color, val ink: Color)
 
@@ -451,38 +357,6 @@ private fun DoorCard(d: Door, counts: Map<String, String>, teaser: String?, nav:
                 Kicker("Du jour", Modifier.padding(top = 10.dp), color = t.ink.copy(alpha = 0.75f))
                 Text(frTypo(it), Modifier.padding(top = 2.dp), fontSize = 14.sp, lineHeight = 19.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
             }
-        }
-    }
-}
-
-/** Page d'une porte : sa question, puis ses rubriques en tuiles (les larges en dernier ; une tuile seule sur sa ligne prend la largeur). */
-@Composable
-fun DoorScreen(id: String, data: PolData, nav: PolNavigator, bottom: Dp) {
-    val d = DOORS.firstOrNull { it.id == id } ?: return
-    val t = doorTint(id)
-    val rubrics = remember(d) { d.rubrics.mapNotNull { r -> RUBRICS.firstOrNull { it.id == r } } }
-    val halves = rubrics.filter { it.kind != TileKind.Wide }
-    val tiles = halves + rubrics.filter { it.kind == TileKind.Wide }
-    val counts = remember(data, d) { rubrics.associate { it.id to it.count(data) } }
-    val vizzes by produceState(emptyMap<String, TileViz?>(), data, d) {
-        value = withContext(Dispatchers.Default) { rubrics.associate { it.id to tileViz(data, it.id) } }
-    }
-    LazyVerticalGrid(
-        GridCells.Fixed(2),
-        Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = bottom),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        full {
-            Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(t.bg).padding(18.dp)) {
-                Kicker(plural(rubrics.size, "rubrique", "rubriques"), color = t.ink.copy(alpha = 0.75f))
-                Text(frTypo(d.question), Modifier.semantics { heading() }, color = t.ink, fontSize = 26.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.02).em)
-            }
-        }
-        tiles.forEachIndexed { i, r ->
-            val full = r.kind == TileKind.Wide || (i == halves.size - 1 && halves.size % 2 == 1)
-            item(key = r.id, span = { GridItemSpan(if (full) maxLineSpan else 1) }) { Tile(r, counts[r.id].orEmpty(), vizzes[r.id]) { nav.go(PolRoute.Rubric(r.id)) } }
         }
     }
 }
