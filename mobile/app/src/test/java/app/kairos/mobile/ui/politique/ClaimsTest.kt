@@ -79,6 +79,13 @@ class ClaimsTest {
         assertNull(claimTableCard(claimsOf(data)[1]).source)
     }
 
+    @Test fun claim_without_camp_says_so() {
+        val c = claimsOf(data)[0].copy(camp = "")
+        assertEquals("camp non établi", campLabel(c))
+        assertEquals("Énergie · camp non établi", claimTableCard(c).kicker)
+        assertEquals("camp non établi", claimTableCard(c).title)
+    }
+
     @Test fun claims_state_empty_and_malformed() {
         for (d in listOf(PolData(emptyMap()), PolData(mapOf("affirmations" to file("""{"CLAIMS":"x","CAMPS":3}"""))), PolData(mapOf("affirmations" to file("""{"CLAIMS":[1,"a",{"q":5}]}"""))))) {
             val c = claimsOf(d)

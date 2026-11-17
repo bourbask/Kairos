@@ -55,7 +55,7 @@ class CouleursJeux(
     }
 }
 
-/** Teintes sémantiques validées (maquette, palette Fougère) : identiques pour toutes les palettes. */
+/** Teintes sémantiques validées (palette Fougère) : identiques pour toutes les palettes. */
 class Semantique(val juste: Color, val justeFond: Color, val justeEncre: Color, val surJuste: Color, val faux: Color, val ambre: Color)
 
 val SEMANTIQUE_CLAIR = Semantique(Color(0xFF4F7942), Color(0xFFE3EDDA), Color(0xFF2F4A28), Color.White, Color(0xFFB8463A), Color(0xFFD9952B))
