@@ -277,11 +277,22 @@ struct Done {
 /// Nombre facultatif saisi au pas à pas, ajouté à `args` sous `key` seulement s'il est saisi.
 #[derive(Deserialize, Serialize)]
 struct DoneCount {
+    #[serde(default)]
     label: String,
     key: String,
     default: u32,
+    #[serde(default = "count_min")]
     min: u32,
+    #[serde(default = "count_max")]
     max: u32,
+}
+
+fn count_min() -> u32 {
+    1
+}
+
+fn count_max() -> u32 {
+    100
 }
 
 /// Valeur demandée à l'utilisateur, ajoutée à `args` sous `key`.
@@ -950,6 +961,9 @@ mod tests {
         let counted = json!({"tool": "app_meal_done", "args": {"day": "2026-11-12", "slot": "soir"},
                              "count": {"label": "Portions obtenues", "key": "made", "default": 4, "min": 1, "max": 100}});
         assert_eq!(first_card(card_with_done(counted.clone())).await["done"], counted);
+        // Libellé et bornes absents : valeurs par défaut.
+        let bare = json!({"tool": "app_meal_done", "args": {}, "count": {"key": "made", "default": 4}});
+        assert_eq!(first_card(card_with_done(bare)).await["done"]["count"], json!({"label": "", "key": "made", "default": 4, "min": 1, "max": 100}));
         // Bornes incohérentes : le nombre tombe, l'action reste.
         let bad = json!({"tool": "app_meal_done", "args": {}, "count": {"label": "l", "key": "made", "default": 0, "min": 1, "max": 100}});
         assert_eq!(first_card(card_with_done(bad)).await["done"], json!({"tool": "app_meal_done", "args": {}}));
