@@ -86,11 +86,27 @@ private suspend fun loadFile(id: String, fetch: suspend (String, Int) -> PolPage
     throw PolLoadException("Fichier modifié pendant la lecture : $id")
 }
 
+/** Fichiers facultatifs : leur échec (erreur serveur, lecture instable) les laisse absents sans faire tomber l'espace. */
+val POL_OPTIONAL_FILES: Set<String> = setOf("jeux")
+
+/** Fichier facultatif : absent sur toute erreur, sauf session expirée et annulation, qui remontent. */
+private suspend fun loadOptional(id: String, fetch: suspend (String, Int) -> PolPage): JsonObject? = try {
+    loadFile(id, fetch)
+} catch (e: ApiError.Unauthorized) {
+    throw e
+} catch (e: kotlinx.coroutines.CancellationException) {
+    throw e
+} catch (_: Exception) {
+    null
+}
+
 /** Charge les fichiers en parallèle ; un fichier inconnu du module est simplement absent. Assemblage et décodage hors du fil principal. */
 suspend fun loadPolData(
     fetch: suspend (id: String, page: Int) -> PolPage,
     files: List<String> = POL_FILES,
 ): PolData = withContext(Dispatchers.Default) {
-    val loaded = files.map { id -> async { loadFile(id, fetch)?.let { id to it } } }.awaitAll()
+    val loaded = files.map { id ->
+        async { (if (id in POL_OPTIONAL_FILES) loadOptional(id, fetch) else loadFile(id, fetch))?.let { id to it } }
+    }.awaitAll()
     PolData(loaded.filterNotNull().toMap())
 }

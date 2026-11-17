@@ -74,6 +74,25 @@ class PolDataTest {
     }
 
     @Test
+    fun games_file_failure_never_takes_the_space_down() = runBlocking {
+        val p0 = page("fichier-dit-vote-p0")
+        for (err in listOf<Exception>(ApiError.Server(422, "Réponse trop volumineuse."), ApiError.NoReply, IllegalStateException("illisible"))) {
+            val d = loadPolData({ id, n -> if (id == "jeux") throw err else p0.copy(version = "v", pages = 1, page = n) }, listOf("dit-vote", "jeux"))
+            assertNotNull(d.file("dit-vote"))
+            assertNull(d.file("jeux"))
+        }
+        // Instable deux fois : absent aussi.
+        var k = 0
+        val d = loadPolData({ id, n -> if (id == "jeux") p0.copy(version = "v${k++}", pages = 2, page = n) else p0.copy(version = "v", pages = 1, page = n) }, listOf("dit-vote", "jeux"))
+        assertNull(d.file("jeux"))
+        // Session expirée : remonte toujours.
+        try {
+            loadPolData({ _, _ -> throw ApiError.Unauthorized }, listOf("jeux"))
+            fail()
+        } catch (_: ApiError.Unauthorized) {}
+    }
+
+    @Test
     fun loader_restarts_when_file_shrinks() = runBlocking {
         val p0 = page("fichier-dit-vote-p0")
         var calls = 0
