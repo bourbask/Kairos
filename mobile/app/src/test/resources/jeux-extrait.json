@@ -3,7 +3,7 @@
   {
    "id": "verifier",
    "nom": "Démêle",
-   "question": "Cette phrase, vraie ?",
+   "question": "Le vrai du faux dans les discours",
    "jeux": [
     "qui-l-a-dit",
     "le-procede",
@@ -13,7 +13,7 @@
   {
    "id": "chiffrer",
    "nom": "Mesure",
-   "question": "Ce programme, sérieux ?",
+   "question": "Le poids réel des promesses",
    "jeux": [
     "quelle-gravite",
     "le-juste-cout",
@@ -23,7 +23,7 @@
   {
    "id": "bilan",
    "nom": "Retrace",
-   "question": "Ce qu'ils ont fait",
+   "question": "Leurs actes, face à leurs paroles",
    "jeux": [
     "le-vote",
     "avant-apres",
@@ -33,7 +33,7 @@
   {
    "id": "pouvoirs",
    "nom": "Relie",
-   "question": "Qui tire les ficelles",
+   "question": "Qui possède, qui finance",
    "jeux": [
     "les-liens",
     "le-financeur"
