@@ -70,20 +70,20 @@ class ClaimsTest {
 
     @Test fun claim_table_card_and_dates() {
         val c = claimsOf(data)[0]
-        val t = claimTableCard(c)
+        val t = claimTableCard(data, c)
         assertEquals("Énergie · entendu côté Camp A", t.kicker)
         assertEquals("Q0", t.quote); assertEquals("vrai", t.verdict)
         assertTrue(t.lines.first().startsWith("Ce que la phrase cache : Cache 0"))
-        assertEquals("Source fictive", t.source)
+        assertEquals("libellé du composant : nom · article", "Source fictive · example.org", t.source)
         assertEquals("mars 2026", fmtDate("2026-03")); assertEquals("1er mars 2026", fmtDate("2026-03-01")); assertEquals("12 mars 2026", fmtDate("2026-03-12")); assertEquals("n'importe quoi", fmtDate("n'importe quoi"))
-        assertNull(claimTableCard(claimsOf(data)[1]).source)
+        assertNull(claimTableCard(data, claimsOf(data)[1]).source)
     }
 
     @Test fun claim_without_camp_says_so() {
         val c = claimsOf(data)[0].copy(camp = "")
         assertEquals("camp non établi", campLabel(c))
-        assertEquals("Énergie · camp non établi", claimTableCard(c).kicker)
-        assertEquals("camp non établi", claimTableCard(c).title)
+        assertEquals("Énergie · camp non établi", claimTableCard(data, c).kicker)
+        assertEquals("camp non établi", claimTableCard(data, c).title)
     }
 
     @Test fun claims_state_empty_and_malformed() {

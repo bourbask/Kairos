@@ -121,7 +121,7 @@ fun ProbiteScreen(data: PolData, nav: PolNavigator) {
             Section("Lobbying", "Des lois sous influence : cas documentés", null, note = "Établis par des enquêtes parlementaires ou journalistiques, avec la réponse des mis en cause.") {
                 if (lobby.isEmpty()) Empty("Aucun cas documenté", "Aucun cas de lobbying n'est publié pour l'instant.")
                 else {
-                    val cards = remember(lobby) { lobby.map { dossierTableCard("Lobbying", it) } }
+                    val cards = remember(lobby) { lobby.map { dossierTableCard(data, "Lobbying", it) } }
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) { lobby.forEachIndexed { i, d -> DossierCard(data, d, { nav.table(cards, i) }, nav) } }
                 }
             }
@@ -165,7 +165,7 @@ private fun AffaireCard(data: PolData, a: Affaire, onTable: () -> Unit, nav: Pol
             if (a.date.isNotBlank()) Kicker(a.date, Modifier.padding(top = 2.dp))
         } else if (a.date.isNotBlank()) Kicker(a.date, Modifier.padding(top = 6.dp))
         Note(a.etat)
-        if (a.url.isNotBlank()) SourceList(listOf(SourceRef("Source", a.url)), data, { nav.sheet(app.kairos.mobile.ui.politique.PolSheetState.Evaluator(it)) })
+        if (a.url.isNotBlank()) SourceList(listOf(SourceRef("", a.url)), data, { nav.sheet(app.kairos.mobile.ui.politique.PolSheetState.Evaluator(it)) })
     }
 }
 
@@ -242,7 +242,7 @@ fun ArgentScreen(data: PolData, nav: PolNavigator) {
             Section("Prêts et financements", "Ceux qui ont fait débat", null) {
                 if (fin.isEmpty()) Empty("Aucun dossier publié", "Aucun prêt ni financement controversé n'est publié pour l'instant.")
                 else {
-                    val cards = remember(fin) { fin.map { dossierTableCard("Financement", it) } }
+                    val cards = remember(fin) { fin.map { dossierTableCard(data, "Financement", it) } }
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) { fin.forEachIndexed { i, d -> DossierCard(data, d, { nav.table(cards, i) }, nav) } }
                 }
             }

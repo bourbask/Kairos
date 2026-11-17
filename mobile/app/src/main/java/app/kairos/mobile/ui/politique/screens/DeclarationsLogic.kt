@@ -1,7 +1,7 @@
 package app.kairos.mobile.ui.politique.screens
 
 import app.kairos.mobile.ui.politique.kit.TableCard
-import app.kairos.mobile.ui.politique.kit.sourceName
+import app.kairos.mobile.ui.politique.kit.sourcesText
 import app.kairos.mobile.ui.politique.model.IdKind
 import app.kairos.mobile.ui.politique.model.PolData
 import app.kairos.mobile.ui.politique.model.SourceRef
@@ -113,5 +113,5 @@ fun declTableCard(data: PolData, d: Declaration): TableCard = TableCard(
     quote = d.citation,
     verdict = d.verdict,
     lines = d.faits.filter { it.isNotBlank() } + listOfNotNull(d.reponse?.takeIf { it.isNotBlank() }?.let { "Sa réponse : $it" }),
-    source = (listOfNotNull(citationSource(d)) + preuvesOf(d)).joinToString(" ; ") { sourceName(it) }.takeIf { it.isNotBlank() },
+    source = sourcesText(listOfNotNull(citationSource(d)) + preuvesOf(d), data),
 )
