@@ -1,5 +1,6 @@
 package app.kairos.mobile.ui.politique.jeux.jeu
 
+import app.kairos.mobile.ui.politique.jeux.kit.CouleursJeux
 import app.kairos.mobile.ui.politique.jeux.kit.rememberTremblement
 import kotlinx.serialization.json.JsonObject
 import androidx.compose.foundation.background
@@ -148,9 +149,10 @@ private fun Fiche(o: String, i: Int, juste: Boolean, sortie: Boolean, st: Manche
     val src = remember { MutableInteractionSource() }
     val presse by src.collectIsPressedAsState()
     val tremble = rememberTremblement(st.react, c.reduit, st.out.lastOrNull() == cle)
-    val pap = when { juste -> sc.primaryContainer; ecarte -> mix(sc.surface, sc.onSurfaceVariant, 0.22f); else -> papier }
-    val onglet = when { juste -> sc.primary; ecarte -> sc.error; else -> mix(sc.tertiary, sc.surface, 0.25f) }
-    val encre = when { juste -> sc.onPrimaryContainer; ecarte -> sc.onSurfaceVariant; else -> sc.onSurface }
+    val cj = CouleursJeux.current
+    val pap = when { juste -> cj.justeFond; ecarte -> mix(sc.surface, sc.onSurfaceVariant, 0.22f); else -> papier }
+    val onglet = when { juste -> cj.juste; ecarte -> cj.faux; else -> mix(sc.tertiary, sc.surface, 0.25f) }
+    val encre = when { juste -> cj.justeEncre; ecarte -> sc.onSurfaceVariant; else -> sc.onSurface }
     val rouge = Teintes.rouge
     val haut = when { juste || sortie -> (-6).dp; presse && actif -> (-3).dp; else -> 0.dp }
     val etat = if (juste) " (bonne réponse)" else if (ecarte) " (écarté)" else ""

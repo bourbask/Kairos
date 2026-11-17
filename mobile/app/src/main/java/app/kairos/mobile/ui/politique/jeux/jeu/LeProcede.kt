@@ -1,5 +1,6 @@
 package app.kairos.mobile.ui.politique.jeux.jeu
 
+import app.kairos.mobile.ui.politique.jeux.kit.CouleursJeux
 import app.kairos.mobile.ui.politique.jeux.kit.rememberTremblement
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
@@ -188,7 +189,7 @@ class LeProcede : PolJeu<TamponsD>("le-procede", TamponsD.serializer()) {
 private fun BoxScope.Frappe(e: Empreinte, cle: Pair<String, Int>) {
     val sc = MaterialTheme.colorScheme
     val reduit = reducedMotion()
-    val encre = if (e.juste) sc.primary else sc.error
+    val encre = if (e.juste) CouleursJeux.current.juste else CouleursJeux.current.faux
     val echelle = remember(cle) { Animatable(if (reduit) 1f else 1.7f) }
     val opacite = remember(cle) { Animatable(if (reduit) 1f else 0f) }
     val barre = remember(cle) { Animatable(if (reduit || e.juste) 1f else 0f) }
@@ -265,8 +266,9 @@ private fun Tampon(t: String, cle: String, juste: Boolean, enfonce: Boolean, st:
     val tremble = rememberTremblement(st.react, c.reduit, st.out.lastOrNull() == cle)
     val gris = mix(sc.outlineVariant, sc.onSurfaceVariant, 0.3f)
     val rouge = Teintes.rouge
-    val kc = when { juste -> sc.primaryContainer; ecarte -> mix(sc.surface, gris, 0.5f); else -> sc.tertiaryContainer }
-    val kn = when { juste -> sc.primary; ecarte -> gris; else -> mix(sc.tertiary, Color.Black, 0.32f) }
+    val cj = CouleursJeux.current
+    val kc = when { juste -> cj.justeFond; ecarte -> mix(sc.surface, gris, 0.5f); else -> sc.tertiaryContainer }
+    val kn = when { juste -> cj.juste; ecarte -> gris; else -> mix(sc.tertiary, Color.Black, 0.32f) }
     val ink = sc.onSurface
     val bas = when { juste || enfonce -> 9.dp; presse && actif -> 3.dp; else -> 0.dp }
     val s = cellPx(3.dp)
@@ -297,7 +299,7 @@ private fun Tampon(t: String, cle: String, juste: Boolean, enfonce: Boolean, st:
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
-                    frTypo(t), Modifier.clearAndSetSemantics { }, color = if (juste) sc.onPrimaryContainer else if (ecarte) sc.onSurfaceVariant else ink,
+                    frTypo(t), Modifier.clearAndSetSemantics { }, color = if (juste) cj.justeEncre else if (ecarte) sc.onSurfaceVariant else ink,
                     fontSize = 12.5.sp, lineHeight = 14.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, maxLines = 3, overflow = TextOverflow.Ellipsis,
                 )
             }

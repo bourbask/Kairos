@@ -7,7 +7,6 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -47,7 +46,6 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
@@ -102,8 +100,8 @@ fun Cadran(
         if (reduit) angle.snapTo(to) else angle.animateTo(to, tween(if (fast) 120 else 320, easing = if (fast) CubicBezierEasing(0f, 0f, 0.58f, 1f) else BackOut))
     }
     val set by rememberUpdatedState(onNiveau)
-    val att = sc.tertiary
-    val g = listOf(sc.outlineVariant, sc.primary, att, mix(att, sc.error, 0.5f), sc.error)
+    val cj = CouleursJeux.current
+    val g = listOf(sc.outlineVariant) + (1..4).map(cj::echelle)
     BoxWithConstraints(modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
         val density = LocalDensity.current
         val avail = with(density) { maxWidth.coerceIn(144.dp, 240.dp).toPx() }

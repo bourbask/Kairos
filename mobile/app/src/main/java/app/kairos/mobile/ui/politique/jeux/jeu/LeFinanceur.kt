@@ -1,5 +1,6 @@
 package app.kairos.mobile.ui.politique.jeux.jeu
 
+import app.kairos.mobile.ui.politique.jeux.kit.CouleursJeux
 import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.runtime.CompositionLocalProvider
@@ -130,7 +131,7 @@ private fun Grille(g: List<String>, couleurs: Map<Char, Color>, modifier: Modifi
 /** Métal des pièces : l'ambre de l'app éclairci, comme les boutons. */
 @Composable
 private fun metal(): Pair<Color, Map<Char, Color>> {
-    val co = mix(MaterialTheme.colorScheme.tertiary, Color.White, 0.22f)
+    val co = mix(CouleursJeux.current.ambre, Color.White, 0.22f)
     val or = { n: Float -> mix(co, Color.Black, n) }
     return or(0.66f) to mapOf(
         'f' to co, 'r' to or(0.1f), 'h' to mix(co, Color.White, 0.4f), 'd' to or(0.3f), 'i' to or(0.2f),
