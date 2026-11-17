@@ -1,5 +1,7 @@
 package app.kairos.mobile.ui.politique.jeux.jeu
 
+import app.kairos.mobile.ui.politique.model.PolData
+import androidx.compose.runtime.MutableIntState
 import kotlinx.serialization.json.JsonObject
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
@@ -76,6 +78,13 @@ private val Glisse = CubicBezierEasing(0.05f, 0.7f, 0.1f, 1f)
  */
 class LaVille : PolJeu<VilleD>("la-ville", VilleD.serializer()) {
 
+    // Grille des régions, calculée une fois par jeu de données (≈ 4 000 tests point-dans-région), pas à chaque manche.
+    private var grilleCache: Pair<PolData, Array<String?>>? = null
+
+    private fun grilleDe(data: PolData): Array<String?> = grilleCache?.takeIf { it.first === data }?.second
+        ?: grilleRegions(data.decode("carte", "regions", RegionShape.serializer()).map { r -> parsePath(r.d).let { RegionGeo(r.code, r.nom, it, boundsOf(it)) } })
+            .also { grilleCache = data to it }
+
     override fun valide(d: VilleD, params: JsonObject) = d.choix.size in 2..6 && d.bonne in d.choix.indices && d.choix.all(::epingleOk)
 
     @Composable
@@ -85,11 +94,9 @@ class LaVille : PolJeu<VilleD>("la-ville", VilleD.serializer()) {
         val density = LocalDensity.current
         val data = c.data
         val proj = remember(data) { data.one("carte", "projection", Projection.serializer()) ?: PROJ_DEFAUT }
-        // ponytail: grille calculée au premier affichage (≈ 4 000 tests point-dans-région) ; hors fil principal si ça se sent.
-        val grille = remember(data) {
-            grilleRegions(data.decode("carte", "regions", RegionShape.serializer()).map { r -> parsePath(r.d).let { RegionGeo(r.code, r.nom, it, boundsOf(it)) } })
-        }
-        var sel by remember(m.id) { mutableIntStateOf(0) }
+        val grille = remember(data) { grilleDe(data) }
+        // Choix gardé dans l'état de la manche : survit au défilement de l'écran.
+        var sel by remember(st) { st.jeu as? MutableIntState ?: mutableIntStateOf(0).also { st.jeu = it } }
         val i = if (st.solved) d.bonne else sel
         val e = d.choix[i]
         val out = "$i" in st.out && !st.solved
