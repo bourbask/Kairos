@@ -91,10 +91,8 @@ enum class HomeAction { Retry, OpenSite }
 /** Hors ligne : réessayer, et le site reste ouvrable. */
 fun homeActions(load: PolLoad): List<HomeAction> = if (load is PolLoad.Down) listOf(HomeAction.Retry, HomeAction.OpenSite) else emptyList()
 
-enum class TileKind { Tile, Wide }
-
 /** Entrée de l'accueil vers une rubrique ; [count] : compte lisible tiré des données. */
-class RubricTile(val id: String, val title: String, val hook: String, val kind: TileKind = TileKind.Tile, val count: (PolData) -> String)
+class RubricTile(val id: String, val title: String, val hook: String, val count: (PolData) -> String)
 
 /** « 0 scrutin », « 1 scrutin », « 3 scrutins ». */
 fun plural(n: Int, one: String, many: String): String = "$n ${if (n > 1) many else one}"
@@ -124,9 +122,9 @@ val RUBRICS: List<RubricTile> = listOf(
     RubricTile("probite", "Probité", "Les affaires, étape par étape") { it.decode<kotlinx.serialization.json.JsonArray>("probite", "AFF").size.or("procédure", "procédures") },
     RubricTile("argent", "Argent", "Qui finance partis et campagnes") { it.size("argent", "FIN").or("dossier", "dossiers") },
     RubricTile("medias", "Médias", "Qui possède quoi, ce qui est prouvé") { it.size("medias", "OWNERS").or("propriétaire", "propriétaires") },
-    RubricTile("villes", "Résultats locaux", "La carte des mairies, et ce qu'ils y font", TileKind.Wide) { it.size("villes", "COMMUNES").or("ville suivie", "villes suivies") },
-    RubricTile("declarations", "Paroles publiques", "Ce qu'ils ont dit, face aux faits", TileKind.Wide) { declarationsOf(it).size.or("déclaration", "déclarations") },
-    RubricTile("bulle", "Hors de ma bulle", "Les mêmes thèmes, lus depuis chaque camp, côte à côte.", TileKind.Wide, ::bubbleLine),
+    RubricTile("villes", "Résultats locaux", "La carte des mairies, et ce qu'ils y font") { it.size("villes", "COMMUNES").or("ville suivie", "villes suivies") },
+    RubricTile("declarations", "Paroles publiques", "Ce qu'ils ont dit, face aux faits") { declarationsOf(it).size.or("déclaration", "déclarations") },
+    RubricTile("bulle", "Hors de ma bulle", "Les mêmes thèmes, lus depuis chaque camp, côte à côte.", ::bubbleLine),
     RubricTile("phrases", "Phrases vérifiées", "Ce que chaque phrase entendue cache vraiment.") { it.size("affirmations", "CLAIMS").or("phrase vérifiée", "phrases vérifiées") },
     RubricTile("dossiers", "Dossiers", "Un contenu viral, repris phrase par phrase.") { it.size("dossiers", "DOSSIERS").or("dossier", "dossiers") },
     RubricTile("evaluateurs", "Qui chiffre ?", "Les évaluateurs, leur argent, leur indépendance.") { it.evaluators.size.or("évaluateur", "évaluateurs") },

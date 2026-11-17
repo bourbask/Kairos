@@ -108,7 +108,6 @@ class FiguresTest {
         assertEquals(listOf("2021"), l.salaireBars.map { it.l })
         val bi = bilanState(d)
         assertEquals(listOf("Choc"), bi.ofceBars.map { it.l }); assertTrue(bi.ippBars.isEmpty())
-        assertNull(tileViz(d, "niveau-de-vie"))
     }
 
     @Test fun fallback_scales_follow_the_values() {
