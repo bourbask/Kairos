@@ -193,10 +193,9 @@ private fun MancheCarte(session: JeuxSession, g: JeuPret, nom: String, st: Manch
     // Carte déjà faite dans un cycle précédent : signalée tant qu'elle n'est pas résolue.
     val deja = remember(st) { carte(g.slug, st.manche.id) in session.prog.faites }
     val piste = rememberPiste(session, g.slug, st, reduit)
-    Row(Modifier.fillMaxWidth().padding(start = 2.dp, bottom = 10.dp).heightIn(min = 40.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(frTypo(nom), Modifier.weight(1f).semantics { heading() }, fontSize = 18.sp, lineHeight = 21.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-        Pager(n, total, st, onPage = { piste.go(it) })
-    }
+    // Titre sur toute la largeur (une ligne, même à 360 dp), pager dessous : ses cibles de 48 dp ne le rognent plus.
+    Text(frTypo(nom), Modifier.fillMaxWidth().padding(start = 2.dp).semantics { heading() }, fontSize = 18.sp, lineHeight = 22.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    Pager(n, total, st, Modifier.fillMaxWidth().padding(start = 2.dp, bottom = 2.dp), onPage = { piste.go(it) })
     Column(Modifier.fillMaxWidth().padding(bottom = 10.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Box(Modifier.fillMaxWidth().weight(1f, fill = true).heightIn(min = 150.dp)) {
             Fenetre(piste, st, session, g.slug, reduit,
@@ -388,10 +387,10 @@ private fun NeutralChip(text: String) {
 // ---------- Pager ----------
 
 @Composable
-private fun Pager(n: Int, total: Int, st: MancheEtat, onPage: (Page) -> Unit) {
+private fun Pager(n: Int, total: Int, st: MancheEtat, modifier: Modifier, onPage: (Page) -> Unit) {
     val scheme = MaterialTheme.colorScheme
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text("$n/$total", Modifier.padding(end = 4.dp).clearAndSetSemantics { }, color = scheme.onSurfaceVariant, fontFamily = Mono, fontSize = 11.sp)
+    Row(modifier, verticalAlignment = Alignment.CenterVertically) {
+        Text("$n/$total", Modifier.weight(1f).clearAndSetSemantics { }, color = scheme.onSurfaceVariant, fontFamily = Mono, fontSize = 11.sp)
         IconButton({ onPage(Page.Question) }, enabled = st.page != Page.Question) {
             Icon(KairosIcons.ChevronBack, contentDescription = "Question $n", tint = scheme.onSurfaceVariant)
         }
