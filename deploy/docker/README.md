@@ -116,6 +116,12 @@ nommé `alimentation-data` ; fiches produits lues dans la base ouverte Open Food
 Calendrier des repas (optionnel, les trois ou aucune) : `ALIMENTATION_CALDAV_URL` (adresse de la collection CalDAV),
 `ALIMENTATION_CALDAV_USER`, `ALIMENTATION_CALDAV_PASS`. Absentes : le plan de la semaine est enregistré sans agenda.
 
+Repas pris dehors : `ALIMENTATION_AGENDA_DB` (déjà posée par le compose) pointe sur la base de l'agenda, lue seule.
+Un repas midi (12 h-14 h) ou soir (19 h-21 h) est pris dehors s'il est couvert par un événement d'une journée
+entière ou qui chevauche sa fenêtre ; il est alors exclu de `cook_options` et du plan. Le choix fait dans
+l'application (`app_meal_place` : maison, dehors, auto) l'emporte ; un plat déjà prévu sur un repas devenu
+« dehors » est signalé « à replanifier », jamais réécrit.
+
 Module marchés : veille de marchés de prédiction en lecture seule. Base SQLite dans le volume `marches-data`. Variables de `kairos.env` : `MARCHES_TOKEN` (obligatoire, `openssl rand -hex 32`), `MARCHES_API_URL` (obligatoire, adresse de la source), `MARCHES_KEYWORDS` (liste séparée par des virgules), `MARCHES_POLL_MINUTES` (optionnel, 30 par défaut). Port publié : `MARCHES_BIND_PORT` (8099).
 
 Partage du site : liens créés depuis l'application, chacun ouvrable sur quelques appareils pendant sa fenêtre de validité (une session par appareil). Base SQLite dans le volume `partage-data` (empreintes seulement). Le service lit son propre fichier `partage.env` (modèle `partage.env.example`), jamais `kairos.env` : `PARTAGE_TOKEN` (obligatoire, `openssl rand -hex 32`), `PARTAGE_PUBLIC_URL` (obligatoire, adresse https du site), `PARTAGE_LIEN_HEURES` (72), `PARTAGE_SESSION_HEURES` (720) et `PARTAGE_APPAREILS_MAX` (3) optionnelles. Le même `PARTAGE_TOKEN` figure aussi dans `kairos.env`, pour la tête. Port MCP 8101 jamais publié ; la tête le joint par `http://partage:8101/mcp` (entrée `[[tentacles]]` dans `tete.toml`). Port 8102 (`POST /cle`, `GET /verifier`) sur le réseau interne `partage-public`, que le compose du site rejoint en `external: true` : lancer ce compose d'abord. Sans l'application : `docker compose exec partage /app/kairos-partage creer "<libellé>"` ou `revoquer <id>`.

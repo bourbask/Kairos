@@ -150,11 +150,14 @@ services:
     environment:
       ALIMENTATION_BIND: 0.0.0.0:8098
       ALIMENTATION_DB: /app/alimentation/alimentation.db
+      # agenda lu seul (repas pris dehors) ; montage en écriture : la base est en WAL
+      ALIMENTATION_AGENDA_DB: /app/data/kairos.db
     env_file:
       - path: kairos.env
         required: false
     volumes:
       - alimentation-data:/app/alimentation
+      - ../../data:/app/data
     ports:
       - "${TENTACLES_BIND_ADDR:-127.0.0.1}:${ALIMENTATION_BIND_PORT:-8098}:8098"
 

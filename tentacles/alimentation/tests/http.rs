@@ -44,7 +44,7 @@ async fn start() -> String {
 async fn start_with(caldav: Option<CalDav>) -> String {
     let store = Arc::new(Store::memory());
     let off = Arc::new(Off::new(&fake_off().await));
-    let settings = Arc::new(Settings { tz: chrono_tz::Europe::Paris, caldav: caldav.map(Arc::new) });
+    let settings = Arc::new(Settings { tz: chrono_tz::Europe::Paris, caldav: caldav.map(Arc::new), agenda_db: None });
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}/mcp", listener.local_addr().unwrap());
     tokio::spawn(tentacle_common::serve_listener(listener, "t".into(), move || {
