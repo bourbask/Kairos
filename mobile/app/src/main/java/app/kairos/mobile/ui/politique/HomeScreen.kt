@@ -172,7 +172,7 @@ fun HomeScreen(data: PolData, nav: PolNavigator, bottom: Dp, grid: LazyGridState
             }
         }
 
-        full { HeaderRow("Explorer", plural(DOORS.size, "porte", "portes")) }
+        full { HeaderRow("Explorer", plural(DOORS.size, "thème", "thèmes")) }
         items(DOORS, span = { GridItemSpan(maxLineSpan) }, key = { it.id }) { d ->
             DoorCard(d, counts, teasers[d.id], nav)
         }

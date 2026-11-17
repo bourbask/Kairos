@@ -66,6 +66,16 @@ import app.kairos.mobile.ui.politique.screens.ClusterSheet
 import app.kairos.mobile.ui.politique.screens.OriginesScreen
 import app.kairos.mobile.ui.politique.screens.PromessesScreen
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.platform.LocalContext
+import app.kairos.mobile.ui.ContextDock
+import app.kairos.mobile.ui.DockItem
+import app.kairos.mobile.ui.politique.jeux.JeuxSession
+import app.kairos.mobile.ui.politique.jeux.JeuxStore
+import app.kairos.mobile.ui.politique.jeux.ProgressionTheme
+import app.kairos.mobile.ui.politique.jeux.ThemeIcon
+import app.kairos.mobile.ui.politique.jeux.ThemeScreen
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -101,6 +111,8 @@ fun PolitiqueScreen(
     onClose: () -> Unit,
     onUnauthorized: () -> Unit,
     site: @Composable (onClose: () -> Unit) -> Unit,
+    /** Dock de l'espace (ses thèmes) tant qu'il est affiché ; null à la fermeture. */
+    onDock: (ContextDock?) -> Unit = {},
 ) {
     val unauthorized by rememberUpdatedState(onUnauthorized)
     var reload by remember { mutableIntStateOf(0) }
@@ -146,6 +158,27 @@ fun PolitiqueScreen(
     val data = (load as? PolLoad.Ready)?.data
     val route = nav.top
 
+    // Jeux : session par jeu de données, progression lue puis enregistrée sur l'appareil.
+    val context = LocalContext.current
+    val store = remember { JeuxStore(context.applicationContext) }
+    val session = remember(data) { data?.let { d -> JeuxSession(d) { p -> appScope.launch { store.save(p) } } } }
+    LaunchedEffect(session) { session?.restore(store.load()) }
+    val themeId = when (route) {
+        is PolRoute.Door -> route.id
+        is PolRoute.Rubric -> doorOf(route.id)?.id
+        else -> null
+    }
+    val dock = remember(session, themeId) {
+        session?.let { ss ->
+            ContextDock(
+                ss.themes.map { t -> DockItem(t.id, t.nom) { c -> ThemeIcon(t.id, c) } }, themeId,
+            ) { id -> if (nav.top is PolRoute.Door) navigator.replace(PolRoute.Door(id)) else navigator.go(PolRoute.Door(id)) }
+        }
+    }
+    val publish by rememberUpdatedState(onDock)
+    LaunchedEffect(dock) { publish(dock) }
+    DisposableEffect(Unit) { onDispose { publish(null) } }
+
     // Avant le site : ses propres retours (page précédente, formulaires) passent d'abord.
     BackHandler(enabled = nav.routes.isNotEmpty()) { nav = nav.back() ?: nav }
     if (route == PolRoute.Site) {
@@ -157,7 +190,7 @@ fun PolitiqueScreen(
         when (route) {
             PolRoute.Home, PolRoute.Site -> "Politique"
             is PolRoute.Rubric -> rubricTitle(route.id)
-            is PolRoute.Door -> DOORS.firstOrNull { it.id == route.id }?.kicker ?: "Politique"
+            is PolRoute.Door -> session?.theme(route.id)?.nom ?: DOORS.firstOrNull { it.id == route.id }?.kicker ?: "Politique"
             PolRoute.Quiz -> "Vrai ou faux ?"
             is PolRoute.Duel -> "Duel"
             PolRoute.Shares -> "Accès partagés"
@@ -165,6 +198,7 @@ fun PolitiqueScreen(
         onBack = { nav.back()?.let { nav = it } ?: onClose() },
         padding = padding,
         subtitle = if (route == PolRoute.Home) verifiedLabel(data?.verifiedOn) else null,
+        subtitleContent = (route as? PolRoute.Door)?.let { r -> session?.theme(r.id)?.let { t -> { ProgressionTheme(session.avance(t)) } } },
         backLabel = if (route == PolRoute.Home) "Fermer l'espace Politique" else "Retour",
         actions = {
             IconButton(onClick = { sharing = true }) {
@@ -192,7 +226,7 @@ fun PolitiqueScreen(
             is PolLoad.Down -> HomeDown(l, onRetry = { reload++ }, onSite = { navigator.go(PolRoute.Site) })
             is PolLoad.Ready -> when (route) {
                 PolRoute.Home -> HomeScreen(l.data, navigator, bottom, homeGrid)
-                is PolRoute.Door -> DoorScreen(route.id, l.data, navigator, bottom)
+                is PolRoute.Door -> session?.let { ThemeScreen(it, route.id, l.data, navigator, bottom) }
                 // Pas de marge basse sur la page : le contenu défile sous le dégradé du dock, comme sur l'accueil.
                 else -> CompositionLocalProvider(LocalPolBottom provides bottom) {
                     Box(Modifier.fillMaxSize()) {

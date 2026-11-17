@@ -35,6 +35,8 @@ fun SpaceHeader(
     subtitle: String? = null,
     backLabel: String = "Fermer",
     backIcon: ImageVector = KairosIcons.ChevronDown,
+    /** Sous-titre composé (prime sur [subtitle]). */
+    subtitleContent: (@Composable () -> Unit)? = null,
     actions: @Composable RowScope.() -> Unit = {},
 ) {
     Row(
@@ -52,7 +54,8 @@ fun SpaceHeader(
                 color = MaterialTheme.colorScheme.onBackground,
                 modifier = Modifier.semantics { heading() },
             )
-            if (subtitle != null) {
+            if (subtitleContent != null) subtitleContent()
+            else if (subtitle != null) {
                 Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
@@ -73,6 +76,7 @@ fun SpaceScaffold(
     padding: PaddingValues,
     modifier: Modifier = Modifier,
     subtitle: String? = null,
+    subtitleContent: (@Composable () -> Unit)? = null,
     backLabel: String = "Fermer",
     scrolled: Boolean = false,
     actions: @Composable RowScope.() -> Unit = {},
@@ -83,7 +87,7 @@ fun SpaceScaffold(
     val bottom = padding.calculateBottomPadding()
     Box(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         Column(Modifier.fillMaxSize().padding(top = padding.calculateTopPadding())) {
-            SpaceHeader(title, onBack, subtitle = subtitle, backLabel = backLabel, actions = actions)
+            SpaceHeader(title, onBack, subtitle = subtitle, backLabel = backLabel, subtitleContent = subtitleContent, actions = actions)
             if (scrolled) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             if (banner != null) {
                 Box(Modifier.padding(horizontal = 20.dp, vertical = 4.dp)) { banner() }
