@@ -63,6 +63,7 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.util.VelocityTracker
@@ -424,7 +425,8 @@ private fun QuizGame(data: PolData, nav: PolNavigator, claims: List<Claim>, camp
                                 // Appui long : le contexte tant qu'on maintient.
                                 peekHeld = true
                                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                while (awaitPointerEvent().changes.any { it.pressed }) { /* attente du lâcher */ }
+                                // Jusqu'au lâcher, consommé avant les enfants : le bouton « Contexte » ne reçoit pas de clic en plus.
+                                longHeld()
                                 peekHeld = false
                                 return@awaitEachGesture
                             }
@@ -799,5 +801,14 @@ private fun QuizEnd(data: PolData, nav: PolNavigator, claims: List<Claim>, deck:
                 VerdictChip(c.v)
             }
         }
+    }
+}
+
+/** Fin d'un appui long : tout est consommé en passe initiale jusqu'au lâcher. */
+private suspend fun androidx.compose.ui.input.pointer.AwaitPointerEventScope.longHeld() {
+    while (true) {
+        val e = awaitPointerEvent(PointerEventPass.Initial)
+        e.changes.forEach { it.consume() }
+        if (e.changes.none { it.pressed }) break
     }
 }

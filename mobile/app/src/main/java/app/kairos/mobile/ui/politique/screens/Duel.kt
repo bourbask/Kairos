@@ -10,7 +10,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -84,6 +85,7 @@ import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.layout
@@ -861,6 +863,29 @@ private fun Annonce(i: Int, key: Int, r: List<DuelRound>, k: DuelInk, modifier: 
 
 // ---------- Carte de round ----------
 
+/**
+ * Appui long n'importe où dans l'élément, boutons compris : une fois reconnu, la suite du geste est
+ * consommée avant les enfants, qui ne voient jamais le lâcher (aucun clic déclenché en plus).
+ */
+internal suspend fun androidx.compose.ui.input.pointer.PointerInputScope.longPress(onLong: () -> Unit) = awaitEachGesture {
+    val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+    val slop = viewConfiguration.touchSlop
+    val ended = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+        while (true) {
+            val c = awaitPointerEvent(PointerEventPass.Final).changes.firstOrNull { it.id == down.id } ?: break
+            if (!c.pressed || (c.position - down.position).getDistance() > slop) break
+        }
+        true
+    }
+    if (ended != null) return@awaitEachGesture
+    onLong()
+    while (true) {
+        val e = awaitPointerEvent(PointerEventPass.Initial)
+        e.changes.forEach { it.consume() }
+        if (e.changes.none { it.pressed }) break
+    }
+}
+
 /** Carte : coins en marches, contour pixel, ombre dure. */
 private fun Modifier.cardFrame(k: DuelInk) = drawBehind {
     val u = 1.dp.toPx()
@@ -936,7 +961,7 @@ private fun RoundCard(f: Fight, i: Int, round: DuelRound) {
     }
     Box(
         Modifier.fillMaxWidth().cardFrame(k).pointerInput(i) {
-            detectTapGestures(onLongPress = { haptic.performHapticFeedback(HapticFeedbackType.LongPress); setHelp(true) })
+            longPress { haptic.performHapticFeedback(HapticFeedbackType.LongPress); setHelp(true) }
         }.semantics { contentDescription = "Round ${i + 1} : ${round.title}" },
     ) {
         Column(Modifier.clip(Cut).background(k.surf)) {
