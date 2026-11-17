@@ -442,7 +442,8 @@ private fun Slot(data: PolData, i: Int, st: DuelPickState, k: DuelInk, roster: L
     val lit = blink(act && !full, still)
     val fc = when {
         c != null -> c
-        act -> if (lit) k.att else Color.Transparent
+        // Clignotement discret : le contour ambre alterne entre 70 % et 35 %, sans jamais disparaître.
+        act -> k.att.copy(alpha = if (lit) 0.7f else 0.35f)
         else -> k.ink.copy(alpha = 0.24f)
     }
     val inner = if (c != null) mix(k.surf, c, 0.24f) else k.surf.copy(alpha = 0.55f)
