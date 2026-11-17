@@ -1,6 +1,9 @@
 package app.kairos.mobile.ui.politique.jeux
 
+import app.kairos.mobile.ui.politique.jeux.jeu.AvantApres
 import app.kairos.mobile.ui.politique.jeux.jeu.Exemple
+import app.kairos.mobile.ui.politique.jeux.jeu.LaVille
+import app.kairos.mobile.ui.politique.jeux.jeu.LeVote
 
 /**
  * Jeux implémentés, par slug (clé de `JEUX` dans `jeux.json`) : une ligne par jeu, chacune remplacée par le jeu
@@ -10,5 +13,7 @@ val JEUX_REGISTRE: Map<String, PolJeu<*>> = listOf<PolJeu<*>>(
     Exemple("qui-l-a-dit"),
     Exemple("le-procede", citation = true),
     Exemple("trente-secondes"),
-    Exemple("la-ville"),
+    LeVote(),
+    AvantApres(),
+    LaVille(),
 ).associateBy { it.slug }
