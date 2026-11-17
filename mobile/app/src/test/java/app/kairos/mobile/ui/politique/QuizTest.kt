@@ -47,7 +47,11 @@ class QuizTest {
         assertNull(quizRelease(20f, 0f, 0.9f, 0f))
         // Vers le bas : jamais de réponse, même loin et vite.
         assertNull(quizRelease(0f, 200f, 0f, 2f))
-        assertTrue(swipeToNext(0f, 91f, 0f, 0f)); assertTrue(swipeToNext(0f, 0f, -0.6f, 0f)); assertFalse(swipeToNext(50f, 0f, 0.2f, 0f))
+        assertTrue(swipeToNext(91f, 0f, 0f, 0f)); assertTrue(swipeToNext(-20f, 5f, -0.6f, 0f)); assertFalse(swipeToNext(50f, 0f, 0.2f, 0f))
+        // Faits et sources : un défilement vertical, même un peu de biais, reste un défilement.
+        assertFalse(swipeToNext(30f, 120f, 0.2f, 1.5f))
+        assertFalse(swipeToNext(0f, 91f, 0f, 0f))
+        assertFalse(backDragTakes(10f, 12f)); assertTrue(backDragTakes(12f, 10f))
     }
 
     @Test fun verdict_note_only_when_it_differs_from_the_game_label() {

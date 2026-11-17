@@ -57,8 +57,8 @@ fun quizRelease(dx: Float, dy: Float, vx: Float, vy: Float): Guess? {
     return if (d >= 100f || (hypot(vx, vy) > 0.5f && d > 30f)) k else null
 }
 
-/** Carte déjà retournée : un glissement suffisant, dans tous les sens, passe à la suivante. */
-fun swipeToNext(dx: Float, dy: Float, vx: Float, vy: Float): Boolean = hypot(dx, dy) > 90f || hypot(vx, vy) > 0.5f
+/** Carte déjà retournée : un glissement surtout horizontal et suffisant passe à la suivante. */
+fun swipeToNext(dx: Float, dy: Float, vx: Float, vy: Float): Boolean = backDragTakes(dx, dy) && (hypot(dx, dy) > 90f || hypot(vx, vy) > 0.5f)
 
 enum class Tone { Ok, Near, Ko }
 class Feedback(val tone: Tone, val text: String)
@@ -312,3 +312,6 @@ fun turnFrame(t: Double, w: Int, h: Int, from: TurnFace): TurnFrame {
     }
     return TurnFrame(cols, rows, shadow, (.16 - lift / 200).toFloat(), runs)
 }
+
+/** Face « faits et sources » : seul un glissé surtout horizontal est pris par la carte ; le vertical reste au défilement. */
+fun backDragTakes(dx: Float, dy: Float): Boolean = abs(dx) > abs(dy)

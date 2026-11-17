@@ -343,5 +343,8 @@ class DuelTest {
         assertEquals(0, windowRelease(0, -29f, 100f))
         assertEquals(0, windowRelease(1, 31f, 100f))
         assertEquals(1, windowRelease(1, 10f, 100f))
+        // Au bord, le glissé n'est pas pris : il change de round.
+        assertFalse(windowTakes(0, 5f)); assertTrue(windowTakes(0, -5f))
+        assertFalse(windowTakes(1, -5f)); assertTrue(windowTakes(1, 5f))
     }
 }

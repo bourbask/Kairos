@@ -701,3 +701,6 @@ fun windowRelease(page: Int, dx: Float, width: Float): Int = when {
     dx > width * 0.3f -> 0
     else -> page
 }
+
+/** La fenêtre prend le glissé sauf à son bord (premier panneau vers la droite, dernier vers la gauche) : il revient au pager des rounds. */
+fun windowTakes(page: Int, dx: Float): Boolean = !((page == 0 && dx > 0) || (page == 1 && dx < 0))

@@ -9,7 +9,8 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.awaitHorizontalTouchSlopOrCancellation
+import androidx.compose.foundation.gestures.horizontalDrag
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
@@ -87,6 +88,7 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalContext
@@ -1277,24 +1279,29 @@ private fun SlideWindow(
         modifier = modifier.fillMaxWidth().clipToBounds()
             .let { if (frame) it.drawBehind { insetBands(k.line, 2.dp.toPx(), 2.dp.toPx(), 2.dp.toPx(), 2.dp.toPx()) } else it }
             .pointerInput(page) {
-                detectHorizontalDragGestures(
-                    onDragStart = { held = true; live = 0f; onTouch() },
-                    onDragEnd = {
-                        val np = windowRelease(page, live, width.toFloat())
-                        val from = live
-                        scope.launch {
-                            back.snapTo(from)
-                            held = false
-                            live = 0f
-                            if (np != page) { turn(np); f.say(if (np == 0) "Premier panneau" else "Second panneau") }
-                            back.animateTo(0f, tween(if (f.still) 0 else 300, easing = Glide))
-                        }
-                    },
-                    onDragCancel = { held = false; live = 0f },
-                ) { ch, dx ->
-                    ch.consume()
-                    val raw = live + dx
-                    live = if ((page == 0 && raw > 0) || (page == 1 && raw < 0)) live + dx / 3 else raw
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    onTouch()
+                    // Au bord, le glissé n'est pas consommé : le pager des rounds le prend.
+                    val start = awaitHorizontalTouchSlopOrCancellation(down.id) { ch, over -> if (windowTakes(page, over)) ch.consume() }
+                        ?: return@awaitEachGesture
+                    held = true
+                    live = start.positionChange().x.let { if (windowTakes(page, it)) it else it / 3 }
+                    val ok = horizontalDrag(start.id) { ch ->
+                        val dx = ch.positionChange().x
+                        ch.consume()
+                        val raw = live + dx
+                        live = if ((page == 0 && raw > 0) || (page == 1 && raw < 0)) live + dx / 3 else raw
+                    }
+                    val np = if (ok) windowRelease(page, live, width.toFloat()) else page
+                    val from = live
+                    scope.launch {
+                        back.snapTo(from)
+                        held = false
+                        live = 0f
+                        if (np != page) { turn(np); f.say(if (np == 0) "Premier panneau" else "Second panneau") }
+                        back.animateTo(0f, tween(if (f.still) 0 else 300, easing = Glide))
+                    }
                 }
             },
     ) { ms, c ->

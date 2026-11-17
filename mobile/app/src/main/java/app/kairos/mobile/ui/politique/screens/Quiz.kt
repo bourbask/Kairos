@@ -436,6 +436,8 @@ private fun QuizGame(data: PolData, nav: PolNavigator, claims: List<Claim>, camp
                                 return@awaitEachGesture
                             }
                             if (first.isConsumed) return@awaitEachGesture
+                            // Faits et sources : un départ surtout vertical appartient au défilement du texte.
+                            if (!front && !backDragTakes(first.position.x - down.position.x, first.position.y - down.position.y)) return@awaitEachGesture
                             first.consume()
                             dragging = true
                             var up = false
