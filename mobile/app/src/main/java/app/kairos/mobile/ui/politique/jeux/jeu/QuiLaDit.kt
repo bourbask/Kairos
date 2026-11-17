@@ -1,5 +1,6 @@
 package app.kairos.mobile.ui.politique.jeux.jeu
 
+import app.kairos.mobile.ui.politique.jeux.kit.CouleursJeux
 import app.kairos.mobile.ui.politique.jeux.kit.rememberTremblement
 import kotlinx.serialization.json.JsonObject
 import androidx.compose.foundation.background
@@ -86,19 +87,20 @@ private fun Portrait(p: Personnalite, cle: String, juste: Boolean, st: MancheEta
     val presse by src.collectIsPressedAsState()
     val tremble = rememberTremblement(st.react, c.reduit, st.out.lastOrNull() == cle)
     val saut = rememberSaut(juste, c.reduit)
+    val cj = CouleursJeux.current
     val kc = when {
-        juste -> sc.primaryContainer
+        juste -> cj.justeFond
         ecarte -> mix(sc.outlineVariant, sc.onSurfaceVariant, 0.18f)
         else -> sc.tertiaryContainer
     }
-    val flanc = if (juste) mix(sc.primary, Color.Black, 0.25f) else mix(kc, sc.onSurface, 0.3f)
+    val flanc = if (juste) mix(cj.juste, Color.Black, 0.25f) else mix(kc, sc.onSurface, 0.3f)
     val encre = when {
-        juste -> sc.onPrimaryContainer
+        juste -> cj.justeEncre
         ecarte -> sc.onSurfaceVariant
         else -> sc.onSurface
     }
-    val clair = if (juste) mix(sc.primaryContainer, Color.White, 0.55f) else mix(kc, Color.White, 0.6f)
-    val sombre = if (juste) mix(sc.primary, sc.primaryContainer, 0.4f) else mix(kc, sc.onSurface, 0.14f)
+    val clair = if (juste) mix(cj.justeFond, Color.White, 0.55f) else mix(kc, Color.White, 0.6f)
+    val sombre = if (juste) mix(cj.juste, cj.justeFond, 0.4f) else mix(kc, sc.onSurface, 0.14f)
     val bas = if ((presse && actif) || ecarte) 6.dp else 0.dp
     val forme = PixelShape()
     val identite = c.data.byId(p.id) ?: PolIdentity(p.id, p.nom, p.parti)
@@ -116,7 +118,7 @@ private fun Portrait(p: Personnalite, cle: String, juste: Boolean, st: MancheEta
                 .drawBehind {
                     val e = ent(3.dp)
                     biseau(clair, sombre, e)
-                    if (juste) cadre(sc.primary, e)
+                    if (juste) cadre(cj.juste, e)
                     else if (!ecarte) aplat(Color.White.copy(alpha = 0.75f), 3 * e, 2 * e, 3 * e, e)
                 }
                 .padding(horizontal = 8.dp),
@@ -127,9 +129,9 @@ private fun Portrait(p: Personnalite, cle: String, juste: Boolean, st: MancheEta
                 IdentityBadge(identite, 40.dp, Modifier.alpha(if (ecarte) 0.6f else 1f))
                 if (juste || ecarte) Box(
                     Modifier.align(Alignment.TopEnd).offset(6.dp, (-6).dp).size(20.dp).clip(PixelShape(steps = 1))
-                        .background(if (juste) sc.primary else sc.error).clearAndSetSemantics { },
+                        .background(if (juste) cj.juste else cj.faux).clearAndSetSemantics { },
                     contentAlignment = Alignment.Center,
-                ) { Text(if (juste) "✓" else "✗", color = sc.onPrimary, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold) }
+                ) { Text(if (juste) "✓" else "✗", color = cj.surJuste, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold) }
             }
             Column(Modifier.weight(1f).clearAndSetSemantics { }) {
                 Text(frTypo(p.nom), color = encre, fontSize = 13.5.sp, lineHeight = 15.5.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)

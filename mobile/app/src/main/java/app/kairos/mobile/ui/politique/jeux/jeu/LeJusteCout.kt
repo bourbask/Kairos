@@ -1,5 +1,6 @@
 package app.kairos.mobile.ui.politique.jeux.jeu
 
+import app.kairos.mobile.ui.politique.jeux.kit.CouleursJeux
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.animateFloatAsState
@@ -152,7 +153,7 @@ private fun Compteur(v: Double, unite: String, essaye: Boolean, juste: Boolean, 
     val sc = MaterialTheme.colorScheme
     val ink = sc.onSurface
     val surf = sc.surface
-    val corps = if (juste) mix(sc.primaryContainer, sc.primary, 0.3f) else mix(surf, ink, 0.16f)
+    val corps = if (juste) CouleursJeux.current.let { mix(it.justeFond, it.juste, 0.3f) } else mix(surf, ink, 0.16f)
     val ombre = Teintes.ombre
     val shape = PixelShape()
     Box(modifier.clearAndSetSemantics { }) {
