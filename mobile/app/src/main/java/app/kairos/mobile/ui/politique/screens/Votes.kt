@@ -340,12 +340,12 @@ fun RevirementsScreen(data: PolData, nav: PolNavigator) {
         }
         val list = rv.filter { it.camp == cur }
         if (list.isEmpty()) part { EmptyState("Aucune position suivie", "Aucun changement de position documenté pour ce camp.") }
-        items(list, key = { it.camp + it.p + it.s + it.a }) { r -> TurnCard(data, r) }
+        items(list, key = { it.camp + it.p + it.s + it.a }) { r -> TurnCard(data, r) { nav.sheet(PolSheetState.Evaluator(it)) } }
     }
 }
 
 @Composable
-private fun TurnCard(data: PolData, r: Turn) {
+private fun TurnCard(data: PolData, r: Turn, onEv: (String) -> Unit) {
     val scheme = MaterialTheme.colorScheme
     val (fg, bg) = turnColors(r.k)
     val label = TURN_KINDS.firstOrNull { it.first == r.k }?.second ?: "Position"
@@ -376,7 +376,7 @@ private fun TurnCard(data: PolData, r: Turn) {
                     Text(frTypo(t), Modifier.padding(top = 4.dp), fontSize = 14.5.sp, lineHeight = 20.sp)
                 }
             }
-            Box(Modifier.padding(horizontal = 16.dp).padding(bottom = 4.dp)) { SourceList(sourcesOf(r.src), data, {}, Modifier.padding(top = 0.dp)) }
+            Box(Modifier.padding(horizontal = 16.dp).padding(bottom = 4.dp)) { SourceList(sourcesOf(r.src), data, onEv, Modifier.padding(top = 0.dp)) }
             Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     repeat(2) { i -> Box(Modifier.width(22.dp).height(4.dp).clip(CircleShape).background(if (i == pager.currentPage) scheme.onSurface else scheme.outlineVariant)) }

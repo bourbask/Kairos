@@ -3,6 +3,8 @@ package app.kairos.mobile.ui.politique.screens
 import app.kairos.mobile.ui.politique.model.alphabetical
 import app.kairos.mobile.ui.politique.model.Lecture
 import app.kairos.mobile.ui.politique.kit.TableCard
+import app.kairos.mobile.ui.politique.kit.sourcesText
+import app.kairos.mobile.ui.politique.model.SourceRef
 import app.kairos.mobile.ui.politique.model.PolData
 import app.kairos.mobile.ui.politique.model.PolJson
 import kotlinx.serialization.KSerializer
@@ -148,7 +150,7 @@ fun budgetsState(data: PolData): BudgetsState {
     val gaps = data.decode<Gap>("budgets", "GAPS").alphabetical { it.who }
     val cards = gaps.map { g ->
         val (a, b) = gapLabels(g)
-        TableCard("Annoncé contre crédité", g.what, lines = listOf("${nameOf(g.who)} : ${g.claimed?.let { fmtNum(it, 1) } ?: NO_VALUE} → ${g.credited?.let { fmtNum(it, 1) } ?: NO_VALUE} ${g.unit}".trim(), "$a / $b"), source = g.src)
+        TableCard("Annoncé contre crédité", g.what, lines = listOf("${nameOf(g.who)} : ${g.claimed?.let { fmtNum(it, 1) } ?: NO_VALUE} → ${g.credited?.let { fmtNum(it, 1) } ?: NO_VALUE} ${g.unit}".trim(), "$a / $b"), source = g.src?.takeIf { it.isNotBlank() }?.let { sourcesText(listOf(SourceRef(it, g.url, g.ev)), data) })
     }
     return BudgetsState(programs, gaps, data.refDebt(programs), data.one("budgets", "AXIS", Scale.serializer()), programs.filter { !it.ref && it.debt != null }, cards)
 }
