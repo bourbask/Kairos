@@ -149,6 +149,9 @@ fun pickTap(p: Pick, id: String): Pick {
     return Pick(s, if (s[0] == null) 0 else if (s[1] == null) 1 else i)
 }
 
+/** Place que le dernier toucher vient de remplir ; un retrait n'en remplit aucune. */
+fun filledSlot(before: Pick, after: Pick): Int? = after.sel.indices.firstOrNull { after.sel[it] != null && after.sel[it] != before.sel[it] }
+
 /** Toucher un cadre : il se vide et devient la place active. */
 fun slotTap(p: Pick, i: Int): Pick = Pick(p.sel.toMutableList().also { it[i] = null }, i)
 

@@ -78,6 +78,7 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.isTraversalGroup
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.progressBarRangeInfo
@@ -355,7 +356,7 @@ private fun QuizGame(data: PolData, nav: PolNavigator, claims: List<Claim>, camp
         val gap = cd * y0 - BAR_H
         val ledTop = BAR_H + (gap - (LED_H + LED_RAISE)) / 2 + LED_RAISE
         Row(
-            Modifier.fillMaxWidth().offset(y = ledTop).padding(horizontal = 12.dp).semantics { contentDescription = "Répondre" },
+            Modifier.fillMaxWidth().offset(y = ledTop).padding(horizontal = 12.dp).semantics { isTraversalGroup = true },
             horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.Bottom,
         ) {
             ORDER.forEach { g ->

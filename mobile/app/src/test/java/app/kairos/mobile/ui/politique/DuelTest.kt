@@ -247,6 +247,11 @@ class DuelTest {
         p = slotTap(p, 0)
         assertEquals(listOf(null, RANDOM), p.sel); assertEquals(0, p.active)
         assertEquals("deux places prises : P2 remplacé", listOf("a", "c"), pickTap(Pick(listOf("a", "b"), 0), "c").sel)
+        // Place annoncée : celle qui vient d'être remplie, même quand P1 vaut déjà « ? ».
+        val both = Pick(listOf(RANDOM, null), 1)
+        assertEquals(1, filledSlot(both, pickTap(both, RANDOM)))
+        assertEquals(0, filledSlot(Pick(), pickTap(Pick(), "a")))
+        assertNull("retrait : rien de rempli", filledSlot(Pick(listOf("a", null), 1), pickTap(Pick(listOf("a", null), 1), "a")))
     }
 
     @Test fun random_draw_never_twice_nor_the_opponent() {

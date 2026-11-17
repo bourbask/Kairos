@@ -35,7 +35,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.requiredSize
+
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -298,7 +298,7 @@ private fun PolData.colorOf(id: String): Color = identityColor(byId(id)?.couleur
 /** Annonce pour le lecteur d'écran : texte invisible en région vivante. */
 @Composable
 private fun Say(text: String) {
-    if (text.isNotEmpty()) Text(text, Modifier.size(1.dp).alpha(0f).semantics { liveRegion = LiveRegionMode.Polite }, fontSize = 1.sp)
+    Box(Modifier.size(1.dp).semantics { liveRegion = LiveRegionMode.Polite; contentDescription = text })
 }
 
 /** Duel : choix des deux adversaires, puis rounds face à face. */
@@ -343,8 +343,7 @@ private fun DuelPick(data: PolData, nav: PolNavigator, st: DuelPickState) {
     fun tap(id: String) {
         val before = st.pick
         st.pick = pickTap(before, id)
-        val removed = id != RANDOM && id in before.sel
-        say = if (removed) "${name(id)} retiré" else "${name(id)} en P${st.pick.sel.indexOf(id) + 1}"
+        say = filledSlot(before, st.pick)?.let { "${name(id)} en P${it + 1}" } ?: "${name(id)} retiré"
     }
 
     fun launch() {
@@ -377,7 +376,8 @@ private fun DuelPick(data: PolData, nav: PolNavigator, st: DuelPickState) {
             }
             val label = KINDS.first { it.first == shown }.second
             Column(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp).semantics { contentDescription = label }, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                (roster + RANDOM).chunked(5).forEach { row ->
+                // Case « ? » seulement quand un tirage est possible.
+                (roster + if (roster.size >= 2) listOf(RANDOM) else emptyList()).chunked(5).forEach { row ->
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         row.forEach { id ->
                             val tags = st.pick.sel.indices.filter { st.pick.sel[it] == id }
@@ -1090,23 +1090,33 @@ private fun SourceFoot(f: Fight, list: List<SourceRef>) {
             val name = ev?.nom?.replace(Regex("""\s*\(.*\)$"""), "") ?: s.label.split(Regex(", (?=[«A-Z0-9])"))[0]
             val host = url?.let { runCatching { java.net.URI(it).host }.getOrNull() }?.removePrefix("www.")
             val txt = ev == null && url == null
-            Box(Modifier.heightIn(min = 48.dp), contentAlignment = Alignment.CenterStart) {
-                Row(Modifier.let { if (txt) it.heightIn(min = 28.dp) else it.height(28.dp) }.clip(Cut2).background(k.inked(0.07f)), verticalAlignment = Alignment.CenterVertically) {
+            // Cibles de 48 dp de haut ; l'étiquette visible (28 dp) est dessinée au centre.
+            val band = 10.dp
+            Row(
+                Modifier.heightIn(min = 48.dp).height(IntrinsicSize.Min).drawBehind {
+                    val m = band.toPx()
+                    translate(0f, m) { drawOutline(Cut2.createOutline(Size(size.width, size.height - 2 * m), layoutDirection, this), k.inked(0.07f)) }
+                },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    Modifier.weight(1f, fill = false).fillMaxHeight()
+                        .let { m -> if (ev != null) m.clickable(role = Role.Button, onClickLabel = "Fiche : ${ev.nom}") { f.nav.sheet(PolSheetState.Evaluator(ev.id)) } else m }
+                        .padding(horizontal = 8.dp, vertical = if (txt) band + 4.dp else 0.dp),
+                    contentAlignment = Alignment.CenterStart,
+                ) {
                     Text(
-                        frTypo(name),
-                        Modifier.weight(1f, fill = false).let { m -> if (ev != null) m.clickable(role = Role.Button, onClickLabel = "Fiche : ${ev.nom}") { f.nav.sheet(PolSheetState.Evaluator(ev.id)) } else m }
-                            .padding(horizontal = 8.dp, vertical = if (txt) 4.dp else 0.dp),
-                        fontSize = 12.sp, lineHeight = if (txt) 15.6.sp else 28.sp, fontWeight = if (txt) FontWeight.Normal else FontWeight.SemiBold,
+                        frTypo(name), fontSize = 12.sp, lineHeight = if (txt) 15.6.sp else 16.sp, fontWeight = if (txt) FontWeight.Normal else FontWeight.SemiBold,
                         color = if (txt) k.onsv else k.ink, maxLines = if (txt) Int.MAX_VALUE else 1, overflow = TextOverflow.Ellipsis,
                     )
-                    if (url != null && host != null) Row(
-                        Modifier.fillMaxHeight().clickable(role = Role.Button, onClickLabel = "Article : $host") { openUrl(context, url) }
-                            .drawBehind { drawRect(k.surf, size = Size(2.dp.toPx(), size.height)) }.padding(horizontal = 8.dp).widthIn(max = 150.dp),
-                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        Text(host, Modifier.weight(1f, fill = false), fontSize = 12.sp, color = k.onsv, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        PxIcon("ext", k.onsv, 9.dp)
-                    }
+                }
+                if (url != null && host != null) Row(
+                    Modifier.fillMaxHeight().clickable(role = Role.Button, onClickLabel = "Article : $host") { openUrl(context, url) }
+                        .drawBehind { val m = band.toPx(); drawRect(k.surf, Offset(0f, m), Size(2.dp.toPx(), size.height - 2 * m)) }.padding(horizontal = 8.dp).widthIn(max = 150.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Text(host, Modifier.weight(1f, fill = false), fontSize = 12.sp, color = k.onsv, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    PxIcon("ext", k.onsv, 9.dp)
                 }
             }
         }
@@ -1331,10 +1341,8 @@ private fun SlideWindow(
 private fun WDots(cur: Int, labels: List<String>, k: DuelInk, onGo: (Int) -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         labels.forEachIndexed { i, l ->
-            Box(Modifier.size(32.dp, 24.dp), contentAlignment = Alignment.Center) {
-                Box(Modifier.requiredSize(48.dp).clickable(role = Role.Button) { onGo(i) }.semantics { contentDescription = l; selected = i == cur }, contentAlignment = Alignment.Center) {
-                    Box(Modifier.size(if (i == cur) 16.dp else 8.dp, 8.dp).background(if (i == cur) k.ink else k.line))
-                }
+            Box(Modifier.size(48.dp).clickable(role = Role.Button) { onGo(i) }.semantics { contentDescription = l; selected = i == cur }, contentAlignment = Alignment.Center) {
+                Box(Modifier.size(if (i == cur) 16.dp else 8.dp, 8.dp).background(if (i == cur) k.ink else k.line))
             }
         }
     }
