@@ -24,6 +24,6 @@ async fn main() -> anyhow::Result<()> {
         (Some(u), Some(user), Some(pass)) => Some(Arc::new(CalDav::new(&u, user, pass))),
         _ => None,
     };
-    let settings = Arc::new(Settings { tz, caldav, agenda_db: var("ALIMENTATION_AGENDA_DB") });
+    let settings = Arc::new(Settings { tz, caldav, agenda_export: var("ALIMENTATION_AGENDA_EXPORT") });
     tentacle_common::serve(env, move || FoodServer::new(store.clone(), off.clone(), settings.clone())).await
 }

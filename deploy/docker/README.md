@@ -119,11 +119,18 @@ nommé `alimentation-data` ; fiches produits lues dans la base ouverte Open Food
 Calendrier des repas (optionnel, les trois ou aucune) : `ALIMENTATION_CALDAV_URL` (adresse de la collection CalDAV),
 `ALIMENTATION_CALDAV_USER`, `ALIMENTATION_CALDAV_PASS`. Absentes : le plan de la semaine est enregistré sans agenda.
 
-Repas pris dehors : `ALIMENTATION_AGENDA_DB` (déjà posée par le compose) pointe sur la base de l'agenda, lue seule.
-Un repas midi (12 h-14 h) ou soir (19 h-21 h) est pris dehors s'il est couvert par un événement d'une journée
-entière ou qui chevauche sa fenêtre ; il est alors exclu de `cook_options` et du plan. Le choix fait dans
-l'application (`app_meal_place` : maison, dehors, auto) l'emporte ; un plat déjà prévu sur un repas devenu
-« dehors » est signalé « à replanifier », jamais réécrit.
+Repas pris dehors : à chaque synchronisation (nuit et à la demande), l'agenda écrit un export minimal
+`data/agenda-export/occupations.json` (`AGENDA_EXPORT_DIR`, posée par le compose) : début, fin, journée entière,
+transparence et titre tronqué à 60 caractères, de J-1 à J+45, sans les entrées écrites par Kairos. `alimentation`
+ne monte que ce répertoire, en lecture seule (`ALIMENTATION_AGENDA_EXPORT`). Export absent ou illisible : « agenda
+illisible », aucun repas dehors. Le répertoire est créé par `deploy.sh` (sinon le compose le créerait en root).
+
+Un repas midi (12 h-14 h) ou soir (19 h-21 h) est pris dehors s'il est couvert par un événement de plusieurs
+journées entières, ou par un événement minuté qui couvre au moins la moitié de sa fenêtre. Ne comptent pas : une
+journée entière isolée (anniversaire, férié, mention) et les événements transparents. Le repas est alors exclu de
+`cook_options` et du plan ; un plat demandé explicitement y est placé quand même (avertissement), sauf si
+l'utilisateur a choisi « dehors » dans l'application (`app_meal_place` : maison, dehors, auto). Un plat déjà prévu
+sur un repas devenu « dehors » est signalé « à replanifier », jamais réécrit.
 
 Module marchés : veille de marchés de prédiction en lecture seule. Base SQLite dans le volume `marches-data`. Variables de `kairos.env` : `MARCHES_TOKEN` (obligatoire, `openssl rand -hex 32`), `MARCHES_API_URL` (obligatoire, adresse de la source), `MARCHES_KEYWORDS` (liste séparée par des virgules), `MARCHES_POLL_MINUTES` (optionnel, 30 par défaut). Port publié : `MARCHES_BIND_PORT` (8099).
 

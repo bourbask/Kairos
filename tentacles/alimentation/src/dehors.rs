@@ -1,22 +1,24 @@
-//! Repas pris dehors : déduits des événements de l'agenda, sauf choix contraire
-//! de l'utilisateur. Lieu de l'événement ignoré : le profil ne connaît pas le domicile.
+//! Repas pris dehors : déduits des occupations exportées par l'agenda, sauf choix
+//! contraire de l'utilisateur. Lieu de l'événement ignoré : le profil ne connaît pas le domicile.
 
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
-use rusqlite::{Connection, OpenFlags};
+use serde::Deserialize;
 
 use crate::nature::Slot;
 
-/// Événement de l'agenda, réduit à ce qui sert ici.
-#[derive(Debug, Clone)]
+/// Occupation de l'agenda, telle qu'exportée.
+#[derive(Debug, Clone, Deserialize)]
 pub struct Busy {
     pub title: String,
     pub start: NaiveDateTime,
     pub end: NaiveDateTime,
     pub all_day: bool,
+    #[serde(default)]
+    pub transparent: bool,
 }
 
 // ponytail: fenêtres fixes (pas de réglage existant) ; préférence le jour où elles gênent.
-/// Fenêtre d'un repas : un événement qui la chevauche fait manger dehors.
+/// Fenêtre d'un repas : un événement qui en couvre au moins la moitié fait manger dehors.
 pub fn window(slot: Slot) -> Option<(NaiveTime, NaiveTime)> {
     let h = |h| NaiveTime::from_hms_opt(h, 0, 0).unwrap();
     match slot {
@@ -26,53 +28,53 @@ pub fn window(slot: Slot) -> Option<(NaiveTime, NaiveTime)> {
     }
 }
 
-const FMT: &str = "%Y-%m-%dT%H:%M:%S";
+/// Taille maximale de l'export lu.
+const EXPORT_MAX_BYTES: u64 = 2 * 1024 * 1024;
 
-/// Titre affichable d'un événement externe : sans caractère de contrôle, borné.
-fn title(raw: Option<String>) -> String {
-    let t: String = raw.unwrap_or_default().chars().filter(|c| !c.is_control()).take(60).collect();
-    if t.trim().is_empty() { "événement".to_string() } else { t.trim().to_string() }
+#[derive(Deserialize)]
+struct Export {
+    events: Vec<serde_json::Value>,
 }
 
-/// Événements de la base de l'agenda (lecture seule) qui touchent `from..=to`.
-/// Les repas et tâches écrits par Kairos lui-même sont écartés.
+/// Occupations de l'export (fichier JSON écrit par l'agenda) qui touchent `from..=to`.
+/// Absent, trop gros ou illisible : erreur. Une entrée illisible est écartée seule.
 pub fn load(path: &str, from: NaiveDate, to: NaiveDate) -> Result<Vec<Busy>, String> {
-    let fail = |_| "agenda illisible".to_string();
-    let c = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX)
-        .map_err(fail)?;
-    let mut st = c
-        .prepare(
-            "SELECT summary, start_time, end_time, all_day FROM calendar_events
-             WHERE start_time < ?2 AND end_time > ?1
-               AND uid NOT LIKE 'kairos-repas-%' AND uid NOT LIKE 'kairos-task-%'",
-        )
-        .map_err(fail)?;
-    let lo = from.and_time(NaiveTime::MIN).format(FMT).to_string();
-    let hi = (to + chrono::Duration::days(1)).and_time(NaiveTime::MIN).format(FMT).to_string();
-    let rows = st
-        .query_map([lo, hi], |r| {
-            Ok((r.get::<_, Option<String>>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, i64>(3)?))
-        })
-        .map_err(fail)?;
-    Ok(rows
-        .flatten()
-        .filter_map(|(s, a, b, all)| {
-            Some(Busy {
-                title: title(s),
-                start: NaiveDateTime::parse_from_str(&a, FMT).ok()?,
-                end: NaiveDateTime::parse_from_str(&b, FMT).ok()?,
-                all_day: all != 0,
-            })
+    fn fail<E>(_: E) -> String {
+        "agenda illisible".to_string()
+    }
+    if std::fs::metadata(path).map_err(fail)?.len() > EXPORT_MAX_BYTES {
+        return Err("agenda illisible".into());
+    }
+    let export: Export = serde_json::from_str(&std::fs::read_to_string(path).map_err(fail)?).map_err(fail)?;
+    let (lo, hi) = (from.and_time(NaiveTime::MIN), (to + chrono::Duration::days(1)).and_time(NaiveTime::MIN));
+    Ok(export
+        .events
+        .into_iter()
+        .filter_map(|v| serde_json::from_value::<Busy>(v).ok())
+        .filter(|b| b.start < hi && b.end > lo)
+        .map(|mut b| {
+            b.title = b.title.chars().filter(|c| !c.is_control()).take(60).collect::<String>().trim().to_string();
+            if b.title.is_empty() {
+                b.title = "événement".into();
+            }
+            b
         })
         .collect())
 }
 
-/// Événement qui fait prendre ce repas dehors : journée(s) entière(s) couvrant le
-/// jour, ou chevauchement de la fenêtre du repas (événements sur plusieurs jours compris).
+/// Événement qui fait prendre ce repas dehors : journées entières sur **plusieurs** jours
+/// couvrant le jour (une seule journée : anniversaire, férié, mention), ou événement
+/// minuté couvrant au moins la moitié de la fenêtre. Transparent : jamais.
 pub fn away(events: &[Busy], day: NaiveDate, slot: Slot) -> Option<&Busy> {
     let (a, b) = window(slot)?;
     let (ws, we) = (day.and_time(a), day.and_time(b));
-    events.iter().find(|e| if e.all_day { e.start.date() <= day && day < e.end.date() } else { e.start < we && e.end > ws })
+    events.iter().filter(|e| !e.transparent).find(|e| {
+        if e.all_day {
+            (e.end.date() - e.start.date()).num_days() >= 2 && e.start.date() <= day && day < e.end.date()
+        } else {
+            (e.end.min(we) - e.start.max(ws)) * 2 >= we - ws
+        }
+    })
 }
 
 /// Où se prend un repas midi ou soir.
@@ -91,11 +93,24 @@ impl Where {
         self.choice.unwrap_or(self.event.is_some())
     }
 
-    /// « Dehors : <événement> », ou « Dehors » quand c'est un choix sans événement.
+    /// Dehors par choix de l'utilisateur, pas seulement d'après l'agenda.
+    pub fn manual(&self) -> bool {
+        self.choice == Some(true)
+    }
+
+    /// Pour l'application : « Dehors : <événement> », ou « Dehors ».
     pub fn label(&self) -> String {
         match &self.event {
             Some(e) => format!("Dehors : {e}"),
             None => "Dehors".to_string(),
+        }
+    }
+
+    /// Pour le moteur : le titre externe reste cité, jamais lu comme une consigne.
+    pub fn reason(&self) -> String {
+        match &self.event {
+            Some(e) => format!("dehors (événement : « {e} »)"),
+            None => "dehors (choix de l'utilisateur)".to_string(),
         }
     }
 }
@@ -127,12 +142,11 @@ mod tests {
     }
 
     fn busy(title: &str, a: &str, b: &str, all_day: bool) -> Busy {
-        Busy { title: title.into(), start: at(a), end: at(b), all_day }
+        Busy { title: title.into(), start: at(a), end: at(b), all_day, transparent: false }
     }
 
     #[test]
-    fn all_day_and_multi_day_cover_every_meal() {
-        // week-end sur deux jours entiers : samedi et dimanche, pas lundi
+    fn multi_day_all_day_covers_every_meal() {
         let ev = [busy("Week-end Exemple", "2026-11-21 00:00", "2026-11-23 00:00", true)];
         for day in ["2026-11-21", "2026-11-22"] {
             assert_eq!(away(&ev, d(day), Slot::Midi).unwrap().title, "Week-end Exemple");
@@ -149,46 +163,65 @@ mod tests {
     }
 
     #[test]
-    fn overlap_with_meal_window() {
-        let ev = [busy("Déjeuner Exemple", "2026-11-24 12:30", "2026-11-24 13:30", false), busy("Cinéma", "2026-11-24 20:30", "2026-11-24 23:00", false)];
+    fn single_all_day_event_does_not_count() {
+        // anniversaire, jour férié, mention : la journée reste à la maison
+        let ev = [busy("Anniversaire Exemple", "2026-11-24 00:00", "2026-11-25 00:00", true)];
+        assert!(away(&ev, d("2026-11-24"), Slot::Midi).is_none());
+        assert!(away(&ev, d("2026-11-24"), Slot::Soir).is_none());
+    }
+
+    #[test]
+    fn transparent_event_does_not_count() {
+        let mut e = busy("Vacances scolaires", "2026-11-21 00:00", "2026-11-30 00:00", true);
+        e.transparent = true;
+        assert!(away(&[e], d("2026-11-24"), Slot::Midi).is_none());
+    }
+
+    #[test]
+    fn timed_event_must_cover_half_the_window() {
+        let ev = [busy("Déjeuner Exemple", "2026-11-24 12:30", "2026-11-24 13:30", false), busy("Cinéma", "2026-11-24 20:00", "2026-11-24 23:00", false)];
         assert_eq!(away(&ev, d("2026-11-24"), Slot::Midi).unwrap().title, "Déjeuner Exemple");
         assert_eq!(away(&ev, d("2026-11-24"), Slot::Soir).unwrap().title, "Cinéma");
-        // juste avant / juste après : pas de chevauchement
-        let ev = [busy("Réunion", "2026-11-24 10:00", "2026-11-24 12:00", false), busy("Sport", "2026-11-24 14:00", "2026-11-24 19:00", false)];
+        // moins d'une heure sur la fenêtre : repas à la maison
+        let ev = [busy("Réunion", "2026-11-24 11:00", "2026-11-24 12:30", false), busy("Sport", "2026-11-24 18:00", "2026-11-24 19:59", false)];
         assert!(away(&ev, d("2026-11-24"), Slot::Midi).is_none());
         assert!(away(&ev, d("2026-11-24"), Slot::Soir).is_none());
     }
 
     #[test]
     fn choice_overrides_agenda() {
-        let ev = [busy("Week-end Exemple", "2026-11-21 00:00", "2026-11-22 00:00", true)];
+        let ev = [busy("Week-end Exemple", "2026-11-21 00:00", "2026-11-23 00:00", true)];
         let w = resolve(&ev, &[(d("2026-11-21"), Slot::Soir, false), (d("2026-11-22"), Slot::Midi, true)], d("2026-11-21"), d("2026-11-22"));
         assert_eq!(w.len(), 4);
         assert!(w[0].out() && w[0].label() == "Dehors : Week-end Exemple");
+        assert_eq!(w[0].reason(), "dehors (événement : « Week-end Exemple »)");
         assert!(!w[1].out(), "maison choisie malgré l'agenda");
-        assert!(w[2].out() && w[2].label() == "Dehors");
-        assert!(!w[3].out());
+        assert!(w[2].out() && w[2].manual());
+        assert!(w[3].out() && !w[3].manual());
     }
 
     #[test]
-    fn load_reads_agenda_without_kairos_entries() {
+    fn load_reads_export_in_range() {
         let dir = std::env::temp_dir().join(format!("kairos-dehors-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("agenda.db");
-        let _ = std::fs::remove_file(&path);
-        let c = Connection::open(&path).unwrap();
-        c.execute_batch(
-            "CREATE TABLE calendar_events (uid TEXT PRIMARY KEY, summary TEXT, start_time TEXT, end_time TEXT, all_day INTEGER);
-             INSERT INTO calendar_events VALUES ('a', 'Week-end Exemple', '2026-11-21T00:00:00', '2026-11-23T00:00:00', 1);
-             INSERT INTO calendar_events VALUES ('kairos-repas-20261121-midi', 'Midi : Dhal', '2026-11-21T12:15:00', '2026-11-21T13:00:00', 0);
-             INSERT INTO calendar_events VALUES ('kairos-task-1@kairos', 'Tâche', '2026-11-21T00:00:00', '2026-11-22T00:00:00', 1);
-             INSERT INTO calendar_events VALUES ('b', NULL, '2026-12-01T12:00:00', '2026-12-01T13:00:00', 0);",
+        let path = dir.join("occupations.json");
+        std::fs::write(
+            &path,
+            r#"{"events": [
+                {"start": "2026-11-21T00:00:00", "end": "2026-11-23T00:00:00", "all_day": true, "transparent": false, "title": "Week-end Exemple"},
+                {"start": "2026-12-01T12:00:00", "end": "2026-12-01T13:00:00", "all_day": false, "transparent": true, "title": ""},
+                {"start": "illisible", "end": "2026-11-21T13:00:00", "all_day": false, "transparent": false, "title": "x"}
+            ]}"#,
         )
         .unwrap();
         let ev = load(path.to_str().unwrap(), d("2026-11-21"), d("2026-11-21")).unwrap();
         assert_eq!(ev.len(), 1);
         assert!(ev[0].all_day && ev[0].title == "Week-end Exemple");
-        assert!(load(dir.join("absente.db").to_str().unwrap(), d("2026-11-21"), d("2026-11-21")).is_err());
+        let ev = load(path.to_str().unwrap(), d("2026-12-01"), d("2026-12-01")).unwrap();
+        assert!(ev[0].transparent && ev[0].title == "événement");
+        assert!(load(dir.join("absente.json").to_str().unwrap(), d("2026-11-21"), d("2026-11-21")).is_err());
+        std::fs::write(&path, "<html>").unwrap();
+        assert!(load(path.to_str().unwrap(), d("2026-11-21"), d("2026-11-21")).is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -27,8 +27,8 @@ pub struct Settings {
     pub tz: chrono_tz::Tz,
     /// Calendrier des repas ; absent : le plan est seulement enregistré.
     pub caldav: Option<Arc<crate::caldav::CalDav>>,
-    /// Base de l'agenda, lue seule pour déduire les repas pris dehors ; absente : aucun.
-    pub agenda_db: Option<String>,
+    /// Export des occupations de l'agenda (JSON), lu pour déduire les repas pris dehors ; absent : aucun.
+    pub agenda_export: Option<String>,
 }
 
 #[derive(Clone)]
@@ -446,7 +446,7 @@ impl FoodServer {
     /// Lieu des repas midi et soir de `from..=to` : choix de l'utilisateur, sinon agenda.
     /// Agenda illisible : avertissement, seuls les choix comptent.
     fn places(&self, from: chrono::NaiveDate, to: chrono::NaiveDate) -> Result<(Vec<crate::dehors::Where>, Option<String>), String> {
-        let (events, warning) = match &self.settings.agenda_db {
+        let (events, warning) = match &self.settings.agenda_export {
             None => (Vec::new(), None),
             Some(p) => match crate::dehors::load(p, from, to) {
                 Ok(e) => (e, None),
@@ -969,10 +969,10 @@ impl FoodServer {
             && let Some(w) = self.places(day, day)?.0.into_iter().find(|w| w.slot == slot && w.out())
         {
             return Ok(format!(
-                "{} le {} : repas pris dehors ({}), rien à cuisiner. Si c'est faux : app_meal_place avec place=maison.",
+                "{} le {} : repas pris {}, rien à cuisiner. Si c'est faux : app_meal_place avec place=maison.",
                 slot.label(),
                 day.format("%d/%m"),
-                w.label()
+                w.reason()
             ));
         }
         let lots = self.store.lots(None, None).map_err(|e| e.to_string())?;
@@ -1174,8 +1174,17 @@ impl FoodServer {
         let end = start + chrono::Duration::days(i64::from(days) - 1);
         let (wheres, agenda_warning) = self.places(start, end)?;
         let outside: Vec<&crate::dehors::Where> = wheres.iter().filter(|w| w.out()).collect();
-        let away: Vec<(chrono::NaiveDate, Slot)> = outside.iter().map(|w| (w.day, w.slot)).collect();
+        let away: Vec<(chrono::NaiveDate, Slot, bool)> = outside.iter().map(|w| (w.day, w.slot, w.manual())).collect();
         let (meals, mut warnings) = build(start, days, &cooks, &office, &away)?;
+        // Un plat demandé l'emporte sur l'agenda : retenu comme « je mange à la maison »,
+        // le repas n'est ni « rien de prévu » ni « à replanifier ».
+        for w in outside.iter().filter(|w| !w.manual()) {
+            if cooks.iter().any(|c| c.day == w.day && c.slot == w.slot) {
+                self.store.set_place(&w.day.to_string(), w.slot.as_str(), Some(false)).map_err(|e| e.to_string())?;
+            }
+        }
+        let outside: Vec<&crate::dehors::Where> =
+            outside.into_iter().filter(|w| !meals.iter().any(|m| m.day == w.day && m.slot == w.slot)).collect();
         warnings.extend(agenda_warning);
 
         let mut recipes = std::collections::HashMap::new();
@@ -1270,7 +1279,7 @@ impl FoodServer {
         if !outside.is_empty() {
             out.push(format!(
                 "Repas dehors, rien de prévu :\n{}",
-                outside.iter().map(|w| format!("- {} {} : {}", day_label(w.day), w.slot.as_str(), w.label())).collect::<Vec<_>>().join("\n")
+                outside.iter().map(|w| format!("- {} {} : {}", day_label(w.day), w.slot.as_str(), w.reason())).collect::<Vec<_>>().join("\n")
             ));
         }
         if !warnings.is_empty() {
@@ -1324,7 +1333,7 @@ impl FoodServer {
         let mut out: Vec<String> = meals
             .iter()
             .map(|m| match wheres.iter().find(|w| w.day == m.day && w.slot == m.slot && w.out()) {
-                Some(w) => format!("{} ⚠ à replanifier ({})", plan_line(m), w.label()),
+                Some(w) => format!("{} ⚠ à replanifier : {}", plan_line(m), w.reason()),
                 None => plan_line(m),
             })
             .collect();
@@ -1885,7 +1894,7 @@ mod tests {
     }
 
     fn server() -> FoodServer {
-        let settings = Arc::new(Settings { tz: chrono_tz::UTC, caldav: None, agenda_db: None });
+        let settings = Arc::new(Settings { tz: chrono_tz::UTC, caldav: None, agenda_export: None });
         FoodServer::new(Arc::new(Store::memory()), Arc::new(Off::new("http://localhost")), settings)
     }
 
@@ -2187,7 +2196,7 @@ mod tests {
                 let _ = c.write_all(r.as_bytes()).await;
             }
         });
-        let settings = Arc::new(Settings { tz: chrono_tz::UTC, caldav: None, agenda_db: None });
+        let settings = Arc::new(Settings { tz: chrono_tz::UTC, caldav: None, agenda_export: None });
         FoodServer::new(Arc::new(Store::memory()), Arc::new(Off::new(&base)), settings)
     }
 
@@ -2714,21 +2723,21 @@ mod tests {
         assert!(decisions(&s).await.is_empty());
     }
 
-    /// Serveur dont l'agenda contient un week-end entier (21-22/11) et un déjeuner le 24/11.
+    /// Serveur dont l'agenda exporte un week-end entier (21-22/11) et un déjeuner le 24/11.
     fn server_with_agenda(tag: &str) -> (FoodServer, std::path::PathBuf) {
         let dir = std::env::temp_dir().join(format!("kairos-repas-{tag}-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("agenda.db");
-        let _ = std::fs::remove_file(&path);
-        rusqlite::Connection::open(&path)
-            .unwrap()
-            .execute_batch(
-                "CREATE TABLE calendar_events (uid TEXT PRIMARY KEY, summary TEXT, start_time TEXT, end_time TEXT, all_day INTEGER, location TEXT);
-                 INSERT INTO calendar_events VALUES ('we', 'Week-end Exemple', '2026-11-21T00:00:00', '2026-11-23T00:00:00', 1, 'example.com');
-                 INSERT INTO calendar_events VALUES ('dej', 'Déjeuner Exemple', '2026-11-24T12:30:00', '2026-11-24T13:30:00', 0, NULL);",
-            )
-            .unwrap();
-        let settings = Arc::new(Settings { tz: chrono_tz::UTC, caldav: None, agenda_db: Some(path.to_string_lossy().into()) });
+        let path = dir.join("occupations.json");
+        std::fs::write(
+            &path,
+            serde_json::json!({"events": [
+                {"start": "2026-11-21T00:00:00", "end": "2026-11-23T00:00:00", "all_day": true, "transparent": false, "title": "Week-end Exemple"},
+                {"start": "2026-11-24T12:30:00", "end": "2026-11-24T13:30:00", "all_day": false, "transparent": false, "title": "Déjeuner Exemple"},
+            ]})
+            .to_string(),
+        )
+        .unwrap();
+        let settings = Arc::new(Settings { tz: chrono_tz::UTC, caldav: None, agenda_export: Some(path.to_string_lossy().into()) });
         (FoodServer::new(Arc::new(Store::memory()), Arc::new(Off::new("http://localhost")), settings), dir)
     }
 
@@ -2759,9 +2768,8 @@ mod tests {
             ]
         );
         assert!(out.contains("Repas dehors, rien de prévu"), "{out}");
-        assert!(out.contains("- sam. 21/11 midi : Dehors : Week-end Exemple"), "{out}");
-        assert!(out.contains("- mar. 24/11 midi : Dehors : Déjeuner Exemple"), "{out}");
-        assert!(!out.contains("example.com"), "seul le titre de l'événement est cité");
+        assert!(out.contains("- sam. 21/11 midi : dehors (événement : « Week-end Exemple »)"), "{out}");
+        assert!(out.contains("- mar. 24/11 midi : dehors (événement : « Déjeuner Exemple »)"), "{out}");
         assert!(!out.contains("21/11 midi : sans repas"), "{out}");
         let _ = std::fs::remove_dir_all(dir);
     }
@@ -2787,8 +2795,30 @@ mod tests {
         assert_eq!(replan["actions"][0]["args"]["place"], "maison");
         let lunch = c.iter().find(|c| c["id"] == "dehors-2026-11-21-midi").unwrap();
         assert_eq!(lunch["title"], "Midi · Dehors : Week-end Exemple");
-        assert!(s.meal_plan(args(serde_json::json!({"day": "2026-11-21", "days": 1}))).await.unwrap().contains("à replanifier"));
+        let plan = s.meal_plan(args(serde_json::json!({"day": "2026-11-21", "days": 1}))).await.unwrap();
+        assert!(plan.contains("⚠ à replanifier : dehors (événement : « Week-end Exemple »)"), "{plan}");
         assert!(s.app_meal_place(args(serde_json::json!({"day": "2026-11-21", "slot": "gouter", "place": "maison"}))).await.is_err());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn explicit_dish_wins_over_agenda_not_over_choice() {
+        let (s, dir) = server_with_agenda("demande");
+        s.app_meal_place(args(serde_json::json!({"day": "2026-11-22", "slot": "soir", "place": "dehors"}))).await.unwrap();
+        let out = s
+            .meal_plan_set(args(serde_json::json!({
+                "start": "2026-11-21", "days": 2,
+                "meals": [{"day": "2026-11-21", "slot": "soir", "dish": "Dhal"}, {"day": "2026-11-22", "slot": "soir", "dish": "Riz"}],
+            })))
+            .await
+            .unwrap();
+        let got: Vec<_> = s.store.plan("2026-11-21", "2026-11-22").unwrap().iter().map(|m| (m.day.to_string(), m.dish.clone())).collect();
+        assert_eq!(got, [("2026-11-21".to_string(), "Dhal".to_string())]);
+        assert!(out.contains("dehors d'après l'agenda, Dhal placé quand même"), "{out}");
+        assert!(out.contains("repas dehors, Riz non placé"), "{out}");
+        assert!(!out.contains("- sam. 21/11 soir : dehors"), "repas cuisiné, pas « rien de prévu » : {out}");
+        // la demande vaut « je mange à la maison » : pas de carte à replanifier
+        assert!(cards(&s, "2026-11-21").iter().any(|c| c["id"] == "repas-2026-11-21-soir"));
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -2796,7 +2826,7 @@ mod tests {
     async fn cook_options_skips_meal_outside() {
         let (s, dir) = server_with_agenda("cook");
         let out = s.cook_options(args(serde_json::json!({"slot": "midi", "day": "2026-11-24"}))).await.unwrap();
-        assert!(out.contains("repas pris dehors (Dehors : Déjeuner Exemple)"), "{out}");
+        assert!(out.contains("repas pris dehors (événement : « Déjeuner Exemple »)"), "{out}");
         let out = s.cook_options(args(serde_json::json!({"slot": "soir", "day": "2026-11-24"}))).await.unwrap();
         assert!(!out.contains("dehors"), "{out}");
         let _ = std::fs::remove_dir_all(dir);

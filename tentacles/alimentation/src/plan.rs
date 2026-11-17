@@ -69,10 +69,11 @@ pub fn build(
     days: u32,
     cooks: &[Cook],
     office: &[Weekday],
-    away: &[(NaiveDate, Slot)],
+    away: &[(NaiveDate, Slot, bool)],
 ) -> Result<(Vec<Meal>, Vec<String>), String> {
     let slots = grid(start, days);
-    let out = |j: usize| away.contains(&slots[j]);
+    // repas dehors : (dehors, choisi par l'utilisateur)
+    let out = |j: usize| away.iter().find(|a| (a.0, a.1) == slots[j]).map(|a| a.2);
     let mut cells: Vec<Option<Meal>> = vec![None; slots.len()];
     let mut warnings = Vec::new();
     let mut placed: Vec<(usize, &Cook)> = Vec::new();
@@ -84,9 +85,14 @@ pub fn build(
         if cells[i].is_some() {
             return Err(format!("{} : deux plats sur le même créneau.", label(c.day, c.slot)));
         }
-        if out(i) {
-            warnings.push(format!("{} : repas dehors, {} non placé.", label(c.day, c.slot), c.dish));
-            continue;
+        // Seul un « dehors » choisi l'emporte sur une demande explicite ; l'agenda, non.
+        match out(i) {
+            Some(true) => {
+                warnings.push(format!("{} : repas dehors, {} non placé.", label(c.day, c.slot), c.dish));
+                continue;
+            }
+            Some(false) => warnings.push(format!("{} : dehors d'après l'agenda, {} placé quand même.", label(c.day, c.slot), c.dish)),
+            None => {}
         }
         cells[i] = Some(Meal { day: c.day, slot: c.slot, dish: c.dish.clone(), kind: MealKind::Cook, from: c.day, note: None });
         placed.push((i, c));
@@ -98,7 +104,7 @@ pub fn build(
             if left == 0 {
                 break;
             }
-            if cells[j].is_none() && !out(j) {
+            if cells[j].is_none() && out(j).is_none() {
                 let (day, slot) = slots[j];
                 let kind = if slot == Slot::Midi && office.contains(&day.weekday()) { MealKind::Box } else { MealKind::Leftover };
                 cells[j] = Some(Meal { day, slot, dish: c.dish.clone(), kind, from: c.day, note: None });
@@ -119,7 +125,7 @@ pub fn build(
     }
     for (j, &(day, slot)) in slots.iter().enumerate() {
         match &cells[j] {
-            None if out(j) => {}
+            None if out(j).is_some() => {}
             None => warnings.push(format!("{} : sans repas.", label(day, slot))),
             Some(m) if m.kind == MealKind::Cook && slot == Slot::Midi && office.contains(&day.weekday()) => {
                 warnings.push(format!("{} : jour de bureau, prévoir une boîte plutôt qu'un plat cuisiné.", label(day, slot)))
@@ -356,13 +362,18 @@ mod tests {
     #[test]
     fn build_skips_meals_outside() {
         // samedi soir ×4, dimanche midi dehors : les restes sautent au dimanche soir, lundi midi, lundi soir
-        let away = [(d(8), Slot::Midi)];
+        let away = [(d(8), Slot::Midi, false)];
         let (meals, warnings) = build(d(7), 3, &[cook(7, Slot::Soir, "Soupe", 4)], &[], &away).unwrap();
         let got: Vec<_> = meals.iter().map(|m| (m.day, m.slot)).collect();
         assert_eq!(got, [(d(7), Slot::Soir), (d(8), Slot::Soir), (d(9), Slot::Midi), (d(9), Slot::Soir)]);
         assert!(!warnings.iter().any(|w| w.contains("08/11 midi")), "{warnings:?}");
-        // plat demandé sur un repas dehors : non placé, signalé
+        // plat demandé sur un repas dehors d'après l'agenda : la demande l'emporte, avec un avertissement
         let (meals, warnings) = build(d(7), 2, &[cook(8, Slot::Midi, "Dhal", 2)], &[], &away).unwrap();
+        let got: Vec<_> = meals.iter().map(|m| (m.day, m.slot, m.kind)).collect();
+        assert_eq!(got, [(d(8), Slot::Midi, MealKind::Cook), (d(8), Slot::Soir, MealKind::Leftover)]);
+        assert!(warnings.iter().any(|w| w.contains("08/11 midi : dehors d'après l'agenda, Dhal placé quand même")), "{warnings:?}");
+        // dehors choisi par l'utilisateur : le plat n'est pas placé
+        let (meals, warnings) = build(d(7), 2, &[cook(8, Slot::Midi, "Dhal", 2)], &[], &[(d(8), Slot::Midi, true)]).unwrap();
         assert!(meals.is_empty());
         assert!(warnings.iter().any(|w| w.contains("08/11 midi : repas dehors, Dhal non placé")), "{warnings:?}");
     }
