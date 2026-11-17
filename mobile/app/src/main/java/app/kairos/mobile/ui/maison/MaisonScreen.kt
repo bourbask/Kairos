@@ -39,11 +39,14 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -99,7 +102,11 @@ import app.kairos.mobile.ui.kit.primaryActionClearance
 import app.kairos.mobile.ui.kit.SpaceHeader
 import app.kairos.mobile.ui.kit.StatusBanner
 import app.kairos.mobile.ui.kit.SwipeRow
+import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.roundToInt
@@ -116,13 +123,13 @@ val MaisonActionCorner = 16.dp
 private const val SHEET_FLING = 1_500f
 
 /** Ce qui est déplié sous un produit. */
-private enum class Panel { Actions, Move, Qty }
+private enum class Panel { Actions, Move, Qty, Date }
 
 /**
  * Espace Inventaire : plan de la cuisine, stock de la zone choisie dans le panneau
  * du bas (↑ l'agrandit). Sur un produit : ← consommé (annulable, file commune),
  * → déplacer, tap sur la quantité = +/− puis « Valider », tap sur la ligne = les mêmes actions
- * en boutons. Les écritures partent depuis [appScope], qui survit à l'écran.
+ * en boutons, plus « Date » (prolonger). Un produit dépassé propose « Encore bon ? » d'un tap. Les écritures partent depuis [appScope], qui survit à l'écran.
  * [onUnpack] : ranger une commande, depuis son bandeau ; [onAdd] : ajouter hors commande.
  */
 @Composable
@@ -352,6 +359,12 @@ fun MaisonScreen(
                                     onConsume = { schedule(state.consume(lot)) },
                                     onMove = { to -> schedule(state.move(lot, to)) },
                                     onQty = { q -> schedule(state.setQty(lot, q)) },
+                                    onDate = { d ->
+                                        state.setExpiry(lot, d, LocalDate.now())?.let {
+                                            schedule(it)
+                                            scope.launch { notifier.show("${lot.name} · jusqu'au ${d.format(DAY_MONTH)}") }
+                                        }
+                                    },
                                     modifier = Modifier.animateItem(
                                         fadeInSpec = Motion.enter(),
                                         placementSpec = Motion.settle(IntOffset(1, 1)),
@@ -633,6 +646,7 @@ private fun LotItem(
     onConsume: () -> Unit,
     onMove: (String) -> Unit,
     onQty: (Double) -> Unit,
+    onDate: (LocalDate) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val colors = MaterialTheme.colorScheme
@@ -674,7 +688,18 @@ private fun LotItem(
                     }
                 }
                 val today = remember { LocalDate.now() }
-                expiryText(lot, today)?.let {
+                if (enabled && overdue(lot, today)) {
+                    // Dépassé mais peut-être encore bon : les raccourcis d'un tap.
+                    Surface(
+                        onClick = { onPanel(if (panel == Panel.Date) null else Panel.Date) },
+                        shape = RoundedCornerShape(10.dp),
+                        color = colors.errorContainer,
+                        contentColor = colors.onErrorContainer,
+                        modifier = Modifier.semantics { contentDescription = "Date passée. Encore bon ? Prolonger" },
+                    ) {
+                        Text("Encore bon ?", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp))
+                    }
+                } else expiryText(lot, today)?.let {
                     Text(
                         it,
                         style = MaterialTheme.typography.labelMedium,
@@ -705,9 +730,10 @@ private fun LotItem(
             if (panel != null) shown = panel
             Box(Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, bottom = 10.dp)) {
                 when (shown) {
-                    Panel.Actions -> Actions(enabled, onConsume, { onPanel(Panel.Move) }, { onPanel(Panel.Qty) })
+                    Panel.Actions -> Actions(enabled, onConsume, { onPanel(Panel.Move) }, { onPanel(Panel.Qty) }, { onPanel(Panel.Date) })
                     Panel.Move -> MoveChoices(lot, zones, enabled, onMove) { onPanel(null) }
                     Panel.Qty -> QtyEditor(lot, enabled, onQty) { onPanel(null) }
+                    Panel.Date -> DateEditor(lot, enabled, onDate) { onPanel(null) }
                 }
             }
         }
@@ -732,6 +758,7 @@ private fun Pill(
     enabled: Boolean,
     color: Color = MaterialTheme.colorScheme.primary,
     filled: Boolean = false,
+    description: String? = null,
 ) {
     Surface(
         onClick = onClick,
@@ -740,7 +767,9 @@ private fun Pill(
         color = if (filled) color else MaterialTheme.colorScheme.surface,
         contentColor = if (filled) MaterialTheme.colorScheme.onPrimary else color,
         border = if (filled) null else BorderStroke(1.5.dp, color),
-        modifier = Modifier.alpha(if (enabled) 1f else 0.45f),
+        modifier = Modifier.alpha(if (enabled) 1f else 0.45f).then(
+            if (description != null) Modifier.semantics { contentDescription = description } else Modifier,
+        ),
     ) {
         Text(
             text,
@@ -751,13 +780,57 @@ private fun Pill(
 }
 
 @Composable
-private fun Actions(enabled: Boolean, onConsume: () -> Unit, onMove: () -> Unit, onQty: () -> Unit) {
+private fun Actions(enabled: Boolean, onConsume: () -> Unit, onMove: () -> Unit, onQty: () -> Unit, onDate: () -> Unit) {
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Pill("← Consommé", onConsume, enabled, MaterialTheme.colorScheme.error)
         Pill("Déplacer →", onMove, enabled)
         Pill("Quantité", onQty, enabled)
+        Pill("Date", onDate, enabled)
     }
 }
+
+/**
+ * Nouvelle date d'un tap : +2 j, +1 sem, +2 sem depuis la date actuelle (aujourd'hui si
+ * passée), ou une date précise. « Je ne sais pas » ferme sans rien changer.
+ */
+@Composable
+private fun DateEditor(lot: Lot, enabled: Boolean, onDate: (LocalDate) -> Unit, onCancel: () -> Unit) {
+    val today = remember { LocalDate.now() }
+    val from = extendFrom(lot, today)
+    var picking by remember { mutableStateOf(false) }
+    Column {
+        Text(
+            if (overdue(lot, today)) "Encore bon jusqu'au…" else "Nouvelle date",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(6.dp))
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            EXTENSIONS.forEach { (short, spoken, days) ->
+                val d = from.plusDays(days)
+                Pill("$short · ${d.format(DAY_MONTH)}", { onDate(d) }, enabled, description = "Plus $spoken, jusqu'au ${d.format(SPOKEN_DATE)}")
+            }
+            Pill("Autre date…", { picking = true }, enabled)
+            TextButton(onClick = onCancel, modifier = Modifier.heightIn(min = 48.dp)) { Text("Je ne sais pas") }
+        }
+    }
+    if (picking) {
+        val start = from.atStartOfDay().toInstant(ZoneOffset.UTC).toEpochMilli()
+        val picker = rememberDatePickerState(initialSelectedDateMillis = start)
+        DatePickerDialog(
+            onDismissRequest = { picking = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    picking = false
+                    picker.selectedDateMillis?.let { onDate(Instant.ofEpochMilli(it).atZone(ZoneOffset.UTC).toLocalDate()) }
+                }) { Text("OK") }
+            },
+            dismissButton = { TextButton(onClick = { picking = false }) { Text("Annuler") } },
+        ) { DatePicker(picker) }
+    }
+}
+
+private val SPOKEN_DATE = DateTimeFormatter.ofPattern("d MMMM", Locale.FRENCH)
 
 @Composable
 private fun MoveChoices(lot: Lot, zones: List<ZoneView>, enabled: Boolean, onMove: (String) -> Unit, onCancel: () -> Unit) {
