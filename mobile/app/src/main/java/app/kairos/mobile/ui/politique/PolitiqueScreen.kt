@@ -5,6 +5,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import app.kairos.mobile.ui.politique.jeux.kit.PixelGrid
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -45,6 +49,8 @@ import app.kairos.mobile.ui.politique.screens.ClaimSheetAt
 import app.kairos.mobile.ui.politique.screens.PhrasesScreen
 import app.kairos.mobile.ui.politique.screens.QuizScreen
 import app.kairos.mobile.ui.politique.screens.DitVoteScreen
+import app.kairos.mobile.ui.politique.screens.DUEL_ICONS
+import app.kairos.mobile.ui.politique.screens.DuelPickState
 import app.kairos.mobile.ui.politique.screens.DuelScreen
 import app.kairos.mobile.ui.politique.screens.RevirementsScreen
 import app.kairos.mobile.ui.politique.screens.ScrutinSheetAt
@@ -161,6 +167,8 @@ fun PolitiqueScreen(
     // Jeux : session par jeu de données, progression lue puis enregistrée sur l'appareil.
     val context = LocalContext.current
     val store = remember { JeuxStore(context.applicationContext) }
+    // Choix du duel : gardé au retour du comparatif, vidé par « Nouveau duel ».
+    val duelPick = remember(data) { DuelPickState() }
     val session = remember(data) { data?.let { d -> JeuxSession(d) { p -> appScope.launch { store.save(p) } } } }
     LaunchedEffect(session) { session?.restore(store.load()) }
     val themeId = when (route) {
@@ -197,10 +205,17 @@ fun PolitiqueScreen(
         },
         onBack = { nav.back()?.let { nav = it } ?: onClose() },
         padding = padding,
-        subtitle = if (route == PolRoute.Home) verifiedLabel(data?.verifiedOn) else null,
+        subtitle = when {
+            route == PolRoute.Home -> verifiedLabel(data?.verifiedOn)
+            route is PolRoute.Duel -> if (route.a != null && route.b != null) "Aucun vainqueur désigné" else "Choisissez deux adversaires"
+            else -> null
+        },
         subtitleContent = (route as? PolRoute.Door)?.let { r -> session?.theme(r.id)?.let { t -> { ProgressionTheme(session.avance(t)) } } },
         backLabel = if (route == PolRoute.Home) "Fermer l'espace Politique" else "Retour",
         actions = {
+            if (route is PolRoute.Duel && route.a != null && route.b != null) IconButton(onClick = { duelPick.reset(); navigator.replace(PolRoute.Duel()) }, Modifier.semantics { contentDescription = "Nouveau duel" }) {
+                PixelGrid(DUEL_ICONS.getValue("swap"), MaterialTheme.colorScheme.onSurfaceVariant, Modifier.size(20.dp))
+            }
             IconButton(onClick = { sharing = true }) {
                 Icon(KairosIcons.Share, contentDescription = "Partager le site", tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
@@ -233,7 +248,7 @@ fun PolitiqueScreen(
                         when (route) {
                             is PolRoute.Rubric -> RubricHost(route.id, l.data, navigator)
                             PolRoute.Quiz -> QuizScreen(l.data, navigator)
-                            is PolRoute.Duel -> DuelScreen(l.data, navigator, route.a, route.b)
+                            is PolRoute.Duel -> DuelScreen(l.data, navigator, route.a, route.b, duelPick)
                             else -> Soon()
                         }
                     }
