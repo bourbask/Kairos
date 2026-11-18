@@ -15,3 +15,4 @@ tokio = { version = "1", features = ["full"] }
 tentacle-common = { path = "../../crates/tentacle-common" }
 rmcp = { version = "3.8", features = ["server", "macros"] }
 schemars = "1"
+unicode-normalization = "0.1"
