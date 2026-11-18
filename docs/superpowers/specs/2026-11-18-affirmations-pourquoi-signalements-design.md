@@ -256,13 +256,14 @@ déjà reçue dans l'heure renvoie la même référence, sans nouvel enregistrem
 ### 5.4 Lecture et traitement
 
 **Outils MCP sur le port interne du module :**
-- `signalements_lister` : filtres par état, par affirmation et par date ; résultats
+- `app_signalements_lister` : filtres par état, par affirmation et par date ; résultats
   bornés ;
-- `signalement_lire` (`id`) ;
-- `signalement_etat` (`id`, `etat`, `note`).
+- `app_signalement_lire` (`id`) ;
+- `app_signalement_etat` (`id`, `etat`, `note`).
 
-Ces outils ne sont pas `app_*`. Ils servent à la relecture, pas à la boucle de
-conversation de l'application.
+Ils portent le préfixe `app_` parce que la tête cache au moteur de conversation tout
+outil ainsi préfixé : le texte d'un lecteur n'entre jamais dans la boucle de conversation.
+Ils servent à la relecture.
 
 Accès depuis la session de relecture : le port MCP du module est publié comme celui des
 autres modules, sur l'adresse réservée aux modules et avec son jeton. Le module ne fait
