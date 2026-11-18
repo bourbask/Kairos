@@ -16,3 +16,4 @@ tentacle-common = { path = "../../crates/tentacle-common" }
 rmcp = { version = "3.8", features = ["server", "macros"] }
 schemars = "1"
 unicode-normalization = "0.1"
+rusqlite = { version = "0.32", features = ["bundled"] }
