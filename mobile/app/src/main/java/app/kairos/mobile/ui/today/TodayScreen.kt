@@ -80,6 +80,7 @@ import app.kairos.mobile.data.ApiError
 import app.kairos.mobile.data.AppRelease
 import app.kairos.mobile.data.Card
 import app.kairos.mobile.data.CardAction
+import app.kairos.mobile.data.DoneCount
 import app.kairos.mobile.data.Mark
 import app.kairos.mobile.data.Repository
 import app.kairos.mobile.data.Snapshot
@@ -90,6 +91,7 @@ import app.kairos.mobile.ui.kit.StatePill
 import app.kairos.mobile.ui.kit.StatusBanner
 import app.kairos.mobile.ui.kit.SwipeRow
 import app.kairos.mobile.ui.kit.Tone
+import app.kairos.mobile.ui.maison.StepButton
 import app.kairos.mobile.ui.mascot.Mascot
 import app.kairos.mobile.ui.mascot.onPageColors
 import app.kairos.mobile.ui.mascot.MascotState
@@ -186,7 +188,7 @@ fun TodayScreen(
     }
 
     // Depuis appScope : quitter l'écran pendant la fenêtre n'abandonne pas l'action du module.
-    fun complete(day: String, card: Card, choice: JsonElement?) {
+    fun complete(day: String, card: Card, choice: JsonElement?, count: Int? = null) {
         appScope.launch {
             val out = try {
                 completeCard(
@@ -196,6 +198,7 @@ fun TodayScreen(
                     undoWindow = { notifier.undo("Fait · ${card.title}") },
                     call = repository::reply,
                     busy = busy,
+                    count = count,
                 )
             } catch (_: ApiError.Unauthorized) {
                 return@launch unauthorized()
@@ -303,9 +306,9 @@ fun TodayScreen(
             exit = Motion.sinkOut,
         ) {
             choosing?.let { (day, card) ->
-                Chooser(card, onPick = { v ->
+                Chooser(card, onPick = { v, made ->
                     chooserOpen = false
-                    complete(day, card, v)
+                    complete(day, card, v, made)
                 }, onCancel = { chooserOpen = false })
             }
         }
@@ -702,11 +705,17 @@ private fun ItemCard(
     }
 }
 
-/** Choix compact (portions…) : une puce par option, la valeur par défaut en avant. */
+/**
+ * Choix compact (portions…) : une puce par option, la valeur par défaut en avant. Un nombre
+ * facultatif ([CardDone.count]) se règle au-dessus avec − et + ; il n'est envoyé que s'il a été saisi.
+ */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun Chooser(card: Card, onPick: (JsonElement) -> Unit, onCancel: () -> Unit) {
-    val c = card.done?.choices ?: return
+private fun Chooser(card: Card, onPick: (JsonElement?, Int?) -> Unit, onCancel: () -> Unit) {
+    val done = card.done ?: return
+    val c = done.choices?.takeIf { it.options.size > 1 }
+    val n = done.count
+    var made by remember(card.key) { mutableStateOf<Int?>(null) }
     Surface(
         shape = MaterialTheme.shapes.large,
         color = MaterialTheme.colorScheme.surface,
@@ -715,23 +724,56 @@ private fun Chooser(card: Card, onPick: (JsonElement) -> Unit, onCancel: () -> U
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(Modifier.padding(start = 16.dp, end = 8.dp, top = 12.dp, bottom = 6.dp)) {
-            Text(c.label.ifBlank { "Combien ?" }, style = MaterialTheme.typography.titleSmall)
+            Text(c?.label?.ifBlank { null } ?: "Combien ?", style = MaterialTheme.typography.titleSmall)
             Text(card.title, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (n != null) CountRow(n, made) { made = it }
             FlowRow(
                 Modifier.padding(top = 8.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.Center,
             ) {
-                c.options.forEach { o ->
+                c?.options?.forEach { o ->
                     FilterChip(
                         selected = o == c.default,
-                        onClick = { onPick(o) },
+                        onClick = { onPick(o, made) },
                         label = { Text(optionLabel(o), style = MaterialTheme.typography.titleSmall) },
                     )
                 }
+                if (c == null) TextButton(onClick = { onPick(null, made) }) { Text("Valider") }
                 TextButton(onClick = onCancel) { Text("Annuler") }
             }
         }
+    }
+}
+
+/** Nombre facultatif : pré-rempli avec la valeur prévue, en retrait tant qu'il n'est pas saisi ; un tap sur le chiffre le note ou l'efface. */
+@Composable
+private fun CountRow(n: DoneCount, made: Int?, onChange: (Int?) -> Unit) {
+    val shown = made ?: n.default
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    Row(Modifier.padding(top = 8.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(n.label.ifBlank { "Nombre" }, style = MaterialTheme.typography.bodyMedium)
+            Text(if (made == null) "facultatif · prévu ${n.default}" else "noté", style = MaterialTheme.typography.labelSmall, color = muted)
+        }
+        StepButton("−", "${n.label} : un de moins", enabled = shown > n.min) { onChange(n.step(made, -1)) }
+        Surface(
+            onClick = { onChange(if (made == null) n.default else null) },
+            color = MaterialTheme.colorScheme.surface,
+            modifier = Modifier
+                .size(width = 56.dp, height = 48.dp)
+                .semantics { contentDescription = if (made == null) "${n.label} : noter ${n.default}" else "${n.label} : $made, effacer" },
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Text(
+                    "$shown",
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = if (made == null) muted.copy(alpha = 0.6f) else MaterialTheme.colorScheme.onSurface,
+                )
+            }
+        }
+        StepButton("+", "${n.label} : un de plus", enabled = shown < n.max) { onChange(n.step(made, 1)) }
     }
 }
 

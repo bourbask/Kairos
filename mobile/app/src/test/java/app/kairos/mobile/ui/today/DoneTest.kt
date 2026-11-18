@@ -71,6 +71,34 @@ class DoneTest {
     }
 
     @Test
+    fun count_sent_only_when_entered() = runBlocking {
+        val cooked = KairosJson.decodeFromString(
+            Card.serializer(),
+            """{"id":"soir","title":"Curry","module":"alimentation",
+               "done":{"tool":"app_meal_done","args":{"day":"2026-11-12","slot":"soir"},
+                       "count":{"label":"Portions obtenues","key":"made","default":4,"min":1,"max":100}}}""",
+        )
+        val done = cooked.done!!
+        val n = done.count!!
+        // Un nombre seul suffit à ouvrir le choix.
+        assertTrue(done.asks)
+        // Rien saisi : rien d'envoyé, même si la valeur prévue est affichée.
+        assertEquals("""{"day":"2026-11-12","slot":"soir"}""", doneArgs(done, null).toString())
+        assertEquals("""{"day":"2026-11-12","slot":"soir","made":6}""", doneArgs(done, null, 6).toString())
+        assertEquals(JsonPrimitive(100), doneArgs(done, null, 500)["made"])
+        // − et + partent de la valeur prévue et restent dans les bornes.
+        assertEquals(5, n.step(null, 1))
+        assertEquals(3, n.step(null, -1))
+        assertEquals(1, n.step(1, -1))
+        val f = Fake()
+        completeCard(cooked, null, f.mark, f.window, f.call, count = 6)
+        assertEquals("""call alimentation/app_meal_done {"day":"2026-11-12","slot":"soir","made":6}""", f.log.last())
+        // Avec le choix des portions mangées : les deux partent ensemble.
+        val both = meal.done!!.copy(count = n)
+        assertEquals("""{"day":"2026-11-12","slot":"soir","portions":2,"made":6}""", doneArgs(both, JsonPrimitive(2), 6).toString())
+    }
+
+    @Test
     fun card_without_done_stays_local() = runBlocking {
         val f = Fake()
         val agenda = Card(id = "rdv", title = "Dentiste", module = "agenda")

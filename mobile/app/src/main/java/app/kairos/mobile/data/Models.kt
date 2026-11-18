@@ -52,7 +52,16 @@ data class Card(
 
 /** Outil `app_*` du module à lancer quand la carte est faite. */
 @Serializable
-data class CardDone(val tool: String, val args: JsonObject = JsonObject(emptyMap()), val choices: DoneChoices? = null)
+data class CardDone(
+    val tool: String,
+    val args: JsonObject = JsonObject(emptyMap()),
+    val choices: DoneChoices? = null,
+    val count: DoneCount? = null,
+)
+
+/** Nombre facultatif saisi au pas à pas (portions obtenues…), ajouté sous [key] seulement s'il est saisi. */
+@Serializable
+data class DoneCount(val label: String = "", val key: String, val default: Int, val min: Int = 1, val max: Int = 100)
 
 /** Geste secondaire d'une carte : outil `app_*` du module, lancé tel quel. */
 @Serializable
