@@ -6,6 +6,8 @@ import app.kairos.mobile.ui.politique.model.PolData
 import app.kairos.mobile.ui.politique.kit.quoted
 import app.kairos.mobile.ui.politique.screens.Owner
 import app.kairos.mobile.ui.politique.screens.Program
+import app.kairos.mobile.ui.politique.screens.ReportQuota
+import app.kairos.mobile.ui.politique.screens.ReportReceipt
 import app.kairos.mobile.ui.politique.screens.VoteRow
 import app.kairos.mobile.ui.politique.screens.claimsOf
 import app.kairos.mobile.ui.politique.screens.declarationsOf
@@ -58,6 +60,10 @@ interface PolNavigator {
     fun table(cards: List<TableCard>, start: Int)
     /** Lien du site enregistré sur l'appareil ; null s'il n'y en a pas. */
     fun siteLink(): String? = null
+    /** Dépose un signalement ([reportArgs]) ; lève [app.kairos.mobile.data.ApiError]. */
+    suspend fun report(args: JsonObject): ReportReceipt
+    /** Quota d'envoi, gardé quand la feuille de signalement se ferme. */
+    var reportQuota: ReportQuota
 }
 
 /**

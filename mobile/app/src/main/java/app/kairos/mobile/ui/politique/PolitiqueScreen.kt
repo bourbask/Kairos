@@ -74,6 +74,8 @@ import app.kairos.mobile.ui.politique.screens.RhetoriqueScreen
 import app.kairos.mobile.ui.politique.screens.ClusterSheet
 import app.kairos.mobile.ui.politique.screens.OriginesScreen
 import app.kairos.mobile.ui.politique.screens.PromessesScreen
+import app.kairos.mobile.ui.politique.screens.ReportQuota
+import app.kairos.mobile.ui.politique.screens.ReportReceipt
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import androidx.compose.runtime.DisposableEffect
@@ -86,6 +88,7 @@ import app.kairos.mobile.ui.politique.jeux.ProgressionTheme
 import app.kairos.mobile.ui.politique.jeux.ThemeIcon
 import app.kairos.mobile.ui.politique.jeux.ThemeScreen
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
@@ -132,6 +135,7 @@ fun PolitiqueScreen(
     var table by remember { mutableStateOf<Pair<List<TableCard>, Int>?>(null) }
     var sharing by remember { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
+    var quota by remember { mutableStateOf(ReportQuota()) }
     // Position de l'accueil gardée pendant qu'une porte ou une rubrique est ouverte.
     val homeGrid = rememberLazyGridState()
     val link by rememberUpdatedState(siteLink)
@@ -142,6 +146,15 @@ fun PolitiqueScreen(
             override fun sheet(s: PolSheetState) { nav = nav.open(s) }
             override fun table(cards: List<TableCard>, start: Int) { table = cards to start }
             override fun siteLink(): String? = link
+            override suspend fun report(args: JsonObject): ReportReceipt = try {
+                repository.lookup(POLITIQUE, "app_signalement_deposer", ReportReceipt.serializer(), args)
+            } catch (e: ApiError.Unauthorized) {
+                unauthorized()
+                throw e
+            }
+            override var reportQuota: ReportQuota
+                get() = quota
+                set(v) { quota = v }
         }
     }
 
