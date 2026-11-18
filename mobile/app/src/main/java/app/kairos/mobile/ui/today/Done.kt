@@ -4,6 +4,7 @@ import app.kairos.mobile.data.ApiError
 import app.kairos.mobile.data.Card
 import app.kairos.mobile.data.CardAction
 import app.kairos.mobile.data.CardDone
+import app.kairos.mobile.data.DoneCount
 import app.kairos.mobile.data.Mark
 import app.kairos.mobile.data.ToolMessage
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -61,14 +62,21 @@ class Pending<K> {
 fun restorable(item: TimelineItem): Boolean = !(item.phase == Phase.Fait && (item.card.done != null || item.card.state == "fait"))
 
 /** Un choix n'est demandé que s'il y a vraiment à choisir. */
-val CardDone.asks: Boolean get() = (choices?.options?.size ?: 0) > 1
+val CardDone.asks: Boolean get() = (choices?.options?.size ?: 0) > 1 || count != null
 
-/** Arguments de l'outil, avec la valeur choisie (sinon le défaut, sinon la première option). */
-fun doneArgs(done: CardDone, choice: JsonElement?): JsonObject {
-    val c = done.choices ?: return done.args
-    val value = choice ?: c.default ?: c.options.firstOrNull() ?: return done.args
-    return JsonObject(done.args + (c.key to value))
+/**
+ * Arguments de l'outil, avec la valeur choisie (sinon le défaut, sinon la première option)
+ * et le nombre [count] s'il a été saisi.
+ */
+fun doneArgs(done: CardDone, choice: JsonElement?, count: Int? = null): JsonObject {
+    val out = done.args.toMutableMap()
+    done.choices?.let { c -> (choice ?: c.default ?: c.options.firstOrNull())?.let { out[c.key] = it } }
+    done.count?.let { n -> count?.let { out[n.key] = JsonPrimitive(it.coerceIn(n.min, n.max)) } }
+    return JsonObject(out)
 }
+
+/** Pas suivant du nombre : part de la valeur prévue tant que rien n'est saisi, reste dans les bornes. */
+fun DoneCount.step(current: Int?, delta: Int): Int = ((current ?: default) + delta).coerceIn(min, max)
 
 fun optionLabel(e: JsonElement): String = (e as? JsonPrimitive)?.content ?: e.toString()
 
@@ -84,10 +92,11 @@ suspend fun completeCard(
     undoWindow: suspend () -> Boolean,
     call: suspend (module: String, tool: String, args: JsonObject) -> ToolMessage,
     busy: InFlight = InFlight(),
+    count: Int? = null,
 ): DoneOutcome {
     if (!busy.claim(card.key)) return DoneOutcome.Ignored
     try {
-        return run(card, choice, mark, undoWindow, call)
+        return run(card, choice, mark, undoWindow, call, count)
     } finally {
         busy.release(card.key)
     }
@@ -99,6 +108,7 @@ private suspend fun run(
     mark: suspend (Mark?) -> Unit,
     undoWindow: suspend () -> Boolean,
     call: suspend (String, String, JsonObject) -> ToolMessage,
+    count: Int?,
 ): DoneOutcome {
     mark(Mark.Fait)
     if (undoWindow()) {
@@ -107,7 +117,7 @@ private suspend fun run(
     }
     val done = card.done ?: return DoneOutcome.Local
     return try {
-        call(card.module, done.tool, doneArgs(done, choice)).let { DoneOutcome.Done(it.message, it.outcome) }
+        call(card.module, done.tool, doneArgs(done, choice, count)).let { DoneOutcome.Done(it.message, it.outcome) }
     } catch (e: ApiError) {
         mark(null)
         DoneOutcome.Refused(refusal(e))
