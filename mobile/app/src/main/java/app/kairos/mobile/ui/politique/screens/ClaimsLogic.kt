@@ -1,5 +1,7 @@
 package app.kairos.mobile.ui.politique.screens
 
+import app.kairos.mobile.ui.mimir.mimirOrigin
+import app.kairos.mobile.ui.politique.kit.frTypo
 import app.kairos.mobile.ui.politique.kit.sourcesText
 import app.kairos.mobile.ui.politique.kit.TableCard
 import app.kairos.mobile.ui.politique.kit.verdictLabel
@@ -48,6 +50,23 @@ fun hasWhy(c: Claim): Boolean = c.pourquoi.isNotBlank()
 fun confidenceLevel(c: Claim): Int? = c.confiance?.takeIf { it in 1..3 }
 
 fun supportFacts(c: Claim): List<Int> = c.appui.filter { it in 1..c.facts.size }.distinct()
+
+private val CLAIM_ID = Regex("^[a-z0-9-]{3,60}$")
+
+fun validClaimId(id: String): Boolean = CLAIM_ID.matches(id)
+
+/** Lien public d'une affirmation : origine du lien du site, sans chemin, fragment ni jeton, puis l'ancre de la carte. */
+fun claimLink(siteLink: String?, id: String): String? =
+    if (siteLink == null || !validClaimId(id)) null else mimirOrigin(siteLink)?.let { "$it#a-$id" }
+
+fun claimShareText(c: Claim, verdict: String, link: String): String = "« ${frTypo(c.q)} » : $verdict\n$link"
+
+/** Nom accessible de la touche verdict, selon la face visible. */
+fun verdictKeyLabel(verdict: String, hasWhy: Boolean, back: Boolean): String = when {
+    !hasWhy -> "Verdict : $verdict. Justification en cours"
+    back -> "$verdict : revenir aux faits"
+    else -> "Verdict : $verdict. Pourquoi ?"
+}
 
 fun claimsOf(data: PolData): List<Claim> = data.decode<Claim>("affirmations", "CLAIMS").map { it.copy(v = normalizeVerdict(it.v)) }
 

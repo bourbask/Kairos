@@ -43,6 +43,8 @@ sealed interface PolSheetState {
     data class City(val key: String) : PolSheetState
     /** Villes d'une même bulle, par clé. */
     data class Cluster(val villes: List<String>) : PolSheetState
+    /** Barème des verdicts et de l'indice de confiance. */
+    data object Bareme : PolSheetState
 }
 
 /** Ce qu'un écran peut demander à la coque. */
@@ -52,6 +54,8 @@ interface PolNavigator {
     fun replace(r: PolRoute)
     fun sheet(s: PolSheetState)
     fun table(cards: List<TableCard>, start: Int)
+    /** Lien du site enregistré sur l'appareil ; null s'il n'y en a pas. */
+    fun siteLink(): String? = null
 }
 
 /**

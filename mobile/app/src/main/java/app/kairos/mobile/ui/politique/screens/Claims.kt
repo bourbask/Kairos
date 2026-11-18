@@ -1,6 +1,43 @@
 package app.kairos.mobile.ui.politique.screens
 
 import androidx.activity.compose.BackHandler
+import android.content.ActivityNotFoundException
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
+import android.widget.Toast
+import androidx.compose.foundation.border
+import androidx.compose.material3.Icon
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.em
+import app.kairos.mobile.ui.kit.KairosIcons
+import app.kairos.mobile.ui.politique.jeux.kit.cellPx
+import app.kairos.mobile.ui.politique.kit.CARD_MOTIF
+import app.kairos.mobile.ui.politique.kit.ConfidenceBars
+import app.kairos.mobile.ui.politique.kit.PixelGauge
+import app.kairos.mobile.ui.politique.kit.PixelKey
+import app.kairos.mobile.ui.politique.kit.StepCut
+import app.kairos.mobile.ui.politique.kit.TURN_KEYS
+import app.kairos.mobile.ui.politique.kit.TurnCanvas
+import app.kairos.mobile.ui.politique.kit.TurnFace
+import app.kairos.mobile.ui.politique.kit.TurnInk
+import app.kairos.mobile.ui.politique.kit.TwoFaces
+import app.kairos.mobile.ui.politique.kit.VerdictLook
+import app.kairos.mobile.ui.politique.model.Bareme
+import app.kairos.mobile.ui.politique.reducedMotion
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -19,6 +56,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyRow
@@ -191,7 +229,7 @@ fun PhrasesScreen(data: PolData, nav: PolNavigator) {
                     Text("Que veulent dire les verdicts ?", fontWeight = FontWeight.SemiBold, modifier = Modifier.heightIn(min = 24.dp))
                     if (defs && bareme != null) bareme.verdicts.forEach { bv ->
                         Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                            VerdictChip(bv.id)
+                            VerdictChip(bv.id, label = verdictName(bareme, bv.id))
                             Text(bv.definition, Modifier.weight(1f), fontSize = 13.sp, color = scheme.onSurfaceVariant)
                         }
                     }
@@ -350,37 +388,201 @@ private fun Steps(on: Int, label: String) {
 
 // ---------- Détail d'une phrase ----------
 
-/** Feuille de détail : réutilisable par toute rubrique qui montre une phrase. */
-@OptIn(ExperimentalLayoutApi::class)
+/** Feuille de détail : la carte de l'affirmation, retournable sur sa justification ; réutilisable par toute rubrique qui montre une phrase. */
 @Composable
 fun ClaimSheet(data: PolData, claim: Claim, nav: PolNavigator, onDismiss: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
-    val onEv: (String) -> Unit = { nav.sheet(PolSheetState.Evaluator(it)) }
-    val evs = claim.par.mapNotNull { data.evaluators[it] }
+    val bareme = remember(data) { baremeOf(data) }
+    val why = hasWhy(claim)
+    val look = verdictLook(claim.v)
+    val name = verdictName(bareme, claim.v)
+    val reduced = reducedMotion()
+    val scope = rememberCoroutineScope()
+    var back by rememberSaveable(claim.id) { mutableStateOf(false) }
+    var turnT by remember { mutableStateOf<Double?>(null) }
+    var flips by remember { mutableIntStateOf(0) }
+    var size by remember { mutableStateOf(IntSize.Zero) }
+    val frontKey = remember { FocusRequester() }
+    val rearKey = remember { FocusRequester() }
+    LaunchedEffect(flips) {
+        if (flips == 0) return@LaunchedEffect
+        withFrameNanos { }
+        runCatching { (if (back) rearKey else frontKey).requestFocus() }
+    }
+    fun flip() {
+        if (!why || turnT != null) return
+        if (reduced) { back = !back; flips++; return }
+        scope.launch {
+            for ((t, ms) in TURN_KEYS) { turnT = t; delay(ms.toLong()) }
+            back = !back; turnT = null; flips++
+        }
+    }
+    val key: @Composable (Boolean) -> Unit = { rear -> VerdictKey(name, look, why, rear, if (rear) rearKey else frontKey, ::flip) }
+    val s = cellPx(3.dp)
+    val ink = mapOf(
+        TurnInk.Paper to scheme.surface, TurnInk.Edge to scheme.outlineVariant, TurnInk.Line to mix(scheme.onSurface, scheme.surface, .62f),
+        TurnInk.Acc to look.fg, TurnInk.Box to mix(scheme.surface, scheme.onSurface, .10f), TurnInk.Ear to scheme.surface, TurnInk.Shadow to scheme.onSurface,
+    )
     PolSheet(full = true, onDismiss = onDismiss) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp)) {
-            Kicker(claimKicker(claim))
-            Box(Modifier.padding(vertical = 8.dp)) {
-                val id = data.idOf(claim.camp)
-                if (id != null) IdentityChip(data, id, text = claim.camp, onClick = { nav.sheet(PolSheetState.Identity(id)) }) else Text(claim.camp, fontWeight = FontWeight.SemiBold)
+            Box(Modifier.fillMaxWidth().onSizeChanged { size = it }) {
+                TwoFaces(
+                    back,
+                    front = { ClaimFront(data, claim, nav, bareme, key) },
+                    rear = { if (why) ClaimBack(claim, nav, bareme, look, name, key) },
+                    Modifier.fillMaxWidth().alpha(if (turnT != null) 0f else 1f)
+                        .border(1.dp, scheme.outlineVariant, StepCut).background(scheme.surface, StepCut).padding(16.dp),
+                )
+                turnT?.let { t -> TurnCanvas(t, size.width / s, size.height / s, s, if (back) TurnFace.Det else TurnFace.Res, { ink.getValue(it) }, ear = 0, motif = CARD_MOTIF) }
             }
-            Text("« ${frTypo(claim.q)} »", Modifier.semantics { heading() }, fontSize = 22.sp, lineHeight = 27.sp, fontWeight = FontWeight.Bold)
-            Row(Modifier.padding(top = 14.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                VerdictMeter(claim.v)
-                VerdictChip(claim.v, large = true)
-                Spacer(Modifier.weight(1f))
-                FullscreenButton({ nav.table(listOf(claimTableCard(data, claim)), 0) })
+        }
+    }
+}
+
+/** Touche verdict : retourne la carte ; sans justification, inerte et sans « ? ». */
+@Composable
+private fun VerdictKey(name: String, look: VerdictLook, why: Boolean, rear: Boolean, focus: FocusRequester, onFlip: () -> Unit) {
+    val surface = MaterialTheme.colorScheme.surface
+    PixelKey(
+        onFlip, verdictKeyLabel(name, why, rear), enabled = why, fg = look.fg, bg = look.bg, focusRequester = focus,
+        padding = PaddingValues(start = 9.dp, end = if (why) 5.dp else 9.dp),
+    ) {
+        Box(Modifier.size(6.dp).background(look.fg))
+        Text(name.uppercase(), color = look.fg, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.SemiBold, fontSize = 11.5.sp, letterSpacing = 0.05.em, maxLines = 1)
+        if (why) Box(Modifier.size(16.dp).clip(StepCut).background(look.fg), contentAlignment = Alignment.Center) {
+            Text(if (rear) "←" else "?", color = surface, fontWeight = FontWeight.Bold, fontSize = 12.sp, lineHeight = 12.sp)
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ClaimFront(data: PolData, claim: Claim, nav: PolNavigator, bareme: Bareme?, key: @Composable (Boolean) -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    val context = LocalContext.current
+    val onEv: (String) -> Unit = { nav.sheet(PolSheetState.Evaluator(it)) }
+    val evs = claim.par.mapNotNull { data.evaluators[it] }
+    val link = claimLink(nav.siteLink(), claim.id)
+    Column {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(listOf(claim.theme, campLabel(claim)).filter { it.isNotBlank() }.joinToString(" · "), Modifier.weight(1f), fontSize = 12.5.sp, lineHeight = 16.sp, color = scheme.onSurfaceVariant)
+            if (link != null) PixelKey({ shareClaim(context, claimShareText(claim, verdictName(bareme, claim.v), link), link) }, "Partager cette affirmation", padding = PaddingValues(0.dp)) {
+                Icon(KairosIcons.Share, null, Modifier.size(13.dp), tint = scheme.onSurface)
             }
-            verdictDefinition(remember(data) { baremeOf(data) }, claim.v)?.let { Text("Verdict : $it.", Modifier.padding(top = 4.dp), fontSize = 13.sp, color = scheme.onSurfaceVariant) }
-            CacheBox(claim.cache)
-            claim.facts.forEach { Text(frTypo(it), Modifier.padding(top = 10.dp), fontSize = 14.5.sp, lineHeight = 21.sp) }
-            if (claim.origine.isNotBlank()) Text("Où on l'entend. ${claim.origine}", Modifier.padding(top = 12.dp), fontSize = 12.5.sp, color = scheme.onSurfaceVariant)
-            if (evs.isNotEmpty()) {
-                Kicker("Vérifié avec les chiffres de", Modifier.padding(top = 14.dp, bottom = 4.dp))
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) { evs.forEach { EvaluatorTag(it, onEv) } }
+            key(false)
+        }
+        if (!hasWhy(claim)) Text("justification en cours", Modifier.padding(top = 2.dp), fontSize = 12.sp, color = scheme.onSurfaceVariant)
+        data.idOf(claim.camp)?.let { id -> Box(Modifier.padding(top = 8.dp)) { IdentityChip(data, id, text = claim.camp, onClick = { nav.sheet(PolSheetState.Identity(id)) }) } }
+        if (claim.camp.isBlank() && claim.camp_note.isNotBlank()) Text(claim.camp_note, Modifier.padding(top = 6.dp), fontSize = 12.5.sp, color = scheme.onSurfaceVariant)
+        Text("« ${frTypo(claim.q)} »", Modifier.padding(top = 10.dp).semantics { heading() }, fontSize = 22.sp, lineHeight = 27.sp, fontWeight = FontWeight.Bold)
+        PixelGauge(verdictThirds(bareme, claim.v) / 3f, verdictLook(claim.v).fg, label = null, Modifier.padding(top = 14.dp))
+        verdictDefinition(bareme, claim.v)?.let { Text("Verdict : ${it.trimEnd('.')}.", Modifier.padding(top = 6.dp), fontSize = 13.sp, color = scheme.onSurfaceVariant) }
+        CacheBox(claim.cache)
+        claim.facts.forEach { Text(frTypo(it), Modifier.padding(top = 10.dp), fontSize = 14.5.sp, lineHeight = 21.sp) }
+        if (claim.origine.isNotBlank()) Text("Où on l'entend. ${claim.origine}", Modifier.padding(top = 12.dp), fontSize = 12.5.sp, color = scheme.onSurfaceVariant)
+        if (evs.isNotEmpty()) {
+            Kicker("Vérifié avec les chiffres de", Modifier.padding(top = 14.dp, bottom = 4.dp))
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) { evs.forEach { EvaluatorTag(it, onEv) } }
+        }
+        claim.lecture?.let { BalanceBlock(it, claim.q, onOpen = nav.balance(it, claim.q, claim.camp)) }
+        Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.End) { FullscreenButton({ nav.table(listOf(claimTableCard(data, claim)), 0) }) }
+        SourceList(sourcesOf(claim.src), data, onEv)
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ClaimBack(claim: Claim, nav: PolNavigator, bareme: Bareme?, look: VerdictLook, name: String, key: @Composable (Boolean) -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    val level = confidenceLevel(claim)
+    val muted = scheme.onSurfaceVariant
+    Column {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Kicker("Pourquoi ce verdict", Modifier.weight(1f))
+            key(true)
+        }
+        Text(
+            buildAnnotatedString {
+                append("« ${frTypo(claim.q)} » est ")
+                withStyle(SpanStyle(color = look.fg, background = look.bg)) { append(" ${name.lowercase()} ") }
+            },
+            Modifier.padding(top = 8.dp).semantics { heading() }, fontSize = 19.sp, lineHeight = 24.sp, fontWeight = FontWeight.Bold,
+        )
+        Text(frTypo(claim.pourquoi), Modifier.padding(top = 10.dp), fontSize = 15.sp, lineHeight = 22.sp)
+        if (level != null) Column(
+            Modifier.padding(top = 14.dp).fillMaxWidth().clip(StepCut).background(mix(scheme.surface, scheme.onSurface, .06f)).padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            val lvl = bareme?.confiance?.firstOrNull { it.niveau == level }?.libelle?.takeIf { it.isNotBlank() }
+            Row(
+                Modifier.semantics(mergeDescendants = true) { if (lvl == null) contentDescription = "Confiance : $level sur 3" },
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                MonoLabel("Confiance", muted)
+                ConfidenceBars(level)
+                if (lvl != null) MonoLabel(lvl, scheme.onSurface, bold = true)
             }
-            claim.lecture?.let { BalanceBlock(it, claim.q, onOpen = nav.balance(it, claim.q, claim.camp)) }
-            SourceList(sourcesOf(claim.src), data, onEv)
+            if (claim.confiance_pourquoi.isNotBlank()) Text(frTypo(claim.confiance_pourquoi), fontSize = 13.5.sp, lineHeight = 19.sp, color = muted)
+            val used = supportFacts(claim)
+            if (used.isNotEmpty()) FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp), itemVerticalAlignment = Alignment.CenterVertically) {
+                MonoLabel("Appuyé sur", muted)
+                used.forEach { n -> MonoLabel("Fait $n", scheme.onSurface, Modifier.clip(StepCut).background(scheme.surface).padding(horizontal = 7.dp, vertical = 3.dp)) }
+            }
+        }
+        if (bareme != null) Row(Modifier.padding(top = 12.dp)) {
+            PixelKey({ nav.sheet(PolSheetState.Bareme) }, "Notre barème") { Text("Notre barème", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = scheme.onSurface) }
+        }
+    }
+}
+
+@Composable
+private fun MonoLabel(text: String, color: Color, modifier: Modifier = Modifier, bold: Boolean = false) =
+    Text(text.uppercase(), modifier, color = color, fontFamily = FontFamily.Monospace, fontWeight = if (bold) FontWeight.Bold else FontWeight.SemiBold, fontSize = 11.5.sp, letterSpacing = 0.06.em)
+
+/** Partage par le sélecteur du système ; sans application pour le recevoir, le lien est copié. */
+private fun shareClaim(context: Context, text: String, link: String) {
+    val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text)
+    try {
+        context.startActivity(Intent.createChooser(send, null))
+    } catch (_: ActivityNotFoundException) {
+        context.getSystemService(ClipboardManager::class.java)?.setPrimaryClip(ClipData.newPlainText("Lien", link))
+        Toast.makeText(context, "Lien copié", Toast.LENGTH_SHORT).show()
+    }
+}
+
+/** Barème publié : principe, verdicts dans l'ordre du fichier, niveaux de confiance du plus haut au plus bas. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun BaremeSheet(data: PolData, onDismiss: () -> Unit) {
+    val b = remember(data) { baremeOf(data) }
+    val scheme = MaterialTheme.colorScheme
+    PolSheet(full = false, onDismiss = onDismiss) {
+        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp)) {
+            Text("Notre barème", Modifier.semantics { heading() }, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            if (b == null) { Text("Le barème n'est pas publié dans les données chargées.", Modifier.padding(top = 8.dp), color = scheme.onSurfaceVariant); return@Column }
+            if (b.principe.isNotBlank()) Text(frTypo(b.principe), Modifier.padding(top = 8.dp), fontSize = 14.5.sp, lineHeight = 21.sp)
+            b.verdicts.forEach { v ->
+                Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    VerdictChip(v.id, label = verdictName(b, v.id))
+                    Text(frTypo(v.definition), Modifier.weight(1f), fontSize = 13.5.sp, color = scheme.onSurfaceVariant)
+                }
+            }
+            if (b.confiance.isNotEmpty()) {
+                Text("Indice de confiance", Modifier.padding(top = 20.dp).semantics { heading() }, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                b.confiance.sortedByDescending { it.niveau }.forEach { c ->
+                    Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Row(
+                            Modifier.clip(StepCut).background(mix(scheme.surface, scheme.onSurface, .08f)).padding(horizontal = 8.dp, vertical = 5.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            ConfidenceBars(c.niveau, small = true)
+                            MonoLabel(c.libelle, scheme.onSurface)
+                        }
+                        Text(frTypo(c.definition), Modifier.weight(1f), fontSize = 13.5.sp, color = scheme.onSurfaceVariant)
+                    }
+                }
+            }
+            Spacer(Modifier.height(16.dp))
         }
     }
 }

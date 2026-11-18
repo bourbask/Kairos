@@ -35,6 +35,7 @@ import app.kairos.mobile.ui.kit.SpaceScaffold
 import app.kairos.mobile.ui.mimir.ShareDialog
 import app.kairos.mobile.ui.mimir.SharesPanel
 import app.kairos.mobile.ui.politique.kit.AtTable
+import app.kairos.mobile.ui.politique.screens.BaremeSheet
 import app.kairos.mobile.ui.politique.kit.BalanceSheet
 import app.kairos.mobile.ui.politique.kit.EmptyState
 import app.kairos.mobile.ui.politique.kit.LocalPolBottom
@@ -116,6 +117,8 @@ fun PolitiqueScreen(
     appScope: CoroutineScope,
     onClose: () -> Unit,
     onUnauthorized: () -> Unit,
+    /** Lien du site enregistré sur l'appareil, pour les liens de partage. */
+    siteLink: String?,
     site: @Composable (onClose: () -> Unit) -> Unit,
     /** Dock de l'espace (ses thèmes) tant qu'il est affiché ; null à la fermeture. */
     onDock: (ContextDock?) -> Unit = {},
@@ -129,12 +132,14 @@ fun PolitiqueScreen(
     var menu by remember { mutableStateOf(false) }
     // Position de l'accueil gardée pendant qu'une porte ou une rubrique est ouverte.
     val homeGrid = rememberLazyGridState()
+    val link by rememberUpdatedState(siteLink)
     val navigator = remember {
         object : PolNavigator {
             override fun go(r: PolRoute) { nav = nav.go(r) }
             override fun replace(r: PolRoute) { nav = nav.replace(r) }
             override fun sheet(s: PolSheetState) { nav = nav.open(s) }
             override fun table(cards: List<TableCard>, start: Int) { table = cards to start }
+            override fun siteLink(): String? = link
         }
     }
 
@@ -302,6 +307,7 @@ fun SheetHost(s: PolSheetState, data: PolData, nav: PolNavigator, onDismiss: () 
         is PolSheetState.Cluster -> ClusterSheet(data, s.villes, nav, onDismiss)
         is PolSheetState.Evaluator -> EvaluatorSheetAt(data, s.id, nav, onDismiss)
         is PolSheetState.Rhet -> RhetSheetAt(data, s.t, nav, onDismiss)
+        PolSheetState.Bareme -> BaremeSheet(data, onDismiss)
     }
 }
 

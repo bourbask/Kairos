@@ -1,10 +1,12 @@
 package app.kairos.mobile.ui.politique.kit
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.Constraints
@@ -148,6 +150,30 @@ fun TurnCanvas(t: Double, w: Int, h: Int, s: Int, from: TurnFace, ink: (TurnInk)
         frame.runs.forEach { r ->
             val base = ink(r.ink)
             cell(r.x, r.y, Color(base.red * r.light, base.green * r.light, base.blue * r.light), s, w = r.w)
+        }
+    }
+}
+
+/**
+ * Recto et verso dans la même case : la hauteur est celle de la plus haute face, seule la face visible est placée.
+ * La face cachée ne dessine rien, ne reçoit ni toucher ni focus, et sort de la sémantique.
+ */
+@Composable
+fun TwoFaces(back: Boolean, front: @Composable () -> Unit, rear: @Composable () -> Unit, modifier: Modifier = Modifier) {
+    val hidden = Modifier.clearAndSetSemantics { }
+    Layout(
+        contents = listOf(
+            { Box(if (back) hidden else Modifier) { front() } },
+            { Box(if (back) Modifier else hidden) { rear() } },
+        ),
+        modifier = modifier,
+    ) { (f, r), c ->
+        val pf = f.map { it.measure(c.copy(minHeight = 0)) }
+        val pr = r.map { it.measure(c.copy(minHeight = 0)) }
+        val w = (pf + pr).maxOfOrNull { it.width } ?: c.minWidth
+        val h = maxOf((pf + pr).maxOfOrNull { it.height } ?: 0, c.minHeight)
+        layout(w.coerceIn(c.minWidth, c.maxWidth), h.coerceIn(c.minHeight, c.maxHeight)) {
+            (if (back) pr else pf).forEach { it.place(0, 0) }
         }
     }
 }

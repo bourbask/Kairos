@@ -128,4 +128,17 @@ class ClaimsTest {
         assertTrue(phrasesState(PolData(emptyMap())).claims.isEmpty())
         assertEquals(emptyList<Int>(), facingColumns(emptyList(), 3, emptyList()).flatMap { it.second })
     }
+
+    @Test fun share_link_keeps_only_origin_and_anchor() {
+        assertEquals("https://site.example/#a-phrase-exemple", claimLink("https://site.example/entrer#jeton-fictif", "phrase-exemple"))
+        assertNull(claimLink(null, "phrase-exemple"))
+        assertNull(claimLink("pas une adresse", "phrase-exemple"))
+        listOf("", "ab", "Phrase", "a b c", "../x", "x".repeat(61)).forEach { assertNull(it, claimLink("https://site.example/", it)) }
+    }
+
+    @Test fun verdict_key_labels() {
+        assertEquals("Verdict : Vrai. Pourquoi ?", verdictKeyLabel("Vrai", hasWhy = true, back = false))
+        assertEquals("Vrai : revenir aux faits", verdictKeyLabel("Vrai", hasWhy = true, back = true))
+        assertEquals("Verdict : Vrai. Justification en cours", verdictKeyLabel("Vrai", hasWhy = false, back = false))
+    }
 }

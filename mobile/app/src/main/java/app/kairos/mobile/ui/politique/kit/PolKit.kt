@@ -490,9 +490,9 @@ private fun ChipBox(text: String, fg: Color, bg: Color, ring: Color?, modifier: 
 }
 
 @Composable
-fun VerdictChip(v: String, modifier: Modifier = Modifier, large: Boolean = false) {
+fun VerdictChip(v: String, modifier: Modifier = Modifier, large: Boolean = false, label: String = verdictLabel(v)) {
     val l = verdictLook(v)
-    ChipBox(verdictLabel(v), l.fg, l.bg, l.ring, modifier, large)
+    ChipBox(label, l.fg, l.bg, l.ring, modifier, large)
 }
 
 /** Quatre segments : plus ils sont pleins, plus la phrase tient ; le mot reste lu à côté. */
