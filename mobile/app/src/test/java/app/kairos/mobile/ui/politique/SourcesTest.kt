@@ -48,7 +48,7 @@ class SourcesTest {
     }
 
     @Test fun no_fiche_label() {
-        assertEquals("Source fictive : source pas encore analysée. Ouvrir sa fiche", noFicheA11y("Source fictive"))
+        assertEquals("Source fictive : source pas encore analysée. Ouvrir les détails", noFicheA11y("Source fictive"))
         val p = parts("Source fictive")
         assertNull(p.ev); assertEquals("Source fictive", p.who)
     }

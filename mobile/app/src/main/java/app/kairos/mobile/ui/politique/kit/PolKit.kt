@@ -373,7 +373,7 @@ internal fun IndTag(n: Int, text: String, modifier: Modifier, shape: Shape) {
 /** Étiquette d'évaluateur : pastille du niveau d'indépendance (1 à 4) et nom court ; ouvre sa fiche. */
 @Composable
 fun EvaluatorTag(ev: Evaluator, onOpen: (String) -> Unit, modifier: Modifier = Modifier, shape: Shape = RoundedCornerShape(8.dp)) =
-    IndTag(indLevel(ev), evShortName(ev), modifier.minimumInteractiveComponentSize().opensEvaluator(ev, onOpen), shape)
+    IndTag(indLevel(ev), evShortName(ev), modifier.minimumInteractiveComponentSize().clip(shape).opensEvaluator(ev, onOpen), shape)
 
 private fun Modifier.opensEvaluator(ev: Evaluator, onOpen: (String) -> Unit) =
     clickable(role = Role.Button) { onOpen(ev.id) }.semantics(mergeDescendants = true) { contentDescription = evA11yLabel(ev) }
@@ -431,12 +431,13 @@ fun SourceButton(src: SourceRef, data: PolData, onOpenEv: (String) -> Unit, modi
     val label = @Composable { t: String, c: Color ->
         Text(t, color = c, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, lineHeight = 16.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
     }
-    // Les deux parties partagent la hauteur de la plus haute (24 dp visibles) ; la zone tactile de l'ensemble fait 32 dp.
-    Row(modifier.heightIn(min = 32.dp).height(IntrinsicSize.Min), verticalAlignment = Alignment.CenterVertically) {
-        if (p.ev != null) IndTag(indLevel(p.ev), evShortName(p.ev), Modifier.fillMaxHeight().opensEvaluator(p.ev, onOpenEv), lShape)
+    // Les deux parties partagent la hauteur de la plus haute (24 dp visibles) ; la cible de 48 dp est réservée autour
+    // de l'ensemble, hors du fond et du contour, qui restent à la hauteur naturelle des étiquettes.
+    Row(modifier.minimumInteractiveComponentSize().height(IntrinsicSize.Min)) {
+        if (p.ev != null) IndTag(indLevel(p.ev), evShortName(p.ev), Modifier.fillMaxHeight().clip(lShape).opensEvaluator(p.ev, onOpenEv), lShape)
         else if (p.who != null) IndTag(
             0, p.who,
-            Modifier.fillMaxHeight().clickable(role = Role.Button) { noFiche(p.who) }.semantics(mergeDescendants = true) { contentDescription = noFicheA11y(p.who) },
+            Modifier.fillMaxHeight().clip(lShape).clickable(role = Role.Button) { noFiche(p.who) }.semantics(mergeDescendants = true) { contentDescription = noFicheA11y(p.who) },
             lShape,
         )
         if (right) Row(
@@ -450,7 +451,7 @@ fun SourceButton(src: SourceRef, data: PolData, onOpenEv: (String) -> Unit, modi
 }
 
 /** Description d'une source sans fiche d'évaluateur. */
-fun noFicheA11y(name: String): String = "$name : source pas encore analysée. Ouvrir sa fiche"
+fun noFicheA11y(name: String): String = "$name : source pas encore analysée. Ouvrir les détails"
 
 const val NO_FICHE_TEXT = "Nous n'avons pas encore analysé cette source : son statut, son financement et son orientation restent à documenter."
 
@@ -469,7 +470,8 @@ fun NoFicheSheet(name: String, onDismiss: () -> Unit) {
 @Composable
 fun SourceList(srcs: List<SourceRef>, data: PolData, onOpenEv: (String) -> Unit, modifier: Modifier = Modifier) {
     if (srcs.isEmpty()) return
-    FlowRow(modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    // Chaque source réserve déjà 48 dp de haut : pas d'espacement vertical en plus.
+    FlowRow(modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         srcs.forEach { SourceButton(it, data, onOpenEv) }
     }
 }

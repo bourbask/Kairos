@@ -201,6 +201,7 @@ fun PolitiqueScreen(
         return
     }
 
+    val noFiche: (String) -> Unit = { navigator.sheet(PolSheetState.NoFiche(it)) }
     SpaceScaffold(
         when (route) {
             PolRoute.Home, PolRoute.Site -> "Politique"
@@ -246,7 +247,7 @@ fun PolitiqueScreen(
         when (val l = load) {
             PolLoad.Loading -> HomeLoading()
             is PolLoad.Down -> HomeDown(l, onRetry = { reload++ }, onSite = { navigator.go(PolRoute.Site) })
-            is PolLoad.Ready -> CompositionLocalProvider(LocalNoFiche provides { navigator.sheet(PolSheetState.NoFiche(it)) }) { when (route) {
+            is PolLoad.Ready -> CompositionLocalProvider(LocalNoFiche provides noFiche) { when (route) {
                 PolRoute.Home -> HomeScreen(l.data, navigator, bottom, homeGrid)
                 is PolRoute.Door -> session?.let { ThemeScreen(it, route.id, l.data, navigator, bottom) }
                 // Pas de marge basse sur la page : le contenu défile sous le dégradé du dock, comme sur l'accueil.
@@ -265,7 +266,7 @@ fun PolitiqueScreen(
     }
 
     if (data != null) nav.sheets.forEachIndexed { i, s ->
-        key(i, s) { CompositionLocalProvider(LocalNoFiche provides { navigator.sheet(PolSheetState.NoFiche(it)) }) { SheetHost(s, data, navigator, onDismiss = { nav = nav.back() ?: nav }) } }
+        key(i, s) { CompositionLocalProvider(LocalNoFiche provides noFiche) { SheetHost(s, data, navigator, onDismiss = { nav = nav.back() ?: nav }) } }
     }
     table?.let { (cards, start) -> AtTable(cards, start) { table = null } }
     if (sharing) ShareDialog(repository, onDismiss = { sharing = false }, onUnauthorized = onUnauthorized)
