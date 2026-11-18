@@ -15,6 +15,7 @@ import java.util.UUID
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
@@ -51,7 +52,10 @@ data class ReportForm(
     val oath: Boolean = false,
     /** Clé d'idempotence : un renvoi du même formulaire garde la même référence. */
     val idem: String = UUID.randomUUID().toString(),
-)
+) {
+    /** Ni texte du lecteur ni clé : rien de la saisie ne fuit dans une trace. */
+    override fun toString(): String = "ReportForm(kind=$kind, target=$target, basis=$basis, oath=$oath)"
+}
 
 /** Caractères invisibles ou de direction du texte (bidi, largeur nulle, BOM). */
 private fun invisible(cp: Int): Boolean =
@@ -86,7 +90,8 @@ fun urlProblem(u: String): String? {
     val t = u.trim()
     if (t.isEmpty()) return "Indiquez l'adresse de la source."
     val cps = t.codePointList()
-    if (cps.size > 300 || cps.any { white(it) || control(it) || invisible(it) }) return "Cette adresse n'est pas valide."
+    if (cps.size > 300) return "Adresse de 300 caractères au plus."
+    if (cps.any { white(it) || control(it) || invisible(it) }) return "Cette adresse n'est pas valide."
     if (!t.startsWith("https://")) return "Seules les adresses en https sont acceptées."
     val authority = t.removePrefix("https://").split('/', '?', '#').first()
     if ('@' in authority) return "L'adresse ne doit pas contenir d'identifiants."
@@ -94,11 +99,12 @@ fun urlProblem(u: String): String? {
     val host = authority.substringBefore(':')
     if (':' in authority && authority.substringAfter(':') != "443") return "L'adresse ne doit pas préciser de port."
     val labels = host.trimEnd('.').lowercase(Locale.ROOT).split('.')
-    val tld = labels.last()
     val wellFormed = labels.all { e -> e.isNotEmpty() && !e.startsWith('-') && !e.endsWith('-') && e.codePointList().all { alnum(it) || it == '-'.code } }
+    if (!wellFormed) return "Cette adresse n'est pas valide."
+    val tld = labels.last()
     // un TLD sans lettre est une adresse IP (décimale)
     val tldIp = tld.codePointList().none { Character.isAlphabetic(it) }
-    if (labels.size < 2 || !wellFormed || tldIp || tld in setOf("local", "internal", "lan", "localhost")) return NOT_PUBLIC
+    if (labels.size < 2 || tldIp || tld in setOf("local", "internal", "lan", "localhost")) return NOT_PUBLIC
     return null
 }
 
@@ -112,10 +118,12 @@ private fun needsTarget(kind: String) = kind == "fait" || kind == "source"
 /** Éléments visables d'une carte : faits `f1…`, sources `s1…` (numérotés à partir de 1, comptés comme le module). */
 fun reportTargets(c: Claim, kind: String, data: PolData): List<Pair<String, String>> = when (kind) {
     "fait" -> c.facts.mapIndexed { i, t -> "f${i + 1}" to "Fait ${i + 1} : ${t.trim().firstCodePoints(70)}" }
-    "source" -> {
-        val refs = sourcesOf(c.src)
-        refs.take(minOf(refs.size, (c.src as? JsonArray)?.size ?: 0))
-            .mapIndexed { i, s -> "s${i + 1}" to sourceParts(s, data).text.ifBlank { "Source ${i + 1}" } }
+    // Un numéro par élément brut de `src`, comme le module ; un tuple plat `[libellé, url]` est une seule source.
+    "source" -> when (val src = c.src) {
+        is JsonArray -> if (src.isNotEmpty() && src.all { it is JsonPrimitive }) listOf(src) else src.toList()
+        else -> emptyList()
+    }.mapIndexed { i, e ->
+        "s${i + 1}" to (sourcesOf(e).map { sourceParts(it, data).text }.firstOrNull { it.isNotBlank() } ?: "Source ${i + 1}")
     }
     else -> emptyList()
 }
@@ -170,7 +178,13 @@ fun reportOutcome(e: ApiError): ReportOutcome {
         val m = e.message.orEmpty()
         LIMIT.matchEntire(m)?.let { return ReportOutcome.Limited(it.groupValues[1].toInt()) }
         if (m == "Plafond du jour atteint." || m == "signalements non configurés") return ReportOutcome.Closed
-        return ReportOutcome.Refused(m)
+        return ReportOutcome.Refused(
+            when {
+                m.startsWith("claim : ") -> "Cette affirmation a été retirée ou modifiée depuis l'affichage : rechargez la page."
+                m.startsWith("target : ") -> "Cet élément n'existe plus dans la carte : rechargez la page."
+                else -> m
+            },
+        )
     }
     if (e == ApiError.NoReply) return ReportOutcome.Failed("Pas de réponse du serveur. Renvoyer garde la même référence.")
     return ReportOutcome.Failed(politiqueIssue(e))

@@ -39,6 +39,9 @@ class ReportTest {
         assertEquals("L'adresse ne doit pas contenir d'identifiants.", urlProblem("https://a:b@example.com"))
         assertEquals("L'adresse ne doit pas préciser de port.", urlProblem("https://x.fr:8443/a"))
         assertEquals("Cette adresse n'est pas valide.", urlProblem("https://x.fr/a b"))
+        assertEquals("Adresse de 300 caractères au plus.", urlProblem("https://x.fr/" + "a".repeat(300)))
+        assertEquals("Cette adresse n'est pas valide.", urlProblem("https://x..fr/"))
+        assertEquals("Indiquez l'adresse publique d'un site (pas une adresse IP ni un nom local).", urlProblem("https://192.0.2.1/x"))
         listOf(
             "https://192.0.2.1/x", "https://[::1]/x", "https://localhost/x", "https://localhost./x", "https://a.local/x",
             "https://a.internal/x", "https://a.LAN/x", "https://a:b@example.com", "https://x.fr:8443/a", "https://x.fr:/a",
@@ -79,6 +82,9 @@ class ReportTest {
         val f = ReportForm()
         assertTrue(f.idem.length in 16..64 && f.idem.all { it.isLetterOrDigit() || it == '-' })
         assertEquals(f.idem, f.copy(what = "x").idem)
+        assertEquals(f.idem, f.copy(kind = "fait", target = "").idem)
+        val shown = f.copy(what = "texte du lecteur").toString()
+        assertFalse("texte du lecteur" in shown || f.idem in shown)
     }
 
     @Test fun outcomes_from_server_replies() {
@@ -88,6 +94,8 @@ class ReportTest {
         assertEquals(ReportOutcome.Refused("what : Description de 30 à 400 caractères."), reportOutcome(ApiError.Server(422, "what : Description de 30 à 400 caractères.")))
         assertEquals(ReportOutcome.Failed("Pas de réponse du serveur. Renvoyer garde la même référence."), reportOutcome(ApiError.NoReply))
         assertTrue(reportOutcome(ApiError.Offline) is ReportOutcome.Failed)
+        assertEquals(ReportOutcome.Refused("Cette affirmation a été retirée ou modifiée depuis l'affichage : rechargez la page."), reportOutcome(ApiError.Server(422, "claim : Affirmation inconnue.")))
+        assertEquals(ReportOutcome.Refused("Cet élément n'existe plus dans la carte : rechargez la page."), reportOutcome(ApiError.Server(422, "target : Cible inconnue.")))
     }
 
     @Test fun quota_follows_receipts_and_limit() {
@@ -105,6 +113,11 @@ class ReportTest {
         assertEquals(listOf("s1", "s2"), reportTargets(claim, "source", data).map { it.first })
         assertTrue(reportTargets(claim.copy(src = buildJsonObject { put("url", "https://example.com") }), "source", data).isEmpty())
         assertTrue(reportTargets(claim, "verdict", data).isEmpty())
+        val gap = reportTargets(claim.copy(src = PolJson.parseToJsonElement("""[[null,"https://example.com/a"],["Source B","https://example.com/b"]]""")), "source", data)
+        assertEquals(listOf("s1", "s2"), gap.map { it.first })
+        assertEquals("Source 1", gap[0].second); assertTrue(gap[1].second, "Source B" in gap[1].second)
+        val flat = reportTargets(claim.copy(src = PolJson.parseToJsonElement("""["Source A","https://example.com/a"]""")), "source", data)
+        assertEquals(listOf("s1"), flat.map { it.first }); assertTrue("Source A" in flat[0].second)
     }
 
     @Test fun receipt_line_in_french() =
