@@ -220,7 +220,7 @@
 - [ ] **Step 1: Compose.**
   - **Réseau** : un réseau `politique-public` (`internal: true`, nom fixe), rejoint par `politique` ; le compose du site le rejoindra en `external`, sur le modèle de `partage-public`.
   - **Volume** : un bind propre pour `/app/signalements`, en écriture, qui doit être le seul montage en écriture du service.
-  - **Port MCP** : publié comme celui des autres modules, sur `${TENTACLES_BIND_ADDR:-127.0.0.1}:${POLITIQUE_BIND_PORT:-8103}`, avec un réseau non interne dédié au port publié. `politique-interne` reste `internal`.
+  - **Port MCP** : non publié (décision de revue : publier exigerait un réseau non interne). La relecture passe par l'API authentifiée de la tête. `politique-interne` reste `internal`.
   - **Pas d'appel sortant** : le module n'en fait aucun. Le vérifier avec `grep -rn "reqwest\|TcpStream::connect" tentacles/politique/src` (aucun résultat).
 - [ ] **Step 2: `politique.env.example`** : ajouter `POLITIQUE_PUBLIC_BIND=`, `POLITIQUE_SIGNALEMENTS_PLAFOND_JOUR=`, valeurs vides.
 - [ ] **Step 3:** `docker compose config -q` sort avec le code 0, puis commit : `deploy(politique): réception des signalements`.
@@ -259,7 +259,7 @@
   - `client_max_body_size 4k` ;
   - une zone `limit_req` dédiée (20 par heure, rafale de 5) ;
   - `proxy_set_header Cookie $http_cookie` vers `http://$politique/api/signalements`, avec `set $politique politique:<port public>` et la résolution à la demande déjà en place ;
-  - aucun `access_log` du corps.
+  - `access_log off;` sur cette route **et** sur `/_session` quand elle est appelée par elle (sinon l'heure à la seconde relie le signalement à l'adresse IP du journal) ; vérifier qu'aucune ligne n'est écrite pour un envoi.
 
   La CSP `connect-src 'self'` suffit. Vérifier avec `nginx -t` (image du compose).
 

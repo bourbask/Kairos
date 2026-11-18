@@ -211,6 +211,9 @@ Le serveur web du site :
 
 **Ce qui n'est jamais enregistré, ni dans la base ni dans les journaux :**
 - l'adresse IP, l'agent utilisateur et le cookie de session ;
+- et le serveur web ne journalise pas les requêtes de signalement (`access_log off` sur la
+  route et sur sa sous-requête de session) : sinon l'heure à la seconde, renvoyée au
+  lecteur et stockée, permettrait de relier un signalement à une adresse IP ;
 - tout identifiant qui permettrait de remonter à un lien d'accès.
 
 **Limite de 10 par heure :**
@@ -265,9 +268,9 @@ Ils portent le préfixe `app_` parce que la tête cache au moteur de conversatio
 outil ainsi préfixé : le texte d'un lecteur n'entre jamais dans la boucle de conversation.
 Ils servent à la relecture.
 
-Accès depuis la session de relecture : le port MCP du module est publié comme celui des
-autres modules, sur l'adresse réservée aux modules et avec son jeton. Le module ne fait
-toujours aucun appel sortant.
+Accès depuis la session de relecture : par l'API authentifiée de la tête, qui relaie les
+outils `app_*`. Le port MCP du module n'est pas publié : le publier exigerait un réseau non
+interne, donc une sortie possible. Le module reste sans aucun accès sortant.
 
 **Le texte d'un lecteur reste une donnée.**
 - **Format de réponse** : chaque champ libre est rendu dans une enveloppe explicite,
