@@ -64,6 +64,8 @@ interface PolNavigator {
     fun siteLink(): String? = null
     /** Dépose un signalement ([reportArgs]) ; lève [app.kairos.mobile.data.ApiError]. */
     suspend fun report(args: JsonObject): ReportReceipt
+    /** Lance [block] sur la durée de l'espace, pas de la feuille : un envoi en cours survit à sa fermeture. */
+    fun launch(block: suspend () -> Unit)
     /** Quota d'envoi, gardé quand la feuille de signalement se ferme. */
     var reportQuota: ReportQuota
 }

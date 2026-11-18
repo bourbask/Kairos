@@ -130,9 +130,14 @@ class ReportTest {
         assertEquals("29 / 400 · encore 1 caractère au moins", counterText(29, 30, 400))
     }
 
+    @Test fun oversize_body_is_refused_before_sending() {
+        assertNull(oversize(reportArgs(ok, "phrase-exemple")))
+        assertEquals("Votre texte est trop long une fois encodé : raccourcissez-le un peu.", oversize(buildJsonObject { put("what", "é".repeat(2100)) }))
+    }
+
     @Test fun anonymity_note_agrees_with_remaining_sends() {
         assertTrue(anonymityNote(null).startsWith("Anonyme : ni adresse IP"))
-        assertTrue(anonymityNote(null).endsWith(" 10 envois par heure au plus."))
+        assertTrue(anonymityNote(null).endsWith(" 10 envois au plus par heure."))
         assertTrue(anonymityNote(1).endsWith(" 1 envoi possible encore cette heure."))
         assertTrue(anonymityNote(0).endsWith(" 0 envoi possible encore cette heure."))
         assertTrue(anonymityNote(9).endsWith(" 9 envois possibles encore cette heure."))

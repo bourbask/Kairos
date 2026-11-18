@@ -26,9 +26,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.saveable.listSaver
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -42,7 +39,10 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.error
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
@@ -67,7 +67,6 @@ import app.kairos.mobile.ui.politique.kit.quoted
 import app.kairos.mobile.ui.politique.model.PolData
 import app.kairos.mobile.ui.theme.mix
 import java.time.ZoneId
-import kotlinx.coroutines.launch
 
 /** Drapeau de la touche « Signaler une erreur », grille du site. */
 val FLAG_GRID = listOf("#.......", "######..", "#.....#.", "#......#", "#.....#.", "######..", "#.......", "#.......", "#.......")
@@ -75,17 +74,6 @@ val FLAG_GRID = listOf("#.......", "######..", "#.....#.", "#......#", "#.....#.
 private val CHECK_GRID = listOf("........##", ".......###", "......###.", "##...###..", "###.###...", ".#####....", "..###.....", "..........")
 
 private const val LIMIT_TEXT = "Chaque signalement est relu à la main, source par source. Au-delà de 10 par heure, personne ne pourrait les vérifier dans un délai raisonnable, et la limite protège aussi le formulaire des envois automatiques."
-
-/** Sauvegarde du formulaire : un renvoi, même après recréation de l'écran, garde sa clé `idem`. */
-private val FormSaver = listSaver<ReportForm, Any>(
-    save = { listOf(it.kind, it.target, it.what, it.basis, it.url, it.refWho, it.refWhen, it.refWhat, it.refIn, it.fix, it.oath, it.idem) },
-    restore = {
-        ReportForm(
-            it[0] as String, it[1] as String, it[2] as String, it[3] as String, it[4] as String, it[5] as String,
-            it[6] as String, it[7] as String, it[8] as String, it[9] as String, it[10] as Boolean, it[11] as String,
-        )
-    },
-)
 
 /**
  * Signalement d'une erreur sur l'affirmation [claimId] : formulaire, puis reçu, limite atteinte ou fermeture.
@@ -98,22 +86,24 @@ fun ReportSheet(data: PolData, claimId: String, nav: PolNavigator, onDismiss: ()
         PolSheet(full = false, onDismiss = onDismiss) { EmptyState("Phrase introuvable", "Cette phrase n'est plus dans les données chargées. Fermez la feuille et rouvrez-la depuis la liste.", Modifier.padding(16.dp)) }
         return
     }
-    var form by rememberSaveable(claimId, stateSaver = FormSaver) { mutableStateOf(ReportForm()) }
-    var sending by remember { mutableStateOf(false) }
-    var problem by remember { mutableStateOf<String?>(null) }
-    var received by remember { mutableStateOf<ReportOutcome.Received?>(null) }
-    var closed by remember { mutableStateOf(false) }
-    val scope = rememberCoroutineScope()
+    // Mémoire seule, jamais l'état sauvegardé de l'activité : la saisie ne quitte pas le processus.
+    var form by remember(claimId) { mutableStateOf(ReportForm()) }
+    var sending by remember(claimId) { mutableStateOf(false) }
+    var problem by remember(claimId) { mutableStateOf<String?>(null) }
+    var received by remember(claimId) { mutableStateOf<ReportOutcome.Received?>(null) }
+    var closed by remember(claimId) { mutableStateOf(false) }
     val wait = nav.reportQuota.waitMinutes(System.currentTimeMillis())
 
     fun send() {
         if (sending || !reportReady(form, claim, data)) return
+        val args = reportArgs(form, claim.id)
+        oversize(args)?.let { problem = it; return }
         sending = true
         problem = null
-        val sent = form
-        scope.launch {
+        // Sur la durée de l'espace : fermer la feuille pendant l'envoi ne perd ni le quota ni le dépôt.
+        nav.launch {
             val outcome = try {
-                nav.report(reportArgs(sent, claim.id)).let { ReportOutcome.Received(it.reference, it.recu_a, it.restant) }
+                nav.report(args).let { ReportOutcome.Received(it.reference, it.recu_a, it.restant) }
             } catch (_: ApiError.Unauthorized) {
                 // L'espace demande déjà une nouvelle connexion ; le formulaire reste tel quel.
                 sending = false
@@ -146,8 +136,11 @@ fun ReportSheet(data: PolData, claimId: String, nav: PolNavigator, onDismiss: ()
                     Notice(ok = true, receiptLine(r.ref, r.at, ZoneId.systemDefault()), "Il sera relu avec ses sources.")
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { Key("Fermer", onDismiss) }
                 }
-                wait != null -> Notice(ok = false, "$LIMIT_TEXT Vous pourrez en envoyer un nouveau dans $wait min.")
-                closed -> Notice(ok = false, "Les signalements sont momentanément fermés.")
+                wait != null || closed -> {
+                    if (wait != null) Notice(ok = false, "Vous avez envoyé 10 signalements dans l'heure.", "$LIMIT_TEXT Vous pourrez en envoyer un nouveau dans $wait min.", bold = true)
+                    else Notice(ok = false, "Les signalements sont momentanément fermés.")
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { Key("Fermer", onDismiss) }
+                }
                 else -> ReportFields(form, { form = it }, claim, data, nav.reportQuota.left, sending, problem, ::send, onDismiss)
             }
             Spacer(Modifier.height(8.dp))
@@ -170,7 +163,11 @@ private fun ColumnScope.ReportFields(
         Choices(reportTargets(claim, form.kind, data), form.target) { set(form.copy(target = it)) }
     }
     Group("Qu'est-ce qui est inexact ?", "Citez le passage concerné, puis dites précisément ce qui ne va pas. Pas votre avis sur le sujet : l'erreur à corriger.") {
-        Field(form.what, { set(form.copy(what = it)) }, "Qu'est-ce qui est inexact ?", 400, multiline = true)
+        Field(
+            form.what, { set(form.copy(what = it)) }, "Qu'est-ce qui est inexact ?", 400, multiline = true,
+            hint = "Citez le passage concerné, puis dites précisément ce qui ne va pas. Pas votre avis sur le sujet : l'erreur à corriger.",
+            counter = counterText(reportLength(form.what), 30, 400),
+        )
         Counter(form.what, 30, 400)
     }
     Group("Sur quoi vous appuyez-vous ?") {
@@ -178,14 +175,20 @@ private fun ColumnScope.ReportFields(
         when (form.basis) {
             "lien" -> Sub {
                 Group("Lien vers la source", "Adresse en https. Elle n'est pas ouverte automatiquement : elle sera consultée à la relecture.", main = false) {
-                    Field(form.url, { set(form.copy(url = it)) }, "Lien vers la source", 300, placeholder = "https://…", keyboard = KeyboardType.Uri)
-                    if (form.url.isNotEmpty()) urlProblem(form.url)?.let { Text(it, fontSize = 13.sp, color = PolColors.current.fragile) }
+                    val bad = form.url.takeIf { it.isNotEmpty() }?.let(::urlProblem)
+                    Field(
+                        form.url, { set(form.copy(url = it)) }, "Lien vers la source", 300, placeholder = "https://…", keyboard = KeyboardType.Uri,
+                        hint = "Adresse en https. Elle n'est pas ouverte automatiquement : elle sera consultée à la relecture.", error = bad,
+                    )
+                    if (bad != null) Text(bad, Modifier.clearAndSetSemantics { }, fontSize = 13.sp, color = PolColors.current.fragile)
                 }
             }
             "ref" -> Sub {
                 Group("Média ou auteur", main = false) { Field(form.refWho, { set(form.copy(refWho = it)) }, "Média ou auteur", 80) }
                 Group("Date, même approximative", main = false) { Field(form.refWhen, { set(form.copy(refWhen = it)) }, "Date, même approximative", 30, placeholder = "ex. mars 2025") }
-                Group("Titre ou mots-clés", "Assez pour retrouver l'article par une recherche.", main = false) { Field(form.refWhat, { set(form.copy(refWhat = it)) }, "Titre ou mots-clés", 160) }
+                Group("Titre ou mots-clés", "Assez pour retrouver l'article par une recherche.", main = false) {
+                    Field(form.refWhat, { set(form.copy(refWhat = it)) }, "Titre ou mots-clés", 160, hint = "Assez pour retrouver l'article par une recherche.")
+                }
             }
             "carte" -> Sub {
                 Group("Quels éléments de la carte se contredisent ?", main = false) {
@@ -195,7 +198,11 @@ private fun ColumnScope.ReportFields(
         }
     }
     Group("Que faudrait-il écrire à la place, d'après vous ?", "Votre proposition sera relue et vérifiée ; elle ne remplace pas le texte automatiquement.") {
-        Field(form.fix, { set(form.copy(fix = it)) }, "Que faudrait-il écrire à la place, d'après vous ?", 300, multiline = true)
+        Field(
+            form.fix, { set(form.copy(fix = it)) }, "Que faudrait-il écrire à la place, d'après vous ?", 300, multiline = true,
+            hint = "Votre proposition sera relue et vérifiée ; elle ne remplace pas le texte automatiquement.",
+            counter = counterText(reportLength(form.fix), 10, 300),
+        )
         Counter(form.fix, 10, 300)
     }
     Oath(form.oath) { set(form.copy(oath = it)) }
@@ -255,24 +262,34 @@ private fun Choices(options: List<Pair<String, String>>, selected: String, onSel
     }
 }
 
-/** Champ creusé : coins en marche, ombre intérieure en haut. [max] borne la saisie brute (points de code). */
+/**
+ * Champ creusé : coins en marche, ombre intérieure en haut. [max] borne la saisie brute (points de code).
+ * L'aide et le compteur sont lus avec le champ ; [error] le marque invalide.
+ */
 @Composable
-private fun Field(value: String, onChange: (String) -> Unit, label: String, max: Int, multiline: Boolean = false, placeholder: String = "", keyboard: KeyboardType = KeyboardType.Text) {
+private fun Field(
+    value: String, onChange: (String) -> Unit, label: String, max: Int, multiline: Boolean = false, placeholder: String = "",
+    keyboard: KeyboardType = KeyboardType.Text, hint: String? = null, counter: String? = null, error: String? = null,
+) {
     val scheme = MaterialTheme.colorScheme
     val shade = mix(scheme.surface, scheme.onSurface, .18f)
     BasicTextField(
         value,
         { if (it.codePointCount(0, it.length) <= max) onChange(it) },
-        Modifier.fillMaxWidth().heightIn(min = if (multiline) 84.dp else 0.dp).clip(StepCut)
+        Modifier.fillMaxWidth().heightIn(min = if (multiline) 84.dp else 48.dp).clip(StepCut)
             .background(mix(scheme.surface, scheme.onSurface, .05f))
             .drawBehind { drawRect(shade, size = Size(size.width, 2.dp.toPx())) }
-            .semantics { contentDescription = label },
+            .semantics {
+                contentDescription = listOfNotNull(label, hint).joinToString(". ")
+                if (counter != null) stateDescription = counter
+                if (error != null) this.error(error)
+            },
         textStyle = TextStyle(color = scheme.onSurface, fontSize = 15.sp, lineHeight = 21.sp),
         keyboardOptions = KeyboardOptions(keyboardType = keyboard, autoCorrectEnabled = keyboard != KeyboardType.Uri),
         singleLine = !multiline,
         cursorBrush = SolidColor(scheme.onSurface),
         decorationBox = { inner ->
-            Box(Modifier.padding(start = 11.dp, end = 11.dp, top = 10.dp, bottom = 9.dp)) {
+            Box(Modifier.padding(start = 11.dp, end = 11.dp, top = 10.dp, bottom = 9.dp), contentAlignment = if (multiline) Alignment.TopStart else Alignment.CenterStart) {
                 if (value.isEmpty() && placeholder.isNotEmpty()) Text(placeholder, fontSize = 15.sp, color = scheme.onSurfaceVariant)
                 inner()
             }
@@ -284,7 +301,7 @@ private fun Field(value: String, onChange: (String) -> Unit, label: String, max:
 private fun ColumnScope.Counter(text: String, min: Int, max: Int) {
     val n = reportLength(text)
     Text(
-        counterText(n, min, max), Modifier.align(Alignment.End), fontFamily = FontFamily.Monospace, fontSize = 11.5.sp,
+        counterText(n, min, max), Modifier.align(Alignment.End).clearAndSetSemantics { }, fontFamily = FontFamily.Monospace, fontSize = 11.5.sp,
         color = if (n in 1 until min) PolColors.current.fragile else MaterialTheme.colorScheme.onSurfaceVariant,
     )
 }
@@ -297,7 +314,7 @@ private fun Oath(checked: Boolean, onChange: (Boolean) -> Unit) {
     val under = mix(scheme.surface, scheme.onSurface, .14f)
     val sunk = mix(scheme.onSurface, scheme.surface, .30f)
     Row(
-        Modifier.fillMaxWidth().clip(StepCut).background(mix(scheme.surface, scheme.onSurface, .06f))
+        Modifier.fillMaxWidth().heightIn(min = 48.dp).clip(StepCut).background(mix(scheme.surface, scheme.onSurface, .06f))
             .drawBehind { bottomBand(under, 2) }
             .toggleable(checked, role = Role.Checkbox, onValueChange = onChange)
             .padding(horizontal = 14.dp, vertical = 12.dp),
@@ -328,7 +345,7 @@ private fun DrawScope.bottomBand(c: Color, dp: Int) {
 
 /** Encadré d'état : reçu ([ok]) ou limite et fermeture ; annoncé à son apparition. */
 @Composable
-private fun Notice(ok: Boolean, vararg lines: String) {
+private fun Notice(ok: Boolean, vararg lines: String, bold: Boolean = false) {
     val pc = PolColors.current
     val accent = if (ok) pc.solide else pc.partiel
     Column(
@@ -337,7 +354,11 @@ private fun Notice(ok: Boolean, vararg lines: String) {
             .semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite }
             .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
-    ) { lines.forEach { Text(it, fontSize = 14.sp, lineHeight = 20.sp, color = MaterialTheme.colorScheme.onSurface) } }
+    ) {
+        lines.forEachIndexed { i, t ->
+            Text(t, fontSize = 14.sp, lineHeight = 20.sp, fontWeight = if (bold && i == 0) FontWeight.Bold else null, color = MaterialTheme.colorScheme.onSurface)
+        }
+    }
 }
 
 @Composable

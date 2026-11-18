@@ -24,6 +24,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -140,6 +141,7 @@ fun PolitiqueScreen(
     // Position de l'accueil gardée pendant qu'une porte ou une rubrique est ouverte.
     val homeGrid = rememberLazyGridState()
     val link by rememberUpdatedState(siteLink)
+    val screenScope = rememberCoroutineScope()
     val navigator = remember {
         object : PolNavigator {
             override fun go(r: PolRoute) { nav = nav.go(r) }
@@ -153,6 +155,7 @@ fun PolitiqueScreen(
                 unauthorized()
                 throw e
             }
+            override fun launch(block: suspend () -> Unit) { screenScope.launch { block() } }
             override var reportQuota: ReportQuota
                 get() = quota
                 set(v) { quota = v }
