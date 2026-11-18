@@ -23,6 +23,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -67,6 +68,8 @@ import app.kairos.mobile.ui.politique.kit.quoted
 import app.kairos.mobile.ui.politique.model.PolData
 import app.kairos.mobile.ui.theme.mix
 import java.time.ZoneId
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.withTimeoutOrNull
 
 /** Drapeau de la touche « Signaler une erreur », grille du site. */
 val FLAG_GRID = listOf("#.......", "######..", "#.....#.", "#......#", "#.....#.", "######..", "#.......", "#.......", "#.......")
@@ -89,8 +92,17 @@ fun ReportSheet(data: PolData, claimId: String, nav: PolNavigator, onDismiss: ()
     // Mémoire seule, jamais l'état sauvegardé de l'activité : la saisie ne quitte pas le processus.
     var form by remember(claimId) { mutableStateOf(ReportForm()) }
     var sending by remember(claimId) { mutableStateOf(false) }
-    // Gardé par l'espace : un échec survenu feuille fermée s'affiche à la réouverture.
-    val problem = nav.reportIssue?.takeIf { it.first == claimId }?.second
+    // Un échec survenu feuille fermée, gardé par l'espace, est repris une seule fois à la réouverture.
+    var problem by remember(claimId) { mutableStateOf(nav.reportIssue?.takeIf { it.first == claimId }?.second) }
+    // Vidé à l'ouverture (déjà copié) et à la fermeture (déjà vu) ; seul un échec survenu feuille fermée y reste.
+    DisposableEffect(claimId) {
+        if (nav.reportIssue?.first == claimId) nav.reportIssue = null
+        onDispose { if (nav.reportIssue?.first == claimId) nav.reportIssue = null }
+    }
+    fun issue(m: String) {
+        problem = m
+        nav.reportIssue = claimId to m
+    }
     var received by remember(claimId) { mutableStateOf<ReportOutcome.Received?>(null) }
     var closed by remember(claimId) { mutableStateOf(false) }
     val wait = nav.reportQuota.waitMinutes(System.currentTimeMillis())
@@ -98,25 +110,33 @@ fun ReportSheet(data: PolData, claimId: String, nav: PolNavigator, onDismiss: ()
     fun send() {
         if (sending || nav.reportInFlight || !reportReady(form, claim, data)) return
         val args = reportArgs(form, claim.id)
-        oversize(args)?.let { nav.reportIssue = claimId to it; return }
+        oversize(args)?.let { problem = it; return }
         sending = true
         nav.reportInFlight = true
+        problem = null
         nav.reportIssue = null
         // Sur la durée de l'espace : fermer la feuille pendant l'envoi ne perd ni le quota ni le dépôt.
         nav.launch { try {
             val outcome = try {
-                nav.report(args).let { ReportOutcome.Received(it.reference, it.recu_a, it.restant) }
+                // Plafond total, au-delà des délais du client HTTP (connexion, lecture) : la requête a pu partir.
+                withTimeoutOrNull(45_000) { nav.report(args) }?.let { ReportOutcome.Received(it.reference, it.recu_a, it.restant) }
+                    ?: reportOutcome(ApiError.NoReply)
             } catch (_: ApiError.Unauthorized) {
                 // L'espace demande déjà une nouvelle connexion ; le formulaire reste tel quel.
                 return@launch
             } catch (e: ApiError) {
                 reportOutcome(e)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // Réponse inattendue : rien de la saisie ni de la clé n'est journalisé.
+                ReportOutcome.Failed("Envoi impossible pour le moment. Réessayez plus tard.")
             }
             nav.reportQuota = nav.reportQuota.after(outcome, System.currentTimeMillis())
             when (outcome) {
                 is ReportOutcome.Received -> received = outcome
-                is ReportOutcome.Refused -> nav.reportIssue = claimId to outcome.message
-                is ReportOutcome.Failed -> nav.reportIssue = claimId to outcome.message
+                is ReportOutcome.Refused -> issue(outcome.message)
+                is ReportOutcome.Failed -> issue(outcome.message)
                 ReportOutcome.Closed -> closed = true
                 // La limite passe par le quota : l'écran de limite s'affiche de lui-même.
                 is ReportOutcome.Limited -> Unit
