@@ -227,17 +227,19 @@ fun rearCells(w: Int, h: Int, index: Int, left: Int, cw: Int = TRACT_W, ch: Int 
 /** Face « faits et sources » : seul un glissé surtout horizontal est pris par la carte ; le vertical reste au défilement. */
 fun backDragTakes(dx: Float, dy: Float): Boolean = abs(dx) > abs(dy)
 
-/** Carte en main dans une zone [w] × [h] cellules dont [reserve] rangées du haut vont au score et aux voyants : taille et coin. */
-class DeckFit(val cw: Int, val ch: Int, val x0: Int, val y0: Int)
+/** Carte en main dans une zone [w] × [h] cellules dont [reserve] rangées du haut vont au score : taille, coin, largeur [side] des colonnes de voyants et haut [ledTop] de leur rangée. */
+class SideFit(val cw: Int, val ch: Int, val x0: Int, val y0: Int, val side: Int, val ledTop: Int)
 
-/** La pile occupe la zone sous la réserve, centrée, réduite au besoin (40 cellules de large au moins). */
-fun deckFit(w: Int, h: Int, reserve: Int): DeckFit {
+/** Pile centrée entre les deux colonnes de voyants (étroites sous 150 cellules), réduite au besoin (40 cellules de large au moins). */
+fun sideFit(w: Int, h: Int, reserve: Int): SideFit {
+    val side = if (w >= 150) 26 else 15
     val area = h - reserve
-    val cw = minOf(TRACT_W, w - 8, ((area - 4) * TRACT_W / TRACT_H.toFloat()).toInt()).coerceAtLeast(40)
+    val cw = minOf(TRACT_W, w - 2 * (side + 7), ((area - 4) * TRACT_W / TRACT_H.toFloat()).toInt()).coerceAtLeast(40)
     val ch = jsRound(cw * TRACT_H / TRACT_W.toDouble())
-    val (x0, y0) = cardOrigin(w, area, cw, ch)
-    return DeckFit(cw, ch, x0, max(0, y0) + reserve)
+    val y0 = reserve + max(0, jsRound((area - ch) / 2.0))
+    return SideFit(cw, ch, jsRound((w - cw) / 2.0), y0, side, y0 + jsRound(ch * .06))
 }
 
-/** Haut de la rangée de voyants : centrée dans l'écart [gap] sous le score ([bar]), jamais au-dessus de sa limite basse. */
-fun ledOffset(gap: Float, bar: Float, led: Float, raise: Float): Float = bar + max(0f, (gap - (led + raise)) / 2) + raise
+/** Colonnes de voyants, de haut en bas : à gauche les réponses fausses, à droite les vraies. */
+val LED_LEFT = listOf(Guess.PlutotFaux, Guess.Faux)
+val LED_RIGHT = listOf(Guess.PlutotVrai, Guess.Vrai)

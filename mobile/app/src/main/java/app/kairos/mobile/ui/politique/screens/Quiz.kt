@@ -19,7 +19,6 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -31,7 +30,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -72,7 +70,6 @@ import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.LiveRegionMode
-import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
@@ -81,7 +78,6 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.isTraversalGroup
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.onClick
-import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.SpanStyle
@@ -93,6 +89,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
@@ -109,6 +106,7 @@ import app.kairos.mobile.ui.politique.jeux.kit.mix
 import app.kairos.mobile.ui.politique.kit.EmptyState
 import app.kairos.mobile.ui.politique.kit.Kicker
 import app.kairos.mobile.ui.politique.kit.LocalPolBottom
+import app.kairos.mobile.ui.politique.kit.PixelGauge
 import app.kairos.mobile.ui.politique.kit.PolColors
 import app.kairos.mobile.ui.politique.kit.SourceList
 import app.kairos.mobile.ui.politique.kit.TURN_KEYS
@@ -218,10 +216,8 @@ private fun <T> androidx.compose.foundation.lazy.LazyListScope.items(list: List<
 
 // ---------- Jeu ----------
 
-/** Hauteur de la barre de score, puis de la rangée de voyants (les « plutôt » montent de [LED_RAISE]). */
+/** Hauteur de la barre de score. */
 private val BAR_H = 32.dp
-private val LED_H = 60.dp
-private val LED_RAISE = 14.dp
 
 /** Direction d'envoi d'une carte répondue. */
 private val VEC = mapOf(Guess.Faux to (-1f to .08f), Guess.PlutotFaux to (-.72f to -.72f), Guess.PlutotVrai to (.72f to -.72f), Guess.Vrai to (1f to .08f))
@@ -332,9 +328,9 @@ private fun QuizGame(data: PolData, nav: PolNavigator, claims: List<Claim>, camp
         val cd = with(density) { s.toDp() }
         val wC = constraints.maxWidth / s
         val hC = constraints.maxHeight / s
-        // Carte au plus 318 × 441 dp, dans la zone sous la réserve du score et des voyants (réservée au-dessus seulement).
-        val reserve = ((BAR_H + LED_H + LED_RAISE + 12.dp) / cd).toInt() + 1
-        val fit = deckFit(wC, hC, reserve)
+        // Carte au plus 318 × 441 dp, sous le score, entre les deux colonnes de voyants.
+        val reserve = (BAR_H / cd).toInt() + 3
+        val fit = sideFit(wC, hC, reserve)
         val cw = fit.cw
         val ch = fit.ch
         val x0 = fit.x0
@@ -356,22 +352,6 @@ private fun QuizGame(data: PolData, nav: PolNavigator, claims: List<Claim>, camp
                     cell(x, y + reserve, rearInk[k], s, w = e - x)
                     x = e
                 }
-            }
-        }
-
-        // Voyants, centrés dans l'écart entre le score et la pile.
-        val gap = cd * y0 - BAR_H
-        val ledTop = ledOffset(gap.value, BAR_H.value, LED_H.value, LED_RAISE.value).dp
-        Row(
-            Modifier.fillMaxWidth().offset(y = ledTop).padding(horizontal = 12.dp).semantics { isTraversalGroup = true },
-            horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.Bottom,
-        ) {
-            ORDER.forEach { g ->
-                val raised = g == Guess.PlutotFaux || g == Guess.PlutotVrai
-                LedButton(
-                    g, if (g == ledGuess) ledLevel else 0, if (g == ledGuess) blinkOn else true, enabled = !revealed,
-                    onClick = { answer(g) }, modifier = Modifier.weight(1f).offset(y = if (raised) -LED_RAISE else 0.dp),
-                )
             }
         }
 
@@ -498,6 +478,52 @@ private fun QuizGame(data: PolData, nav: PolNavigator, claims: List<Claim>, camp
                 }) }
             }
         }
+
+        // Voyants de part et d'autre de la pile, par-dessus une feuille en mouvement.
+        val narrow = fit.side < 26
+        listOf(LED_LEFT to Alignment.TopStart, LED_RIGHT to Alignment.TopEnd).forEach { (gs, at) ->
+            Column(
+                Modifier.align(at).offset(y = cd * fit.ledTop).width(cd * fit.side)
+                    .ledPlate(cd * (fit.ledTop - reserve)).semantics { isTraversalGroup = true },
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                gs.forEach { g ->
+                    LedButton(
+                        g, if (g == ledGuess) ledLevel else 0, if (g == ledGuess) blinkOn else true, enabled = !revealed,
+                        onClick = { answer(g) }, modifier = Modifier.fillMaxWidth(), narrow = narrow,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Plaque de métal pixel derrière une colonne de voyants : relief, dessus en retrait, liseré clair, quatre rivets,
+ * suspendue par deux fils qui montent de [hang] jusqu'au haut de la zone de jeu. Dessinée hors des bornes de la colonne.
+ */
+@Composable
+private fun Modifier.ledPlate(hang: Dp): Modifier {
+    val sc = MaterialTheme.colorScheme
+    val dark = sc.background.luminance() < 0.5f
+    val pl = mix(sc.surface, sc.onSurface, .13f)
+    val pr = mix(sc.surface, sc.onSurface, .34f)
+    val ph = if (dark) mix(sc.surface, sc.onSurface, .30f) else mix(sc.surface, Color.White, .55f)
+    val pw = mix(sc.surface, sc.onSurface, .42f)
+    return drawBehind {
+        val d = 1.dp.toPx()
+        val w = size.width
+        val top = -6 * d
+        val bottom = size.height + 12 * d
+        val wireTop = -hang.toPx()
+        if (top > wireTop) {
+            drawRect(pw, Offset(12 * d, wireTop), Size(2 * d, top - wireTop))
+            drawRect(pw, Offset(w - 14 * d, wireTop), Size(2 * d, top - wireTop))
+        }
+        drawRect(pr, Offset(0f, top), Size(w, bottom - top))
+        drawRect(pl, Offset(2 * d, top + 2 * d), Size(w - 4 * d, bottom - top - 8 * d))
+        drawRect(ph, Offset(2 * d, top + 2 * d), Size(w - 4 * d, 2 * d))
+        for (x in listOf(6 * d, w - 8 * d)) for (y in listOf(top + 6 * d, bottom - 12 * d)) drawRect(pr, Offset(x, y), Size(2 * d, 2 * d))
     }
 }
 
@@ -506,12 +532,7 @@ private fun QuizGame(data: PolData, nav: PolNavigator, claims: List<Claim>, camp
 private fun QuizBar(p: QuizProgress, modifier: Modifier = Modifier) {
     val scheme = MaterialTheme.colorScheme
     Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Box(
-            Modifier.weight(1f).height(6.dp).clip(CircleShape).background(scheme.outlineVariant)
-                .semantics { progressBarRangeInfo = ProgressBarRangeInfo(p.fraction, 0f..1f) },
-        ) {
-            Box(Modifier.fillMaxHeight().fillMaxWidth(p.fraction).background(scheme.onSurface))
-        }
+        PixelGauge(p.fraction, scheme.onSurface, label = "Progression", modifier = Modifier.weight(1f))
         Icon(
             if (p.resultReached) KairosIcons.FlagFilled else KairosIcons.Flag,
             // Pendant le jeu, seule la barre parle ; la page de résultat l'annonce.
@@ -572,12 +593,13 @@ private fun arrowGrid(dir: Arrow): List<String> {
 
 /** Voyant-flèche : allumé en 3 crans ([level]), halo au dernier ; c'est aussi un bouton qui répond sans glisser. */
 @Composable
-private fun LedButton(g: Guess, level: Int, lit: Boolean, enabled: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+private fun LedButton(g: Guess, level: Int, lit: Boolean, enabled: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier, narrow: Boolean = false) {
     val sc = MaterialTheme.colorScheme
     val dark = sc.background.luminance() < 0.5f
     val gi = guessInk(g)
     val cells = remember(g) { ledCells(g.arrow) }
-    val s = cellPx(3.dp)
+    // Colonne étroite : lentille de 30 dp (cellules de 2 dp).
+    val s = cellPx(if (narrow) 2.dp else 3.dp)
     val off = mix(sc.surface, sc.onSurface, if (dark) .42f else .22f)
     val bezel = mix(sc.surface, sc.onSurface, if (dark) .2f else .5f)
     val lens = when (level) { 0 -> off; 1 -> mix(off, gi.led, .38f); 2 -> mix(off, gi.led, .72f); else -> gi.led }
@@ -602,7 +624,8 @@ private fun LedButton(g: Guess, level: Int, lit: Boolean, enabled: Boolean, onCl
         }
         Text(
             g.label.uppercase(), Modifier.clearAndSetSemantics { }, color = if (level > 0) gi.fg else sc.onSurfaceVariant,
-            fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, fontSize = 10.5.sp, lineHeight = 12.sp, letterSpacing = 0.03.em, maxLines = 1, softWrap = false,
+            fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, fontSize = 10.5.sp, lineHeight = 12.sp, letterSpacing = 0.03.em,
+            textAlign = TextAlign.Center, maxLines = if (narrow) Int.MAX_VALUE else 1, softWrap = narrow,
         )
     }
 }
