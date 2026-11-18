@@ -38,8 +38,11 @@ impl Etat {
 }
 
 #[derive(Debug, Clone, Copy, Default)]
-pub struct Filtre {
+pub struct Filtre<'a> {
     pub etat: Option<Etat>,
+    pub claim: Option<&'a str>,
+    /// Instant Unix minimal de réception.
+    pub depuis: Option<i64>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -211,14 +214,15 @@ impl Store {
         Ok(Recu { reference, recu_a: maintenant, nouveau: true })
     }
 
-    pub fn lister(&self, filtre: Filtre, limite: u32) -> Vec<Ligne> {
+    pub fn lister(&self, filtre: Filtre<'_>, limite: u32) -> Vec<Ligne> {
         let c = self.conn();
         let etat = filtre.etat.map(|e| e.texte());
         let sql = format!(
-            "SELECT {COLONNES} FROM signalements WHERE (?1 IS NULL OR etat=?1) ORDER BY id DESC LIMIT ?2"
+            "SELECT {COLONNES} FROM signalements WHERE (?1 IS NULL OR etat=?1) AND (?3 IS NULL OR claim=?3) \
+             AND (?4 IS NULL OR recu_a>=?4) ORDER BY id DESC LIMIT ?2"
         );
         let Ok(mut st) = c.prepare(&sql) else { return vec![] };
-        st.query_map(params![etat, limite], ligne)
+        st.query_map(params![etat, limite, filtre.claim, filtre.depuis], ligne)
             .map(|rows| rows.filter_map(Result::ok).collect())
             .unwrap_or_default()
     }
@@ -344,7 +348,7 @@ mod tests {
         b.deposer(&sig(), "b", J, 10).unwrap();
         let id = b.lister(Filtre::default(), 10)[0].id;
         b.etat(id, Etat::Rejete, "");
-        let f = |e| b.lister(Filtre { etat: Some(e) }, 10).len();
+        let f = |e| b.lister(Filtre { etat: Some(e), ..Default::default() }, 10).len();
         assert_eq!((f(Etat::Rejete), f(Etat::Nouveau), f(Etat::Doublon)), (1, 1, 0));
     }
 

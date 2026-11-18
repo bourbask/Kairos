@@ -28,6 +28,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Signalements actifs seulement si l'écouteur public est configuré.
     let mut signalements: Option<(Arc<Store>, Arc<Limiteur>)> = None;
+    let mut plafond = 200;
     let mut ecouteur = None;
     if let Some(bind) = var("POLITIQUE_PUBLIC_BIND") {
         let bind: SocketAddr = bind.parse().context("POLITIQUE_PUBLIC_BIND invalide")?;
@@ -37,14 +38,14 @@ async fn main() -> anyhow::Result<()> {
             None => 200,
             Some(v) => v.parse::<u32>().ok().filter(|n| *n > 0).context("POLITIQUE_SIGNALEMENTS_PLAFOND_JOUR : entier positif attendu")?,
         };
+        plafond = plafond_jour;
         let etat = public::PublicState { store: store.clone(), limiteur: limiteur.clone(), donnees: donnees.clone(), plafond_jour, now: maintenant, comptes: Default::default() };
         ecouteur = Some((tokio::net::TcpListener::bind(bind).await?, public::router(etat)));
         signalements = Some((store, limiteur));
     }
-    // ponytail: gardés pour les outils de relecture, branchés à l'étape suivante.
-    let _ = &signalements;
+    let (store, limiteur) = signalements.unzip();
 
-    let mcp = tentacle_common::serve(env, move || PolitiqueServer::new(donnees.clone()));
+    let mcp = tentacle_common::serve(env, move || PolitiqueServer::new(donnees.clone(), store.clone(), limiteur.clone(), plafond));
     match ecouteur {
         None => mcp.await,
         Some((listener, router)) => {
