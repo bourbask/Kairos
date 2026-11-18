@@ -1,0 +1,11 @@
+{
+ "VERDICTS": [
+  {"id": "vrai", "libelle": "Vrai", "famille": "solide", "definition": "Établi sans réserve."},
+  {"id": "plutot-vrai", "libelle": "Plutôt vrai", "famille": "partiel", "definition": "Juste sur l'essentiel."},
+  {"id": "faux", "libelle": "Faux", "famille": "fragile", "definition": "Démenti par les faits."}
+ ],
+ "CONFIANCE": [
+  {"niveau": 1, "libelle": "Basse", "definition": "Sources rares."}
+ ],
+ "PRINCIPE": "Principe fictif."
+}

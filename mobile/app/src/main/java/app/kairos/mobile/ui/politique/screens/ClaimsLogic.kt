@@ -2,7 +2,12 @@ package app.kairos.mobile.ui.politique.screens
 
 import app.kairos.mobile.ui.politique.kit.sourcesText
 import app.kairos.mobile.ui.politique.kit.TableCard
+import app.kairos.mobile.ui.politique.kit.verdictLabel
+import app.kairos.mobile.ui.politique.model.Bareme
+import app.kairos.mobile.ui.politique.model.BaremeConfiance
+import app.kairos.mobile.ui.politique.model.BaremeVerdict
 import app.kairos.mobile.ui.politique.model.Claim
+import kotlinx.serialization.json.JsonPrimitive
 import app.kairos.mobile.ui.politique.model.VERDICT_SCALE
 import app.kairos.mobile.ui.politique.model.normalizeVerdict
 import app.kairos.mobile.ui.politique.model.PolData
@@ -18,17 +23,31 @@ const val BULLE_PAGE = 12
 
 val VERDICT_ORDER = VERDICT_SCALE
 
-private val VERDICT_DEFS = mapOf(
-    "vrai" to "les faits soutiennent l'affirmation",
-    "plutot-vrai" to "l'essentiel est soutenu ; nuance sur un détail ou l'ampleur",
-    "trompeur" to "faits exacts, conclusion qu'ils ne soutiennent pas",
-    "plutot-faux" to "l'essentiel n'est pas soutenu ou est fortement exagéré",
-    "non-prouve" to "affirmé sans preuve suffisante",
-    "faux" to "contredit par les faits",
-    "non-documente" to "impossible à vérifier faute de données publiques",
-)
+fun baremeOf(data: PolData): Bareme? {
+    val verdicts = data.decode<BaremeVerdict>("bareme", "VERDICTS")
+    if (verdicts.isEmpty()) return null
+    val principe = (data.file("bareme")?.get("PRINCIPE") as? JsonPrimitive)?.takeIf { it.isString }?.content.orEmpty()
+    return Bareme(verdicts, data.decode<BaremeConfiance>("bareme", "CONFIANCE").filter { it.niveau in 1..3 }, principe)
+}
 
-fun verdictDefinition(v: String): String? = VERDICT_DEFS[normalizeVerdict(v)]
+private fun Bareme?.entry(v: String): BaremeVerdict? = this?.verdicts?.firstOrNull { normalizeVerdict(it.id) == normalizeVerdict(v) }
+
+fun verdictName(b: Bareme?, v: String): String = b.entry(v)?.libelle?.takeIf { it.isNotBlank() } ?: verdictLabel(v)
+
+fun verdictDefinition(b: Bareme?, v: String): String? = b.entry(v)?.definition?.takeIf { it.isNotBlank() }
+
+fun verdictThirds(b: Bareme?, v: String): Int = when (b.entry(v)?.famille) {
+    "solide" -> 3
+    "partiel" -> 2
+    null -> when (normalizeVerdict(v)) { "vrai" -> 3; "plutot-vrai" -> 2; else -> 1 }
+    else -> 1
+}
+
+fun hasWhy(c: Claim): Boolean = c.pourquoi.isNotBlank()
+
+fun confidenceLevel(c: Claim): Int? = c.confiance?.takeIf { it in 1..3 }
+
+fun supportFacts(c: Claim): List<Int> = c.appui.filter { it in 1..c.facts.size }.distinct()
 
 fun claimsOf(data: PolData): List<Claim> = data.decode<Claim>("affirmations", "CLAIMS").map { it.copy(v = normalizeVerdict(it.v)) }
 

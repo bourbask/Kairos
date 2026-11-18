@@ -39,6 +39,7 @@ fun normalizeVerdict(v: String): String = LEGACY_VERDICTS[v] ?: v
 
 @Serializable
 data class Claim(
+    val id: String = "",
     val theme: String = "",
     val camp: String = "",
     val q: String = "",
@@ -50,7 +51,21 @@ data class Claim(
     val par: List<String> = emptyList(),
     val date: String? = null,
     val lecture: Lecture? = null,
+    val pourquoi: String = "",
+    val confiance: Int? = null,
+    val confiance_pourquoi: String = "",
+    val appui: List<Int> = emptyList(),
+    val camp_note: String = "",
 )
+
+@Serializable
+data class BaremeVerdict(val id: String = "", val libelle: String = "", val famille: String = "", val definition: String = "")
+
+@Serializable
+data class BaremeConfiance(val niveau: Int = 0, val libelle: String = "", val definition: String = "")
+
+/** Barème de lecture des verdicts et des niveaux de confiance, lu dans `bareme.json`. */
+class Bareme(val verdicts: List<BaremeVerdict>, val confiance: List<BaremeConfiance>, val principe: String)
 
 @Serializable
 data class Dirigeant(val nom: String = "", val role: String = "", val parcours: String = "")

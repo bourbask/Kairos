@@ -171,6 +171,7 @@ internal fun frCount(n: Int, one: String, many: String) = "$n ${if (n > 1) many 
 @Composable
 fun PhrasesScreen(data: PolData, nav: PolNavigator) {
     val st = remember(data) { phrasesState(data) }
+    val bareme = remember(data) { baremeOf(data) }
     var v by rememberSaveable { mutableStateOf("") }
     var camp by rememberSaveable { mutableStateOf("") }
     var theme by rememberSaveable { mutableStateOf("") }
@@ -184,14 +185,14 @@ fun PhrasesScreen(data: PolData, nav: PolNavigator) {
                 TitleInfo("Entendues partout, vérifiées une à une", "Des phrases qu'on entend à la télé, en meeting ou à table, de tous les camps. Pour chacune : le verdict des données, et surtout ce qu'elle cache.")
             }
         }
-        part {
+        if (bareme != null) part {
             Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = scheme.surface, tonalElevation = 1.dp) {
                 Column(Modifier.clickable(role = Role.Button) { defs = !defs }.padding(horizontal = 14.dp, vertical = 12.dp)) {
                     Text("Que veulent dire les verdicts ?", fontWeight = FontWeight.SemiBold, modifier = Modifier.heightIn(min = 24.dp))
-                    if (defs) VERDICT_ORDER.forEach { k ->
+                    if (defs && bareme != null) bareme.verdicts.forEach { bv ->
                         Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                            VerdictChip(k)
-                            Text(verdictDefinition(k).orEmpty(), Modifier.weight(1f), fontSize = 13.sp, color = scheme.onSurfaceVariant)
+                            VerdictChip(bv.id)
+                            Text(bv.definition, Modifier.weight(1f), fontSize = 13.sp, color = scheme.onSurfaceVariant)
                         }
                     }
                 }
@@ -370,7 +371,7 @@ fun ClaimSheet(data: PolData, claim: Claim, nav: PolNavigator, onDismiss: () -> 
                 Spacer(Modifier.weight(1f))
                 FullscreenButton({ nav.table(listOf(claimTableCard(data, claim)), 0) })
             }
-            verdictDefinition(claim.v)?.let { Text("Verdict : $it.", Modifier.padding(top = 4.dp), fontSize = 13.sp, color = scheme.onSurfaceVariant) }
+            verdictDefinition(remember(data) { baremeOf(data) }, claim.v)?.let { Text("Verdict : $it.", Modifier.padding(top = 4.dp), fontSize = 13.sp, color = scheme.onSurfaceVariant) }
             CacheBox(claim.cache)
             claim.facts.forEach { Text(frTypo(it), Modifier.padding(top = 10.dp), fontSize = 14.5.sp, lineHeight = 21.sp) }
             if (claim.origine.isNotBlank()) Text("Où on l'entend. ${claim.origine}", Modifier.padding(top = 12.dp), fontSize = 12.5.sp, color = scheme.onSurfaceVariant)

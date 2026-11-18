@@ -23,6 +23,36 @@ class ClaimsTest {
         {"theme":"","camp":"Camp B","q":"Q8","v":"faux"},
         42]}""")))
 
+    private val BAREME = """{"VERDICTS":[
+      {"id":"vrai","libelle":"Vrai (barème)","famille":"solide","definition":"Déf vrai"},
+      {"id":"faux","libelle":"Faux","famille":"partiel","definition":"Déf faux"}],
+      "CONFIANCE":[{"niveau":1,"libelle":"Basse","definition":"D1"},{"niveau":9,"libelle":"X","definition":"X"}],
+      "PRINCIPE":"Principe fictif."}"""
+
+    @Test fun justification_fields_decode_with_fallback() {
+        val d = PolData(mapOf("affirmations" to file("""{"CLAIMS":[
+          {"id":"phrase-exemple","q":"Q0","v":"vrai","facts":["F1","F2"],"pourquoi":"P","confiance":2,
+           "confiance_pourquoi":"C","appui":[2,0,9,2],"camp":null,"camp_note":"Note"},
+          {"q":"Q1","v":"faux","confiance":7}]}""")))
+        val (a, b) = claimsOf(d)
+        assertEquals("phrase-exemple", a.id); assertTrue(hasWhy(a)); assertEquals(2, confidenceLevel(a))
+        assertEquals(listOf(2), supportFacts(a)); assertEquals("", a.camp); assertEquals("Note", a.camp_note)
+        assertEquals("", b.id); assertFalse(hasWhy(b)); assertNull(confidenceLevel(b)); assertTrue(supportFacts(b).isEmpty())
+    }
+
+    @Test fun bareme_comes_from_file_or_is_absent() {
+        val b = baremeOf(PolData(mapOf("bareme" to file(BAREME))))!!
+        assertEquals("Vrai (barème)", verdictName(b, "solide"))
+        assertEquals("Déf faux", verdictDefinition(b, "faux"))
+        assertEquals(2, verdictThirds(b, "faux"))
+        assertEquals(listOf(1), b.confiance.map { it.niveau })
+        assertEquals("Principe fictif.", b.principe)
+        assertNull(baremeOf(PolData(emptyMap())))
+        assertEquals("Plutôt vrai", verdictName(null, "plutot-vrai"))
+        assertNull(verdictDefinition(null, "vrai"))
+        assertEquals(listOf(3, 2, 1, 1), listOf("vrai", "plutot-vrai", "trompeur", "non-documente").map { verdictThirds(null, it) })
+    }
+
     @Test fun bulle_only_offers_claims_with_facing() {
         val c = claimsOf(data)
         assertEquals(9, c.size)
