@@ -17,3 +17,6 @@ rmcp = { version = "3.8", features = ["server", "macros"] }
 schemars = "1"
 unicode-normalization = "0.1"
 rusqlite = { version = "0.32", features = ["bundled"] }
+hmac = "0.12"
+sha2 = "0.10"
+getrandom = "0.3"
