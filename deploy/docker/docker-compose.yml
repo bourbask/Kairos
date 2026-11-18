@@ -216,8 +216,7 @@ services:
       - partage-public
 
   # Données publiques d'information politique (lecture seule) et réception des signalements.
-  # La tête joint le port MCP sur un réseau interne ; le port MCP publié passe par un réseau dédié.
-  # Le module ne fait aucun appel sortant.
+  # Port MCP (8103) jamais publié : la tête le joint sur un réseau interne, sans sortie vers l'extérieur.
   politique:
     logging: *logging
     <<: *hardening
@@ -247,14 +246,13 @@ services:
           create_host_path: false
       # Seul montage en écriture : base des signalements (créé par deploy.sh).
       - type: bind
-        source: ${POLITIQUE_SIGNALEMENTS_HOTE:-./data/signalements}
+        source: ${POLITIQUE_SIGNALEMENTS_HOTE:-../../data/signalements}
         target: /app/signalements
-    ports:
-      - "${TENTACLES_BIND_ADDR:-127.0.0.1}:${POLITIQUE_BIND_PORT:-8103}:8103"
+        bind:
+          create_host_path: false
     networks:
       - politique-interne
       - politique-public
-      - politique-mcp
 
   # Tête : boucle principale (conversation, briefs, suggestions) ; joint les tentacules par nom de service.
   tete:
@@ -363,5 +361,3 @@ networks:
   politique-public:
     name: politique-public
     internal: true
-  # Porte uniquement la publication du port MCP (impossible depuis un réseau interne).
-  politique-mcp: {}
