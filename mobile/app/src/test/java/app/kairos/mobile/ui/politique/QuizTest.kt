@@ -1,6 +1,7 @@
 package app.kairos.mobile.ui.politique
 
 import app.kairos.mobile.ui.politique.model.Claim
+import app.kairos.mobile.ui.politique.kit.*
 import app.kairos.mobile.ui.politique.screens.*
 import org.junit.Assert.*
 import org.junit.Test
@@ -159,5 +160,13 @@ class QuizTest {
         // Voyants : jamais au-dessus de la limite sous le score.
         assertEquals(32f + 14f, ledOffset(gap = 10f, bar = 32f, led = 60f, raise = 14f), 0f)
         assertEquals(32f + 10f + 14f, ledOffset(gap = 94f, bar = 32f, led = 60f, raise = 14f), 0f)
+    }
+
+    @Test fun card_turn_has_no_dog_ear() {
+        val tract = turnFrame(.05, 300, 420, TurnFace.Res)
+        val card = turnFrame(.05, 300, 420, TurnFace.Res, ear = 0, motif = CARD_MOTIF)
+        assertTrue(tract.runs.any { it.ink == TurnInk.Ear })
+        assertTrue(card.runs.none { it.ink == TurnInk.Ear })
+        assertEquals(tract.cols to tract.rows, card.cols to card.rows)
     }
 }

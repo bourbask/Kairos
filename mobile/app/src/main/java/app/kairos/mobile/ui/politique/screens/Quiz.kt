@@ -111,7 +111,11 @@ import app.kairos.mobile.ui.politique.kit.Kicker
 import app.kairos.mobile.ui.politique.kit.LocalPolBottom
 import app.kairos.mobile.ui.politique.kit.PolColors
 import app.kairos.mobile.ui.politique.kit.SourceList
+import app.kairos.mobile.ui.politique.kit.TURN_KEYS
 import app.kairos.mobile.ui.politique.kit.TitleInfo
+import app.kairos.mobile.ui.politique.kit.TurnCanvas
+import app.kairos.mobile.ui.politique.kit.TurnFace
+import app.kairos.mobile.ui.politique.kit.TurnInk
 import app.kairos.mobile.ui.politique.kit.VerdictChip
 import app.kairos.mobile.ui.politique.kit.frTypo
 import app.kairos.mobile.ui.politique.kit.verdictLabel
@@ -486,7 +490,12 @@ private fun QuizGame(data: PolData, nav: PolNavigator, claims: List<Claim>, camp
                     if (front) TractFront(claim, cw, ch, s, ink, peek = peekHeld || peekOpen, onInfo = { peekOpen = !peekOpen }, dragShadow = dragging)
                     else TractBack(data, nav, claim, ans.getOrNull(i) ?: Guess.Vrai, cw, ch, s, ink, turned, isLast = i + 1 >= n, onNext = { next(1f, 0f) }, dragShadow = dragging)
                 }
-                turnT?.let { t -> TurnCanvas(t, cw, ch, s, ink, if (turned) TurnFace.Det else TurnFace.Res) }
+                turnT?.let { t -> TurnCanvas(t, cw, ch, s, if (turned) TurnFace.Det else TurnFace.Res, {
+                    when (it) {
+                        TurnInk.Paper -> ink.paper; TurnInk.Edge -> ink.edge; TurnInk.Line -> ink.line; TurnInk.Acc -> ink.pri
+                        TurnInk.Box -> ink.box; TurnInk.Ear -> ink.ear; TurnInk.Shadow -> ink.groundShadow
+                    }
+                }) }
             }
         }
     }
@@ -751,29 +760,6 @@ private fun NextButton(text: String, onClick: () -> Unit) {
             .clickable(src, indication = null, role = Role.Button, onClick = onClick).padding(horizontal = 16.dp),
         contentAlignment = Alignment.Center,
     ) { Text(text, color = cj.suivantEncre, fontWeight = FontWeight.ExtraBold) }
-}
-
-/** Retournement image par image : la feuille en bande souple, dessinée en pictogramme, déborde du cadre de la carte. */
-@Composable
-private fun TurnCanvas(t: Double, w: Int, h: Int, s: Int, k: TractInks, from: TurnFace) {
-    val frame = remember(t, w, h, from) { turnFrame(t, w * 3, h * 3, from) }
-    val pad = TURN_PAD / 3
-    Canvas(
-        Modifier.layout { m, _ ->
-            val p = m.measure(Constraints.fixed(frame.cols * s, frame.rows * s))
-            layout(0, 0) { p.place(-pad * s, -pad * s) }
-        }.clearAndSetSemantics { },
-    ) {
-        val sh = frame.shadow
-        cell(sh.x, sh.y, k.groundShadow.copy(alpha = frame.shadowAlpha.coerceIn(0f, 1f)), s, w = sh.w)
-        frame.runs.forEach { r ->
-            val base = when (r.ink) {
-                TurnInk.Paper -> k.paper; TurnInk.Edge -> k.edge; TurnInk.Line -> k.line; TurnInk.Acc -> k.pri
-                TurnInk.Box -> k.box; TurnInk.Ear -> k.ear; TurnInk.Shadow -> k.groundShadow
-            }
-            cell(r.x, r.y, Color(base.red * r.light, base.green * r.light, base.blue * r.light), s, w = r.w)
-        }
-    }
 }
 
 // ---------- Fin ----------
