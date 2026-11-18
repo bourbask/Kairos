@@ -68,6 +68,10 @@ interface PolNavigator {
     fun launch(block: suspend () -> Unit)
     /** Quota d'envoi, gardé quand la feuille de signalement se ferme. */
     var reportQuota: ReportQuota
+    /** Un signalement est en route : aucun autre ne part, même depuis une feuille rouverte. */
+    var reportInFlight: Boolean
+    /** Dernier refus ou échec d'envoi, par identifiant d'affirmation : message seul, jamais la saisie. */
+    var reportIssue: Pair<String, String>?
 }
 
 /**

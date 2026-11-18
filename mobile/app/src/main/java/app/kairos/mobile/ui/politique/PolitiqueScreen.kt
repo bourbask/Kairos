@@ -138,6 +138,8 @@ fun PolitiqueScreen(
     var sharing by remember { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
     var quota by remember { mutableStateOf(ReportQuota()) }
+    var inFlight by remember { mutableStateOf(false) }
+    var issue by remember { mutableStateOf<Pair<String, String>?>(null) }
     // Position de l'accueil gardée pendant qu'une porte ou une rubrique est ouverte.
     val homeGrid = rememberLazyGridState()
     val link by rememberUpdatedState(siteLink)
@@ -159,6 +161,12 @@ fun PolitiqueScreen(
             override var reportQuota: ReportQuota
                 get() = quota
                 set(v) { quota = v }
+            override var reportInFlight: Boolean
+                get() = inFlight
+                set(v) { inFlight = v }
+            override var reportIssue: Pair<String, String>?
+                get() = issue
+                set(v) { issue = v }
         }
     }
 

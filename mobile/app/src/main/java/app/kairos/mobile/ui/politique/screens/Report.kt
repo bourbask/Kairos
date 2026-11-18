@@ -89,24 +89,25 @@ fun ReportSheet(data: PolData, claimId: String, nav: PolNavigator, onDismiss: ()
     // Mémoire seule, jamais l'état sauvegardé de l'activité : la saisie ne quitte pas le processus.
     var form by remember(claimId) { mutableStateOf(ReportForm()) }
     var sending by remember(claimId) { mutableStateOf(false) }
-    var problem by remember(claimId) { mutableStateOf<String?>(null) }
+    // Gardé par l'espace : un échec survenu feuille fermée s'affiche à la réouverture.
+    val problem = nav.reportIssue?.takeIf { it.first == claimId }?.second
     var received by remember(claimId) { mutableStateOf<ReportOutcome.Received?>(null) }
     var closed by remember(claimId) { mutableStateOf(false) }
     val wait = nav.reportQuota.waitMinutes(System.currentTimeMillis())
 
     fun send() {
-        if (sending || !reportReady(form, claim, data)) return
+        if (sending || nav.reportInFlight || !reportReady(form, claim, data)) return
         val args = reportArgs(form, claim.id)
-        oversize(args)?.let { problem = it; return }
+        oversize(args)?.let { nav.reportIssue = claimId to it; return }
         sending = true
-        problem = null
+        nav.reportInFlight = true
+        nav.reportIssue = null
         // Sur la durée de l'espace : fermer la feuille pendant l'envoi ne perd ni le quota ni le dépôt.
-        nav.launch {
+        nav.launch { try {
             val outcome = try {
                 nav.report(args).let { ReportOutcome.Received(it.reference, it.recu_a, it.restant) }
             } catch (_: ApiError.Unauthorized) {
                 // L'espace demande déjà une nouvelle connexion ; le formulaire reste tel quel.
-                sending = false
                 return@launch
             } catch (e: ApiError) {
                 reportOutcome(e)
@@ -114,14 +115,16 @@ fun ReportSheet(data: PolData, claimId: String, nav: PolNavigator, onDismiss: ()
             nav.reportQuota = nav.reportQuota.after(outcome, System.currentTimeMillis())
             when (outcome) {
                 is ReportOutcome.Received -> received = outcome
-                is ReportOutcome.Refused -> problem = outcome.message
-                is ReportOutcome.Failed -> problem = outcome.message
+                is ReportOutcome.Refused -> nav.reportIssue = claimId to outcome.message
+                is ReportOutcome.Failed -> nav.reportIssue = claimId to outcome.message
                 ReportOutcome.Closed -> closed = true
                 // La limite passe par le quota : l'écran de limite s'affiche de lui-même.
                 is ReportOutcome.Limited -> Unit
             }
+        } finally {
             sending = false
-        }
+            nav.reportInFlight = false
+        } }
     }
 
     PolSheet(full = true, onDismiss = onDismiss) {
@@ -141,7 +144,7 @@ fun ReportSheet(data: PolData, claimId: String, nav: PolNavigator, onDismiss: ()
                     else Notice(ok = false, "Les signalements sont momentanément fermés.")
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { Key("Fermer", onDismiss) }
                 }
-                else -> ReportFields(form, { form = it }, claim, data, nav.reportQuota.left, sending, problem, ::send, onDismiss)
+                else -> ReportFields(form, { form = it }, claim, data, nav.reportQuota.left, sending, nav.reportInFlight, problem, ::send, onDismiss)
             }
             Spacer(Modifier.height(8.dp))
         }
@@ -152,7 +155,7 @@ fun ReportSheet(data: PolData, claimId: String, nav: PolNavigator, onDismiss: ()
 @Composable
 private fun ColumnScope.ReportFields(
     form: ReportForm, set: (ReportForm) -> Unit, claim: app.kairos.mobile.ui.politique.model.Claim, data: PolData,
-    left: Int?, sending: Boolean, problem: String?, onSend: () -> Unit, onCancel: () -> Unit,
+    left: Int?, sending: Boolean, inFlight: Boolean, problem: String?, onSend: () -> Unit, onCancel: () -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
     Group("Qu'est-ce qui pose problème ?") {
@@ -210,8 +213,8 @@ private fun ColumnScope.ReportFields(
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
             Key("Annuler", onCancel)
-            val active = !sending && reportReady(form, claim, data)
-            val label = if (sending) "Envoi…" else "Envoyer le signalement"
+            val active = !sending && !inFlight && reportReady(form, claim, data)
+            val label = if (sending) "Envoi…" else if (inFlight) "Envoi en cours…" else "Envoyer le signalement"
             PixelKey(onSend, label, Modifier.alpha(if (active) 1f else .45f), enabled = active, fg = scheme.surface, bg = scheme.primary, hoverBg = scheme.primary) {
                 Text(label, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = scheme.surface)
             }
@@ -226,7 +229,8 @@ private fun Group(label: String, hint: String? = null, main: Boolean = true, con
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Column {
             Text(label, fontWeight = FontWeight.Bold, fontSize = if (main) 15.sp else 14.sp)
-            if (hint != null) Text(hint, Modifier.padding(top = 2.dp), fontSize = 13.sp, lineHeight = 18.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            // Aide lue avec le champ qu'elle décrit ; ici, visible seulement.
+            if (hint != null) Text(hint, Modifier.padding(top = 2.dp).clearAndSetSemantics { }, fontSize = 13.sp, lineHeight = 18.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         content()
     }
