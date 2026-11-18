@@ -92,6 +92,9 @@ pub struct CalendarEvent {
     pub all_day: bool,
     pub source: String,
     pub etag: Option<String>,
+    /// TRANSP:TRANSPARENT : affiché sans occuper le temps (anniversaire, mention…).
+    #[serde(default)]
+    pub transparent: bool,
 }
 
 impl CalendarEvent {

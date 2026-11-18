@@ -29,6 +29,7 @@ fn row_to_event(row: &rusqlite::Row) -> SqlResult<Option<CalendarEvent>> {
         all_day: row.get::<_, i32>(6)? != 0,
         source: row.get(7)?,
         etag: row.get(8)?,
+        transparent: row.get::<_, Option<i32>>(9)?.unwrap_or(0) != 0,
     }))
 }
 
@@ -141,6 +142,14 @@ impl Storage {
             CREATE INDEX IF NOT EXISTS idx_llm_usage_day ON llm_usage(day, engine);
             "
         )?;
+        let has_transp: bool = self.conn.query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('calendar_events') WHERE name = 'transparent'",
+            [],
+            |r| r.get::<_, i64>(0),
+        )? > 0;
+        if !has_transp {
+            self.conn.execute_batch("ALTER TABLE calendar_events ADD COLUMN transparent INTEGER DEFAULT 0")?;
+        }
         Ok(())
     }
 
@@ -574,8 +583,8 @@ impl Storage {
 
     fn upsert_event_on(conn: &Connection, event: &CalendarEvent) -> SqlResult<()> {
         conn.execute(
-            "INSERT OR REPLACE INTO calendar_events (uid, summary, description, location, start_time, end_time, all_day, source, etag, last_synced)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            "INSERT OR REPLACE INTO calendar_events (uid, summary, description, location, start_time, end_time, all_day, source, etag, last_synced, transparent)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 event.uid,
                 event.summary,
@@ -587,6 +596,7 @@ impl Storage {
                 event.source,
                 event.etag,
                 Utc::now().to_rfc3339(),
+                event.transparent as i32,
             ],
         )?;
         Ok(())
@@ -598,7 +608,7 @@ impl Storage {
         let start = today.format("%Y-%m-%dT00:00:00").to_string();
         let end = today.format("%Y-%m-%dT23:59:59").to_string();
         let mut stmt = self.conn.prepare(
-            "SELECT uid, summary, description, location, start_time, end_time, all_day, source, etag
+            "SELECT uid, summary, description, location, start_time, end_time, all_day, source, etag, transparent
              FROM calendar_events
              WHERE start_time <= ?2 AND end_time >= ?1
              ORDER BY start_time"
@@ -610,7 +620,7 @@ impl Storage {
     pub fn get_upcoming_events(&self, limit: u32) -> SqlResult<Vec<CalendarEvent>> {
         let now = Utc::now().with_timezone(&USER_TZ).naive_local().format("%Y-%m-%dT%H:%M:%S").to_string();
         let mut stmt = self.conn.prepare(
-            "SELECT uid, summary, description, location, start_time, end_time, all_day, source, etag
+            "SELECT uid, summary, description, location, start_time, end_time, all_day, source, etag, transparent
              FROM calendar_events
              WHERE end_time >= ?1
              ORDER BY start_time
@@ -624,7 +634,7 @@ impl Storage {
     pub fn get_events_between(&self, from: NaiveDateTime, to: NaiveDateTime) -> SqlResult<Vec<CalendarEvent>> {
         let fmt = |t: NaiveDateTime| t.format("%Y-%m-%dT%H:%M:%S").to_string();
         let mut stmt = self.conn.prepare(
-            "SELECT uid, summary, description, location, start_time, end_time, all_day, source, etag
+            "SELECT uid, summary, description, location, start_time, end_time, all_day, source, etag, transparent
              FROM calendar_events
              WHERE start_time < ?2 AND end_time > ?1
              ORDER BY start_time"
@@ -642,6 +652,20 @@ impl Storage {
             st.work |= e.source == crate::calendar::SOURCE_WORK;
         }
         Ok(st)
+    }
+
+    /// Retire les événements des abonnements qui ne figurent plus dans `keep`.
+    pub fn prune_subscriptions(&self, keep: &[String]) -> SqlResult<usize> {
+        let sources: Vec<String> = self
+            .conn
+            .prepare("SELECT DISTINCT source FROM calendar_events")?
+            .query_map([], |r| r.get(0))?
+            .collect::<SqlResult<_>>()?;
+        let mut n = 0;
+        for s in sources.iter().filter(|s| crate::calendar::is_subscription(s) && !keep.contains(s)) {
+            n += self.delete_calendar_events_by_source(s)?;
+        }
+        Ok(n)
     }
 
     pub fn delete_calendar_events_by_source(&self, source: &str) -> SqlResult<usize> {
@@ -686,7 +710,7 @@ mod tests {
             end_time: NaiveDate::from_ymd_opt(2026, 1, 5).unwrap().and_hms_opt(10, 0, 0).unwrap(),
             all_day: false,
             source: "test".into(),
-            etag: None,
+            etag: None, transparent: false,
         };
         Storage::open(p).unwrap().upsert_calendar_event(&ev).unwrap();
         let ro = Storage::open_readonly(p).unwrap();
@@ -790,7 +814,7 @@ mod tests {
         CalendarEvent {
             uid: uid.into(), summary: None, description: None, location: None,
             start_time: d.and_hms_opt(h1, 0, 0).unwrap(), end_time: d.and_hms_opt(h2, 0, 0).unwrap(),
-            all_day, source: source.into(), etag: None,
+            all_day, source: source.into(), etag: None, transparent: false,
         }
     }
     fn at(h: u32, m: u32) -> NaiveDateTime {
@@ -815,6 +839,26 @@ mod tests {
         s.replace_calendar_events("calendar", &[ev("n1", "calendar", false, 11, 12), ev("n2", "calendar", false, 13, 14)]).unwrap();
         let uids: Vec<_> = s.get_events_between(at(0, 0), at(23, 0)).unwrap().into_iter().map(|e| e.uid).collect();
         assert_eq!(uids, ["w", "n1", "n2"]);
+    }
+
+    #[test]
+    fn prune_subscriptions_drops_legacy_and_removed_sources() {
+        let s = Storage::open(":memory:").unwrap();
+        for (uid, src) in [("p", "calendar"), ("a", "subscription"), ("b", "subscription-2"), ("c", "subscription-0badcafe"), ("d", "subscription-12345678")] {
+            s.upsert_calendar_event(&ev(uid, src, false, 9, 10)).unwrap();
+        }
+        s.prune_subscriptions(&["subscription-12345678".to_string()]).unwrap();
+        let uids: Vec<_> = s.get_events_between(at(0, 0), at(23, 0)).unwrap().into_iter().map(|e| e.uid).collect();
+        assert_eq!(uids, ["p", "d"]);
+    }
+
+    #[test]
+    fn transparent_flag_round_trips() {
+        let s = Storage::open(":memory:").unwrap();
+        let mut e = ev("t", "calendar", false, 9, 10);
+        e.transparent = true;
+        s.upsert_calendar_event(&e).unwrap();
+        assert!(s.get_events_between(at(0, 0), at(23, 0)).unwrap()[0].transparent);
     }
 
     #[test]

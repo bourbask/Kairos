@@ -94,6 +94,12 @@ CREATE TABLE IF NOT EXISTS order_lines (
     PRIMARY KEY (order_id, idx)
 );
 CREATE TABLE IF NOT EXISTS prefs (k TEXT PRIMARY KEY, v TEXT NOT NULL, updated_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS meal_place (
+    day TEXT NOT NULL,
+    slot TEXT NOT NULL,
+    outside INTEGER NOT NULL,
+    PRIMARY KEY (day, slot)
+);
 ";
 
 /// Emplacements reconnus (le reste est refusé, pour garder un inventaire lisible).
@@ -1306,6 +1312,32 @@ impl Store {
         let db = self.db.lock().unwrap();
         let mut st = db.prepare("SELECT k, v FROM prefs ORDER BY k")?;
         st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect()
+    }
+
+    /// Choix « dehors » (vrai) ou « maison » (faux) d'un repas ; `None` le retire.
+    pub fn set_place(&self, day: &str, slot: &str, outside: Option<bool>) -> rusqlite::Result<()> {
+        let db = self.db.lock().unwrap();
+        match outside {
+            None => db.execute("DELETE FROM meal_place WHERE day = ?1 AND slot = ?2", params![day, slot])?,
+            Some(o) => db.execute(
+                "INSERT OR REPLACE INTO meal_place (day, slot, outside) VALUES (?1, ?2, ?3)",
+                params![day, slot, o],
+            )?,
+        };
+        Ok(())
+    }
+
+    /// Choix de lieu de `from..=to` : (jour, créneau, dehors).
+    pub fn places(&self, from: &str, to: &str) -> rusqlite::Result<Vec<(chrono::NaiveDate, crate::nature::Slot, bool)>> {
+        let db = self.db.lock().unwrap();
+        let mut st = db.prepare("SELECT day, slot, outside FROM meal_place WHERE day >= ?1 AND day <= ?2")?;
+        let rows = st.query_map(params![from, to], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, bool>(2)?)))?;
+        Ok(rows
+            .flatten()
+            .filter_map(|(d, s, o)| {
+                Some((chrono::NaiveDate::parse_from_str(&d, "%Y-%m-%d").ok()?, crate::nature::Slot::parse(&s)?, o))
+            })
+            .collect())
     }
 
     /// Dépenses de courses enregistrées depuis une date (somme des commandes).
