@@ -79,6 +79,7 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import app.kairos.mobile.data.ApiError
 import app.kairos.mobile.data.AppRelease
 import app.kairos.mobile.data.Card
+import app.kairos.mobile.data.CardAction
 import app.kairos.mobile.data.Mark
 import app.kairos.mobile.data.Repository
 import app.kairos.mobile.data.Snapshot
@@ -218,6 +219,18 @@ fun TodayScreen(
         }
     }
 
+    // Geste secondaire (lieu du repas…) : message du module, puis le fil se recharge.
+    fun act(card: Card, action: CardAction) {
+        appScope.launch {
+            try {
+                notice(cardAction(card, action, repository::reply))
+                repository.refresh()
+            } catch (_: ApiError.Unauthorized) {
+                unauthorized()
+            }
+        }
+    }
+
     // Choix demandé par le module (portions…) : posé sous le pouce, avant la fenêtre d'annulation.
     var choosing by remember { mutableStateOf<Pair<String, Card>?>(null) }
     var chooserOpen by remember { mutableStateOf(false) }
@@ -272,6 +285,7 @@ fun TodayScreen(
                         onDone = ::done,
                         onLater = ::later,
                         onUnmark = { day, card -> scope.launch { repository.mark(day, card.key, null) } },
+                        onAction = ::act,
                         update = update,
                         updateProgress = updateProgress,
                         onUpdate = onUpdate,
@@ -314,6 +328,7 @@ private fun DayContent(
     onDone: (String, Card) -> Unit,
     onLater: (String, Card) -> Unit,
     onUnmark: (String, Card) -> Unit,
+    onAction: (Card, CardAction) -> Unit,
     update: AppRelease?,
     updateProgress: Float?,
     onUpdate: () -> Unit,
@@ -369,6 +384,7 @@ private fun DayContent(
                 onDone = { onDone(todayKey, item.card) },
                 onLater = { onLater(todayKey, item.card) },
                 onRestore = { onUnmark(todayKey, item.card) },
+                onAction = { onAction(item.card, it) },
                 modifier = Modifier.animateItem(),
                 swipeEnabled = !marked,
             )
@@ -553,6 +569,7 @@ private fun TimelineRow(
     onDone: () -> Unit,
     onLater: () -> Unit,
     onRestore: () -> Unit,
+    onAction: (CardAction) -> Unit,
     swipeEnabled: Boolean,
     modifier: Modifier = Modifier,
 ) {
@@ -589,7 +606,7 @@ private fun TimelineRow(
             rightStays = true,
             leftStays = true,
         ) {
-            ItemCard(item, now, expanded, { toggle() }, onDone, onLater, onRestore, swipeEnabled)
+            ItemCard(item, now, expanded, { toggle() }, onDone, onLater, onRestore, onAction, swipeEnabled)
         }
     }
 }
@@ -610,6 +627,7 @@ private fun ItemCard(
     onDone: () -> Unit,
     onLater: () -> Unit,
     onRestore: () -> Unit,
+    onAction: (CardAction) -> Unit,
     actionable: Boolean,
 ) {
     val card = item.card
@@ -676,6 +694,7 @@ private fun ItemCard(
                         } else if (restorable(item)) {
                             Pill("Remettre dans le fil", onRestore)
                         }
+                        card.actions.forEach { a -> Pill(a.label) { onAction(a) } }
                     }
                 }
             }

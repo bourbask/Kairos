@@ -4,6 +4,7 @@ import app.kairos.mobile.data.ApiError
 import app.kairos.mobile.data.ToolMessage
 import app.kairos.mobile.data.Card
 import app.kairos.mobile.data.CardDone
+import app.kairos.mobile.data.CardAction
 import app.kairos.mobile.data.KairosJson
 import app.kairos.mobile.data.Mark
 import kotlinx.coroutines.CompletableDeferred
@@ -140,5 +141,22 @@ class DoneTest {
         assertEquals(setOf("soir"), pending.hidden.value)
         pending.hide("soir", false)
         assertTrue(pending.hidden.value.isEmpty())
+    }
+
+    @Test
+    fun card_action_calls_module_tool_as_given() = runBlocking {
+        val out = KairosJson.decodeFromString(
+            Card.serializer(),
+            """{"id":"dehors-2026-11-21-midi","title":"Midi · Dehors : Exemple","module":"alimentation",
+               "actions":[{"label":"Je mange à la maison","tool":"app_meal_place",
+                           "args":{"day":"2026-11-21","slot":"midi","place":"maison"}}]}""",
+        )
+        val a: CardAction = out.actions.single()
+        assertEquals("Je mange à la maison", a.label)
+        val f = Fake()
+        assertEquals("Repas noté : Curry", cardAction(out, a, f.call))
+        assertEquals(listOf("""call alimentation/app_meal_place {"day":"2026-11-21","slot":"midi","place":"maison"}"""), f.log)
+        assertEquals("Serveur injoignable : rien n'a été enregistré.", cardAction(out, a, Fake(fail = ApiError.Offline).call))
+        assertTrue(meal.actions.isEmpty())
     }
 }

@@ -2,6 +2,7 @@ package app.kairos.mobile.ui.today
 
 import app.kairos.mobile.data.ApiError
 import app.kairos.mobile.data.Card
+import app.kairos.mobile.data.CardAction
 import app.kairos.mobile.data.CardDone
 import app.kairos.mobile.data.Mark
 import app.kairos.mobile.data.ToolMessage
@@ -129,4 +130,15 @@ fun refusal(e: ApiError): String = when (e) {
     ApiError.Offline -> "Serveur injoignable : rien n'a été enregistré."
     ApiError.NoReply -> "Pas de réponse du serveur : vérifie avant de réessayer."
     is ApiError.Server -> if (e.code == 422) e.message ?: "Refusé." else "${e.unavailable()}."
+}
+
+/** Geste secondaire [action] de [card] : message du module, sinon raison du refus. [ApiError.Unauthorized] remonte. */
+suspend fun cardAction(
+    card: Card,
+    action: CardAction,
+    call: suspend (module: String, tool: String, args: JsonObject) -> ToolMessage,
+): String = try {
+    call(card.module, action.tool, action.args).message.ifBlank { "Fait." }
+} catch (e: ApiError) {
+    refusal(e)
 }

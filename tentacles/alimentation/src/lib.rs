@@ -4,6 +4,7 @@
 
 pub mod bon;
 pub mod caldav;
+pub mod dehors;
 pub mod nature;
 pub mod off;
 pub mod plan;

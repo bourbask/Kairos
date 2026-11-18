@@ -6,6 +6,10 @@ edition = "2024"
 [workspace]
 members = [".", "tete", "crates/tentacle-common", "tentacles/memoire", "tentacles/agenda", "tentacles/finances", "tentacles/medias", "tentacles/documents", "tentacles/alimentation", "tentacles/marches", "tentacles/partage", "tentacles/politique"]
 
+[features]
+# Abonnements d'agenda en clair, pour les tests des autres crates seulement.
+test-http = []
+
 [dependencies]
 tokio = { version = "1", features = ["full"] }
 reqwest = { version = "0.12", features = ["json"] }
