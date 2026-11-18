@@ -4,7 +4,7 @@ use std::sync::Arc;
 use anyhow::Context;
 use kairos_politique::{
     donnees::Donnees,
-    signalements::{limite::Limiteur, public, store::Store},
+    signalements::{limite::Limiteur, ouvrir_optionnel, public, store::Store},
     tools::PolitiqueServer,
 };
 use tentacle_common::TentacleEnv;
@@ -32,7 +32,9 @@ async fn main() -> anyhow::Result<()> {
     let mut ecouteur = None;
     if let Some(bind) = var("POLITIQUE_PUBLIC_BIND") {
         let bind: SocketAddr = bind.parse().context("POLITIQUE_PUBLIC_BIND invalide")?;
-        let store = Arc::new(Store::open(var("POLITIQUE_SIGNALEMENTS_DB").unwrap_or_else(|| "/app/signalements/signalements.db".into()))?);
+        let chemin = var("POLITIQUE_SIGNALEMENTS_DB").unwrap_or_else(|| "/app/signalements/signalements.db".into());
+        if let Some(store) = ouvrir_optionnel(chemin) {
+        let store = Arc::new(store);
         let limiteur = Arc::new(Limiteur::new(10));
         let plafond_jour = match var("POLITIQUE_SIGNALEMENTS_PLAFOND_JOUR") {
             None => 200,
@@ -42,6 +44,7 @@ async fn main() -> anyhow::Result<()> {
         let etat = public::PublicState { store: store.clone(), limiteur: limiteur.clone(), donnees: donnees.clone(), plafond_jour, now: maintenant, comptes: Default::default() };
         ecouteur = Some((tokio::net::TcpListener::bind(bind).await?, public::router(etat)));
         signalements = Some((store, limiteur));
+        }
     }
     let (store, limiteur) = signalements.unzip();
 

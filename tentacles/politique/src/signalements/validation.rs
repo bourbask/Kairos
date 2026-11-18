@@ -53,9 +53,14 @@ fn refus(champ: &'static str, message: &'static str) -> Refus {
     Refus { champ, message }
 }
 
-/// NFC, sans caractères de contrôle (sauf saut de ligne), sans espaces en bord.
+/// Caractères invisibles ou de direction du texte (bidi, largeur nulle, BOM).
+fn invisible(c: char) -> bool {
+    matches!(c, '\u{061C}' | '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{2069}' | '\u{FEFF}')
+}
+
+/// NFC, sans caractères de contrôle (sauf saut de ligne) ni invisibles, sans espaces en bord.
 pub fn nettoyer(s: &str) -> String {
-    let nfc: String = s.nfc().filter(|c| *c == '\n' || !c.is_control()).collect();
+    let nfc: String = s.nfc().filter(|c| *c == '\n' || !(c.is_control() || invisible(*c))).collect();
     nfc.trim().to_string()
 }
 
@@ -95,7 +100,7 @@ fn numero(cible: &str, prefixe: char) -> Option<usize> {
 
 /// Adresse https, nom de domaine public, sans identifiants, port absent ou 443.
 fn url_valide(u: &str) -> bool {
-    if u.chars().count() > 300 || u.chars().any(|c| c.is_whitespace() || c.is_control()) {
+    if u.chars().count() > 300 || u.chars().any(|c| c.is_whitespace() || c.is_control() || invisible(c)) {
         return false;
     }
     let Some(reste) = u.strip_prefix("https://") else {
@@ -239,6 +244,31 @@ mod tests {
         assert_eq!(nettoyer("a\u{0007}b"), "ab");
         assert_eq!(nettoyer("  a\nb  "), "a\nb");
         assert_eq!(nettoyer("e\u{0301}"), "\u{e9}");
+    }
+
+    #[test]
+    fn bidi_retire() {
+        assert_eq!(nettoyer("a\u{202E}b\u{2066}c\u{061C}d"), "abcd");
+    }
+
+    #[test]
+    fn zero_largeur_retire() {
+        assert_eq!(nettoyer("a\u{200B}b\u{FEFF}c\u{2060}d"), "abcd");
+    }
+
+    #[test]
+    fn invisibles_hors_longueur() {
+        let what = format!("{}{}", "x".repeat(29), "\u{200B}".repeat(5));
+        assert_eq!(champ(Brut { what, ..brut() }), "what");
+        let what = format!("{}{}", "x".repeat(30), "\u{202E}".repeat(400));
+        assert!(valider(Brut { what, ..brut() }, &C).is_ok());
+    }
+
+    #[test]
+    fn url_bidi_refusee() {
+        for c in ["\u{202E}", "\u{200B}", "\u{FEFF}", "\u{2066}"] {
+            assert_eq!(champ(avec_url(&format!("https://example.com/a{c}b"))), "url", "{c:?}");
+        }
     }
 
     #[test]
