@@ -38,6 +38,8 @@ import app.kairos.mobile.ui.politique.kit.AtTable
 import app.kairos.mobile.ui.politique.screens.BaremeSheet
 import app.kairos.mobile.ui.politique.kit.BalanceSheet
 import app.kairos.mobile.ui.politique.kit.EmptyState
+import app.kairos.mobile.ui.politique.kit.LocalNoFiche
+import app.kairos.mobile.ui.politique.kit.NoFicheSheet
 import app.kairos.mobile.ui.politique.kit.LocalPolBottom
 import app.kairos.mobile.ui.politique.kit.TableCard
 import app.kairos.mobile.ui.politique.model.PolData
@@ -244,7 +246,7 @@ fun PolitiqueScreen(
         when (val l = load) {
             PolLoad.Loading -> HomeLoading()
             is PolLoad.Down -> HomeDown(l, onRetry = { reload++ }, onSite = { navigator.go(PolRoute.Site) })
-            is PolLoad.Ready -> when (route) {
+            is PolLoad.Ready -> CompositionLocalProvider(LocalNoFiche provides { navigator.sheet(PolSheetState.NoFiche(it)) }) { when (route) {
                 PolRoute.Home -> HomeScreen(l.data, navigator, bottom, homeGrid)
                 is PolRoute.Door -> session?.let { ThemeScreen(it, route.id, l.data, navigator, bottom) }
                 // Pas de marge basse sur la page : le contenu défile sous le dégradé du dock, comme sur l'accueil.
@@ -258,12 +260,12 @@ fun PolitiqueScreen(
                         }
                     }
                 }
-            }
+            } }
         }
     }
 
     if (data != null) nav.sheets.forEachIndexed { i, s ->
-        key(i, s) { SheetHost(s, data, navigator, onDismiss = { nav = nav.back() ?: nav }) }
+        key(i, s) { CompositionLocalProvider(LocalNoFiche provides { navigator.sheet(PolSheetState.NoFiche(it)) }) { SheetHost(s, data, navigator, onDismiss = { nav = nav.back() ?: nav }) } }
     }
     table?.let { (cards, start) -> AtTable(cards, start) { table = null } }
     if (sharing) ShareDialog(repository, onDismiss = { sharing = false }, onUnauthorized = onUnauthorized)
@@ -308,6 +310,7 @@ fun SheetHost(s: PolSheetState, data: PolData, nav: PolNavigator, onDismiss: () 
         is PolSheetState.Evaluator -> EvaluatorSheetAt(data, s.id, nav, onDismiss)
         is PolSheetState.Rhet -> RhetSheetAt(data, s.t, nav, onDismiss)
         PolSheetState.Bareme -> BaremeSheet(data, onDismiss)
+        is PolSheetState.NoFiche -> NoFicheSheet(s.name, onDismiss)
     }
 }
 

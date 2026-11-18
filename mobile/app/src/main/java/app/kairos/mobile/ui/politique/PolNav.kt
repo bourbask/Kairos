@@ -45,6 +45,8 @@ sealed interface PolSheetState {
     data class Cluster(val villes: List<String>) : PolSheetState
     /** Barème des verdicts et de l'indice de confiance. */
     data object Bareme : PolSheetState
+    /** Source signée par un nom sans fiche d'évaluateur. */
+    data class NoFiche(val name: String) : PolSheetState
 }
 
 /** Ce qu'un écran peut demander à la coque. */
