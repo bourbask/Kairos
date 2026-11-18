@@ -215,8 +215,9 @@ services:
       - default
       - partage-public
 
-  # Données publiques d'information politique, en lecture seule. Port MCP (8103) jamais publié :
-  # la tête le joint sur un réseau interne, sans sortie vers l'extérieur.
+  # Données publiques d'information politique (lecture seule) et réception des signalements.
+  # La tête joint le port MCP sur un réseau interne ; le port MCP publié passe par un réseau dédié.
+  # Le module ne fait aucun appel sortant.
   politique:
     logging: *logging
     <<: *hardening
@@ -230,6 +231,8 @@ services:
     environment:
       POLITIQUE_BIND: 0.0.0.0:8103
       POLITIQUE_DONNEES: /app/politique
+      POLITIQUE_PUBLIC_BIND: 0.0.0.0:8104
+      POLITIQUE_SIGNALEMENTS_DB: /app/signalements/signalements.db
     # Fichier dédié : ce module ne reçoit aucun autre secret de Kairos.
     env_file:   # POLITIQUE_TOKEN (obligatoire) — cf. politique.env.example
       - path: politique.env
@@ -242,8 +245,16 @@ services:
         read_only: true
         bind:
           create_host_path: false
+      # Seul montage en écriture : base des signalements (créé par deploy.sh).
+      - type: bind
+        source: ${POLITIQUE_SIGNALEMENTS_HOTE:-./data/signalements}
+        target: /app/signalements
+    ports:
+      - "${TENTACLES_BIND_ADDR:-127.0.0.1}:${POLITIQUE_BIND_PORT:-8103}:8103"
     networks:
       - politique-interne
+      - politique-public
+      - politique-mcp
 
   # Tête : boucle principale (conversation, briefs, suggestions) ; joint les tentacules par nom de service.
   tete:
@@ -348,3 +359,9 @@ networks:
   # Tête ↔ module politique uniquement, sans sortie vers l'extérieur.
   politique-interne:
     internal: true
+  # Réception publique des signalements : sans sortie ; nom fixe pour que le compose du site le rejoigne.
+  politique-public:
+    name: politique-public
+    internal: true
+  # Porte uniquement la publication du port MCP (impossible depuis un réseau interne).
+  politique-mcp: {}
