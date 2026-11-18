@@ -220,6 +220,16 @@ impl Etat {
     }
 }
 
+/// Bornes des cartes d'affirmations : nombre de faits et de sources par `id`.
+impl crate::signalements::validation::Cartes for Etat {
+    fn bornes(&self, claim: &str) -> Option<(usize, usize)> {
+        let claims = self.fichiers.get("affirmations")?.get("CLAIMS")?.as_array()?;
+        let c = claims.iter().find(|c| c.get("id").and_then(Value::as_str) == Some(claim))?;
+        let n = |k: &str| c.get(k).and_then(Value::as_array).map_or(0, Vec::len);
+        Some((n("facts"), n("src")))
+    }
+}
+
 impl Donnees {
     pub fn new(dir: impl Into<PathBuf>) -> Donnees {
         Donnees { dir: dir.into(), cache: Mutex::new(BTreeMap::new()) }
@@ -283,5 +293,24 @@ impl Donnees {
             );
         }
         etat
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::signalements::validation::Cartes;
+
+    #[test]
+    fn bornes_des_affirmations() {
+        let a = serde_json::json!({"CLAIMS": [
+            {"q": "sans id"},
+            {"id": "a1", "facts": ["f1", "f2"], "src": [["s", "https://example.org"]]},
+            {"id": "a2"}
+        ]});
+        let e = Etat::new(BTreeMap::from([("affirmations".to_string(), Arc::new(a))]), BTreeMap::new());
+        assert_eq!(e.bornes("a1"), Some((2, 1)));
+        assert_eq!(e.bornes("a2"), Some((0, 0)));
+        assert_eq!(e.bornes("inconnue"), None);
     }
 }
