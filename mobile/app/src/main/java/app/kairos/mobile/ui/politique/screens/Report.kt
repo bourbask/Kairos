@@ -41,7 +41,6 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
-import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.error
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.heading
@@ -160,7 +159,7 @@ fun ReportSheet(data: PolData, claimId: String, nav: PolNavigator, onDismiss: ()
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { Key("Fermer", onDismiss) }
                 }
                 wait != null || closed -> {
-                    if (wait != null) Notice(ok = false, "Vous avez envoyé 10 signalements dans l'heure.", "$LIMIT_TEXT Vous pourrez en envoyer un nouveau dans $wait min.", bold = true)
+                    if (wait != null) Notice(ok = false, "La limite de 10 signalements par heure est atteinte.", "$LIMIT_TEXT Vous pourrez en envoyer un nouveau dans $wait min.", bold = true)
                     else Notice(ok = false, "Les signalements sont momentanément fermés.")
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { Key("Fermer", onDismiss) }
                 }
@@ -186,12 +185,7 @@ private fun ColumnScope.ReportFields(
         Choices(reportTargets(claim, form.kind, data), form.target) { set(form.copy(target = it)) }
     }
     Group("Qu'est-ce qui est inexact ?", "Citez le passage concerné, puis dites précisément ce qui ne va pas. Pas votre avis sur le sujet : l'erreur à corriger.") {
-        Field(
-            form.what, { set(form.copy(what = it)) }, "Qu'est-ce qui est inexact ?", 400, multiline = true,
-            hint = "Citez le passage concerné, puis dites précisément ce qui ne va pas. Pas votre avis sur le sujet : l'erreur à corriger.",
-            counter = counterText(reportLength(form.what), 30, 400),
-        )
-        Counter(form.what, 30, 400)
+        Field(form.what, { set(form.copy(what = it)) }, 400, multiline = true, min = 30)
     }
     Group("Sur quoi vous appuyez-vous ?") {
         Choices(REPORT_BASES, form.basis) { set(form.copy(basis = it)) }
@@ -199,34 +193,24 @@ private fun ColumnScope.ReportFields(
             "lien" -> Sub {
                 Group("Lien vers la source", "Adresse en https. Elle n'est pas ouverte automatiquement : elle sera consultée à la relecture.", main = false) {
                     val bad = form.url.takeIf { it.isNotEmpty() }?.let(::urlProblem)
-                    Field(
-                        form.url, { set(form.copy(url = it)) }, "Lien vers la source", 300, placeholder = "https://…", keyboard = KeyboardType.Uri,
-                        hint = "Adresse en https. Elle n'est pas ouverte automatiquement : elle sera consultée à la relecture.", error = bad,
-                    )
+                    Field(form.url, { set(form.copy(url = it)) }, 300, placeholder = "https://…", keyboard = KeyboardType.Uri, error = bad)
                     if (bad != null) Text(bad, Modifier.clearAndSetSemantics { }, fontSize = 13.sp, color = PolColors.current.fragile)
                 }
             }
             "ref" -> Sub {
-                Group("Média ou auteur", main = false) { Field(form.refWho, { set(form.copy(refWho = it)) }, "Média ou auteur", 80) }
-                Group("Date, même approximative", main = false) { Field(form.refWhen, { set(form.copy(refWhen = it)) }, "Date, même approximative", 30, placeholder = "ex. mars 2025") }
-                Group("Titre ou mots-clés", "Assez pour retrouver l'article par une recherche.", main = false) {
-                    Field(form.refWhat, { set(form.copy(refWhat = it)) }, "Titre ou mots-clés", 160, hint = "Assez pour retrouver l'article par une recherche.")
-                }
+                Group("Média ou auteur", main = false) { Field(form.refWho, { set(form.copy(refWho = it)) }, 80) }
+                Group("Date, même approximative", main = false) { Field(form.refWhen, { set(form.copy(refWhen = it)) }, 30, placeholder = "ex. mars 2025") }
+                Group("Titre ou mots-clés", "Assez pour retrouver l'article par une recherche.", main = false) { Field(form.refWhat, { set(form.copy(refWhat = it)) }, 160) }
             }
             "carte" -> Sub {
                 Group("Quels éléments de la carte se contredisent ?", main = false) {
-                    Field(form.refIn, { set(form.copy(refIn = it)) }, "Quels éléments de la carte se contredisent ?", 160, placeholder = "ex. le fait 2 et le verdict")
+                    Field(form.refIn, { set(form.copy(refIn = it)) }, 160, placeholder = "ex. le fait 2 et le verdict")
                 }
             }
         }
     }
     Group("Que faudrait-il écrire à la place, d'après vous ?", "Votre proposition sera relue et vérifiée ; elle ne remplace pas le texte automatiquement.") {
-        Field(
-            form.fix, { set(form.copy(fix = it)) }, "Que faudrait-il écrire à la place, d'après vous ?", 300, multiline = true,
-            hint = "Votre proposition sera relue et vérifiée ; elle ne remplace pas le texte automatiquement.",
-            counter = counterText(reportLength(form.fix), 10, 300),
-        )
-        Counter(form.fix, 10, 300)
+        Field(form.fix, { set(form.copy(fix = it)) }, 300, multiline = true, min = 10)
     }
     Oath(form.oath) { set(form.copy(oath = it)) }
     Text(anonymityNote(left), fontSize = 12.5.sp, lineHeight = 17.sp, color = scheme.onSurfaceVariant)
@@ -236,21 +220,23 @@ private fun ColumnScope.ReportFields(
             val active = !sending && !inFlight && reportReady(form, claim, data)
             val label = if (sending) "Envoi…" else if (inFlight) "Envoi en cours…" else "Envoyer le signalement"
             PixelKey(onSend, label, Modifier.alpha(if (active) 1f else .45f), enabled = active, fg = scheme.surface, bg = scheme.primary, hoverBg = scheme.primary) {
-                Text(label, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = scheme.surface)
+                Text(label, fontSize = 14.sp, lineHeight = 16.sp, fontWeight = FontWeight.SemiBold, color = scheme.surface)
             }
         }
         if (problem != null) Text(problem, Modifier.semantics { liveRegion = LiveRegionMode.Assertive }, fontSize = 13.sp, color = PolColors.current.fragile)
     }
 }
 
-/** Intitulé (et son aide), puis le contenu ; [main] : question du formulaire, sinon sous-champ. */
+/**
+ * Intitulé (et son aide), puis le contenu ; [main] : question du formulaire, sinon sous-champ.
+ * Intitulé et aide restent lus juste avant le champ : une description posée sur un champ éditable peut masquer le texte saisi.
+ */
 @Composable
 private fun Group(label: String, hint: String? = null, main: Boolean = true, content: @Composable ColumnScope.() -> Unit) {
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Column {
             Text(label, fontWeight = FontWeight.Bold, fontSize = if (main) 15.sp else 14.sp)
-            // Aide lue avec le champ qu'elle décrit ; ici, visible seulement.
-            if (hint != null) Text(hint, Modifier.padding(top = 2.dp).clearAndSetSemantics { }, fontSize = 13.sp, lineHeight = 18.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (hint != null) Text(hint, Modifier.padding(top = 2.dp), fontSize = 13.sp, lineHeight = 18.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         content()
     }
@@ -280,7 +266,7 @@ private fun Choices(options: List<Pair<String, String>>, selected: String, onSel
                 bg = if (on) scheme.onSurface else mix(scheme.surface, scheme.onSurface, .08f),
                 hoverBg = if (on) scheme.onSurface else mix(scheme.surface, scheme.onSurface, .15f),
             ) {
-                Text(label, fontSize = 14.sp, color = if (on) scheme.surface else scheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(label, fontSize = 14.sp, lineHeight = 16.sp, color = if (on) scheme.surface else scheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
     }
@@ -288,15 +274,17 @@ private fun Choices(options: List<Pair<String, String>>, selected: String, onSel
 
 /**
  * Champ creusé : coins en marche, ombre intérieure en haut. [max] borne la saisie brute (points de code).
- * L'aide et le compteur sont lus avec le champ ; [error] le marque invalide.
+ * [min] non null : compteur sous le champ, lu comme état du champ ; [error] le marque invalide.
  */
 @Composable
 private fun Field(
-    value: String, onChange: (String) -> Unit, label: String, max: Int, multiline: Boolean = false, placeholder: String = "",
-    keyboard: KeyboardType = KeyboardType.Text, hint: String? = null, counter: String? = null, error: String? = null,
+    value: String, onChange: (String) -> Unit, max: Int, multiline: Boolean = false, placeholder: String = "",
+    keyboard: KeyboardType = KeyboardType.Text, min: Int? = null, error: String? = null,
 ) {
     val scheme = MaterialTheme.colorScheme
     val shade = mix(scheme.surface, scheme.onSurface, .18f)
+    val n = if (min != null) reportLength(value) else 0
+    val counter = min?.let { counterText(n, it, max) }
     BasicTextField(
         value,
         { if (it.codePointCount(0, it.length) <= max) onChange(it) },
@@ -304,7 +292,6 @@ private fun Field(
             .background(mix(scheme.surface, scheme.onSurface, .05f))
             .drawBehind { drawRect(shade, size = Size(size.width, 2.dp.toPx())) }
             .semantics {
-                contentDescription = listOfNotNull(label, hint).joinToString(". ")
                 if (counter != null) stateDescription = counter
                 if (error != null) this.error(error)
             },
@@ -319,15 +306,12 @@ private fun Field(
             }
         },
     )
-}
-
-@Composable
-private fun ColumnScope.Counter(text: String, min: Int, max: Int) {
-    val n = reportLength(text)
-    Text(
-        counterText(n, min, max), Modifier.align(Alignment.End).clearAndSetSemantics { }, fontFamily = FontFamily.Monospace, fontSize = 11.5.sp,
-        color = if (n in 1 until min) PolColors.current.fragile else MaterialTheme.colorScheme.onSurfaceVariant,
-    )
+    if (counter != null && min != null) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+        Text(
+            counter, Modifier.clearAndSetSemantics { }, fontFamily = FontFamily.Monospace, fontSize = 11.5.sp,
+            color = if (n in 1 until min) PolColors.current.fragile else scheme.onSurfaceVariant,
+        )
+    }
 }
 
 /** Case pixel de 18 dp et phrase d'engagement ; toute la ligne coche. */
@@ -387,4 +371,4 @@ private fun Notice(ok: Boolean, vararg lines: String, bold: Boolean = false) {
 
 @Composable
 private fun Key(label: String, onClick: () -> Unit) =
-    PixelKey(onClick, label) { Text(label, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface) }
+    PixelKey(onClick, label) { Text(label, fontSize = 14.sp, lineHeight = 16.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface) }

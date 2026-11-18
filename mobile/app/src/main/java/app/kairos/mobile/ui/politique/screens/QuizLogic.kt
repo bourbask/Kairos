@@ -6,7 +6,6 @@ import app.kairos.mobile.ui.politique.kit.verdictLabel
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.atan2
-import kotlin.math.ceil
 import kotlin.math.cos
 import kotlin.math.floor
 import kotlin.math.hypot

@@ -231,7 +231,7 @@ fun PhrasesScreen(data: PolData, nav: PolNavigator) {
             Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = scheme.surface, tonalElevation = 1.dp) {
                 Column(Modifier.clickable(role = Role.Button) { defs = !defs }.padding(horizontal = 14.dp, vertical = 12.dp)) {
                     Text("Que veulent dire les verdicts ?", fontWeight = FontWeight.SemiBold, modifier = Modifier.heightIn(min = 24.dp))
-                    if (defs && bareme != null) bareme.verdicts.forEach { bv ->
+                    if (defs) bareme.verdicts.forEach { bv ->
                         Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                             VerdictChip(bv.id, label = verdictName(bareme, bv.id))
                             Text(bv.definition, Modifier.weight(1f), fontSize = 13.sp, color = scheme.onSurfaceVariant)
@@ -457,7 +457,7 @@ private fun VerdictKey(name: String, look: VerdictLook, why: Boolean, rear: Bool
         padding = PaddingValues(start = 9.dp, end = if (why) 5.dp else 9.dp),
     ) {
         Box(Modifier.size(6.dp).background(look.fg))
-        Text(name.uppercase(), color = look.fg, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.SemiBold, fontSize = 11.5.sp, letterSpacing = 0.05.em, maxLines = 1)
+        Text(name.uppercase(), color = look.fg, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.SemiBold, fontSize = 11.5.sp, lineHeight = 16.sp, letterSpacing = 0.05.em, maxLines = 1)
         if (why) Box(Modifier.size(16.dp).clip(StepCut).background(look.fg), contentAlignment = Alignment.Center) {
             Text(if (rear) "←" else "?", color = surface, fontWeight = FontWeight.Bold, fontSize = 12.sp, lineHeight = 12.sp)
         }
@@ -539,10 +539,10 @@ private fun ClaimBack(claim: Claim, nav: PolNavigator, bareme: Bareme?, look: Ve
             }
         }
         if (bareme != null || validClaimId(claim.id)) FlowRow(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (bareme != null) PixelKey({ nav.sheet(PolSheetState.Bareme) }, "Notre barème") { Text("Notre barème", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = scheme.onSurface) }
+            if (bareme != null) PixelKey({ nav.sheet(PolSheetState.Bareme) }, "Notre barème") { Text("Notre barème", fontSize = 13.sp, lineHeight = 16.sp, fontWeight = FontWeight.SemiBold, color = scheme.onSurface) }
             if (validClaimId(claim.id)) PixelKey({ nav.sheet(PolSheetState.Report(claim.id)) }, "Signaler une erreur") {
                 PixelGrid(FLAG_GRID, scheme.onSurface, Modifier.size(8.dp, 9.dp))
-                Text("Signaler une erreur", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = scheme.onSurface)
+                Text("Signaler une erreur", fontSize = 13.sp, lineHeight = 16.sp, fontWeight = FontWeight.SemiBold, color = scheme.onSurface)
             }
         }
     }

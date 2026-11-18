@@ -45,6 +45,7 @@ class ClaimsTest {
         assertEquals("Vrai (barème)", verdictName(b, "solide"))
         assertEquals("Déf faux", verdictDefinition(b, "faux"))
         assertEquals(2, verdictThirds(b, "faux"))
+        assertEquals(2, verdictThirds(b, "plutot-vrai"))
         assertEquals(listOf(1), b.confiance.map { it.niveau })
         assertEquals("Principe fictif.", b.principe)
         assertNull(baremeOf(PolData(emptyMap())))

@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -114,7 +115,7 @@ fun PixelKey(
         Row(
             Modifier
                 .offset(y = drop.dp)
-                .height(30.dp)
+                .heightIn(min = 30.dp)
                 .widthIn(min = 30.dp)
                 .clip(StepCut)
                 .drawBehind {

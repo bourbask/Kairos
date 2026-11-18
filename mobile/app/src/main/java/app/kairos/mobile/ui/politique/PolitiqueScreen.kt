@@ -226,7 +226,7 @@ fun PolitiqueScreen(
         return
     }
 
-    val noFiche: (String) -> Unit = { navigator.sheet(PolSheetState.NoFiche(it)) }
+    val noFiche: (String) -> Unit = remember { { navigator.sheet(PolSheetState.NoFiche(it)) } }
     SpaceScaffold(
         when (route) {
             PolRoute.Home, PolRoute.Site -> "Politique"
