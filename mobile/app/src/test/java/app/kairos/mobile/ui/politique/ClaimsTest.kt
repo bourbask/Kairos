@@ -131,6 +131,7 @@ class ClaimsTest {
 
     @Test fun share_link_keeps_only_origin_and_anchor() {
         assertEquals("https://site.example/#a-phrase-exemple", claimLink("https://site.example/entrer#jeton-fictif", "phrase-exemple"))
+        assertEquals("https://site.example/#a-phrase-exemple", claimLink("https://site.example/x?t=1#y", "phrase-exemple"))
         assertNull(claimLink(null, "phrase-exemple"))
         assertNull(claimLink("pas une adresse", "phrase-exemple"))
         listOf("", "ab", "Phrase", "a b c", "../x", "x".repeat(61)).forEach { assertNull(it, claimLink("https://site.example/", it)) }

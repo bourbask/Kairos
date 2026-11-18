@@ -4,6 +4,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
@@ -29,6 +30,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -73,6 +75,8 @@ fun PixelKey(
     enabled: Boolean = true,
     fg: Color = MaterialTheme.colorScheme.onSurface,
     bg: Color = MaterialTheme.colorScheme.let { mix(it.surface, it.onSurface, .08f) },
+    /** Fond au survol ; neutre par défaut, une touche teintée passe le sien. */
+    hoverBg: Color = MaterialTheme.colorScheme.let { mix(it.surface, it.onSurface, .15f) },
     focusRequester: FocusRequester? = null,
     padding: PaddingValues = PaddingValues(horizontal = 11.dp),
     content: @Composable RowScope.() -> Unit,
@@ -82,19 +86,19 @@ fun PixelKey(
     val hovered by src.collectIsHoveredAsState()
     val pressed by src.collectIsPressedAsState()
     val focused by src.collectIsFocusedAsState()
-    val live = enabled
-    val drop = if (!live) 0 else if (pressed) 2 else if (hovered) 1 else 0
-    val relief = if (!live) 2 else if (pressed) 0 else if (hovered) 1 else 2
-    // Survol : fond plus soutenu ; la touche neutre suit la maquette, la touche teintée fonce vers sa propre encre.
-    val face = if (live && hovered && !pressed) {
-        if (fg == scheme.onSurface) mix(scheme.surface, scheme.onSurface, .15f) else mix(bg, fg, .16f)
-    } else bg
+    val drop = if (!enabled) 0 else if (pressed) 2 else if (hovered) 1 else 0
+    val relief = if (!enabled) 2 else if (pressed) 0 else if (hovered) 1 else 2
+    val face = if (enabled && hovered && !pressed) hoverBg else bg
     val reliefColor = mix(bg, scheme.onSurface, .22f)
     Box(
         modifier
             .minimumInteractiveComponentSize()
-            .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
+            // Focalisable aussi en mode tactile (le focus y est rendu après un retournement) : la cible de focus du clic,
+            // limitée au mode clavier, est coupée au profit d'un `focusable` placé dessous, dont le clic reçoit les touches.
+            .focusProperties { canFocus = false }
             .clickable(src, indication = null, enabled = enabled, role = Role.Button, onClick = onClick)
+            .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
+            .focusable(enabled, src)
             .clearAndSetSemantics { contentDescription = label; if (!enabled) disabled() },
         contentAlignment = Alignment.Center,
     ) {

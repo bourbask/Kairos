@@ -6,6 +6,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.util.Log
 import android.widget.Toast
 import androidx.compose.foundation.border
 import androidx.compose.material3.Icon
@@ -15,6 +16,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
@@ -85,6 +87,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
@@ -404,10 +407,15 @@ fun ClaimSheet(data: PolData, claim: Claim, nav: PolNavigator, onDismiss: () -> 
     var size by remember { mutableStateOf(IntSize.Zero) }
     val frontKey = remember { FocusRequester() }
     val rearKey = remember { FocusRequester() }
+    val view = LocalView.current
     LaunchedEffect(flips) {
         if (flips == 0) return@LaunchedEffect
+        // La touche activée vient de sortir de la sémantique : la face qui apparaît est annoncée, puis sa touche verdict prend le focus.
+        @Suppress("DEPRECATION")
+        view.announceForAccessibility(if (back) "Pourquoi ce verdict. « ${claim.q} » est ${name.lowercase()}." else "Retour aux faits. « ${claim.q} »")
         withFrameNanos { }
-        runCatching { (if (back) rearKey else frontKey).requestFocus() }
+        // Échec signalé, sans texte de lecteur ; l'annonce ci-dessus a déjà renseigné TalkBack.
+        if (!(if (back) rearKey else frontKey).requestFocus()) Log.w("Politique", "focus de la touche verdict refusé après retournement")
     }
     fun flip() {
         if (!why || turnT != null) return
@@ -444,7 +452,7 @@ fun ClaimSheet(data: PolData, claim: Claim, nav: PolNavigator, onDismiss: () -> 
 private fun VerdictKey(name: String, look: VerdictLook, why: Boolean, rear: Boolean, focus: FocusRequester, onFlip: () -> Unit) {
     val surface = MaterialTheme.colorScheme.surface
     PixelKey(
-        onFlip, verdictKeyLabel(name, why, rear), enabled = why, fg = look.fg, bg = look.bg, focusRequester = focus,
+        onFlip, verdictKeyLabel(name, why, rear), enabled = why, fg = look.fg, bg = look.bg, hoverBg = mix(look.bg, look.fg, .16f), focusRequester = focus,
         padding = PaddingValues(start = 9.dp, end = if (why) 5.dp else 9.dp),
     ) {
         Box(Modifier.size(6.dp).background(look.fg))
@@ -471,7 +479,7 @@ private fun ClaimFront(data: PolData, claim: Claim, nav: PolNavigator, bareme: B
             }
             key(false)
         }
-        if (!hasWhy(claim)) Text("justification en cours", Modifier.padding(top = 2.dp), fontSize = 12.sp, color = scheme.onSurfaceVariant)
+        if (!hasWhy(claim)) Text("justification en cours", Modifier.padding(top = 2.dp).clearAndSetSemantics { }, fontSize = 12.sp, color = scheme.onSurfaceVariant)
         data.idOf(claim.camp)?.let { id -> Box(Modifier.padding(top = 8.dp)) { IdentityChip(data, id, text = claim.camp, onClick = { nav.sheet(PolSheetState.Identity(id)) }) } }
         if (claim.camp.isBlank() && claim.camp_note.isNotBlank()) Text(claim.camp_note, Modifier.padding(top = 6.dp), fontSize = 12.5.sp, color = scheme.onSurfaceVariant)
         Text("« ${frTypo(claim.q)} »", Modifier.padding(top = 10.dp).semantics { heading() }, fontSize = 22.sp, lineHeight = 27.sp, fontWeight = FontWeight.Bold)
