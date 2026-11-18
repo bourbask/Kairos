@@ -15,7 +15,7 @@ use axum::{
 use serde_json::json;
 
 use super::limite::Limiteur;
-use super::store::{Depot, Store};
+use super::store::{Depot, Recu, Store};
 use super::validation::{Brut, valider};
 use crate::donnees::Donnees;
 
@@ -62,6 +62,10 @@ fn refus(champ: &str, message: &str) -> Response {
     (StatusCode::BAD_REQUEST, Json(json!({"champ": champ, "message": message}))).into_response()
 }
 
+fn cree(recu: &Recu, restant: u32) -> Response {
+    (StatusCode::CREATED, Json(json!({"reference": recu.reference, "recu_a": recu.recu_a, "restant": restant}))).into_response()
+}
+
 async fn deposer(State(e): State<PublicState>, headers: HeaderMap, corps: Bytes) -> Response {
     let Some(session) = session(&headers) else { return StatusCode::UNAUTHORIZED.into_response() };
     let Some(idem) = idempotence(&headers) else {
@@ -74,21 +78,24 @@ async fn deposer(State(e): State<PublicState>, headers: HeaderMap, corps: Bytes)
         Err(r) => return refus(r.champ, r.message),
     };
     let maintenant = (e.now)();
+    // Un renvoi du même formulaire garde sa référence, même à la limite, sans consommer de quota.
+    if let Some(recu) = e.store.rejeu(idem, maintenant) {
+        return cree(&recu, e.limiteur.verifier(session, maintenant).unwrap_or(0));
+    }
     let restant = match e.limiteur.verifier(session, maintenant) {
         Ok(r) => r,
         Err(minutes) => return (StatusCode::TOO_MANY_REQUESTS, Json(json!({"attente_min": minutes}))).into_response(),
     };
     match e.store.deposer(&s, idem, maintenant, e.plafond_jour) {
         Ok(recu) => {
-            // Un renvoi du même formulaire ne consomme pas de quota.
+            // Rejeu concurrent passé entre la lecture et l'écriture : pas de quota consommé.
             let restant = if recu.nouveau {
                 e.limiteur.noter(session, maintenant);
                 restant - 1
             } else {
                 restant
             };
-            let corps = json!({"reference": recu.reference, "recu_a": recu.recu_a, "restant": restant});
-            (StatusCode::CREATED, Json(corps)).into_response()
+            cree(&recu, restant)
         }
         Err(Depot::Plafond) => (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"ferme": true}))).into_response(),
         Err(Depot::Erreur(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
@@ -231,6 +238,22 @@ mod tests {
         // Autre session : non limitée.
         let r = envoyer(&e, Some("autre"), Some(&cle(11)), corps().to_string()).await;
         assert_eq!(r.status(), StatusCode::CREATED);
+    }
+
+    #[tokio::test]
+    async fn rejeu_du_dixieme_201() {
+        let e = etat(200);
+        let mut dixieme = Value::Null;
+        for n in 0..10 {
+            dixieme = json_de(envoyer(&e, Some("sess"), Some(&cle(n)), corps().to_string()).await).await;
+        }
+        let r = envoyer(&e, Some("sess"), Some(&cle(9)), corps().to_string()).await;
+        assert_eq!(r.status(), StatusCode::CREATED);
+        no_store(&r);
+        let v = json_de(r).await;
+        assert_eq!(v, dixieme);
+        assert_eq!(v["restant"], 0);
+        assert_eq!(e.store.lister(Default::default(), 20).len(), 10);
     }
 
     #[tokio::test]
