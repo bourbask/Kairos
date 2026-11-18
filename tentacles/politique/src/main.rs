@@ -19,6 +19,7 @@ fn maintenant() -> i64 {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    tracing_subscriber::fmt().with_writer(std::io::stderr).with_ansi(false).init();
     let env = TentacleEnv::from_env("POLITIQUE")?;
     let dir = var("POLITIQUE_DONNEES").context("variable POLITIQUE_DONNEES absente ou vide")?;
     let donnees = Arc::new(Donnees::new(dir));
@@ -36,7 +37,7 @@ async fn main() -> anyhow::Result<()> {
             None => 200,
             Some(v) => v.parse::<u32>().ok().filter(|n| *n > 0).context("POLITIQUE_SIGNALEMENTS_PLAFOND_JOUR : entier positif attendu")?,
         };
-        let etat = public::PublicState { store: store.clone(), limiteur: limiteur.clone(), donnees: donnees.clone(), plafond_jour, now: maintenant };
+        let etat = public::PublicState { store: store.clone(), limiteur: limiteur.clone(), donnees: donnees.clone(), plafond_jour, now: maintenant, comptes: Default::default() };
         ecouteur = Some((tokio::net::TcpListener::bind(bind).await?, public::router(etat)));
         signalements = Some((store, limiteur));
     }

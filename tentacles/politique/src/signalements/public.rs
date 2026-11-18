@@ -1,7 +1,7 @@
 //! Écouteur public : dépôt d'un signalement par un lecteur en session. Ni le corps, ni les
 //! en-têtes, ni le cookie ne sont journalisés ; les erreurs ne renvoient jamais le contenu reçu.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use axum::{
     Router,
@@ -30,6 +30,43 @@ pub struct PublicState {
     pub donnees: Arc<Donnees>,
     pub plafond_jour: u32,
     pub now: fn() -> i64,
+    pub comptes: Arc<Comptes>,
+}
+
+#[derive(Clone, Copy)]
+pub enum Evenement {
+    Depose,
+    Refuse,
+    Limite,
+    Ferme,
+}
+
+/// Comptes du jour UTC en mémoire : déposés, refusés, limités, fermés pour plafond.
+#[derive(Default)]
+pub struct Comptes(Mutex<(i64, [u32; 4])>);
+
+impl Comptes {
+    /// Compte l'événement et journalise une ligne de comptes à chaque événement :
+    /// des nombres seulement, jamais de contenu, d'en-tête ni de cookie.
+    pub fn compter(&self, maintenant: i64, ev: Evenement) -> [u32; 4] {
+        let mut g = self.0.lock().unwrap_or_else(|p| p.into_inner());
+        let jour = maintenant.div_euclid(86_400);
+        if g.0 != jour {
+            *g = (jour, [0; 4]);
+        }
+        g.1[ev as usize] += 1;
+        let [deposes, refuses, limites, fermes] = g.1;
+        tracing::info!(deposes, refuses, limites, fermes, "signalements du jour");
+        g.1
+    }
+}
+
+/// Genre d'une erreur de stockage, sans son texte (qui pourrait citer une valeur).
+fn genre(e: &anyhow::Error) -> String {
+    match e.downcast_ref::<rusqlite::Error>() {
+        Some(r) => r.sqlite_error_code().map_or_else(|| "sqlite".into(), |c| format!("{c:?}")),
+        None => "autre".into(),
+    }
 }
 
 pub fn router(etat: PublicState) -> Router {
@@ -67,38 +104,49 @@ fn cree(recu: &Recu, restant: u32) -> Response {
 }
 
 async fn deposer(State(e): State<PublicState>, headers: HeaderMap, corps: Bytes) -> Response {
-    let Some(session) = session(&headers) else { return StatusCode::UNAUTHORIZED.into_response() };
-    let Some(idem) = idempotence(&headers) else {
-        return refus("idempotency_key", "En-tête Idempotency-Key requis : 16 à 64 caractères [A-Za-z0-9-].");
+    let maintenant = (e.now)();
+    let (ev, r) = traiter(&e, &headers, &corps, maintenant);
+    if let Some(ev) = ev {
+        e.comptes.compter(maintenant, ev);
+    }
+    r
+}
+
+fn traiter(e: &PublicState, headers: &HeaderMap, corps: &[u8], maintenant: i64) -> (Option<Evenement>, Response) {
+    use Evenement::*;
+    let Some(session) = session(headers) else { return (Some(Refuse), StatusCode::UNAUTHORIZED.into_response()) };
+    let Some(idem) = idempotence(headers) else {
+        return (Some(Refuse), refus("idempotency_key", "En-tête Idempotency-Key requis : 16 à 64 caractères [A-Za-z0-9-]."));
     };
     // Texte de l'erreur de décodage non renvoyé : il peut citer le contenu reçu.
-    let Ok(brut) = serde_json::from_slice::<Brut>(&corps) else { return refus("corps", "Formulaire illisible.") };
+    let Ok(brut) = serde_json::from_slice::<Brut>(corps) else { return (Some(Refuse), refus("corps", "Formulaire illisible.")) };
     let s = match valider(brut, &e.donnees.etat()) {
         Ok(s) => s,
-        Err(r) => return refus(r.champ, r.message),
+        Err(r) => return (Some(Refuse), refus(r.champ, r.message)),
     };
-    let maintenant = (e.now)();
     // Un renvoi du même formulaire garde sa référence, même à la limite, sans consommer de quota.
-    if let Some(recu) = e.store.rejeu(idem, maintenant) {
-        return cree(&recu, e.limiteur.verifier(session, maintenant).unwrap_or(0));
+    match e.store.rejeu(idem, maintenant) {
+        Ok(Some(recu)) => return (None, cree(&recu, e.limiteur.verifier(session, maintenant).unwrap_or(0))),
+        Ok(None) => {}
+        // Le dépôt refait sa propre vérification : on poursuit.
+        Err(err) => tracing::warn!(genre = %genre(&err), "signalements : lecture de rejeu en échec"),
     }
     let restant = match e.limiteur.verifier(session, maintenant) {
         Ok(r) => r,
-        Err(minutes) => return (StatusCode::TOO_MANY_REQUESTS, Json(json!({"attente_min": minutes}))).into_response(),
+        Err(minutes) => return (Some(Limite), (StatusCode::TOO_MANY_REQUESTS, Json(json!({"attente_min": minutes}))).into_response()),
     };
     match e.store.deposer(&s, idem, maintenant, e.plafond_jour) {
+        // Rejeu concurrent passé entre la lecture et l'écriture : pas de quota consommé.
+        Ok(recu) if !recu.nouveau => (None, cree(&recu, restant)),
         Ok(recu) => {
-            // Rejeu concurrent passé entre la lecture et l'écriture : pas de quota consommé.
-            let restant = if recu.nouveau {
-                e.limiteur.noter(session, maintenant);
-                restant - 1
-            } else {
-                restant
-            };
-            cree(&recu, restant)
+            e.limiteur.noter(session, maintenant);
+            (Some(Depose), cree(&recu, restant - 1))
         }
-        Err(Depot::Plafond) => (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"ferme": true}))).into_response(),
-        Err(Depot::Erreur(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        Err(Depot::Plafond) => (Some(Ferme), (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"ferme": true}))).into_response()),
+        Err(Depot::Erreur(err)) => {
+            tracing::error!(genre = %genre(&err), "signalements : dépôt en échec");
+            (None, StatusCode::INTERNAL_SERVER_ERROR.into_response())
+        }
     }
 }
 
@@ -137,6 +185,7 @@ mod tests {
             donnees: Arc::new(Donnees::new(dossier())),
             plafond_jour: plafond,
             now: || T0,
+            comptes: Arc::default(),
         }
     }
 
@@ -254,6 +303,14 @@ mod tests {
         assert_eq!(v, dixieme);
         assert_eq!(v["restant"], 0);
         assert_eq!(e.store.lister(Default::default(), 20).len(), 10);
+    }
+
+    #[test]
+    fn comptes_remis_a_zero_chaque_jour() {
+        let c = Comptes::default();
+        c.compter(T0, Evenement::Depose);
+        c.compter(T0, Evenement::Refuse);
+        assert_eq!(c.compter(T0 + 86_400, Evenement::Limite), [0, 0, 1, 0]);
     }
 
     #[tokio::test]

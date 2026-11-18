@@ -150,14 +150,15 @@ impl Store {
     }
 
     /// Reçu d'une clé déjà déposée dans l'heure, sans rien écrire.
-    pub fn rejeu(&self, idem: &str, maintenant: i64) -> Option<Recu> {
-        self.conn()
+    pub fn rejeu(&self, idem: &str, maintenant: i64) -> anyhow::Result<Option<Recu>> {
+        Ok(self
+            .conn()
             .query_row(
                 "SELECT reference, recu_a FROM idempotence WHERE cle=?1 AND recu_a > ?2",
                 params![idem, maintenant - FENETRE_IDEM],
                 |r| Ok(Recu { reference: r.get(0)?, recu_a: r.get(1)?, nouveau: false }),
             )
-            .ok()
+            .optional()?)
     }
 
     pub fn deposer(
@@ -294,11 +295,11 @@ mod tests {
     #[test]
     fn rejeu_lecture_seule() {
         let b = base();
-        assert_eq!(b.rejeu("k", J), None);
+        assert_eq!(b.rejeu("k", J).unwrap(), None);
         let a = b.deposer(&sig(), "k", J, 10).unwrap();
-        let r = b.rejeu("k", J + 3000).unwrap();
+        let r = b.rejeu("k", J + 3000).unwrap().unwrap();
         assert_eq!((r.reference, r.recu_a, r.nouveau), (a.reference, J, false));
-        assert_eq!(b.rejeu("k", J + 3600), None, "fenêtre d'une heure");
+        assert_eq!(b.rejeu("k", J + 3600).unwrap(), None, "fenêtre d'une heure");
         assert_eq!(b.lister(Filtre::default(), 10).len(), 1);
     }
 

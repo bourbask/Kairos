@@ -1523,6 +1523,8 @@ dependencies = [
  "tentacle-common",
  "tokio",
  "tower",
+ "tracing",
+ "tracing-subscriber",
  "unicode-normalization",
 ]
 
