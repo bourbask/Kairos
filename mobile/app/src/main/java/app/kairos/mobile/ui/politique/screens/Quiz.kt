@@ -80,6 +80,7 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.traversalIndex
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
@@ -480,17 +481,22 @@ private fun QuizGame(data: PolData, nav: PolNavigator, claims: List<Claim>, camp
         }
 
         // Voyants de part et d'autre de la pile, par-dessus une feuille en mouvement.
+        // Colonne étroite (45 dp) : la zone tactile déborde de 3 dp côté carte pour atteindre 48 dp ; le tracé ne bouge pas.
         val narrow = fit.side < 26
+        val reach = if (narrow) 3.dp else 0.dp
         listOf(LED_LEFT to Alignment.TopStart, LED_RIGHT to Alignment.TopEnd).forEach { (gs, at) ->
+            val right = at == Alignment.TopEnd
             Column(
-                Modifier.align(at).offset(y = cd * fit.ledTop).width(cd * fit.side)
-                    .ledPlate(cd * (fit.ledTop - reserve)).semantics { isTraversalGroup = true },
+                Modifier.align(at).offset(y = cd * fit.ledTop).width(cd * fit.side + reach)
+                    .ledPlate(cd * (fit.ledTop - reserve), cd * fit.side, atEnd = right)
+                    .semantics { isTraversalGroup = true; traversalIndex = 1f },
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 gs.forEach { g ->
                     LedButton(
                         g, if (g == ledGuess) ledLevel else 0, if (g == ledGuess) blinkOn else true, enabled = !revealed,
                         onClick = { answer(g) }, modifier = Modifier.fillMaxWidth(), narrow = narrow,
+                        inset = if (right) PaddingValues(start = reach) else PaddingValues(end = reach),
                     )
                 }
             }
@@ -500,10 +506,11 @@ private fun QuizGame(data: PolData, nav: PolNavigator, claims: List<Claim>, camp
 
 /**
  * Plaque de métal pixel derrière une colonne de voyants : relief, dessus en retrait, liseré clair, quatre rivets,
- * suspendue par deux fils qui montent de [hang] jusqu'au haut de la zone de jeu. Dessinée hors des bornes de la colonne.
+ * suspendue par deux fils qui montent de [hang] jusqu'au haut de la zone de jeu. Large de [plate], côté bord de l'écran
+ * ([atEnd] : à droite) ; dessinée hors des bornes de la colonne.
  */
 @Composable
-private fun Modifier.ledPlate(hang: Dp): Modifier {
+private fun Modifier.ledPlate(hang: Dp, plate: Dp, atEnd: Boolean): Modifier {
     val sc = MaterialTheme.colorScheme
     val dark = sc.background.luminance() < 0.5f
     val pl = mix(sc.surface, sc.onSurface, .13f)
@@ -512,18 +519,19 @@ private fun Modifier.ledPlate(hang: Dp): Modifier {
     val pw = mix(sc.surface, sc.onSurface, .42f)
     return drawBehind {
         val d = 1.dp.toPx()
-        val w = size.width
+        val w = plate.toPx()
+        val x0 = if (atEnd) size.width - w else 0f
         val top = -6 * d
         val bottom = size.height + 12 * d
         val wireTop = -hang.toPx()
         if (top > wireTop) {
-            drawRect(pw, Offset(12 * d, wireTop), Size(2 * d, top - wireTop))
-            drawRect(pw, Offset(w - 14 * d, wireTop), Size(2 * d, top - wireTop))
+            drawRect(pw, Offset(x0 + 12 * d, wireTop), Size(2 * d, top - wireTop))
+            drawRect(pw, Offset(x0 + w - 14 * d, wireTop), Size(2 * d, top - wireTop))
         }
-        drawRect(pr, Offset(0f, top), Size(w, bottom - top))
-        drawRect(pl, Offset(2 * d, top + 2 * d), Size(w - 4 * d, bottom - top - 8 * d))
-        drawRect(ph, Offset(2 * d, top + 2 * d), Size(w - 4 * d, 2 * d))
-        for (x in listOf(6 * d, w - 8 * d)) for (y in listOf(top + 6 * d, bottom - 12 * d)) drawRect(pr, Offset(x, y), Size(2 * d, 2 * d))
+        drawRect(pr, Offset(x0, top), Size(w, bottom - top))
+        drawRect(pl, Offset(x0 + 2 * d, top + 2 * d), Size(w - 4 * d, bottom - top - 8 * d))
+        drawRect(ph, Offset(x0 + 2 * d, top + 2 * d), Size(w - 4 * d, 2 * d))
+        for (x in listOf(6 * d, w - 8 * d)) for (y in listOf(top + 6 * d, bottom - 12 * d)) drawRect(pr, Offset(x0 + x, y), Size(2 * d, 2 * d))
     }
 }
 
@@ -593,7 +601,7 @@ private fun arrowGrid(dir: Arrow): List<String> {
 
 /** Voyant-flèche : allumé en 3 crans ([level]), halo au dernier ; c'est aussi un bouton qui répond sans glisser. */
 @Composable
-private fun LedButton(g: Guess, level: Int, lit: Boolean, enabled: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier, narrow: Boolean = false) {
+private fun LedButton(g: Guess, level: Int, lit: Boolean, enabled: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier, narrow: Boolean = false, inset: PaddingValues = PaddingValues(0.dp)) {
     val sc = MaterialTheme.colorScheme
     val dark = sc.background.luminance() < 0.5f
     val gi = guessInk(g)
@@ -606,7 +614,7 @@ private fun LedButton(g: Guess, level: Int, lit: Boolean, enabled: Boolean, onCl
     val side = with(LocalDensity.current) { (LED_SIZE * s).toDp() }
     Column(
         modifier.heightIn(min = 58.dp).clickable(enabled = enabled, role = Role.Button, onClick = onClick)
-            .semantics { contentDescription = g.label; if (!enabled) disabled() },
+            .semantics { contentDescription = g.label; if (!enabled) disabled() }.padding(inset),
         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.Bottom),
     ) {
         Canvas(Modifier.size(side).alpha(if (lit) 1f else .35f)) {

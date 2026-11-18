@@ -153,9 +153,13 @@ class QuizTest {
         assertEquals(26, wide.side); assertEquals(TRACT_W, wide.cw); assertTrue(wide.x0 >= wide.side + 7)
         val narrow = sideFit(120, 260, 12)
         assertEquals(15, narrow.side); assertEquals(120 - 2 * (15 + 7), narrow.cw); assertEquals(22, narrow.x0)
+        assertEquals(15, sideFit(149, 260, 12).side)
+        assertEquals(26, sideFit(150, 260, 12).side)
         val low = sideFit(200, 80, 12)
         assertTrue(low.y0 + low.ch <= 80 && low.cw >= 40 && low.y0 >= 12)
-        assertEquals(wide.y0 + Math.round(wide.ch * .06f), wide.ledTop)
+        // Colonne (deux voyants de 59 dp, 10 dp d'écart) et plaque (12 dp dessous), en cellules de 3 dp : 47.
+        assertTrue(low.ledTop + 47 <= 80)
+        assertEquals(wide.y0 + Math.round(wide.ch * .06).toInt(), wide.ledTop)
     }
 
     @Test fun led_columns_read_like_the_site() {
