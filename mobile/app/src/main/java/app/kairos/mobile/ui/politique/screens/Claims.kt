@@ -24,6 +24,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.em
 import app.kairos.mobile.ui.kit.KairosIcons
+import app.kairos.mobile.ui.politique.jeux.kit.PixelGrid
 import app.kairos.mobile.ui.politique.jeux.kit.cellPx
 import app.kairos.mobile.ui.politique.kit.CARD_MOTIF
 import app.kairos.mobile.ui.politique.kit.ConfidenceBars
@@ -537,8 +538,12 @@ private fun ClaimBack(claim: Claim, nav: PolNavigator, bareme: Bareme?, look: Ve
                 used.forEach { n -> MonoLabel("Fait $n", scheme.onSurface, Modifier.clip(StepCut).background(scheme.surface).padding(horizontal = 7.dp, vertical = 3.dp)) }
             }
         }
-        if (bareme != null) Row(Modifier.padding(top = 12.dp)) {
-            PixelKey({ nav.sheet(PolSheetState.Bareme) }, "Notre barème") { Text("Notre barème", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = scheme.onSurface) }
+        if (bareme != null || validClaimId(claim.id)) FlowRow(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (bareme != null) PixelKey({ nav.sheet(PolSheetState.Bareme) }, "Notre barème") { Text("Notre barème", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = scheme.onSurface) }
+            if (validClaimId(claim.id)) PixelKey({ nav.sheet(PolSheetState.Report(claim.id)) }, "Signaler une erreur") {
+                PixelGrid(FLAG_GRID, scheme.onSurface, Modifier.size(8.dp, 9.dp))
+                Text("Signaler une erreur", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = scheme.onSurface)
+            }
         }
     }
 }

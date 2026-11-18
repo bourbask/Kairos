@@ -208,3 +208,12 @@ private val RECEIPT_TIME = DateTimeFormatter.ofPattern("d MMMM yyyy 'à' HH:mm",
 /** [at] : secondes depuis l'époque, comme `recu_a`. */
 fun receiptLine(ref: String, at: Long, zone: ZoneId): String =
     "Référence $ref, reçu le ${RECEIPT_TIME.format(Instant.ofEpochSecond(at).atZone(zone))}."
+
+/** Compteur d'un champ : « n / max », et ce qui manque tant que le minimum n'est pas atteint. */
+fun counterText(n: Int, min: Int, max: Int): String =
+    "$n / $max" + if (n in 1 until min) (min - n).let { " · encore $it caractère${if (it > 1) "s" else ""} au moins" } else ""
+
+/** Mention d'anonymat, puis les envois restants cette heure ([left] inconnu avant le premier envoi). */
+fun anonymityNote(left: Int?): String =
+    "Anonyme : ni adresse IP, ni compte, ni identifiant ne sont gardés. Seuls le contenu, l'affirmation visée et l'heure d'envoi sont enregistrés." +
+        if (left == null) " 10 envois par heure au plus." else { val s = if (left > 1) "s" else ""; " $left envoi$s possible$s encore cette heure." }

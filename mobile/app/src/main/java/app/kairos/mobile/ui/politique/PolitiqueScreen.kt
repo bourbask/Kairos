@@ -76,6 +76,7 @@ import app.kairos.mobile.ui.politique.screens.OriginesScreen
 import app.kairos.mobile.ui.politique.screens.PromessesScreen
 import app.kairos.mobile.ui.politique.screens.ReportQuota
 import app.kairos.mobile.ui.politique.screens.ReportReceipt
+import app.kairos.mobile.ui.politique.screens.ReportSheet
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import androidx.compose.runtime.DisposableEffect
@@ -325,6 +326,7 @@ fun SheetHost(s: PolSheetState, data: PolData, nav: PolNavigator, onDismiss: () 
         is PolSheetState.Rhet -> RhetSheetAt(data, s.t, nav, onDismiss)
         PolSheetState.Bareme -> BaremeSheet(data, onDismiss)
         is PolSheetState.NoFiche -> NoFicheSheet(s.name, onDismiss)
+        is PolSheetState.Report -> ReportSheet(data, s.claimId, nav, onDismiss)
     }
 }
 

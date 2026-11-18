@@ -122,4 +122,19 @@ class ReportTest {
 
     @Test fun receipt_line_in_french() =
         assertEquals("Référence S-261118-001, reçu le 18 novembre 2026 à 14:05.", receiptLine("S-261118-001", 1795010700, ZoneId.of("UTC")))
+
+    @Test fun counter_shows_what_remains_below_minimum() {
+        assertEquals("12 / 400 · encore 18 caractères au moins", counterText(12, 30, 400))
+        assertEquals("0 / 400", counterText(0, 30, 400))
+        assertEquals("31 / 400", counterText(31, 30, 400))
+        assertEquals("29 / 400 · encore 1 caractère au moins", counterText(29, 30, 400))
+    }
+
+    @Test fun anonymity_note_agrees_with_remaining_sends() {
+        assertTrue(anonymityNote(null).startsWith("Anonyme : ni adresse IP"))
+        assertTrue(anonymityNote(null).endsWith(" 10 envois par heure au plus."))
+        assertTrue(anonymityNote(1).endsWith(" 1 envoi possible encore cette heure."))
+        assertTrue(anonymityNote(0).endsWith(" 0 envoi possible encore cette heure."))
+        assertTrue(anonymityNote(9).endsWith(" 9 envois possibles encore cette heure."))
+    }
 }

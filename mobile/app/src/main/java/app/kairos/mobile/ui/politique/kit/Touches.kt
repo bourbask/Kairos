@@ -45,6 +45,8 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
@@ -66,6 +68,7 @@ val StepCut: Shape = object : Shape {
 /**
  * Touche pixel : 30 dp visibles, cible de 48 dp, relief bas qui s'écrase au survol puis à l'appui ; jamais d'élévation.
  * [label] est le nom accessible et remplace le contenu. Désactivée : inerte, même teinte.
+ * [selected] non null : touche de choix, enfoncée de 2 dp tant qu'elle est choisie.
  */
 @Composable
 fun PixelKey(
@@ -79,6 +82,7 @@ fun PixelKey(
     hoverBg: Color = MaterialTheme.colorScheme.let { mix(it.surface, it.onSurface, .15f) },
     focusRequester: FocusRequester? = null,
     padding: PaddingValues = PaddingValues(horizontal = 11.dp),
+    selected: Boolean? = null,
     content: @Composable RowScope.() -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
@@ -86,9 +90,10 @@ fun PixelKey(
     val hovered by src.collectIsHoveredAsState()
     val pressed by src.collectIsPressedAsState()
     val focused by src.collectIsFocusedAsState()
-    val drop = if (!enabled) 0 else if (pressed) 2 else if (hovered) 1 else 0
-    val relief = if (!enabled) 2 else if (pressed) 0 else if (hovered) 1 else 2
-    val face = if (enabled && hovered && !pressed) hoverBg else bg
+    val down = selected == true
+    val drop = if (down) 2 else if (!enabled) 0 else if (pressed) 2 else if (hovered) 1 else 0
+    val relief = if (down) 0 else if (!enabled) 2 else if (pressed) 0 else if (hovered) 1 else 2
+    val face = if (enabled && hovered && !pressed && !down) hoverBg else bg
     val reliefColor = mix(bg, scheme.onSurface, .22f)
     Box(
         modifier
@@ -96,10 +101,14 @@ fun PixelKey(
             // Focalisable aussi en mode tactile (le focus y est rendu après un retournement) : la cible de focus du clic,
             // limitée au mode clavier, est coupée au profit d'un `focusable` placé dessous, dont le clic reçoit les touches.
             .focusProperties { canFocus = false }
-            .clickable(src, indication = null, enabled = enabled, role = Role.Button, onClick = onClick)
+            .clickable(src, indication = null, enabled = enabled, role = if (selected != null) Role.RadioButton else Role.Button, onClick = onClick)
             .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
             .focusable(enabled, src)
-            .clearAndSetSemantics { contentDescription = label; if (!enabled) disabled() },
+            .clearAndSetSemantics {
+                contentDescription = label
+                selected?.let { role = Role.RadioButton; this.selected = it }
+                if (!enabled) disabled()
+            },
         contentAlignment = Alignment.Center,
     ) {
         Row(

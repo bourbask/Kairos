@@ -49,6 +49,8 @@ sealed interface PolSheetState {
     data object Bareme : PolSheetState
     /** Source signée par un nom sans fiche d'évaluateur. */
     data class NoFiche(val name: String) : PolSheetState
+    /** Signalement d'une erreur sur une affirmation, par son identifiant. */
+    data class Report(val claimId: String) : PolSheetState
 }
 
 /** Ce qu'un écran peut demander à la coque. */
