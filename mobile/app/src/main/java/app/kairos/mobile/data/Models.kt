@@ -40,6 +40,8 @@ data class Card(
     val done: CardDone? = null,
     /** État connu du module (« fait ») : prime sur l'absence de marque locale. */
     val state: String? = null,
+    /** Gestes secondaires proposés par le module (« Je mange dehors »…). */
+    val actions: List<CardAction> = emptyList(),
 ) {
     /** Identifiant unique dans le fil : deux modules peuvent émettre le même `id`. */
     val key: String get() = "$module/$id"
@@ -50,7 +52,20 @@ data class Card(
 
 /** Outil `app_*` du module à lancer quand la carte est faite. */
 @Serializable
-data class CardDone(val tool: String, val args: JsonObject = JsonObject(emptyMap()), val choices: DoneChoices? = null)
+data class CardDone(
+    val tool: String,
+    val args: JsonObject = JsonObject(emptyMap()),
+    val choices: DoneChoices? = null,
+    val count: DoneCount? = null,
+)
+
+/** Nombre facultatif saisi au pas à pas (portions obtenues…), ajouté sous [key] seulement s'il est saisi. */
+@Serializable
+data class DoneCount(val label: String = "", val key: String, val default: Int, val min: Int = 1, val max: Int = 100)
+
+/** Geste secondaire d'une carte : outil `app_*` du module, lancé tel quel. */
+@Serializable
+data class CardAction(val label: String, val tool: String, val args: JsonObject = JsonObject(emptyMap()))
 
 /** Valeur demandée avant l'action, ajoutée aux arguments sous [key]. */
 @Serializable

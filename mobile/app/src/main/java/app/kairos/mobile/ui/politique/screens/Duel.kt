@@ -121,6 +121,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.zIndex
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import app.kairos.mobile.ui.politique.IdentityBadge
@@ -187,15 +188,19 @@ internal class DuelInk(
 }
 
 @Composable
-internal fun duelInk(): DuelInk {
-    val s = MaterialTheme.colorScheme
-    val k = KairosColors.current
-    val p = PolColors.current
-    return DuelInk(
-        s.background.luminance() < 0.5f, s.primary, s.onPrimary, s.primaryContainer, s.onPrimaryContainer, s.surface, s.onSurface,
-        s.tertiary, k.attentionText, s.onSurfaceVariant, s.outlineVariant, k.btn, p.pour, p.contre,
-    )
-}
+internal fun duelInk(): DuelInk = duelInk(MaterialTheme.colorScheme, KairosColors.current, PolColors.current)
+
+internal fun duelInk(s: ColorScheme, k: KairosColors, p: PolColors) = DuelInk(
+    s.background.luminance() < 0.5f, s.primary, s.onPrimary, s.primaryContainer, s.onPrimaryContainer, s.surface, s.onSurface,
+    s.tertiary, k.attentionText, s.onSurfaceVariant, s.outlineVariant, k.btn, p.pour, p.contre,
+)
+
+/** Teintes d'un sujet dépliable : fond, encre, contour (qui sert aussi de flanc). */
+internal class TopicInk(val bg: Color, val fg: Color, val ring: Color)
+
+/** Sujet dépliable : bouton distinct de la carte au repos, enfoncé au conteneur principal une fois ouvert. */
+internal fun DuelInk.topic(open: Boolean) =
+    if (open) TopicInk(pc, onPc, mix(pc, ink, 0.6f)) else TopicInk(inked(0.08f), ink, inked(0.55f))
 
 /** Rectangle aux coins en marches ([steps] marches de [step]) ; [top] / [bottom] : coins coupés de ce côté. */
 internal class CutShape(private val step: Dp, private val top: Boolean = true, private val bottom: Boolean = true, private val steps: Int = 2) : Shape {
@@ -1542,14 +1547,25 @@ private fun TurnBody(f: Fight, i: Int, r: TurnRound) {
             val id = "tw${i}_${s}_$j"
             val on = open == id
             val rot by animateFloatAsState(if (on) 90f else 0f, tween(if (f.still) 0 else 200, easing = steps(2)), label = "chevron")
+            val src = remember { MutableInteractionSource() }
+            val down = on || src.collectIsPressedAsState().value
+            val tk = k.topic(on)
+            // Bouton pixel : flanc de 3 dp au repos ; l'appui ou l'état ouvert descend le dessus.
             Row(
-                Modifier.fillMaxWidth().heightIn(min = 48.dp).dashedBottom(k.line)
-                    .clickable(role = Role.Button) { open = if (on) null else id; if (!on) f.wins[id] = 0 }
-                    .semantics { stateDescription = if (on) "ouvert" else "fermé" },
+                Modifier.padding(top = 6.dp).fillMaxWidth().heightIn(min = 48.dp)
+                    .clickable(src, null, role = Role.Button) { open = if (on) null else id; if (!on) f.wins[id] = 0 }
+                    .semantics { stateDescription = if (on) "ouvert" else "fermé" }
+                    .padding(top = if (down) 3.dp else 0.dp, bottom = if (down) 0.dp else 3.dp)
+                    .drawBehind {
+                        val u = 1.dp.toPx()
+                        if (!down) drawRect(tk.ring, Offset(0f, size.height), Size(size.width, 3 * u))
+                        drawRect(tk.bg)
+                        insetBands(tk.ring, 2 * u, 2 * u, 2 * u, 2 * u)
+                    }.padding(horizontal = 10.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                Text(frTypo(t.s), Modifier.weight(1f), fontSize = 13.sp, lineHeight = 17.sp, fontWeight = FontWeight.SemiBold, color = if (on) k.pri else k.ink)
-                PxIcon("chev", if (on) k.pri else k.onsv, 12.dp, Modifier.graphicsLayer { rotationZ = rot })
+                Text(frTypo(t.s), Modifier.weight(1f), fontSize = 13.sp, lineHeight = 17.sp, fontWeight = FontWeight.SemiBold, color = tk.fg)
+                PxIcon("chev", tk.fg, 12.dp, Modifier.graphicsLayer { rotationZ = rot })
             }
             Unroll(on, f.still, 260, 5) {
                 Column(Modifier.padding(top = 8.dp, bottom = 10.dp)) {

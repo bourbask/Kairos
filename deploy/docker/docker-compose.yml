@@ -23,6 +23,7 @@ x-kairos-common: &kairos-common
     OLLAMA_URL: http://ollama:11434
     OLLAMA_MODEL: phi3:mini
     DATABASE_PATH: /app/data/kairos.db
+    AGENDA_EXPORT_DIR: /app/data/agenda-export   # occupations minimales, lues par alimentation
     BRIEFINGS_DIR: /app/briefings
     TZ: Europe/Paris          # fuseau de planification
   env_file:
@@ -113,7 +114,8 @@ services:
     environment:
       AGENDA_BIND: 0.0.0.0:8092
       DATABASE_PATH: /app/data/kairos.db
-    env_file:   # CALENDAR_URL, CALENDAR_WORK_URL, CALENDAR_USERNAME, CALENDAR_PASSWORD (facultatives)
+      AGENDA_EXPORT_DIR: /app/data/agenda-export
+    env_file:   # CALENDAR_URL, CALENDAR_WORK_URL, CALENDAR_USERNAME, CALENDAR_PASSWORD, CALENDAR_SUBSCRIPTION_* (facultatives)
       - path: kairos.env
         required: false
     volumes:
@@ -150,11 +152,14 @@ services:
     environment:
       ALIMENTATION_BIND: 0.0.0.0:8098
       ALIMENTATION_DB: /app/alimentation/alimentation.db
+      # occupations exportées par l'agenda (repas pris dehors), seul répertoire monté, en lecture
+      ALIMENTATION_AGENDA_EXPORT: /app/agenda-export/occupations.json
     env_file:
       - path: kairos.env
         required: false
     volumes:
       - alimentation-data:/app/alimentation
+      - ../../data/agenda-export:/app/agenda-export:ro
     ports:
       - "${TENTACLES_BIND_ADDR:-127.0.0.1}:${ALIMENTATION_BIND_PORT:-8098}:8098"
 

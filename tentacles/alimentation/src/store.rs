@@ -94,6 +94,19 @@ CREATE TABLE IF NOT EXISTS order_lines (
     PRIMARY KEY (order_id, idx)
 );
 CREATE TABLE IF NOT EXISTS prefs (k TEXT PRIMARY KEY, v TEXT NOT NULL, updated_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS recipe_yields (
+    id INTEGER PRIMARY KEY,
+    recipe TEXT NOT NULL,
+    portions INTEGER NOT NULL,
+    factor REAL NOT NULL DEFAULT 1,
+    at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS meal_place (
+    day TEXT NOT NULL,
+    slot TEXT NOT NULL,
+    outside INTEGER NOT NULL,
+    PRIMARY KEY (day, slot)
+);
 ";
 
 /// Emplacements reconnus (le reste est refusé, pour garder un inventaire lisible).
@@ -252,9 +265,52 @@ pub struct Recipe {
     #[serde(default)]
     pub ingredients: Vec<Ingredient>,
     pub steps: Vec<String>,
+    /// Rendement constaté (médiane des dernières mesures), lu à part : jamais écrit avec la recette.
+    #[serde(skip)]
+    pub observed: Option<u32>,
+}
+
+/// Mesures prises en compte pour le rendement constaté.
+const YIELD_WINDOW: usize = 3;
+/// Mesures nécessaires avant de croire le constaté.
+const YIELD_MIN: usize = 2;
+/// Mesures plausibles, en multiple de l'annoncé ; au-delà, une erreur de saisie.
+const YIELD_RANGE: (f64, f64) = (0.5, 3.0);
+/// Écart au-delà duquel une baisse des quantités est proposée.
+pub const YIELD_DRIFT: f64 = 1.3;
+
+/// Médiane, robuste à une mesure aberrante ; vide : aucune.
+pub fn median(v: &[f64]) -> Option<f64> {
+    let mut v = v.to_vec();
+    v.sort_by(f64::total_cmp);
+    let n = v.len();
+    match n {
+        0 => None,
+        _ if n % 2 == 1 => Some(v[n / 2]),
+        _ => Some((v[n / 2 - 1] + v[n / 2]) / 2.0),
+    }
 }
 
 impl Recipe {
+    /// Portions attendues : le constaté s'il existe, sinon l'annoncé.
+    pub fn planned(&self) -> u32 {
+        self.observed.unwrap_or(self.portions)
+    }
+
+    /// « Portions : 4 » ou « Portions : annoncé 4 · constaté 6 ».
+    pub fn portions_line(&self) -> String {
+        match self.observed {
+            Some(o) => format!("Portions : annoncé {} · constaté {o}", self.portions),
+            None => format!("Portions : {}", self.portions),
+        }
+    }
+
+    /// Facteur de quantités qui ramènerait le constaté à l'annoncé, quand l'écart le justifie.
+    pub fn shrink(&self) -> Option<f64> {
+        let o = f64::from(self.observed?);
+        (o > f64::from(self.portions) * YIELD_DRIFT).then(|| f64::from(self.portions) / o)
+    }
+
     /// « Préparation : 10 min · cuisson : 25 min ».
     pub fn timing(&self) -> Option<String> {
         let parts: Vec<String> = [("Préparation", self.prep_minutes), ("cuisson", self.cook_minutes)]
@@ -1201,12 +1257,20 @@ impl Store {
     /// Crée ou remplace une recette (même nom, accents et casse ignorés).
     pub fn set_recipe(&self, r: &Recipe) -> rusqlite::Result<()> {
         let data = serde_json::to_string(r).expect("recette sérialisable");
-        self.db.lock().unwrap().execute(
+        let key = fold(r.title.trim());
+        let mut db = self.db.lock().unwrap();
+        let tx = db.transaction()?;
+        let before = Self::stored(&tx, &key)?;
+        // Autres ingrédients ou quantités : les mesures passées ne décrivent plus cette recette.
+        if before.is_some_and(|b| b.ingredients != r.ingredients) {
+            tx.execute("DELETE FROM recipe_yields WHERE recipe = ?1", [&key])?;
+        }
+        tx.execute(
             "INSERT INTO recipes (name, data, updated_at) VALUES (?1, ?2, ?3)
              ON CONFLICT(name) DO UPDATE SET data = ?2, updated_at = ?3",
-            params![fold(r.title.trim()), data, now()],
+            params![key, data, now()],
         )?;
-        Ok(())
+        tx.commit()
     }
 
     pub fn recipes(&self) -> rusqlite::Result<Vec<Recipe>> {
@@ -1214,7 +1278,81 @@ impl Store {
         let mut st = db.prepare("SELECT data FROM recipes ORDER BY name")?;
         let rows = st.query_map([], |r| r.get::<_, String>(0))?;
         // Une ligne illisible est ignorée plutôt que de bloquer tout le carnet.
-        Ok(rows.filter_map(|d| d.ok().and_then(|d| serde_json::from_str(&d).ok())).collect())
+        let mut all: Vec<Recipe> = rows.filter_map(|d| d.ok().and_then(|d| serde_json::from_str(&d).ok())).collect();
+        for r in &mut all {
+            r.observed = Self::observed(&db, &r.title, r.portions)?;
+        }
+        Ok(all)
+    }
+
+    /// Recette enregistrée sous cette clé, sans rendement.
+    fn stored(db: &Connection, key: &str) -> rusqlite::Result<Option<Recipe>> {
+        let data: Option<String> = db.query_row("SELECT data FROM recipes WHERE name = ?1", [key], |r| r.get(0)).optional()?;
+        Ok(data.and_then(|d| serde_json::from_str(&d).ok()))
+    }
+
+    /// Dernières mesures plausibles, ramenées aux quantités actuelles, la plus récente d'abord.
+    fn measures(db: &Connection, title: &str, portions: u32) -> rusqlite::Result<Vec<f64>> {
+        let (lo, hi) = (f64::from(portions) * YIELD_RANGE.0, f64::from(portions) * YIELD_RANGE.1);
+        let mut st = db.prepare("SELECT portions / factor FROM recipe_yields WHERE recipe = ?1 ORDER BY id DESC")?;
+        let all: Vec<f64> = st.query_map([fold(title.trim())], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
+        Ok(all.into_iter().filter(|v| (lo..=hi).contains(v)).take(YIELD_WINDOW).collect())
+    }
+
+    /// Rendement constaté, ramené aux quantités actuelles de la recette.
+    fn observed(db: &Connection, title: &str, portions: u32) -> rusqlite::Result<Option<u32>> {
+        let v = Self::measures(db, title, portions)?;
+        Ok(median(&v).filter(|_| v.len() >= YIELD_MIN).map(|m| m.round().max(1.0) as u32))
+    }
+
+    /// Mesures retenues pour une recette du carnet.
+    pub fn yields(&self, title: &str) -> rusqlite::Result<Vec<f64>> {
+        let db = self.db.lock().unwrap();
+        let portions = Self::stored(&db, &fold(title.trim()))?.map_or(0, |r| r.portions);
+        Self::measures(&db, title, portions)
+    }
+
+    #[cfg(test)]
+    pub fn exec(&self, sql: &str) {
+        self.db.lock().unwrap().execute_batch(sql).unwrap();
+    }
+
+    /// Portions réellement obtenues avec `factor` fois les quantités actuelles de la recette.
+    pub fn add_yield(&self, title: &str, portions: u32, factor: f64) -> rusqlite::Result<()> {
+        self.db.lock().unwrap().execute(
+            "INSERT INTO recipe_yields (recipe, portions, factor, at) VALUES (?1, ?2, ?3, ?4)",
+            params![fold(title.trim()), portions, factor, now()],
+        )?;
+        Ok(())
+    }
+
+    /// Multiplie les quantités de la recette par `k` ; les mesures passées restent
+    /// comparables (leur facteur est exprimé par rapport aux nouvelles quantités).
+    /// Relue et jugée dans la transaction : une copie périmée ne réduit jamais deux fois.
+    pub fn scale_recipe(&self, r: &Recipe) -> rusqlite::Result<Option<(Recipe, f64)>> {
+        let key = fold(r.title.trim());
+        let mut db = self.db.lock().unwrap();
+        let tx = db.transaction()?;
+        let Some(mut r) = Self::stored(&tx, &key)? else { return Ok(None) };
+        r.observed = Self::observed(&tx, &r.title, r.portions)?;
+        let Some(k) = r.shrink() else { return Ok(None) };
+        for i in &mut r.ingredients {
+            let piece = parse_unit(i.unit.as_deref().unwrap_or("")).is_some_and(|(f, _)| f == Family::Piece);
+            i.qty = i.qty.map(|q| {
+                if piece {
+                    (q * k).round().max(1.0)
+                } else {
+                    // Une petite quantité ne disparaît pas à l'arrondi.
+                    Some((q * k * 100.0).round() / 100.0).filter(|v| *v > 0.0).unwrap_or(q)
+                }
+            });
+        }
+        let data = serde_json::to_string(&r).expect("recette sérialisable");
+        tx.execute("UPDATE recipes SET data = ?2, updated_at = ?3 WHERE name = ?1", params![key, data, now()])?;
+        tx.execute("UPDATE recipe_yields SET factor = factor / ?2 WHERE recipe = ?1", params![key, k])?;
+        r.observed = Self::observed(&tx, &r.title, r.portions)?;
+        tx.commit()?;
+        Ok(Some((r, k)))
     }
 
     /// Nom exact, sinon seule recette contenant tous les mots demandés.
@@ -1308,6 +1446,32 @@ impl Store {
         st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect()
     }
 
+    /// Choix « dehors » (vrai) ou « maison » (faux) d'un repas ; `None` le retire.
+    pub fn set_place(&self, day: &str, slot: &str, outside: Option<bool>) -> rusqlite::Result<()> {
+        let db = self.db.lock().unwrap();
+        match outside {
+            None => db.execute("DELETE FROM meal_place WHERE day = ?1 AND slot = ?2", params![day, slot])?,
+            Some(o) => db.execute(
+                "INSERT OR REPLACE INTO meal_place (day, slot, outside) VALUES (?1, ?2, ?3)",
+                params![day, slot, o],
+            )?,
+        };
+        Ok(())
+    }
+
+    /// Choix de lieu de `from..=to` : (jour, créneau, dehors).
+    pub fn places(&self, from: &str, to: &str) -> rusqlite::Result<Vec<(chrono::NaiveDate, crate::nature::Slot, bool)>> {
+        let db = self.db.lock().unwrap();
+        let mut st = db.prepare("SELECT day, slot, outside FROM meal_place WHERE day >= ?1 AND day <= ?2")?;
+        let rows = st.query_map(params![from, to], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, bool>(2)?)))?;
+        Ok(rows
+            .flatten()
+            .filter_map(|(d, s, o)| {
+                Some((chrono::NaiveDate::parse_from_str(&d, "%Y-%m-%d").ok()?, crate::nature::Slot::parse(&s)?, o))
+            })
+            .collect())
+    }
+
     /// Dépenses de courses enregistrées depuis une date (somme des commandes).
     pub fn spent_since(&self, ts: i64) -> rusqlite::Result<f64> {
         self.db.lock().unwrap().query_row(
@@ -1321,6 +1485,110 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn median_is_robust() {
+        assert_eq!(median(&[]), None);
+        assert_eq!(median(&[6.0]), Some(6.0));
+        assert_eq!(median(&[6.0, 12.0, 5.0]), Some(6.0), "une mesure aberrante ne tire pas le rendement");
+        assert_eq!(median(&[5.0, 6.0]), Some(5.5));
+    }
+
+    fn soup() -> Recipe {
+        Recipe {
+            title: "Soupe Exemple".into(),
+            portions: 4,
+            prep_minutes: None,
+            cook_minutes: None,
+            ingredients: vec![Ingredient { name: "Carottes".into(), qty: Some(600.0), unit: Some("g".into()) }],
+            steps: vec!["Mijoter.".into()],
+            observed: None,
+        }
+    }
+
+    #[test]
+    fn scale_applies_once_on_stale_copy() {
+        let s = Store::memory();
+        s.set_recipe(&soup()).unwrap();
+        s.add_yield("Soupe Exemple", 6, 1.0).unwrap();
+        s.add_yield("Soupe Exemple", 6, 1.0).unwrap();
+        let r = s.recipe("Soupe Exemple").unwrap().unwrap();
+        let (first, k) = s.scale_recipe(&r).unwrap().expect("réduction");
+        assert!((k - 4.0 / 6.0).abs() < 1e-9);
+        assert_eq!(first.ingredients[0].qty, Some(400.0));
+        // Même copie périmée, second appel : rien de plus.
+        assert!(s.scale_recipe(&r).unwrap().is_none());
+        assert_eq!(s.recipe("Soupe Exemple").unwrap().unwrap().ingredients[0].qty, Some(400.0));
+    }
+
+    #[test]
+    fn observed_needs_two_sane_measures() {
+        let s = Store::memory();
+        s.set_recipe(&soup()).unwrap();
+        s.add_yield("Soupe Exemple", 6, 1.0).unwrap();
+        assert_eq!(s.recipe("Soupe Exemple").unwrap().unwrap().observed, None, "une mesure ne suffit pas");
+        // Hors de [0,5 ; 3] × l'annoncé (4) : écartées.
+        s.add_yield("Soupe Exemple", 13, 1.0).unwrap();
+        s.add_yield("Soupe Exemple", 1, 1.0).unwrap();
+        assert_eq!(s.recipe("Soupe Exemple").unwrap().unwrap().observed, None);
+        s.add_yield("Soupe Exemple", 6, 1.0).unwrap();
+        assert_eq!(s.recipe("Soupe Exemple").unwrap().unwrap().observed, Some(6));
+    }
+
+    #[test]
+    fn rewritten_ingredients_reset_yields() {
+        let s = Store::memory();
+        s.set_recipe(&soup()).unwrap();
+        s.add_yield("Soupe Exemple", 6, 1.0).unwrap();
+        s.add_yield("Soupe Exemple", 6, 1.0).unwrap();
+        let mut r = soup();
+        r.steps.push("Mixer.".into());
+        s.set_recipe(&r).unwrap();
+        assert_eq!(s.recipe("Soupe Exemple").unwrap().unwrap().observed, Some(6), "étapes seules : mesures gardées");
+        r.ingredients[0].qty = Some(900.0);
+        s.set_recipe(&r).unwrap();
+        assert_eq!(s.recipe("Soupe Exemple").unwrap().unwrap().observed, None, "autres quantités : mesures caduques");
+    }
+
+    #[test]
+    fn scaling_never_rounds_to_zero() {
+        let s = Store::memory();
+        let mut r = soup();
+        r.ingredients = vec![
+            Ingredient { name: "Sel".into(), qty: Some(0.004), unit: Some("g".into()) },
+            Ingredient { name: "Oignon".into(), qty: Some(1.0), unit: None },
+            Ingredient { name: "Œufs".into(), qty: Some(3.0), unit: Some("pièces".into()) },
+            Ingredient { name: "Lait".into(), qty: Some(0.5), unit: Some("l".into()) },
+        ];
+        s.set_recipe(&r).unwrap();
+        s.add_yield("Soupe Exemple", 6, 1.0).unwrap();
+        s.add_yield("Soupe Exemple", 6, 1.0).unwrap();
+        let (r, _) = s.scale_recipe(&r).unwrap().unwrap();
+        let q: Vec<Option<f64>> = r.ingredients.iter().map(|i| i.qty).collect();
+        assert_eq!(q, [Some(0.004), Some(1.0), Some(2.0), Some(0.33)]);
+    }
+
+    #[test]
+    fn observed_yield_from_last_three_measures() {
+        let s = Store::memory();
+        s.set_recipe(&soup()).unwrap();
+        let r = s.recipe("soupe exemple").unwrap().unwrap();
+        assert_eq!((r.observed, r.planned(), r.portions_line()), (None, 4, "Portions : 4".into()));
+        for p in [2, 6, 7, 6] {
+            s.add_yield("Soupe Exemple", p, 1.0).unwrap();
+        }
+        // La plus ancienne (2) sort de la fenêtre : médiane de 6, 7, 6.
+        let r = s.recipe("Soupe Exemple").unwrap().unwrap();
+        assert_eq!((r.observed, r.planned()), (Some(6), 6));
+        assert_eq!(r.portions_line(), "Portions : annoncé 4 · constaté 6");
+        assert!((r.shrink().unwrap() - 4.0 / 6.0).abs() < 1e-9);
+        // Quantités réduites : les mesures passées sont ramenées aux nouvelles quantités.
+        let (scaled, _) = s.scale_recipe(&r).unwrap().unwrap();
+        assert_eq!(scaled.ingredients[0].qty, Some(400.0));
+        assert_eq!(scaled.observed, Some(4));
+        assert_eq!(s.recipe("Soupe Exemple").unwrap().unwrap(), scaled);
+        assert_eq!(scaled.shrink(), None);
+    }
 
     #[test]
     fn meals_on_one_day_only() {

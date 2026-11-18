@@ -4,6 +4,7 @@ import app.kairos.mobile.data.ApiError
 import app.kairos.mobile.data.ToolMessage
 import app.kairos.mobile.data.Card
 import app.kairos.mobile.data.CardDone
+import app.kairos.mobile.data.CardAction
 import app.kairos.mobile.data.KairosJson
 import app.kairos.mobile.data.Mark
 import kotlinx.coroutines.CompletableDeferred
@@ -67,6 +68,34 @@ class DoneTest {
         assertFalse(plain.asks)
         assertEquals("""{"lot":3}""", doneArgs(plain, null).toString())
         assertEquals(listOf("1", "2", "3"), done.choices.options.map(::optionLabel))
+    }
+
+    @Test
+    fun count_sent_only_when_entered() = runBlocking {
+        val cooked = KairosJson.decodeFromString(
+            Card.serializer(),
+            """{"id":"soir","title":"Curry","module":"alimentation",
+               "done":{"tool":"app_meal_done","args":{"day":"2026-11-12","slot":"soir"},
+                       "count":{"label":"Portions obtenues","key":"made","default":4,"min":1,"max":100}}}""",
+        )
+        val done = cooked.done!!
+        val n = done.count!!
+        // Un nombre seul suffit à ouvrir le choix.
+        assertTrue(done.asks)
+        // Rien saisi : rien d'envoyé, même si la valeur prévue est affichée.
+        assertEquals("""{"day":"2026-11-12","slot":"soir"}""", doneArgs(done, null).toString())
+        assertEquals("""{"day":"2026-11-12","slot":"soir","made":6}""", doneArgs(done, null, 6).toString())
+        assertEquals(JsonPrimitive(100), doneArgs(done, null, 500)["made"])
+        // − et + partent de la valeur prévue et restent dans les bornes.
+        assertEquals(5, n.step(null, 1))
+        assertEquals(3, n.step(null, -1))
+        assertEquals(1, n.step(1, -1))
+        val f = Fake()
+        completeCard(cooked, null, f.mark, f.window, f.call, count = 6)
+        assertEquals("""call alimentation/app_meal_done {"day":"2026-11-12","slot":"soir","made":6}""", f.log.last())
+        // Avec le choix des portions mangées : les deux partent ensemble.
+        val both = meal.done!!.copy(count = n)
+        assertEquals("""{"day":"2026-11-12","slot":"soir","portions":2,"made":6}""", doneArgs(both, JsonPrimitive(2), 6).toString())
     }
 
     @Test
@@ -140,5 +169,22 @@ class DoneTest {
         assertEquals(setOf("soir"), pending.hidden.value)
         pending.hide("soir", false)
         assertTrue(pending.hidden.value.isEmpty())
+    }
+
+    @Test
+    fun card_action_calls_module_tool_as_given() = runBlocking {
+        val out = KairosJson.decodeFromString(
+            Card.serializer(),
+            """{"id":"dehors-2026-11-21-midi","title":"Midi · Dehors : Exemple","module":"alimentation",
+               "actions":[{"label":"Je mange à la maison","tool":"app_meal_place",
+                           "args":{"day":"2026-11-21","slot":"midi","place":"maison"}}]}""",
+        )
+        val a: CardAction = out.actions.single()
+        assertEquals("Je mange à la maison", a.label)
+        val f = Fake()
+        assertEquals("Repas noté : Curry", cardAction(out, a, f.call))
+        assertEquals(listOf("""call alimentation/app_meal_place {"day":"2026-11-21","slot":"midi","place":"maison"}"""), f.log)
+        assertEquals("Serveur injoignable : rien n'a été enregistré.", cardAction(out, a, Fake(fail = ApiError.Offline).call))
+        assertTrue(meal.actions.isEmpty())
     }
 }

@@ -43,6 +43,8 @@ const CHAT_DEFAULT: u32 = 50;
 const DONE_ARGS_MAX: usize = 2048;
 /// Nombre maximal de valeurs proposées par le choix d'une action « fait ».
 const CHOICES_MAX: usize = 20;
+/// Nombre maximal de gestes secondaires d'une carte.
+const ACTIONS_MAX: usize = 4;
 /// Durée de validité du nombre de décisions servi par le statut.
 const COUNT_TTL: Duration = Duration::from_secs(60);
 
@@ -232,8 +234,33 @@ struct Card {
     /// État connu du module : seul « fait » est transmis, toute autre valeur est retirée.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     state: Option<Value>,
+    /// Gestes secondaires, lus bruts : ceux hors contrat sont retirés un à un.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    actions: Vec<Value>,
     #[serde(skip_deserializing)]
     module: String,
+}
+
+/// Geste secondaire d'une carte : un outil `app_*` du module émetteur, lancé tel quel.
+#[derive(Deserialize, Serialize)]
+struct Action {
+    label: String,
+    tool: String,
+    args: serde_json::Map<String, Value>,
+}
+
+/// Geste conservé seulement s'il vise un outil `app_*` avec des arguments bornés.
+fn valid_action(v: Value) -> Option<Value> {
+    let mut a: Action = serde_json::from_value(v).ok()?;
+    if !app_tool(&a.tool) || serde_json::to_string(&a.args).ok()?.len() > DONE_ARGS_MAX {
+        return None;
+    }
+    cut(&mut a.label, TITLE_MAX);
+    serde_json::to_value(a).ok()
+}
+
+fn app_tool(t: &str) -> bool {
+    t.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_') && t.starts_with("app_") && t.len() <= TITLE_MAX
 }
 
 /// Action « fait » d'une carte : un outil `app_*` du module émetteur.
@@ -243,6 +270,29 @@ struct Done {
     args: serde_json::Map<String, Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     choices: Option<DoneChoices>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    count: Option<DoneCount>,
+}
+
+/// Nombre facultatif saisi au pas à pas, ajouté à `args` sous `key` seulement s'il est saisi.
+#[derive(Deserialize, Serialize)]
+struct DoneCount {
+    #[serde(default)]
+    label: String,
+    key: String,
+    default: u32,
+    #[serde(default = "count_min")]
+    min: u32,
+    #[serde(default = "count_max")]
+    max: u32,
+}
+
+fn count_min() -> u32 {
+    1
+}
+
+fn count_max() -> u32 {
+    100
 }
 
 /// Valeur demandée à l'utilisateur, ajoutée à `args` sous `key`.
@@ -258,8 +308,7 @@ struct DoneChoices {
 /// Action conservée seulement si elle vise un outil `app_*` avec des arguments bornés.
 fn valid_done(v: Value) -> Option<Value> {
     let mut d: Done = serde_json::from_value(v).ok()?;
-    let name_ok = d.tool.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_');
-    if !name_ok || !d.tool.starts_with("app_") || d.tool.len() > TITLE_MAX || serde_json::to_string(&d.args).ok()?.len() > DONE_ARGS_MAX {
+    if !app_tool(&d.tool) || serde_json::to_string(&d.args).ok()?.len() > DONE_ARGS_MAX {
         return None;
     }
     if let Some(c) = &mut d.choices {
@@ -268,6 +317,13 @@ fn valid_done(v: Value) -> Option<Value> {
         c.options.truncate(CHOICES_MAX);
         if serde_json::to_string(&(&c.options, &c.default)).ok()?.len() > DONE_ARGS_MAX {
             return None;
+        }
+    }
+    if let Some(c) = &mut d.count {
+        cut(&mut c.label, TITLE_MAX);
+        cut(&mut c.key, TITLE_MAX);
+        if c.min > c.max || !(c.min..=c.max).contains(&c.default) {
+            d.count = None;
         }
     }
     serde_json::to_value(d).ok()
@@ -363,6 +419,7 @@ async fn days(Deps(d): Deps<AppDeps>, Query(q): Query<DaysQuery>) -> Json<Vec<Va
             cut_opt(&mut c.dish, TITLE_MAX);
             c.chips.iter_mut().for_each(|ch| cut(&mut ch.text, TITLE_MAX));
             c.done = c.done.take().and_then(valid_done);
+            c.actions = std::mem::take(&mut c.actions).into_iter().filter_map(valid_action).take(ACTIONS_MAX).collect();
             c.state = c.state.take().filter(|v| v == "fait");
         });
         cards.sort_by(|a, b| (a.time.is_none(), &a.time).cmp(&(b.time.is_none(), &b.time)));
@@ -901,6 +958,15 @@ mod tests {
                           "choices": {"label": "Portions mangées", "key": "portions", "options": [1, 2, 3], "default": 1}});
         let c = first_card(card_with_done(done.clone())).await;
         assert_eq!(c["done"], done);
+        let counted = json!({"tool": "app_meal_done", "args": {"day": "2026-11-12", "slot": "soir"},
+                             "count": {"label": "Portions obtenues", "key": "made", "default": 4, "min": 1, "max": 100}});
+        assert_eq!(first_card(card_with_done(counted.clone())).await["done"], counted);
+        // Libellé et bornes absents : valeurs par défaut.
+        let bare = json!({"tool": "app_meal_done", "args": {}, "count": {"key": "made", "default": 4}});
+        assert_eq!(first_card(card_with_done(bare)).await["done"]["count"], json!({"label": "", "key": "made", "default": 4, "min": 1, "max": 100}));
+        // Bornes incohérentes : le nombre tombe, l'action reste.
+        let bad = json!({"tool": "app_meal_done", "args": {}, "count": {"label": "l", "key": "made", "default": 0, "min": 1, "max": 100}});
+        assert_eq!(first_card(card_with_done(bad)).await["done"], json!({"tool": "app_meal_done", "args": {}}));
         // Sans `choices` : omis à la sortie.
         let c = first_card(card_with_done(json!({"tool": "app_lot_use", "args": {"lot": 3}}))).await;
         assert_eq!(c["done"], json!({"tool": "app_lot_use", "args": {"lot": 3}}));
@@ -937,6 +1003,25 @@ mod tests {
         let c = first_card(card_with_done(json!({"tool": "app_x", "args": {},
             "choices": {"label": "l", "key": "k", "options": [1], "default": "d".repeat(DONE_ARGS_MAX)}}))).await;
         assert!(c.get("done").is_none());
+    }
+
+    #[tokio::test]
+    async fn actions_kept_filtered_and_bounded() {
+        let ok = json!({"label": "Je mange à la maison", "tool": "app_meal_place", "args": {"day": "2026-11-21", "slot": "midi", "place": "maison"}});
+        let long = json!({"label": "l".repeat(200), "tool": "app_x", "args": {}});
+        let cards = json!([{"id": "c", "kind": "info", "title": "t", "actions": [
+            ok, {"label": "x", "tool": "stock_set", "args": {}}, {"label": "x", "tool": "app_x", "args": {"k": "v".repeat(DONE_ARGS_MAX)}},
+            "app_x", long, ok, ok, ok, ok,
+        ]}]);
+        let c = first_card(cards).await;
+        let a = c["actions"].as_array().expect("actions transmises");
+        assert_eq!(a.len(), ACTIONS_MAX);
+        assert_eq!(a[0], ok);
+        assert_eq!(a[1]["label"].as_str().unwrap().chars().count(), TITLE_MAX);
+        assert!(a.iter().all(|x| x["tool"].as_str().unwrap().starts_with("app_")));
+        // sans actions : champ omis
+        let c = first_card(json!([{"id": "c", "kind": "info", "title": "t"}])).await;
+        assert!(c.get("actions").is_none());
     }
 
     fn apk_deps(files: &[&str]) -> (AppDeps, tempfile::TempDir) {
