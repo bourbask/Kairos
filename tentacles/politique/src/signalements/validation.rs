@@ -6,6 +6,7 @@ use unicode_normalization::UnicodeNormalization;
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Brut {
+    #[serde(default)]
     pub claim: String,
     pub kind: String,
     pub target: Option<String>,
@@ -18,6 +19,9 @@ pub struct Brut {
     pub ref_in: Option<String>,
     pub fix: String,
     pub oath: bool,
+    pub cible_type: Option<String>,
+    pub cible_ref: Option<String>,
+    pub extrait: Option<String>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -29,7 +33,19 @@ pub struct Signalement {
     pub basis: String,
     pub source: Source,
     pub fix: String,
+    /// `affirmation`, ou un type de la liste blanche [`TYPES_INFO`].
+    pub cible_type: String,
+    /// Absents pour une affirmation.
+    pub cible_ref: Option<String>,
+    pub extrait: Option<String>,
 }
+
+/// Types d'information du site signalables hors affirmation.
+pub const TYPES_INFO: &[&str] = &[
+    "declaration", "promesse", "evaluateur", "scrutin", "manche", "vote", "coherence", "bilan",
+    "budget", "ecart", "niveau-de-vie", "revirement", "parti", "camp", "comparaison", "media",
+    "argent", "probite", "ville", "rhetorique", "dossier", "aide", "theme", "bareme",
+];
 
 #[derive(Debug, PartialEq)]
 pub enum Source {
@@ -134,10 +150,74 @@ fn url_valide(u: &str) -> bool {
     bien_forme && !tld_ip && !local
 }
 
+/// Identifiant `^[a-z0-9][a-z0-9._:-]*$`, 1 à 120 caractères.
+fn reference_valide(r: &str) -> bool {
+    let premier = r.bytes().next().is_some_and(|b| b.is_ascii_lowercase() || b.is_ascii_digit());
+    premier
+        && r.len() <= 120
+        && r.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b".:_-".contains(&b))
+}
+
 pub fn valider(b: Brut, cartes: &impl Cartes) -> Result<Signalement, Refus> {
     if !b.oath {
         return Err(refus("oath", "Engagement requis."));
     }
+    let (target, cible_type, cible_ref, extrait) = match b.cible_type.as_deref() {
+        None | Some("affirmation") => (affirmation(&b, cartes)?, "affirmation".to_string(), None, None),
+        Some(t) => {
+            if !TYPES_INFO.contains(&t) {
+                return Err(refus("cible_type", "Type d'information inconnu."));
+            }
+            let r = b.cible_ref.as_deref().filter(|r| reference_valide(r));
+            let r = r.ok_or(refus("cible_ref", "Référence de l'information invalide."))?;
+            let extrait = requis(&b.extrait, 4, 300, "extrait", "Extrait de l'information manquant ou trop long.")?;
+            if !b.claim.is_empty() {
+                return Err(refus("claim", "Affirmation non permise."));
+            }
+            if !matches!(b.kind.as_str(), "fait" | "source" | "formulation" | "autre") {
+                return Err(refus("kind", "Type inconnu."));
+            }
+            if b.target.is_some() {
+                return Err(refus("target", "Cible non permise."));
+            }
+            (None, t.to_string(), Some(r.to_string()), Some(extrait))
+        }
+    };
+    let what = borne(&b.what, 30, 400, "what", "Description de 30 à 400 caractères.")?;
+    let fix = borne(&b.fix, 10, 300, "fix", "Correction de 10 à 300 caractères.")?;
+    let source = match b.basis.as_str() {
+        "lien" => {
+            let u = b.url.as_deref().unwrap_or("").trim();
+            if !url_valide(u) {
+                return Err(refus("url", "Adresse https invalide."));
+            }
+            Source::Lien(u.to_string())
+        }
+        "ref" => Source::Ref {
+            who: requis(&b.ref_who, 2, 80, "ref_who", "Auteur de 2 à 80 caractères.")?,
+            when: requis(&b.ref_when, 0, 30, "ref_when", "Date de 30 caractères au plus.")?,
+            what: requis(&b.ref_what, 4, 160, "ref_what", "Titre de 4 à 160 caractères.")?,
+        },
+        "carte" => Source::Carte(requis(&b.ref_in, 4, 160, "ref_in", "Passage de 4 à 160 caractères.")?),
+        _ => return Err(refus("basis", "Fondement inconnu.")),
+    };
+    Ok(Signalement {
+        claim: b.claim,
+        kind: b.kind,
+        target,
+        what,
+        basis: b.basis,
+        source,
+        fix,
+        cible_type,
+        cible_ref,
+        extrait,
+    })
+}
+
+/// Affirmation connue, type et cible (fait ou source) dans les bornes de sa carte.
+/// `cible_ref` et `extrait` éventuels sont ignorés.
+fn affirmation(b: &Brut, cartes: &impl Cartes) -> Result<Option<String>, Refus> {
     let Some((faits, sources)) = cartes.bornes(&b.claim) else {
         return Err(refus("claim", "Affirmation inconnue."));
     };
@@ -158,25 +238,7 @@ pub fn valider(b: Brut, cartes: &impl Cartes) -> Result<Signalement, Refus> {
         (_, Some(_)) => return Err(refus("target", "Cible non permise.")),
         (_, None) => None,
     };
-    let what = borne(&b.what, 30, 400, "what", "Description de 30 à 400 caractères.")?;
-    let fix = borne(&b.fix, 10, 300, "fix", "Correction de 10 à 300 caractères.")?;
-    let source = match b.basis.as_str() {
-        "lien" => {
-            let u = b.url.as_deref().unwrap_or("").trim();
-            if !url_valide(u) {
-                return Err(refus("url", "Adresse https invalide."));
-            }
-            Source::Lien(u.to_string())
-        }
-        "ref" => Source::Ref {
-            who: requis(&b.ref_who, 2, 80, "ref_who", "Auteur de 2 à 80 caractères.")?,
-            when: requis(&b.ref_when, 0, 30, "ref_when", "Date de 30 caractères au plus.")?,
-            what: requis(&b.ref_what, 4, 160, "ref_what", "Titre de 4 à 160 caractères.")?,
-        },
-        "carte" => Source::Carte(requis(&b.ref_in, 4, 160, "ref_in", "Passage de 4 à 160 caractères.")?),
-        _ => return Err(refus("basis", "Fondement inconnu.")),
-    };
-    Ok(Signalement { claim: b.claim, kind: b.kind, target, what, basis: b.basis, source, fix })
+    Ok(target)
 }
 
 #[cfg(test)]
@@ -204,6 +266,21 @@ mod tests {
             ref_in: None,
             fix: "y".repeat(10),
             oath: true,
+            cible_type: None,
+            cible_ref: None,
+            extrait: None,
+        }
+    }
+
+    /// Signalement d'une information hors affirmation, valide.
+    fn info() -> Brut {
+        Brut {
+            claim: String::new(),
+            kind: "fait".into(),
+            cible_type: Some("promesse".into()),
+            cible_ref: Some("p-x-3".into()),
+            extrait: Some("Texte affiché".into()),
+            ..brut()
         }
     }
 
@@ -382,5 +459,91 @@ mod tests {
     fn champ_inconnu_refuse() {
         let j = r#"{"claim":"a1","kind":"verdict","what":"x","basis":"lien","fix":"y","oath":true,"cle":"k"}"#;
         assert!(serde_json::from_str::<Brut>(j).is_err());
+    }
+
+    #[test]
+    fn affirmation_explicite_comme_absente() {
+        let a = valider(brut(), &C).unwrap();
+        let b = valider(Brut { cible_type: Some("affirmation".into()), ..brut() }, &C).unwrap();
+        assert_eq!(a, b);
+        assert_eq!((a.cible_type.as_str(), a.cible_ref, a.extrait), ("affirmation", None, None));
+        assert_eq!(champ(Brut { cible_type: Some("affirmation".into()), claim: "zz".into(), ..brut() }), "claim");
+    }
+
+    #[test]
+    fn information_acceptee() {
+        let s = valider(info(), &C).unwrap();
+        assert_eq!(s.cible_type, "promesse");
+        assert_eq!(s.cible_ref.as_deref(), Some("p-x-3"));
+        assert_eq!(s.extrait.as_deref(), Some("Texte affiché"));
+        assert_eq!((s.claim.as_str(), s.target), ("", None));
+        for k in ["fait", "source", "formulation", "autre"] {
+            assert!(valider(Brut { kind: k.into(), ..info() }, &C).is_ok(), "{k}");
+        }
+        for t in ["declaration", "manche", "niveau-de-vie", "bareme"] {
+            assert!(valider(Brut { cible_type: Some(t.into()), ..info() }, &C).is_ok(), "{t}");
+        }
+    }
+
+    #[test]
+    fn information_claim_absent_en_json() {
+        let j = r#"{"cible_type":"ville","cible_ref":"75056","extrait":"Paris ville","kind":"autre","what":"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx","basis":"carte","ref_in":"Passage","fix":"yyyyyyyyyy","oath":true}"#;
+        let b: Brut = serde_json::from_str(j).unwrap();
+        assert!(valider(b, &C).is_ok());
+    }
+
+    #[test]
+    fn cible_type_hors_liste() {
+        for t in ["inconnu", "", "Promesse", "affirmation "] {
+            let r = valider(Brut { cible_type: Some(t.into()), ..info() }, &C).unwrap_err();
+            assert_eq!(r, Refus { champ: "cible_type", message: "Type d'information inconnu." }, "{t:?}");
+        }
+    }
+
+    #[test]
+    fn cible_ref_invalide() {
+        let attendu = Refus { champ: "cible_ref", message: "Référence de l'information invalide." };
+        let long = "a".repeat(121);
+        for r in [None, Some(""), Some("-a"), Some("A1"), Some("a b"), Some("a/b"), Some("é"), Some(long.as_str())] {
+            let b = Brut { cible_ref: r.map(String::from), ..info() };
+            assert_eq!(valider(b, &C).unwrap_err(), attendu, "{r:?}");
+        }
+        for r in ["a", "0", "quiz:m-12", "an-17-4438", "vote:loi.x_1:2", &"a".repeat(120)] {
+            assert!(valider(Brut { cible_ref: Some(r.into()), ..info() }, &C).is_ok(), "{r}");
+        }
+    }
+
+    #[test]
+    fn extrait_borne_et_nettoye() {
+        let attendu = Refus { champ: "extrait", message: "Extrait de l'information manquant ou trop long." };
+        for e in [None, Some("abc".to_string()), Some("x".repeat(301)), Some(format!("abc{}", "\u{200B}".repeat(5)))] {
+            assert_eq!(valider(Brut { extrait: e.clone(), ..info() }, &C).unwrap_err(), attendu, "{e:?}");
+        }
+        assert!(valider(Brut { extrait: Some("x".repeat(300)), ..info() }, &C).is_ok());
+        let s = valider(Brut { extrait: Some("  e\u{0301}t\u{202E}\u{0007}é!  ".into()), ..info() }, &C).unwrap();
+        assert_eq!(s.extrait.as_deref(), Some("\u{e9}t\u{e9}!"));
+    }
+
+    #[test]
+    fn information_kind_restreint() {
+        for k in ["verdict", "classement", "inconnu"] {
+            let r = valider(Brut { kind: k.into(), ..info() }, &C).unwrap_err();
+            assert_eq!(r, Refus { champ: "kind", message: "Type inconnu." }, "{k}");
+        }
+    }
+
+    #[test]
+    fn information_sans_target_ni_claim() {
+        assert_eq!(champ(Brut { target: Some("f1".into()), ..info() }), "target");
+        assert_eq!(champ(Brut { claim: "a1".into(), ..info() }), "claim");
+    }
+
+    #[test]
+    fn information_regles_communes() {
+        assert_eq!(champ(Brut { oath: false, ..info() }), "oath");
+        assert_eq!(champ(Brut { what: "x".repeat(29), ..info() }), "what");
+        assert_eq!(champ(Brut { fix: "y".repeat(9), ..info() }), "fix");
+        assert_eq!(champ(Brut { url: Some("http://example.com".into()), ..info() }), "url");
+        assert_eq!(champ(Brut { basis: "autre".into(), ..info() }), "basis");
     }
 }
