@@ -76,6 +76,18 @@ data class Historique(val annee: Int? = null, val sujet: String = "", val consta
 @Serializable
 data class Controverse(val t: String = "", val src: JsonElement? = null)
 
+/** Niveau d'indépendance (1 à 4, 0 = non qualifié) et ce qu'il recouvre, lu dans `NIVEAUX` du fichier des évaluateurs. */
+@Serializable
+data class Niveau(val n: Int = -1, val libelle: String = "", val definition: String = "", val criteres: List<String> = emptyList())
+
+/** Libellés de repli quand les données ne publient pas encore `NIVEAUX`. */
+internal val NIVEAU_LABELS = linkedMapOf(
+    1 to "Indépendance statutaire et contrôlée", 2 to "Indépendant, orientation connue",
+    3 to "Lié à un intérêt économique ou à un camp", 4 to "Partisan ou militant", 0 to "Non qualifié",
+)
+
+internal const val PRINCIPE_REPLI = "Le niveau décrit les liens du producteur (statut, financement, dirigeants), pas la qualité d'un chiffre. Chaque fiche justifie le sien."
+
 @Serializable
 data class Evaluator(
     val id: String = "",

@@ -491,7 +491,7 @@ private fun ClaimFront(data: PolData, claim: Claim, nav: PolNavigator, bareme: B
         if (claim.origine.isNotBlank()) Text("Où on l'entend. ${claim.origine}", Modifier.padding(top = 12.dp), fontSize = 12.5.sp, color = scheme.onSurfaceVariant)
         if (evs.isNotEmpty()) {
             Kicker("Vérifié avec les chiffres de", Modifier.padding(top = 14.dp, bottom = 4.dp))
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) { evs.forEach { EvaluatorTag(it, onEv) } }
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) { evs.forEach { EvaluatorTag(it, data, onEv) } }
         }
         claim.lecture?.let { BalanceBlock(it, claim.q, onOpen = nav.balance(it, claim.q, claim.camp)) }
         Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.End) { FullscreenButton({ nav.table(listOf(claimTableCard(data, claim)), 0) }) }

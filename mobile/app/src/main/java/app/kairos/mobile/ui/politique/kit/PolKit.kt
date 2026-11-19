@@ -178,22 +178,16 @@ fun balanceRows(postes: List<Poste>): List<BalanceRow> = postes.map { p ->
     BalanceRow(p.quoi.trim(), p.qui?.trim()?.takeIf { it.isNotEmpty() }, p.montant?.takeIf { it.isNotBlank() }?.let(::lossAmount))
 }
 
-private val IND_LABELS = mapOf(
-    1 to "Indépendance statutaire et contrôlée", 2 to "Indépendant, orientation connue",
-    3 to "Lié à un intérêt économique ou à un camp", 4 to "Partisan ou militant",
-)
-
 /** Niveau d'indépendance 1 à 4 ; 0 = non qualifié. */
 fun indLevel(ev: Evaluator): Int = ev.independance?.takeIf { it in 1..4 } ?: 0
-fun indLabel(level: Int): String = IND_LABELS[level] ?: "Non qualifiée"
 
 /** Nom court : le nom s'il tient en 26 caractères, sinon le plus court alias sans chiffre. */
 fun evShortName(ev: Evaluator): String =
     if (ev.nom.length <= 26) ev.nom else ev.alias.filter { a -> a.none { it.isDigit() } }.minByOrNull { it.length } ?: ev.nom
 
-fun evA11yLabel(ev: Evaluator): String {
+fun evA11yLabel(ev: Evaluator, data: PolData): String {
     val n = indLevel(ev)
-    return "${ev.nom}, évaluateur. Indépendance " + (if (n > 0) "niveau $n sur 4 : ${indLabel(n)}" else "non qualifiée") + ". Ouvrir sa fiche"
+    return "${ev.nom}, évaluateur. Indépendance " + (if (n > 0) "niveau $n sur 4 : ${data.levelLabel(n)}" else "non qualifiée") + ". Ouvrir sa fiche"
 }
 
 /**
@@ -372,11 +366,11 @@ internal fun IndTag(n: Int, text: String, modifier: Modifier, shape: Shape) {
 
 /** Étiquette d'évaluateur : pastille du niveau d'indépendance (1 à 4) et nom court ; ouvre sa fiche. */
 @Composable
-fun EvaluatorTag(ev: Evaluator, onOpen: (String) -> Unit, modifier: Modifier = Modifier, shape: Shape = RoundedCornerShape(8.dp)) =
-    IndTag(indLevel(ev), evShortName(ev), modifier.minimumInteractiveComponentSize().clip(shape).opensEvaluator(ev, onOpen), shape)
+fun EvaluatorTag(ev: Evaluator, data: PolData, onOpen: (String) -> Unit, modifier: Modifier = Modifier, shape: Shape = RoundedCornerShape(8.dp)) =
+    IndTag(indLevel(ev), evShortName(ev), modifier.minimumInteractiveComponentSize().clip(shape).opensEvaluator(ev, data, onOpen), shape)
 
-private fun Modifier.opensEvaluator(ev: Evaluator, onOpen: (String) -> Unit) =
-    clickable(role = Role.Button) { onOpen(ev.id) }.semantics(mergeDescendants = true) { contentDescription = evA11yLabel(ev) }
+private fun Modifier.opensEvaluator(ev: Evaluator, data: PolData, onOpen: (String) -> Unit) =
+    clickable(role = Role.Button) { onOpen(ev.id) }.semantics(mergeDescendants = true) { contentDescription = evA11yLabel(ev, data) }
 
 /** Légende : l'étiquette d'un niveau, sans action. */
 @Composable
@@ -434,7 +428,7 @@ fun SourceButton(src: SourceRef, data: PolData, onOpenEv: (String) -> Unit, modi
     // Les deux parties partagent la hauteur de la plus haute (24 dp visibles) ; la cible de 48 dp est réservée autour
     // de l'ensemble, hors du fond et du contour, qui restent à la hauteur naturelle des étiquettes.
     Row(modifier.minimumInteractiveComponentSize().height(IntrinsicSize.Min)) {
-        if (p.ev != null) IndTag(indLevel(p.ev), evShortName(p.ev), Modifier.fillMaxHeight().clip(lShape).opensEvaluator(p.ev, onOpenEv), lShape)
+        if (p.ev != null) IndTag(indLevel(p.ev), evShortName(p.ev), Modifier.fillMaxHeight().clip(lShape).opensEvaluator(p.ev, data, onOpenEv), lShape)
         else if (p.who != null) IndTag(
             0, p.who,
             Modifier.fillMaxHeight().clip(lShape).clickable(role = Role.Button) { noFiche(p.who) }.semantics(mergeDescendants = true) { contentDescription = noFicheA11y(p.who) },
@@ -451,20 +445,9 @@ fun SourceButton(src: SourceRef, data: PolData, onOpenEv: (String) -> Unit, modi
 }
 
 /** Description d'une source sans fiche d'évaluateur. */
-fun noFicheA11y(name: String): String = "$name : source pas encore analysée. Ouvrir les détails"
+fun noFicheA11y(name: String): String = "$name, source pas encore analysée. Indépendance non qualifiée. Ouvrir sa fiche"
 
 const val NO_FICHE_TEXT = "Nous n'avons pas encore analysé cette source : son statut, son financement et son orientation restent à documenter."
-
-/** Feuille d'une source sans fiche : son nom, puis ce qu'on sait d'elle (rien encore). */
-@Composable
-fun NoFicheSheet(name: String, onDismiss: () -> Unit) {
-    PolSheet(full = false, onDismiss = onDismiss) {
-        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp)) {
-            Text(name, Modifier.semantics { heading() }, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            Text(NO_FICHE_TEXT, Modifier.padding(top = 8.dp), fontSize = 14.5.sp, lineHeight = 21.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-    }
-}
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
