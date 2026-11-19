@@ -247,4 +247,18 @@ class ReportTest {
         assertNull(duelBlockSig(app.kairos.mobile.ui.politique.model.IdKind.Personne, "x", "y", "Élus"))
         assertEquals("Création : 2016 depuis", lineText(Kv("Création", "2016", "depuis")))
     }
+
+    @Test
+    fun extraitResserreLesEspacesInsecables() {
+        assertEquals("Un mot ici fin", infoExtrait("Un\u00A0mot\u202Fici \t fin"))
+    }
+
+    /** Le moteur d'expressions régulières d'Android refuse le drapeau (?U) : il plante au chargement de la classe. */
+    @Test
+    fun aucunDrapeauRegexInconnuDAndroid() {
+        val src = java.io.File("src/main/java")
+        assertTrue("sources introuvables", src.isDirectory)
+        val fautifs = src.walkTopDown().filter { it.extension == "kt" && it.readText().contains("(?U)") }.map { it.name }.toList()
+        assertEquals(emptyList<String>(), fautifs)
+    }
 }
