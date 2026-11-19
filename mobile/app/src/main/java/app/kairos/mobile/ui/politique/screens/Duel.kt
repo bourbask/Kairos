@@ -1100,16 +1100,20 @@ private fun SourceFoot(f: Fight, list: List<SourceRef>) {
 private fun RoundBody(f: Fight, i: Int, round: DuelRound) {
     val grown = f.still || i in f.grown
     when (round) {
-        is FinRound -> round.gauges.forEachIndexed { j, g -> GaugeView(f, g, grown, last = j == round.gauges.lastIndex) }
+        is FinRound -> round.gauges.forEachIndexed { j, g -> GaugeView(f, g, grown, last = j == round.gauges.lastIndex, sig = g.ref?.let { "comparaison" to it }) }
         is WalletRound -> WalletBody(f, i, round, grown)
         is GapRound -> GapBody(f, round)
         is BilanRound -> BilanBody(f, round)
         is VotesRound -> VotesBody(f, round)
         is TurnRound -> TurnBody(f, i, round)
-        is CardRound -> round.blocks.forEachIndexed { j, b ->
-            when (b) {
-                is GaugeBlock -> GaugeView(f, b.gauge, grown, last = j == round.blocks.lastIndex || round.blocks.getOrNull(j + 1) !is GaugeBlock)
-                is Cols -> SectionView(f, b.title, b.a, b.b)
+        is CardRound -> {
+            val (a, b) = f.s.ids
+            val kind = remember(a) { f.data.kindOf(a) }
+            round.blocks.forEachIndexed { j, x ->
+                when (x) {
+                    is GaugeBlock -> GaugeView(f, x.gauge, grown, last = j == round.blocks.lastIndex || round.blocks.getOrNull(j + 1) !is GaugeBlock, sig = duelBlockSig(kind, a, b, x.gauge.title))
+                    is Cols -> SectionView(f, x.title, x.a, x.b, duelBlockSig(kind, a, b, x.title))
+                }
             }
         }
     }
@@ -1149,6 +1153,19 @@ private fun TwoSep(f: Fight, modifier: Modifier = Modifier, content: @Composable
 private fun H4(t: String, k: DuelInk, modifier: Modifier = Modifier) =
     Text(frTypo(t), modifier, fontSize = 14.5.sp, lineHeight = 19.sp, fontWeight = FontWeight.Bold, color = k.ink)
 
+/** Intertitre et, quand l'élément se signale ([sig] : type et référence), sa touche en bout de ligne. */
+@Composable
+private fun SigH4(f: Fight, t: String, sig: Pair<String, String>?, extrait: () -> String, modifier: Modifier = Modifier) {
+    if (sig == null) return H4(t, f.k, modifier)
+    Row(modifier, verticalAlignment = Alignment.CenterVertically) {
+        H4(t, f.k, Modifier.weight(1f))
+        SignalKey(f.nav, sig.first, sig.second, extrait(), t, ink = f.k.onsv)
+    }
+}
+
+/** « nom A : x | nom B : y », extrait signalé d'un élément comparé. */
+private fun Fight.both(x: (Int) -> String): String = "${s.names[0]} : ${x(0)} | ${s.names[1]} : ${x(1)}"
+
 @Composable
 private fun Na(t: String, k: DuelInk, modifier: Modifier = Modifier) =
     Text(frTypo(t), modifier.padding(vertical = 6.dp), fontSize = 12.5.sp, fontStyle = FontStyle.Italic, color = k.onsv)
@@ -1156,10 +1173,10 @@ private fun Na(t: String, k: DuelInk, modifier: Modifier = Modifier) =
 // ---------- Jauges ----------
 
 @Composable
-private fun GaugeView(f: Fight, g: Gauge, grown: Boolean, last: Boolean) {
+private fun GaugeView(f: Fight, g: Gauge, grown: Boolean, last: Boolean, sig: Pair<String, String>? = null) {
     val k = f.k
     Column(Modifier.fillMaxWidth().let { if (last) it else it.dashedBottom(k.line) }.padding(top = 12.dp, bottom = if (last) 4.dp else 12.dp)) {
-        H4(g.title, k, Modifier.padding(bottom = 6.dp))
+        SigH4(f, g.title, sig, { "${g.title} · " + f.both { g.label(if (it == 0) g.a else g.b) } }, Modifier.padding(bottom = 6.dp))
         Row(Modifier.padding(bottom = 2.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             listOf(g.a, g.b).forEachIndexed { s, v ->
                 Column(Modifier.weight(1f), horizontalAlignment = if (s == 0) Alignment.Start else Alignment.End) {
@@ -1333,8 +1350,13 @@ private fun WalletBody(f: Fight, i: Int, r: WalletRound, grown: Boolean) {
     val key = "w$i"
     val page = f.wins[key] ?: 0
     val go = { p: Int -> f.wins[key] = p }
-    GaugeView(f, r.gauge, grown, last = false)
-    H4("Ce que chaque programme sacrifie", k, Modifier.padding(top = 14.dp, bottom = 6.dp))
+    GaugeView(f, r.gauge, grown, last = false, sig = r.gauge.ref?.let { "comparaison" to it })
+    val sacrifie = "Ce que chaque programme sacrifie"
+    SigH4(
+        f, sacrifie, r.lectureRef?.let { "comparaison" to it },
+        { "$sacrifie · " + f.both { s -> (if (s == 0) r.la else r.lb)?.let { it.contrepartie_courte.ifBlank { it.contrepartie } } ?: "balance non documentée" } },
+        Modifier.padding(top = 14.dp, bottom = 6.dp),
+    )
     SlideWindow(page, go, f, k.surf to k.inked(0.1f), frame = true) { p ->
         Column(Modifier.padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 12.dp)) {
             Row(Modifier.fillMaxWidth().padding(bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1438,7 +1460,7 @@ private fun BilanBody(f: Fight, r: BilanRound) {
     val k = f.k
     r.lines.forEach { l ->
         Column(Modifier.padding(top = 12.dp)) {
-            H4(l.o, k)
+            SigH4(f, l.o, "bilan" to infoRef("bilan", l.o), { "${l.o} · " + f.both { s -> (if (s == 0) l.a else l.b)?.let { MARKS[it.firstOrNull()] ?: "Non trouvé" } ?: "Non trouvé" } })
             if (l.s.isNotBlank()) Text(frTypo(l.s), Modifier.padding(top = 1.dp, bottom = 6.dp), fontSize = 12.sp, color = k.onsv)
             TwoSep(f) { s ->
                 val x = if (s == 0) l.a else l.b
@@ -1463,7 +1485,10 @@ private fun GapBody(f: Fight, r: GapRound) {
             val (la, lb) = gapLabels(g)
             val mx = max(g.claimed ?: 0.0, g.credited ?: 0.0).takeIf { it > 0 } ?: 1.0
             fun fmt(v: Double?) = v?.let { fmtNum(it, if (it % 1.0 != 0.0) 1 else 0) + " " + g.unit } ?: NO_DATA
-            Text(frTypo(g.what), Modifier.padding(top = 10.dp, bottom = 4.dp), fontSize = 13.sp, lineHeight = 17.sp, fontWeight = FontWeight.SemiBold, color = k.ink)
+            Row(Modifier.padding(top = 10.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(frTypo(g.what), Modifier.weight(1f), fontSize = 13.sp, lineHeight = 17.sp, fontWeight = FontWeight.SemiBold, color = k.ink)
+                SignalKey(f.nav, "ecart", infoRef("budgets", "${g.who} ${g.what}"), "${g.who} : ${g.what}. $la ${fmt(g.claimed)}, ${lb.lowercase()} ${fmt(g.credited)}", g.who, ink = k.onsv)
+            }
             listOf(Triple(la, g.claimed, true), Triple(lb, g.credited, false)).forEach { (label, v, hollow) ->
                 Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.Bottom) {
                     Text(label, Modifier.weight(1f), fontSize = 11.5.sp, color = k.onsv)
@@ -1502,7 +1527,10 @@ private fun VotesBody(f: Fight, r: VotesRound) {
     }
     r.lines.forEach { l ->
         Column(Modifier.fillMaxWidth().dashedBottom(k.line).padding(vertical = 8.dp)) {
-            Text(frTypo(l.t), fontSize = 13.sp, lineHeight = 17.sp, fontWeight = FontWeight.SemiBold, color = k.ink)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(frTypo(l.t), Modifier.weight(1f), fontSize = 13.sp, lineHeight = 17.sp, fontWeight = FontWeight.SemiBold, color = k.ink)
+                SignalKey(f.nav, "vote", infoRef("votes", l.t), "Assemblée nationale · ${l.t} : ${r.groupA} ${VOTE_WORDS[l.a] ?: ""}, ${r.groupB} ${VOTE_WORDS[l.b] ?: ""}", l.t, ink = k.onsv)
+            }
             Row(Modifier.fillMaxWidth().padding(top = 5.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) { Vote(l.a, k) }
                 Box(Modifier.width(28.dp), contentAlignment = Alignment.Center) {
@@ -1579,6 +1607,9 @@ private fun TurnBody(f: Fight, i: Int, r: TurnRound) {
                             Text(frTypo(if (p == 0) t.a else t.b), Modifier.padding(top = 2.dp), fontSize = 12.5.sp, lineHeight = 17.sp, color = k.ink)
                         }
                     }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        SignalKey(f.nav, "revirement", infoRef("revirements", "${t.p} ${t.s}"), "${t.p}, ${t.s} : ${t.a} → ${t.b}", "${t.p} · ${t.s}", ink = k.onsv)
+                    }
                 }
             }
         }
@@ -1603,10 +1634,10 @@ private fun Before(after: Boolean, k: DuelInk) {
 }
 
 @Composable
-private fun SectionView(f: Fight, title: String, a: List<Line>, b: List<Line>) {
+private fun SectionView(f: Fight, title: String, a: List<Line>, b: List<Line>, sig: Pair<String, String>? = null) {
     val k = f.k
     Column(Modifier.padding(top = 12.dp)) {
-        H4(title, k, Modifier.padding(bottom = 4.dp))
+        SigH4(f, title, sig, { "$title · " + f.both { s -> (if (s == 0) a else b).map(::lineText).filter { it.isNotBlank() }.joinToString(" ; ") } }, Modifier.padding(bottom = 4.dp))
         TwoSep(f) { s -> (if (s == 0) a else b).forEachIndexed { j, l -> LineView(f, l, j == 0) } }
     }
 }

@@ -20,6 +20,7 @@ import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -41,6 +42,7 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.error
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.heading
@@ -55,6 +57,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.kairos.mobile.data.ApiError
 import app.kairos.mobile.ui.politique.PolNavigator
+import app.kairos.mobile.ui.politique.PolSheetState
 import app.kairos.mobile.ui.politique.jeux.kit.PixelGrid
 import app.kairos.mobile.ui.politique.kit.EmptyState
 import app.kairos.mobile.ui.politique.kit.Kicker
@@ -78,16 +81,40 @@ private val CHECK_GRID = listOf("........##", ".......###", "......###.", "##...
 private const val LIMIT_TEXT = "Chaque signalement est relu à la main, source par source. Au-delà de 10 par heure, personne ne pourrait les vérifier dans un délai raisonnable, et la limite protège aussi le formulaire des envois automatiques."
 
 /**
- * Signalement d'une erreur sur l'affirmation [claimId] : formulaire, puis reçu, limite atteinte ou fermeture.
- * Introuvable dans les données chargées : feuille explicative.
+ * Touche compacte « signaler une erreur » d'une information ou d'une affirmation : drapeau discret, cible de 48 dp.
+ * À poser seulement là où l'information est déjà dévoilée (jamais avant la réponse d'un jeu).
  */
 @Composable
-fun ReportSheet(data: PolData, claimId: String, nav: PolNavigator, onDismiss: () -> Unit) {
-    val claim = remember(data, claimId) { claimsOf(data).firstOrNull { it.id == claimId && validClaimId(it.id) } }
-    if (claim == null) {
+fun SignalKey(nav: PolNavigator, target: ReportTarget, modifier: Modifier = Modifier, ink: Color = MaterialTheme.colorScheme.onSurfaceVariant) {
+    val what = if (target is ReportTarget.Affirmation) "cette affirmation" else "cette information"
+    IconButton({ nav.sheet(PolSheetState.Report(target)) }, modifier.size(48.dp).semantics { contentDescription = "Signaler une erreur sur $what" }) {
+        PixelGrid(FLAG_GRID, ink.copy(alpha = ink.alpha * .75f), Modifier.size(8.dp, 9.dp))
+    }
+}
+
+/** Raccourci : touche d'une information ([infoTarget]) ; [ink] : sur un fond qui n'est pas la surface. */
+@Composable
+fun SignalKey(nav: PolNavigator, type: String, ref: String, extrait: String, titre: String = "", modifier: Modifier = Modifier, ink: Color = MaterialTheme.colorScheme.onSurfaceVariant) =
+    SignalKey(nav, remember(type, ref, extrait, titre) { infoTarget(type, ref, extrait, titre) }, modifier, ink)
+
+/**
+ * Signalement d'une erreur sur [target] (affirmation ou autre information) : formulaire, puis reçu, limite atteinte ou fermeture.
+ * Introuvable dans les données chargées, ou information hors des règles du module : feuille explicative.
+ */
+@Composable
+fun ReportSheet(data: PolData, target: ReportTarget, nav: PolNavigator, onDismiss: () -> Unit) {
+    val claimId = target.key
+    val info = target as? ReportTarget.Info
+    val claim = remember(data, target) { (target as? ReportTarget.Affirmation)?.let { t -> claimsOf(data).firstOrNull { it.id == t.claimId && validClaimId(it.id) } } }
+    if (info == null && claim == null) {
         PolSheet(full = false, onDismiss = onDismiss) { EmptyState("Phrase introuvable", "Cette phrase n'est plus dans les données chargées. Fermez la feuille et rouvrez-la depuis la liste.", Modifier.padding(16.dp)) }
         return
     }
+    if (info != null && !infoOk(info)) {
+        PolSheet(full = false, onDismiss = onDismiss) { EmptyState("Formulaire indisponible", "Cette information ne peut pas être signalée : fermez la feuille, puis rechargez l'espace.", Modifier.padding(16.dp)) }
+        return
+    }
+    val ready = { f: ReportForm -> if (claim != null) reportReady(f, claim, data) else reportReady(f, info!!) }
     // Mémoire seule, jamais l'état sauvegardé de l'activité : la saisie ne quitte pas le processus.
     var form by remember(claimId) { mutableStateOf(ReportForm()) }
     var sending by remember(claimId) { mutableStateOf(false) }
@@ -107,8 +134,8 @@ fun ReportSheet(data: PolData, claimId: String, nav: PolNavigator, onDismiss: ()
     val wait = nav.reportQuota.waitMinutes(System.currentTimeMillis())
 
     fun send() {
-        if (sending || nav.reportInFlight || !reportReady(form, claim, data)) return
-        val args = reportArgs(form, claim.id)
+        if (sending || nav.reportInFlight || !ready(form)) return
+        val args = reportArgs(form, target)
         oversize(args)?.let { problem = it; return }
         sending = true
         nav.reportInFlight = true
@@ -151,7 +178,12 @@ fun ReportSheet(data: PolData, claimId: String, nav: PolNavigator, onDismiss: ()
             val r = received
             Column {
                 Kicker(if (r != null) "Signalement reçu" else "Signaler une erreur")
-                Text(if (r != null) "Merci, c'est noté" else frTypo(quoted(claim.q)), Modifier.padding(top = 4.dp).semantics { heading() }, fontSize = 19.sp, lineHeight = 24.sp, fontWeight = FontWeight.Bold)
+                val title = if (claim != null) quoted(claim.q) else info!!.titre.ifEmpty { info.extrait }
+                Text(if (r != null) "Merci, c'est noté" else frTypo(title), Modifier.padding(top = 4.dp).semantics { heading() }, fontSize = 19.sp, lineHeight = 24.sp, fontWeight = FontWeight.Bold)
+                // L'extrait visé sous l'intitulé, quand il ne le répète pas.
+                if (r == null && info != null && info.titre.isNotEmpty() && info.titre != info.extrait) {
+                    Text(frTypo(info.extrait), Modifier.padding(top = 6.dp), fontSize = 14.sp, lineHeight = 20.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
             when {
                 r != null -> {
@@ -163,7 +195,7 @@ fun ReportSheet(data: PolData, claimId: String, nav: PolNavigator, onDismiss: ()
                     else Notice(ok = false, "Les signalements sont momentanément fermés.")
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { Key("Fermer", onDismiss) }
                 }
-                else -> ReportFields(form, { form = it }, claim, data, nav.reportQuota.left, sending, nav.reportInFlight, problem, ::send, onDismiss)
+                else -> ReportFields(form, { form = it }, target, claim, data, ready, nav.reportQuota.left, sending, nav.reportInFlight, problem, ::send, onDismiss)
             }
             Spacer(Modifier.height(8.dp))
         }
@@ -173,22 +205,23 @@ fun ReportSheet(data: PolData, claimId: String, nav: PolNavigator, onDismiss: ()
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ColumnScope.ReportFields(
-    form: ReportForm, set: (ReportForm) -> Unit, claim: app.kairos.mobile.ui.politique.model.Claim, data: PolData,
-    left: Int?, sending: Boolean, inFlight: Boolean, problem: String?, onSend: () -> Unit, onCancel: () -> Unit,
+    form: ReportForm, set: (ReportForm) -> Unit, target: ReportTarget, claim: app.kairos.mobile.ui.politique.model.Claim?, data: PolData,
+    ready: (ReportForm) -> Boolean, left: Int?, sending: Boolean, inFlight: Boolean, problem: String?, onSend: () -> Unit, onCancel: () -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
-    Group("Qu'est-ce qui pose problème ?") {
+    val info = claim == null
+    Group(if (info) "Qu'est-ce qui ne va pas ?" else "Qu'est-ce qui pose problème ?") {
         // La clé `idem` suit le formulaire : changer de type ne la renouvelle pas.
-        Choices(REPORT_KINDS, form.kind) { if (it != form.kind) set(form.copy(kind = it, target = "")) }
+        Choices(reportKinds(target), form.kind) { if (it != form.kind) set(form.copy(kind = it, target = "")) }
     }
-    if (form.kind == "fait" || form.kind == "source") Group("Lequel ?") {
+    if (claim != null && (form.kind == "fait" || form.kind == "source")) Group("Lequel ?") {
         Choices(reportTargets(claim, form.kind, data), form.target) { set(form.copy(target = it)) }
     }
     Group("Qu'est-ce qui est inexact ?", "Citez le passage concerné, puis dites précisément ce qui ne va pas. Pas votre avis sur le sujet : l'erreur à corriger.") {
         Field(form.what, { set(form.copy(what = it)) }, 400, multiline = true, min = 30)
     }
     Group("Sur quoi vous appuyez-vous ?") {
-        Choices(REPORT_BASES, form.basis) { set(form.copy(basis = it)) }
+        Choices(reportBases(target), form.basis) { set(form.copy(basis = it)) }
         when (form.basis) {
             "lien" -> Sub {
                 Group("Lien vers la source", "Adresse en https. Elle n'est pas ouverte automatiquement : elle sera consultée à la relecture.", main = false) {
@@ -203,8 +236,8 @@ private fun ColumnScope.ReportFields(
                 Group("Titre ou mots-clés", "Assez pour retrouver l'article par une recherche.", main = false) { Field(form.refWhat, { set(form.copy(refWhat = it)) }, 160) }
             }
             "carte" -> Sub {
-                Group("Quels éléments de la carte se contredisent ?", main = false) {
-                    Field(form.refIn, { set(form.copy(refIn = it)) }, 160, placeholder = "ex. le fait 2 et le verdict")
+                Group(if (info) "Quelles parties de l'élément se contredisent ?" else "Quels éléments de la carte se contredisent ?", main = false) {
+                    Field(form.refIn, { set(form.copy(refIn = it)) }, 160, placeholder = if (info) "ex. le chiffre et la phrase qui le commente" else "ex. le fait 2 et le verdict")
                 }
             }
         }
@@ -213,11 +246,11 @@ private fun ColumnScope.ReportFields(
         Field(form.fix, { set(form.copy(fix = it)) }, 300, multiline = true, min = 10)
     }
     Oath(form.oath) { set(form.copy(oath = it)) }
-    Text(anonymityNote(left), fontSize = 12.5.sp, lineHeight = 17.sp, color = scheme.onSurfaceVariant)
+    Text(anonymityNote(left, info), fontSize = 12.5.sp, lineHeight = 17.sp, color = scheme.onSurfaceVariant)
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
             Key("Annuler", onCancel)
-            val active = !sending && !inFlight && reportReady(form, claim, data)
+            val active = !sending && !inFlight && ready(form)
             val label = if (sending) "Envoi…" else if (inFlight) "Envoi en cours…" else "Envoyer le signalement"
             PixelKey(onSend, label, Modifier.alpha(if (active) 1f else .45f), enabled = active, fg = scheme.surface, bg = scheme.primary, hoverBg = scheme.primary) {
                 Text(label, fontSize = 14.sp, lineHeight = 16.sp, fontWeight = FontWeight.SemiBold, color = scheme.surface)

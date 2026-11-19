@@ -753,6 +753,7 @@ private fun TractBack(
                         color = k.muted, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.SemiBold, fontSize = 12.sp, letterSpacing = 0.04.em, lineHeight = 14.sp,
                     )
                     NextButton(if (isLast) "Score ›" else "Suivante ›", onNext)
+                    if (validClaimId(claim.id)) SignalKey(nav, ReportTarget.Affirmation(claim.id), ink = k.muted)
                 }
             }
         } else {
@@ -770,6 +771,9 @@ private fun TractBack(
                     )
                 }
                 SourceList(sourcesOf(claim.src), data, { nav.sheet(PolSheetState.Evaluator(it)) })
+                if (validClaimId(claim.id)) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    SignalKey(nav, ReportTarget.Affirmation(claim.id), ink = k.muted)
+                }
             }
         }
     }
@@ -819,6 +823,7 @@ private fun QuizEnd(data: PolData, nav: PolNavigator, claims: List<Claim>, deck:
                 Text(if (ok) "✓" else "✗", Modifier.semantics { contentDescription = if (ok) "Bonne réponse" else "Réponse manquée" }, color = if (ok) pc.solide else scheme.onSurfaceVariant, fontWeight = FontWeight.Bold, fontSize = 18.sp)
                 Text(frTypo(c.q), Modifier.weight(1f), fontSize = 14.sp)
                 VerdictChip(c.v)
+                if (validClaimId(c.id)) SignalKey(nav, ReportTarget.Affirmation(c.id), Modifier.offset(y = (-12).dp))
             }
         }
     }

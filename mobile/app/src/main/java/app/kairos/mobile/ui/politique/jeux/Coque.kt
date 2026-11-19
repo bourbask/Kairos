@@ -1,5 +1,7 @@
 package app.kairos.mobile.ui.politique.jeux
 
+import app.kairos.mobile.ui.politique.screens.SignalKey
+import app.kairos.mobile.ui.politique.screens.claimsOf
 import app.kairos.mobile.ui.politique.jeux.kit.CouleursJeux
 import android.view.HapticFeedbackConstants
 import androidx.compose.animation.core.CubicBezierEasing
@@ -358,6 +360,9 @@ private fun Reponse(g: JeuPret, st: MancheEtat, d: Any, first: Boolean, data: Po
             if (refs.isNotEmpty()) FlowRow(Modifier.semantics { contentDescription = r.libelle ?: "Source" }, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 refs.forEach { SourceButton(it, data, { id -> nav.sheet(PolSheetState.Evaluator(id)) }) }
             }
+            // Réponse affichée seulement après la bonne réponse : le signalement ne dévoile rien.
+            val target = remember(g.slug, st.manche, data) { mancheTarget(g.slug, g.jeu.nom, st.manche, claimsOf(data).mapTo(HashSet()) { it.id }) }
+            SignalKey(nav, target, ink = ink)
         }
         // Mouvements réduits : pas d'invitation, une flèche compacte mène à la suivante.
         if (reduit) IconButton(onNext, Modifier.align(Alignment.BottomEnd).padding(10.dp).clip(CircleShape).background(cj.suivant)) {

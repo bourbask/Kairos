@@ -60,6 +60,10 @@ import app.kairos.mobile.ui.politique.kit.SourceList
 import app.kairos.mobile.ui.politique.kit.VerdictChip
 import app.kairos.mobile.ui.politique.kit.frTypo
 import app.kairos.mobile.ui.politique.model.Claim
+import app.kairos.mobile.ui.politique.screens.SignalKey
+import app.kairos.mobile.ui.politique.screens.infoRef
+import app.kairos.mobile.ui.politique.screens.ReportTarget
+import app.kairos.mobile.ui.politique.screens.validClaimId
 import app.kairos.mobile.ui.politique.screens.CHAMBERS
 import app.kairos.mobile.ui.politique.screens.Declaration
 import app.kairos.mobile.ui.politique.screens.Promesse
@@ -408,6 +412,9 @@ private fun sections(data: PolData, id: String, l: IdentityLinks, nav: PolNaviga
     fun opens(lecture: Lecture?, title: String, who: String?): Modifier =
         lecture?.let { Modifier.opensBalance(title) { nav.sheet(PolSheetState.Balance(it, title, who)) } } ?: Modifier
     @Composable fun balance(lecture: Lecture?, title: String) { lecture?.let { BalanceBlock(it, title, onOpen = null) } }
+    // Même cible que dans la rubrique d'origine : touche en bas à droite de chaque élément.
+    @Composable fun flag(type: String, ref: String, extrait: String, titre: String) =
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { SignalKey(nav, type, ref, extrait, titre) }
     val out = mutableListOf<Section>()
     val p = ownProgram(l, data, id)
     val m = l.measures.firstOrNull()
@@ -424,6 +431,7 @@ private fun sections(data: PolData, id: String, l: IdentityLinks, nav: PolNaviga
                     ),
                 )
                 balance(it.lecture, "${it.who} : programme")
+                flag("budget", infoRef("budgets", it.who), "${it.who} (${it.party}) : dette ${it.debt.or(unit = " %")}, déficit ${it.deficit.or(unit = " %")}, effet net ${it.net?.let { v -> fmtSigned(v, 1) + " Md€" } ?: NO_VALUE} par an", it.who)
             }
         }
         m?.let {
@@ -433,6 +441,7 @@ private fun sections(data: PolData, id: String, l: IdentityLinks, nav: PolNaviga
                 if (it.b.isNotBlank()) { Kicker("Pour qui", Modifier.padding(top = 10.dp)); Body(it.b) }
                 if (it.f.isNotBlank()) { Kicker("Financé par", Modifier.padding(top = 10.dp)); Body(it.f) }
                 balance(it.lecture, "${it.who} : pouvoir d'achat")
+                flag("niveau-de-vie", infoRef("niveau-de-vie", it.who), "${it.who} : ${it.hh?.let { v -> fmtSigned(v) } ?: NO_VALUE} €/an. Mesures : ${it.m}. Pour qui : ${it.b}. Financé par : ${it.f}", it.who)
             }
         }
         l.gaps.forEach { g ->
@@ -445,6 +454,7 @@ private fun sections(data: PolData, id: String, l: IdentityLinks, nav: PolNaviga
                     balance(g.lecture, g.what)
                 }
                 g.src?.takeIf { it.isNotBlank() }?.let { SourceList(listOf(SourceRef(it, g.url, g.ev)), data, onEv) }
+                flag("ecart", infoRef("budgets", "${g.who} ${g.what}"), "${g.who} : ${g.what}. Annoncé ${g.claimed.or(unit = " ${g.unit}")}, retenu ${g.credited.or(unit = " ${g.unit}")}", g.who)
             }
         }
     }
@@ -454,6 +464,7 @@ private fun sections(data: PolData, id: String, l: IdentityLinks, nav: PolNaviga
                 Row { Tag(MARK_LABEL[st.pos] ?: "Position") }
                 Title(r.o)
                 Body(st.text)
+                flag("bilan", infoRef("bilan", r.o), "${r.o} : ${r.s}", r.o)
             }
         }
     }
@@ -468,6 +479,7 @@ private fun sections(data: PolData, id: String, l: IdentityLinks, nav: PolNaviga
                         Text(frTypo(v.t), fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
                         c.getOrNull(1)?.takeIf { it.isNotBlank() }?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp) }
                     }
+                    SignalKey(nav, "vote", infoRef("votes", v.t), "$chamber · ${v.t} (${v.d}) : $group ${VOTE_WORDS[k] ?: ""}", v.t)
                 }
             }
         }
@@ -496,6 +508,7 @@ private fun sections(data: PolData, id: String, l: IdentityLinks, nav: PolNaviga
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { StateTag(DV_LABELS[d.verdict.v].orEmpty(), if (d.verdict.v == "ecart") "fragile" else "partiel") }
                 Title(d.scrutin.titre)
                 Body(d.verdict.explication)
+                flag("scrutin", infoRef("${d.scrutin.id}:${d.verdict.qui}"), "${d.verdict.qui} · ${DV_LABELS[d.verdict.v] ?: d.verdict.v} : ${d.verdict.explication}", d.scrutin.titre)
             }
         }
         TextButton({ nav.go(PolRoute.Rubric("dit-vote")) }, Modifier.heightIn(min = 48.dp)) { Text("Tous les scrutins croisés") }
@@ -503,7 +516,11 @@ private fun sections(data: PolData, id: String, l: IdentityLinks, nav: PolNaviga
     if (l.claims.isNotEmpty()) out += Section("Phrases") {
         l.claims.forEach { c ->
             FigCard {
-                Row { VerdictChip(c.v) }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    VerdictChip(c.v)
+                    Spacer(Modifier.weight(1f))
+                    if (validClaimId(c.id)) SignalKey(nav, ReportTarget.Affirmation(c.id))
+                }
                 Body("« ${c.q} »", Modifier.padding(top = 6.dp))
                 SourceList(sourcesOf(c.src), data, onEv)
                 claimsOf(data).indexOf(c).takeIf { it >= 0 }?.let { i -> TextButton({ nav.sheet(PolSheetState.Claim(i)) }, Modifier.heightIn(min = 48.dp)) { Text("Les faits et ce qu'elle cache") } }
@@ -517,10 +534,13 @@ private fun sections(data: PolData, id: String, l: IdentityLinks, nav: PolNaviga
         l.proms.forEach { PromesseCard(data, it, nav, self = id) }
     }
     if (l.coh.isNotEmpty()) out += Section("Cohérence") {
-        l.coh.flatMap { it.items }.forEach { item ->
+        l.coh.flatMap { g -> g.items.map { g.camp to it } }.forEach { (camp, item) ->
             val k = item.getOrElse(0) { "" }
             Column(Modifier.padding(vertical = 4.dp)) {
-                StateTag(COH_LABEL[k] ?: "—", when (k) { "coherent" -> "solide"; "explique" -> "partiel"; "ecart" -> "fragile"; else -> null })
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.weight(1f)) { StateTag(COH_LABEL[k] ?: "—", when (k) { "coherent" -> "solide"; "explique" -> "partiel"; "ecart" -> "fragile"; else -> null }) }
+                    SignalKey(nav, "coherence", infoRef("votes", "$camp ${item.getOrElse(1) { "" }}"), "$camp · ${COH_LABEL[k] ?: k} : ${item.getOrElse(1) { "" }}", camp)
+                }
                 Body(item.getOrElse(1) { "" })
             }
         }
@@ -533,6 +553,7 @@ private fun sections(data: PolData, id: String, l: IdentityLinks, nav: PolNaviga
                 Body("<b>Avant.</b> ${r.a}")
                 Body("<b>Après.</b> ${r.b}")
                 SourceList(sourcesOf(r.src), data, onEv)
+                flag("revirement", infoRef("revirements", "${r.p} ${r.s}"), "${r.p}, ${r.s} : ${r.a} → ${r.b}", "${r.p} · ${r.s}")
             }
         }
     }
@@ -545,17 +566,19 @@ private fun sections(data: PolData, id: String, l: IdentityLinks, nav: PolNaviga
                 StageLadder(a.stg)
                 Body(a.etat)
                 a.url.takeIf { it.isNotBlank() }?.let { SourceList(listOf(SourceRef("", it)), data, onEv) }
+                flag("probite", infoRef("probite", "${a.who} ${a.faits}"), "${a.who} (${a.party}) · ${a.stg} : ${a.factsText}. ${a.etat} (${a.date})", a.who)
             }
         }
     }
     val aide = ownAide(l, data, id)
     val part = ownPartis(l, data, id)
     if (aide != null || part != null || l.c22.isNotEmpty() || l.money.isNotEmpty()) out += Section("Argent") {
-        aide?.v?.let { v -> FigCard { Kicker("Aide publique"); Text(moneyLabel(v), fontSize = 22.sp, fontWeight = FontWeight.ExtraBold) } }
+        aide?.let { r -> r.v?.let { v -> FigCard { Kicker("Aide publique"); Text(moneyLabel(v), fontSize = 22.sp, fontWeight = FontWeight.ExtraBold); flag("argent", infoRef("argent", "Aide publique ${r.l}"), "Aide publique · ${r.l} : ${moneyLabel(v)}", r.l) } } }
         part?.let {
             FigCard {
                 Kicker("Derniers comptes publiés")
                 KeyValue(listOf("Dons et cotisations" to moneyLabel(it.dons), "Dette" to moneyLabel(it.dette), "Situation nette" to netLabel(it.net)))
+                flag("argent", infoRef("argent", "finances ${it.parti}"), "${it.parti} : dons et cotisations ${moneyLabel(it.dons)}, dette ${moneyLabel(it.dette)}, situation nette ${netLabel(it.net)}", it.parti)
             }
         }
         l.c22.forEach { c ->
@@ -563,6 +586,7 @@ private fun sections(data: PolData, id: String, l: IdentityLinks, nav: PolNaviga
                 Kicker("Présidentielle précédente · ${c.cand}")
                 KeyValue(listOf("Score" to c.score, "Dépenses" to moneyLabel(c.depense), "Remboursé" to moneyLabel(c.rembourse)))
                 c.note.takeIf { it.isNotBlank() }?.let { Body(it) }
+                flag("argent", infoRef("argent", "comptes 2022 ${c.cand}"), "${c.cand}, campagne précédente : ${c.score}, dépenses ${moneyLabel(c.depense)}, remboursé ${moneyLabel(c.rembourse)}", c.cand)
             }
         }
         l.money.forEach { f ->
@@ -571,6 +595,7 @@ private fun sections(data: PolData, id: String, l: IdentityLinks, nav: PolNaviga
                 Title(f.t)
                 Body(f.p)
                 SourceList(sourcesOf(f.s), data, onEv)
+                flag("argent", infoRef("argent", f.t), "${f.t} (${f.label}) : ${f.p}", f.t)
             }
         }
     }
@@ -579,20 +604,22 @@ private fun sections(data: PolData, id: String, l: IdentityLinks, nav: PolNaviga
             Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(c.ville, Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
                 Text(statusLabel(c.statut), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+                SignalKey(nav, "ville", if (c.insee.isNotBlank()) infoRef(c.insee) else infoRef("villes", c.ville), "${c.ville} : ${statusLabel(c.statut)}${if (c.detail.isNotBlank()) ". ${c.detail}" else ""}", c.ville)
             }
         }
-        l.muni.forEach { mu -> FigCard { StageTag(mu.stg); Body(mu.p, Modifier.padding(top = 6.dp)) } }
+        l.muni.forEach { mu -> FigCard { StageTag(mu.stg); Body(mu.p, Modifier.padding(top = 6.dp)); flag("ville", infoRef("villes", mu.t), "${mu.t} (${mu.label}) : ${mu.p}", mu.t) } }
         l.villes.forEach { f ->
             FigCard {
                 Row { Tag(factKind(f.kind).first) }
                 Title("${f.ville} · ${f.maire}")
                 Body(f.text)
+                flag("ville", infoRef("villes", "${f.ville} ${f.text}"), "${f.ville} (${f.maire}) · ${factKind(f.kind).first} : ${f.text}", f.ville)
                 if (f.srcLabel.isNotBlank() || f.srcUrl.isNotBlank()) SourceList(listOf(SourceRef(f.srcLabel, f.srcUrl)), data, onEv)
             }
         }
     }
     if (l.rhet.isNotEmpty()) out += Section("Procédés") {
-        l.rhet.forEach { (t, text) -> FigCard { Kicker(t); Body(text) } }
+        l.rhet.forEach { (t, text) -> FigCard { Kicker(t); Body(text); flag("rhetorique", infoRef("rhetorique", t), "$t : $text", t) } }
     }
     return out
 }

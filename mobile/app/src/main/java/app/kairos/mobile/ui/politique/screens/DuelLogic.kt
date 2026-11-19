@@ -235,7 +235,11 @@ fun euros(v: Double?): String? = v?.let { fmtNum(it, 0) + " €" }
  * Jauge : valeurs des deux côtés, barres tracées depuis [base] (la référence [refName], sinon zéro) ;
  * [others] : les autres, en repères gris pour situer sans classer.
  */
-class Gauge(val title: String, val unit: String, val a: Double?, val b: Double?, val others: List<Double>, val base: Double = 0.0, val refName: String? = null) {
+class Gauge(
+    val title: String, val unit: String, val a: Double?, val b: Double?, val others: List<Double>, val base: Double = 0.0, val refName: String? = null,
+    /** Référence de signalement d'un indicateur comparé (`<comparaison>:<champ>`). */
+    val ref: String? = null,
+) {
     private val all get() = listOfNotNull(a, b) + others + base
     val min get() = all.min()
     val max get() = all.max()
@@ -285,7 +289,7 @@ class FinRound(override val title: String, val gauges: List<Gauge>, override val
 }
 
 /** Effet par ménage, puis ce que chaque programme sacrifie ([la], [lb] : balances ; [whoA], [whoB] : libellés de leurs lignes). */
-class WalletRound(val gauge: Gauge, val la: Lecture?, val lb: Lecture?, val whoA: String?, val whoB: String?, override val sources: List<SourceRef>) : DuelRound {
+class WalletRound(val gauge: Gauge, val la: Lecture?, val lb: Lecture?, val whoA: String?, val whoB: String?, override val sources: List<SourceRef>, val lectureRef: String? = null) : DuelRound {
     override val title = "Porte-monnaie"
     override val help = listOf(
         "Gain (+) ou perte (−) moyenne par ménage et par an : une moyenne cache des écarts.",
@@ -415,12 +419,13 @@ private fun PolData.candidateRounds(a: String, b: String): List<DuelRound> {
                 ind.libelle.ifBlank { ind.champ }, ind.unite, ra?.num(ind.champ), rb?.num(ind.champ),
                 rows.filter { it !== ra && it !== rb }.mapNotNull { it.num(ind.champ) }, base ?: 0.0,
                 base?.let { ref.str(c.cle_identite)?.ifBlank { null } ?: "Sans mesure" },
+                infoRef("${c.id}:${ind.champ}"),
             )
             if (ind.champ in WALLET_FIELDS) {
                 if (wallet != null) continue
                 val la = ra?.lecture(); val lb = rb?.lecture()
                 val avis = listOfNotNull(la, lb).flatMap { it.avis }.map { SourceRef(it.ev, it.url, it.ev) }
-                wallet = WalletRound(g, la, lb, ra?.str(c.cle_identite), rb?.str(c.cle_identite), footSources(src + avis.distinctBy { it.ev }, 4))
+                wallet = WalletRound(g, la, lb, ra?.str(c.cle_identite), rb?.str(c.cle_identite), footSources(src + avis.distinctBy { it.ev }, 4), infoRef("${c.id}:lecture"))
             } else {
                 fin += g
                 finSrc += src
@@ -715,3 +720,22 @@ fun windowRelease(page: Int, dx: Float, width: Float): Int = when {
 
 /** La fenêtre prend le glissé sauf à son bord (premier panneau vers la droite, dernier vers la gauche) : il revient au pager des rounds. */
 fun windowTakes(page: Int, dx: Float): Boolean = !((page == 0 && dx > 0) || (page == 1 && dx < 0))
+
+// ---------- Signalement ----------
+
+/** Type et référence de signalement d'un bloc ou d'une jauge de fiche côte à côte (partis, camps), comme le site. */
+fun duelBlockSig(kind: IdKind, a: String, b: String, title: String): Pair<String, String>? = when (kind) {
+    IdKind.Camp -> "camp" to infoRef("camps:$a:$b", title)
+    IdKind.Parti -> "parti" to infoRef("partis:$a:$b", title)
+    IdKind.Personne -> null
+}
+
+/** Texte lisible d'une ligne de fiche, pour l'extrait signalé. */
+fun lineText(l: Line): String = when (l) {
+    is Kv -> "${l.k} : " + l.vals.joinToString(", ") { v -> listOfNotNull(v.v ?: v.nr, v.small).filter { it.isNotBlank() }.joinToString(" ") }
+    is CampLine -> "${l.k} : ${l.id ?: "aucun camp"}"
+    is Tiles -> l.ids.joinToString(", ")
+    is Big -> l.text
+    is Note -> l.text
+    is Srcs -> ""
+}

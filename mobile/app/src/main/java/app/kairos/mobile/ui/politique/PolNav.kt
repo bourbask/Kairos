@@ -8,6 +8,7 @@ import app.kairos.mobile.ui.politique.screens.Owner
 import app.kairos.mobile.ui.politique.screens.Program
 import app.kairos.mobile.ui.politique.screens.ReportQuota
 import app.kairos.mobile.ui.politique.screens.ReportReceipt
+import app.kairos.mobile.ui.politique.screens.ReportTarget
 import app.kairos.mobile.ui.politique.screens.VoteRow
 import app.kairos.mobile.ui.politique.screens.claimsOf
 import app.kairos.mobile.ui.politique.screens.declarationsOf
@@ -49,8 +50,8 @@ sealed interface PolSheetState {
     data object Bareme : PolSheetState
     /** Source signée par un nom sans fiche d'évaluateur. */
     data class NoFiche(val name: String) : PolSheetState
-    /** Signalement d'une erreur sur une affirmation, par son identifiant. */
-    data class Report(val claimId: String) : PolSheetState
+    /** Signalement d'une erreur sur une affirmation ou sur une autre information affichée. */
+    data class Report(val target: ReportTarget) : PolSheetState
 }
 
 /** Ce qu'un écran peut demander à la coque. */
@@ -70,7 +71,7 @@ interface PolNavigator {
     var reportQuota: ReportQuota
     /** Un signalement est en route : aucun autre ne part, même depuis une feuille rouverte. */
     var reportInFlight: Boolean
-    /** Dernier refus ou échec d'envoi, par identifiant d'affirmation : message seul, jamais la saisie. */
+    /** Dernier refus ou échec d'envoi, par clé de cible ([ReportTarget.key]) : message seul, jamais la saisie. */
     var reportIssue: Pair<String, String>?
 }
 

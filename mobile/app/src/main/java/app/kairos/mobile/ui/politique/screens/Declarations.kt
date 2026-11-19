@@ -126,6 +126,7 @@ internal fun DeclarationCard(data: PolData, d: Declaration, nav: PolNavigator, s
                     fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold,
                 )
             }
+            if (d.id.isNotBlank()) SignalKey(nav, "declaration", infoRef(d.id), "${d.qui} : ${quoted(d.citation)} · ${verdictLabel(d.verdict)}", d.qui)
             FullscreenButton(onTable)
         }
         declKicker(d, withGov = false).takeIf { it.isNotEmpty() }?.let { Kicker(it) }

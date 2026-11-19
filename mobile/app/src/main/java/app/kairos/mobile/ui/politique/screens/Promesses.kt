@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -148,7 +149,8 @@ internal fun PromesseCard(data: PolData, p: Promesse, nav: PolNavigator, self: S
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             if (who != null) { if (who != self) IdentityChip(data, who, onClick = { nav.sheet(PolSheetState.Identity(who)) }) }
             else if (p.qui.isNotBlank()) Text(p.qui, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-            if (p.theme.isNotBlank()) Kicker(p.theme)
+            if (p.theme.isNotBlank()) Kicker(p.theme, Modifier.weight(1f)) else Spacer(Modifier.weight(1f))
+            if (p.id.isNotBlank()) SignalKey(nav, "promesse", infoRef(p.id), "${p.qui} : ${p.promesse.trim()} · ${graviteLabel(p.gravite)}", p.qui)
         }
         Text(frTypo(p.promesse.trim()), Modifier.padding(top = 8.dp), fontSize = 17.sp, lineHeight = 23.sp, fontWeight = FontWeight.SemiBold)
         GraviteChip(p.gravite, Modifier.padding(top = 8.dp))

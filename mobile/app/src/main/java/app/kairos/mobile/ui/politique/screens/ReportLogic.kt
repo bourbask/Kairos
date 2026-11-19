@@ -20,8 +20,8 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
 /**
- * Signalement d'une erreur sur une affirmation : mêmes champs, bornes, nettoyage et règle d'adresse
- * que la validation du module, qui refait tout et fait foi.
+ * Signalement d'une erreur sur une affirmation ou sur toute autre information affichée : mêmes champs, bornes,
+ * nettoyage, références et règle d'adresse que la validation du module et que le site, le module fait foi.
  */
 
 val REPORT_KINDS: List<Pair<String, String>> = listOf(
@@ -37,6 +37,82 @@ val REPORT_BASES: List<Pair<String, String>> = listOf(
     "ref" to "Une source, sans lien",
     "carte" to "Une contradiction dans la carte elle-même",
 )
+
+/** Choix proposés hors affirmation : ni verdict ni classement, pas d'élément numéroté. */
+val INFO_KINDS: List<Pair<String, String>> = listOf(
+    "fait" to "Un chiffre ou un fait",
+    "source" to "Une source",
+    "formulation" to "La formulation",
+    "autre" to "Autre chose",
+)
+
+val INFO_BASES: List<Pair<String, String>> = REPORT_BASES.map { if (it.first == "carte") "carte" to "Une contradiction dans l'élément lui-même" else it }
+
+/** Types d'information acceptés par le module hors affirmation. */
+val INFO_TYPES: Set<String> = setOf(
+    "declaration", "promesse", "evaluateur", "scrutin", "manche", "vote", "coherence", "bilan", "budget", "ecart", "niveau-de-vie",
+    "revirement", "parti", "camp", "comparaison", "media", "argent", "probite", "ville", "rhetorique", "dossier", "aide", "theme", "bareme",
+)
+
+/** Ce que vise un signalement : une affirmation par son identifiant, ou une autre information affichée. */
+sealed interface ReportTarget {
+    /** Clé de la feuille et du dernier échec. */
+    val key: String
+
+    data class Affirmation(val claimId: String) : ReportTarget {
+        override val key: String get() = claimId
+    }
+
+    /** [extrait] : texte affiché de l'élément ; [titre] : son intitulé, en tête de la feuille. */
+    data class Info(val type: String, val ref: String, val extrait: String, val titre: String = "") : ReportTarget {
+        override val key: String get() = "$type|$ref"
+    }
+}
+
+/** Cible d'une information, extrait et titre ramenés à ce que le module accepte. */
+fun infoTarget(type: String, ref: String, extrait: String, titre: String = ""): ReportTarget.Info =
+    ReportTarget.Info(type, ref, infoExtrait(extrait), infoExtrait(titre))
+
+private val TAGS = Regex("<[^>]*>")
+private val MARKS = Regex("\\p{M}+")
+private val NON_ALNUM = Regex("[^a-z0-9]+")
+private val SPACES = Regex("(?U)\\s+")
+private val REF_PATTERN = Regex("^[a-z0-9][a-z0-9._:-]*$")
+
+fun refOk(r: String): Boolean = r.length <= 120 && REF_PATTERN.matches(r)
+
+/** Libellé normalisé : minuscules, sans accents, tout le reste en tirets, 80 caractères au plus. */
+fun refSlug(s: String): String =
+    Normalizer.normalize(cleanReport(s.replace(TAGS, "")), Normalizer.Form.NFD).replace(MARKS, "").lowercase(Locale.ROOT)
+        .replace(NON_ALNUM, "-").trimStart('-').take(80).trimEnd('-')
+
+/**
+ * Référence d'un élément, comme le site : son id s'il en a un ([label] null, en minuscules),
+ * sinon `<prefix>:<slug du libellé>`, « :n » au n-ième doublon déjà noté dans [seen].
+ */
+fun infoRef(prefix: String, label: String? = null, seen: MutableMap<String, Int>? = null): String {
+    var r = if (label == null) prefix.lowercase(Locale.ROOT) else "$prefix:${refSlug(label).ifEmpty { "element" }}"
+    if (!refOk(r)) r = r.split(':').map(::refSlug).filter { it.isNotEmpty() }.joinToString(":").ifEmpty { "element" }
+    if (seen != null) {
+        val n = (seen[r] ?: 0) + 1
+        seen[r] = n
+        if (n > 1) r += ":$n"
+    }
+    return r.take(120).trimEnd(':', '.', '-')
+}
+
+/** Texte affiché, sans balises ni invisibles, espaces resserrés, 300 caractères au plus. */
+fun infoExtrait(s: String): String {
+    val t = cleanReport(s.replace(TAGS, "")).replace(SPACES, " ").codePointList()
+    return if (t.size > 300) t.take(299).str().trimEnd() + "…" else t.str()
+}
+
+/** Information signalable : type connu, référence au motif, extrait de 4 à 300 caractères. */
+fun infoOk(t: ReportTarget.Info): Boolean = t.type in INFO_TYPES && refOk(t.ref) && reportLength(t.extrait) in 4..300
+
+fun reportKinds(t: ReportTarget): List<Pair<String, String>> = if (t is ReportTarget.Info) INFO_KINDS else REPORT_KINDS
+
+fun reportBases(t: ReportTarget): List<Pair<String, String>> = if (t is ReportTarget.Info) INFO_BASES else REPORT_BASES
 
 data class ReportForm(
     val kind: String = "",
@@ -131,8 +207,17 @@ fun reportTargets(c: Claim, kind: String, data: PolData): List<Pair<String, Stri
 private fun within(s: String, min: Int, max: Int) = reportLength(s) in min..max
 
 fun reportReady(f: ReportForm, c: Claim, data: PolData): Boolean {
-    if (!validClaimId(c.id) || !f.oath || REPORT_KINDS.none { it.first == f.kind }) return false
+    if (!validClaimId(c.id) || REPORT_KINDS.none { it.first == f.kind }) return false
     if (needsTarget(f.kind) && reportTargets(c, f.kind, data).none { it.first == f.target }) return false
+    return reportCommonReady(f)
+}
+
+/** Hors affirmation : aucun élément numéroté à choisir. */
+fun reportReady(f: ReportForm, t: ReportTarget.Info): Boolean =
+    infoOk(t) && INFO_KINDS.any { it.first == f.kind } && reportCommonReady(f)
+
+private fun reportCommonReady(f: ReportForm): Boolean {
+    if (!f.oath) return false
     if (!within(f.what, 30, 400) || !within(f.fix, 10, 300)) return false
     return when (f.basis) {
         "lien" -> urlProblem(f.url) == null
@@ -143,10 +228,16 @@ fun reportReady(f: ReportForm, c: Claim, data: PolData): Boolean {
 }
 
 /** Arguments de `app_signalement_deposer` : seulement la cible et les champs de la base choisie. */
-fun reportArgs(f: ReportForm, claimId: String): JsonObject = buildJsonObject {
-    put("claim", claimId)
+fun reportArgs(f: ReportForm, claimId: String): JsonObject = reportArgs(f, ReportTarget.Affirmation(claimId))
+
+/** Une affirmation : `claim` et, pour un fait ou une source, `target` ; une autre information : `cible_*`, ni `claim` ni `target`. */
+fun reportArgs(f: ReportForm, t: ReportTarget): JsonObject = buildJsonObject {
+    when (t) {
+        is ReportTarget.Affirmation -> put("claim", t.claimId)
+        is ReportTarget.Info -> { put("cible_type", t.type); put("cible_ref", t.ref); put("extrait", cleanReport(t.extrait)) }
+    }
     put("kind", f.kind)
-    if (needsTarget(f.kind)) put("target", f.target)
+    if (t is ReportTarget.Affirmation && needsTarget(f.kind)) put("target", f.target)
     put("what", cleanReport(f.what))
     put("basis", f.basis)
     when (f.basis) {
@@ -218,6 +309,6 @@ fun counterText(n: Int, min: Int, max: Int): String =
     "$n / $max" + if (n in 1 until min) (min - n).let { " · encore $it caractère${if (it > 1) "s" else ""} au moins" } else ""
 
 /** Mention d'anonymat, puis les envois restants cette heure ([left] inconnu avant le premier envoi). */
-fun anonymityNote(left: Int?): String =
-    "Anonyme : ni adresse IP, ni compte, ni identifiant ne sont gardés. Seuls le contenu, l'affirmation visée et l'heure d'envoi sont enregistrés." +
+fun anonymityNote(left: Int?, info: Boolean = false): String =
+    "Anonyme : ni adresse IP, ni compte, ni identifiant ne sont gardés. Seuls le contenu, ${if (info) "l'information visée" else "l'affirmation visée"} et l'heure d'envoi sont enregistrés." +
         if (left == null) " 10 envois au plus par heure." else { val s = if (left > 1) "s" else ""; " $left envoi$s possible$s encore cette heure." }
