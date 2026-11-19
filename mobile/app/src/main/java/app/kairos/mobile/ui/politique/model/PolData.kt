@@ -6,6 +6,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.serializer
@@ -30,6 +31,8 @@ internal val PolJson = Json {
     coerceInputValues = true
     isLenient = true
 }
+
+private fun JsonElement?.str(): String? = (this as? JsonPrimitive)?.takeIf { it.isString }?.content
 
 @Serializable
 private class Aliases(val id: String = "", val alias: List<String> = emptyList())
@@ -69,7 +72,20 @@ class PolData(private val files: Map<String, JsonObject>) {
         .flatMap { e -> (e.alias + e.nom).filter { it.isNotBlank() }.map { fold(it) to e } }
         .sortedByDescending { it.first.length }
 
-    val verifiedOn: String? = ((files["meta"]?.get("verifie_le")) as? JsonPrimitive)?.takeIf { it.isString }?.content
+    /** Niveaux publiés (0 à 4, ordre des données, un par numéro) ; absents : libellés de repli, sans définition. */
+    val niveaux: List<Niveau> = decode<Niveau>("evaluateurs", "NIVEAUX").filter { it.n in NIVEAU_LABELS }.distinctBy { it.n }
+        .ifEmpty { NIVEAU_LABELS.map { (n, l) -> Niveau(n, l) } }
+
+    /** Libellé d'un niveau : celui des données, à défaut le repli. */
+    fun levelLabel(n: Int): String =
+        niveaux.firstOrNull { it.n == n }?.libelle?.trim()?.takeIf { it.isNotEmpty() } ?: NIVEAU_LABELS[n] ?: NIVEAU_LABELS.getValue(0)
+
+    val principe: String = files["evaluateurs"]?.get("PRINCIPE").str()?.trim()?.takeIf { it.isNotEmpty() } ?: PRINCIPE_REPLI
+
+    /** Définitions des niveaux encore en relecture. */
+    val levelsProvisional: Boolean = (files["evaluateurs"]?.get("provisoire") as? JsonPrimitive)?.content == "true"
+
+    val verifiedOn: String? = files["meta"]?.get("verifie_le").str()
 
     fun byId(id: String): PolIdentity? = byIdMap[id]
 

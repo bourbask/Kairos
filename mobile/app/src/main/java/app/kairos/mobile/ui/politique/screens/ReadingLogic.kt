@@ -5,6 +5,7 @@ import app.kairos.mobile.ui.politique.kit.indLevel
 import app.kairos.mobile.ui.politique.kit.safeHttps
 import app.kairos.mobile.ui.politique.model.Evaluator
 import app.kairos.mobile.ui.politique.model.Lecture
+import app.kairos.mobile.ui.politique.model.Niveau
 import app.kairos.mobile.ui.politique.model.normalizeVerdict
 import app.kairos.mobile.ui.politique.model.PolData
 import kotlinx.serialization.Serializable
@@ -124,3 +125,18 @@ fun hasTendency(e: Evaluator): Boolean = e.tendance.isNotBlank() && !e.tendance.
 
 /** Sous-titre d'une ligne : nature, et « tendance documentée » le cas échéant. */
 fun evaluatorSub(e: Evaluator): String = listOf(sourceTypeLabel(e.type, e.type), "tendance documentée".takeIf { hasTendency(e) }).filterNotNull().filter { it.isNotBlank() }.joinToString(" · ")
+
+/** Palier affiché dans la feuille d'un producteur : sa fiche, ou l'explication des niveaux. */
+enum class Tier { Fiche, Niveaux }
+
+/** Retour : des niveaux à la fiche ; depuis la fiche, null (la feuille se ferme). */
+fun Tier.back(): Tier? = if (this == Tier.Niveaux) Tier.Fiche else null
+
+/** Un niveau expliqué : ses producteurs (noms triés), et s'il est celui du producteur d'où l'on vient. */
+class LevelView(val niveau: Niveau, val producers: List<Evaluator>, val highlighted: Boolean)
+
+/** Niveaux dans l'ordre publié ; [hl] : niveau mis en évidence (0 pour une source « ? »), null pour aucun. */
+fun levelViews(data: PolData, hl: Int?): List<LevelView> {
+    val by = evaluatorsByLevel(data.evaluators.values).toMap()
+    return data.niveaux.map { LevelView(it, by[it.n].orEmpty(), it.n == hl) }
+}

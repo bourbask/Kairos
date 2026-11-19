@@ -40,7 +40,7 @@ import app.kairos.mobile.ui.politique.screens.BaremeSheet
 import app.kairos.mobile.ui.politique.kit.BalanceSheet
 import app.kairos.mobile.ui.politique.kit.EmptyState
 import app.kairos.mobile.ui.politique.kit.LocalNoFiche
-import app.kairos.mobile.ui.politique.kit.NoFicheSheet
+import app.kairos.mobile.ui.politique.screens.ProducerSheet
 import app.kairos.mobile.ui.politique.kit.LocalPolBottom
 import app.kairos.mobile.ui.politique.kit.TableCard
 import app.kairos.mobile.ui.politique.model.PolData
@@ -336,7 +336,7 @@ fun SheetHost(s: PolSheetState, data: PolData, nav: PolNavigator, onDismiss: () 
         is PolSheetState.Evaluator -> EvaluatorSheetAt(data, s.id, nav, onDismiss)
         is PolSheetState.Rhet -> RhetSheetAt(data, s.t, nav, onDismiss)
         PolSheetState.Bareme -> BaremeSheet(data, onDismiss)
-        is PolSheetState.NoFiche -> NoFicheSheet(s.name, onDismiss)
+        is PolSheetState.NoFiche -> ProducerSheet(data, null, s.name, nav, onDismiss)
         is PolSheetState.Report -> ReportSheet(data, s.claimId, nav, onDismiss)
     }
 }

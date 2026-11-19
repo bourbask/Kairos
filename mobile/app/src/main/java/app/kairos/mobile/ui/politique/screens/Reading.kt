@@ -72,7 +72,6 @@ import app.kairos.mobile.ui.politique.kit.SourceButton
 import app.kairos.mobile.ui.politique.kit.SourceList
 import app.kairos.mobile.ui.politique.kit.VerdictChip
 import app.kairos.mobile.ui.politique.kit.VerdictMeter
-import app.kairos.mobile.ui.politique.kit.indLabel
 import app.kairos.mobile.ui.politique.kit.indLevel
 import app.kairos.mobile.ui.politique.kit.verdictLabel
 import app.kairos.mobile.ui.politique.model.Evaluator
@@ -353,18 +352,18 @@ fun EvaluatorsScreen(data: PolData, nav: PolNavigator) {
                         (1..4).forEach { n ->
                             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                                 LevelTag(n, Modifier.width(104.dp))
-                                Text(indLabel(n), fontSize = 13.sp, lineHeight = 17.sp)
+                                Text(data.levelLabel(n), fontSize = 13.sp, lineHeight = 17.sp)
                             }
                         }
                     }
-                    Text("Le niveau décrit les liens (statut, financement, dirigeants), pas la qualité d'un chiffrage. Chaque fiche justifie le sien.", Modifier.padding(top = 10.dp), fontSize = 12.5.sp, color = Muted)
+                    Text(frTypo(data.principe), Modifier.padding(top = 10.dp), fontSize = 12.5.sp, color = Muted)
                 }
             }
         }
         if (groups.isEmpty()) part { EmptyState("Aucun évaluateur", "La liste des évaluateurs n'est pas encore disponible.", Modifier.padding(top = 16.dp)) }
         groups.forEach { (n, evs) ->
             part {
-                Section(if (n > 0) "Niveau $n" else "Non qualifié", if (n > 0) indLabel(n) else "Indépendance non qualifiée", null) {
+                Section(if (n > 0) "Niveau $n" else "Non qualifié", if (n > 0) data.levelLabel(n) else "Indépendance non qualifiée", null) {
                     FigCard {
                         evs.forEachIndexed { i, e ->
                             if (i > 0) Box(Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outlineVariant))
@@ -384,89 +383,4 @@ fun EvaluatorsScreen(data: PolData, nav: PolNavigator) {
             }
         }
     }
-}
-
-@Composable
-private fun Block(title: String, content: @Composable () -> Unit) {
-    Column(Modifier.fillMaxWidth().padding(top = 20.dp)) {
-        Kicker(title)
-        Spacer(Modifier.height(6.dp))
-        content()
-    }
-}
-
-/** Fiche d'un évaluateur : indépendance, statut, financement, dirigeants, orientation, tendance, historique, controverses, sources. */
-@Composable
-fun EvaluatorSheet(data: PolData, e: Evaluator, nav: PolNavigator, onDismiss: () -> Unit) {
-    val n = indLevel(e)
-    val scheme = MaterialTheme.colorScheme
-    val onEv: (String) -> Unit = { nav.sheet(PolSheetState.Evaluator(it)) }
-    PolSheet(full = true, onDismiss = onDismiss) {
-        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp)) {
-            Kicker(sourceTypeLabel(e.type, "Évaluateur"))
-            Text(e.nom, Modifier.padding(top = 6.dp).semantics { heading() }, fontSize = 26.sp, lineHeight = 29.sp, fontWeight = FontWeight.ExtraBold)
-            FigCard(Modifier.padding(top = 14.dp)) {
-                Kicker("Indépendance")
-                Text(if (n > 0) "Niveau $n · ${indLabel(n)}" else "Non qualifiée", Modifier.padding(top = 4.dp), fontSize = 18.sp, lineHeight = 22.sp, fontWeight = FontWeight.Bold)
-                Row(
-                    Modifier.fillMaxWidth().padding(top = 8.dp).semantics(mergeDescendants = true) { contentDescription = "Niveau ${if (n > 0) n.toString() else "inconnu"} sur 4" },
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    (1..4).forEach { i -> Box(Modifier.weight(1f).height(8.dp).clip(CircleShape).background(if (i == n) scheme.onSurface else scheme.outlineVariant)) }
-                }
-                Row(Modifier.fillMaxWidth().padding(top = 4.dp).clearAndSetSemantics { }, horizontalArrangement = Arrangement.SpaceBetween) {
-                    Kicker("1 · statutaire"); Kicker("4 · militant")
-                }
-                if (e.justification.isNotBlank()) Text(frTypo(e.justification), Modifier.padding(top = 10.dp), fontSize = 14.sp, lineHeight = 20.sp)
-            }
-            if (e.statut.isNotBlank()) Block("Statut") { Text(frTypo(e.statut), fontSize = 14.5.sp, lineHeight = 21.sp) }
-            val fin = e.financement.filter { it.isNotBlank() }
-            if (fin.isNotEmpty()) Block("Financement") { fin.forEach { Text("• ${frTypo(it)}", Modifier.padding(top = 2.dp), fontSize = 14.5.sp, lineHeight = 21.sp) } }
-            val dirs = e.dirigeants.filter { it.nom.isNotBlank() }
-            if (dirs.isNotEmpty()) Block("Dirigeants") {
-                dirs.forEachIndexed { i, d ->
-                    if (i > 0) Box(Modifier.fillMaxWidth().padding(vertical = 10.dp).height(1.dp).background(scheme.outlineVariant))
-                    Text(d.nom, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                    if (d.role.isNotBlank()) Text(frTypo(d.role), fontSize = 12.5.sp, color = Muted)
-                    if (d.parcours.isNotBlank()) Text(frTypo(d.parcours), Modifier.padding(top = 4.dp), fontSize = 14.sp, lineHeight = 20.sp)
-                }
-            }
-            if (e.orientation.isNotBlank()) Block("Orientation") { Text(frTypo(e.orientation), fontSize = 14.5.sp, lineHeight = 21.sp) }
-            Block("Tendance observée selon les camps") {
-                Text(
-                    frTypo(if (hasTendency(e)) e.tendance else "Non mesurée : aucune étude ne documente une sévérité différente selon les camps dans ses chiffrages."),
-                    fontSize = 14.5.sp, lineHeight = 21.sp,
-                )
-            }
-            if (e.historique.isNotEmpty()) Block("Historique") {
-                e.historique.forEachIndexed { i, h ->
-                    if (i > 0) Box(Modifier.fillMaxWidth().padding(vertical = 10.dp).height(1.dp).background(scheme.outlineVariant))
-                    Text(listOfNotNull(h.annee?.toString(), h.sujet.takeIf { it.isNotBlank() }).joinToString(" · "), fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                    if (h.constat.isNotBlank()) Text(frTypo(h.constat), Modifier.padding(top = 4.dp), fontSize = 14.sp, lineHeight = 20.sp)
-                    SourceList(sourcesOf(h.src), data, onEv, Modifier.padding(top = 8.dp))
-                }
-            }
-            val ctr = e.controverses.filter { it.t.isNotBlank() }
-            if (ctr.isNotEmpty()) Block("Controverses") {
-                ctr.forEachIndexed { i, c ->
-                    if (i > 0) Box(Modifier.fillMaxWidth().padding(vertical = 10.dp).height(1.dp).background(scheme.outlineVariant))
-                    Text(frTypo(c.t), fontSize = 14.sp, lineHeight = 20.sp)
-                    SourceList(sourcesOf(c.src), data, onEv, Modifier.padding(top = 8.dp))
-                }
-            }
-            Block("Sources de la fiche") {
-                val srcs = sourcesOf(e.src)
-                if (srcs.isEmpty()) Text("Aucune source listée.", fontSize = 13.sp, color = Muted) else SourceList(srcs, data, onEv, Modifier.padding(top = 0.dp))
-            }
-            FilledTonalButton({ nav.go(app.kairos.mobile.ui.politique.PolRoute.Rubric("evaluateurs")) }, Modifier.padding(top = 20.dp).fillMaxWidth().heightIn(min = 48.dp)) { Text("Tous les évaluateurs") }
-        }
-    }
-}
-
-/** Évaluateur désigné par son id ; introuvable (données rechargées) : feuille explicative. */
-@Composable
-fun EvaluatorSheetAt(data: PolData, id: String, nav: PolNavigator, onDismiss: () -> Unit) {
-    val e = data.evaluators[id]
-    if (e != null) EvaluatorSheet(data, e, nav, onDismiss)
-    else PolSheet(full = false, onDismiss = onDismiss) { EmptyState("Évaluateur introuvable", "Cette fiche n'est plus dans les données chargées. Fermez la feuille et rouvrez-la depuis la liste.", Modifier.padding(16.dp)) }
 }

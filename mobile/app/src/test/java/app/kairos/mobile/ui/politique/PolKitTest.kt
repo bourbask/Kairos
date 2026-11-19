@@ -4,6 +4,7 @@ import androidx.compose.ui.graphics.Color
 import app.kairos.mobile.ui.politique.kit.*
 import app.kairos.mobile.ui.politique.model.Evaluator
 import app.kairos.mobile.ui.politique.model.Lecture
+import app.kairos.mobile.ui.politique.model.PolData
 import app.kairos.mobile.ui.politique.model.Poste
 import app.kairos.mobile.ui.politique.model.SourceRef
 import app.kairos.mobile.ui.politique.model.VERDICT_SCALE
@@ -97,8 +98,8 @@ class PolKitTest {
         assertEquals("Court", evShortName(Evaluator(nom = "Court")))
         assertEquals(2, indLevel(ev))
         assertEquals(0, indLevel(Evaluator(independance = 9)))
-        assertTrue(evA11yLabel(ev).contains("niveau 2 sur 4"))
-        assertTrue(evA11yLabel(Evaluator(nom = "N")).contains("non qualifiée"))
+        assertTrue(evA11yLabel(ev, PolData(emptyMap())).contains("niveau 2 sur 4"))
+        assertTrue(evA11yLabel(Evaluator(nom = "N"), PolData(emptyMap())).contains("non qualifiée"))
     }
 
     @Test fun rich_text_and_share() {
