@@ -335,9 +335,9 @@ fun SheetHost(s: PolSheetState, data: PolData, nav: PolNavigator, onDismiss: () 
         is PolSheetState.Cluster -> ClusterSheet(data, s.villes, nav, onDismiss)
         is PolSheetState.Evaluator -> EvaluatorSheetAt(data, s.id, nav, onDismiss)
         is PolSheetState.Rhet -> RhetSheetAt(data, s.t, nav, onDismiss)
-        PolSheetState.Bareme -> BaremeSheet(data, onDismiss)
+        PolSheetState.Bareme -> BaremeSheet(data, nav, onDismiss)
         is PolSheetState.NoFiche -> ProducerSheet(data, null, s.name, nav, onDismiss)
-        is PolSheetState.Report -> ReportSheet(data, s.claimId, nav, onDismiss)
+        is PolSheetState.Report -> ReportSheet(data, s.target, nav, onDismiss)
     }
 }
 

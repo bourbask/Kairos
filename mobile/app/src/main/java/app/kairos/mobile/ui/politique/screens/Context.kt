@@ -67,11 +67,12 @@ private fun CardTitle(text: String, modifier: Modifier = Modifier) = Text(frTypo
 
 /** Dossier sourcé (lobbying, financement) : titre, étape, texte, sources. */
 @Composable
-private fun DossierCard(data: PolData, d: Dossier, onTable: () -> Unit, nav: PolNavigator) {
+private fun DossierCard(data: PolData, d: Dossier, onTable: () -> Unit, nav: PolNavigator, rub: String) {
     val id = data.idOf(d.t)
     FigCard {
         Row(verticalAlignment = Alignment.Top) {
-            CardTitle(d.t, Modifier.weight(1f))
+            CardTitle(d.t, Modifier.weight(1f).padding(top = 12.dp))
+            SignalKey(nav, rub, infoRef(rub, d.t), "${d.t} (${d.stg.getOrElse(1) { "" }}) : ${d.p}", d.t)
             TableLink(onTable)
         }
         if (id != null || d.stg.isNotEmpty()) {
@@ -103,7 +104,7 @@ fun ProbiteScreen(data: PolData, nav: PolNavigator) {
         part {
             Section("Agenda", "Décisions attendues avant l'élection", null) {
                 if (agenda.isEmpty()) Empty("Aucune échéance publiée", "Les prochaines décisions judiciaires attendues apparaîtront ici dès qu'elles seront datées et sourcées.")
-                else Column(verticalArrangement = Arrangement.spacedBy(12.dp)) { agenda.forEach { AgendaRow(it) } }
+                else Column(verticalArrangement = Arrangement.spacedBy(12.dp)) { agenda.forEach { AgendaRow(it, nav) } }
             }
         }
         part {
@@ -122,7 +123,7 @@ fun ProbiteScreen(data: PolData, nav: PolNavigator) {
                 if (lobby.isEmpty()) Empty("Aucun cas documenté", "Aucun cas de lobbying n'est publié pour l'instant.")
                 else {
                     val cards = remember(lobby) { lobby.map { dossierTableCard(data, "Lobbying", it) } }
-                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) { lobby.forEachIndexed { i, d -> DossierCard(data, d, { nav.table(cards, i) }, nav) } }
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) { lobby.forEachIndexed { i, d -> DossierCard(data, d, { nav.table(cards, i) }, nav, "probite") } }
                 }
             }
         }
@@ -130,7 +131,7 @@ fun ProbiteScreen(data: PolData, nav: PolNavigator) {
 }
 
 @Composable
-private fun AgendaRow(a: AgendaItem) {
+private fun AgendaRow(a: AgendaItem, nav: PolNavigator) {
     val pc = PolColors.current
     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Box(Modifier.padding(top = 4.dp).size(14.dp).clip(CircleShape).background(if (a.key) pc.partiel else MaterialTheme.colorScheme.onSurface).clearAndSetSemantics { })
@@ -141,6 +142,7 @@ private fun AgendaRow(a: AgendaItem) {
             }
             Text(frTypo(a.text), Modifier.padding(top = 2.dp), fontSize = 14.5.sp)
         }
+        SignalKey(nav, "probite", infoRef("probite", a.text), "${a.date} : ${a.text}", a.date)
     }
 }
 
@@ -157,6 +159,7 @@ private fun AffaireCard(data: PolData, a: Affaire, onTable: () -> Unit, nav: Pol
                 if (a.who.isNotBlank()) Text(a.who, fontWeight = FontWeight.Bold, fontSize = 15.sp)
                 if (partyId != null) IdentityChip(data, partyId, modifier = Modifier.padding(top = 2.dp)) else if (a.party.isNotBlank()) Muted(a.party)
             }
+            SignalKey(nav, "probite", infoRef("probite", "${a.who} ${a.faits}"), "${a.who} (${a.party}) · ${a.stg} : ${a.factsText}. ${a.etat} (${a.date})", a.who)
             TableLink(onTable)
         }
         Text(frTypo(a.factsText), Modifier.padding(top = 12.dp), fontSize = 14.5.sp)
@@ -188,9 +191,12 @@ fun ArgentScreen(data: PolData, nav: PolNavigator) {
                         if (i > 0) Divider()
                         val id = data.idOf(r.l)
                         val label = moneyLabel(r.v)
-                        Column(Modifier.padding(vertical = 6.dp).semantics(mergeDescendants = true) { contentDescription = "${shortLabel(r.l)} : $label" }) {
-                            Text(shortLabel(r.l), fontWeight = FontWeight.SemiBold, fontSize = 13.5.sp)
-                            Bar(barFraction(r.v, aide.max), identityColor(id?.let { data.byId(it)?.couleur }) ?: MaterialTheme.colorScheme.primary, label)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f).padding(vertical = 6.dp).semantics(mergeDescendants = true) { contentDescription = "${shortLabel(r.l)} : $label" }) {
+                                Text(shortLabel(r.l), fontWeight = FontWeight.SemiBold, fontSize = 13.5.sp)
+                                Bar(barFraction(r.v, aide.max), identityColor(id?.let { data.byId(it)?.couleur }) ?: MaterialTheme.colorScheme.primary, label)
+                            }
+                            SignalKey(nav, "argent", infoRef("argent", "Aide publique ${r.l}"), "Aide publique · ${r.l} : $label", r.l)
                         }
                     }
                 }
@@ -203,7 +209,10 @@ fun ArgentScreen(data: PolData, nav: PolNavigator) {
                     partis.forEach { p ->
                         val id = data.idOf(p.parti)
                         FigCard {
-                            if (id != null) IdentityChip(data, id) else Text(p.parti, fontWeight = FontWeight.Bold)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(Modifier.weight(1f)) { if (id != null) IdentityChip(data, id) else Text(p.parti, fontWeight = FontWeight.Bold) }
+                                SignalKey(nav, "argent", infoRef("argent", "finances ${p.parti}"), "${p.parti} : dons et cotisations ${moneyLabel(p.dons)}, dette ${moneyLabel(p.dette)}, situation nette ${netLabel(p.net)}", p.parti)
+                            }
                             Column(Modifier.padding(top = 8.dp)) {
                                 KeyRow("Dons et cotisations", moneyLabel(p.dons), null)
                                 KeyRow("Dette", moneyLabel(p.dette), null)
@@ -227,6 +236,7 @@ fun ArgentScreen(data: PolData, nav: PolNavigator) {
                                 if (id != null) IdentityChip(data, id, modifier = Modifier.weight(1f, fill = false)) else Text(c.cand, fontWeight = FontWeight.Bold)
                                 Spacer(Modifier.weight(1f))
                                 if (c.score.isNotBlank()) Text("${c.score} des voix", fontFamily = Mono, fontSize = 12.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                SignalKey(nav, "argent", infoRef("argent", "comptes 2022 ${c.cand}"), "${c.cand}, campagne précédente : ${c.score} au 1er tour, dépenses ${moneyLabel(c.depense)}, remboursé ${moneyLabel(c.rembourse)}${if (c.note.isNotBlank()) ". ${c.note}" else ""}", c.cand)
                             }
                             Muted("Dépensé", Modifier.padding(top = 6.dp))
                             Bar(barFraction(c.depense, max), MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f), moneyLabel(c.depense))
@@ -243,7 +253,7 @@ fun ArgentScreen(data: PolData, nav: PolNavigator) {
                 if (fin.isEmpty()) Empty("Aucun dossier publié", "Aucun prêt ni financement controversé n'est publié pour l'instant.")
                 else {
                     val cards = remember(fin) { fin.map { dossierTableCard(data, "Financement", it) } }
-                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) { fin.forEachIndexed { i, d -> DossierCard(data, d, { nav.table(cards, i) }, nav) } }
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) { fin.forEachIndexed { i, d -> DossierCard(data, d, { nav.table(cards, i) }, nav, "argent") } }
                 }
             }
         }
@@ -262,7 +272,10 @@ fun MediasScreen(data: PolData, nav: PolNavigator) {
                 if (st.owners.isEmpty()) Empty("Propriétaires pas encore publiés", "La carte de la propriété des médias apparaîtra ici dès qu'elle sera sourcée.")
                 else Rail(st.owners, 280.dp) { _, x ->
                     FigCard(Modifier.fillMaxSize()) {
-                        CardTitle(x.o)
+                        Row(verticalAlignment = Alignment.Top) {
+                            CardTitle(x.o, Modifier.weight(1f).padding(top = 12.dp))
+                            SignalKey(nav, "media", infoRef("medias", x.o), "${x.o}${if (x.g.isNotBlank()) " (${x.g})" else ""} : ${x.m.joinToString(", ")}. ${x.n}", x.o)
+                        }
                         if (x.g.isNotBlank()) Muted(x.g, Modifier.padding(top = 2.dp))
                         if (x.m.isNotEmpty()) Tags(x.m)
                         Note(x.n)
@@ -275,7 +288,10 @@ fun MediasScreen(data: PolData, nav: PolNavigator) {
                 if (st.unsellable.isEmpty()) Empty("Aucun titre protégé publié", "Les titres dont le capital est protégé de la vente apparaîtront ici dès qu'ils seront sourcés.")
                 else Rail(st.unsellable, 260.dp) { _, x ->
                     FigCard(Modifier.fillMaxSize()) {
-                        StateTag("Protégé de la vente", "solide")
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(Modifier.weight(1f)) { StateTag("Protégé de la vente", "solide") }
+                            SignalKey(nav, "media", infoRef("medias", x.o), "${x.o} : ${x.n}", x.o)
+                        }
                         CardTitle(x.o, Modifier.padding(top = 8.dp))
                         Note(x.n)
                     }
@@ -290,10 +306,13 @@ fun MediasScreen(data: PolData, nav: PolNavigator) {
                         if (i > 0) Divider()
                         val a = r.before?.let { fmtNum(it, 1) + " %" } ?: NO_VALUE
                         val b = r.now?.let { fmtNum(it, 1) + " %" } ?: NO_VALUE
-                        Column(Modifier.padding(vertical = 8.dp).semantics(mergeDescendants = true) { contentDescription = "${r.name} : moyenne précédente $a, dernière mesure $b" }) {
-                            Text(r.name, fontWeight = FontWeight.Bold, fontSize = 14.5.sp)
-                            Bar(barFraction(r.before, st.audience.max), MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f), a)
-                            Bar(barFraction(r.now, st.audience.max), pc.low, b)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f).padding(vertical = 8.dp).semantics(mergeDescendants = true) { contentDescription = "${r.name} : moyenne précédente $a, dernière mesure $b" }) {
+                                Text(r.name, fontWeight = FontWeight.Bold, fontSize = 14.5.sp)
+                                Bar(barFraction(r.before, st.audience.max), MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f), a)
+                                Bar(barFraction(r.now, st.audience.max), pc.low, b)
+                            }
+                            SignalKey(nav, "media", infoRef("medias", "audience ${r.name}"), "Audience de ${r.name} : moyenne précédente $a, dernière mesure $b", r.name)
                         }
                     }
                     Row(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -308,10 +327,13 @@ fun MediasScreen(data: PolData, nav: PolNavigator) {
                 if (st.reg.isEmpty()) Empty("Aucune décision publiée", "La frise des décisions du régulateur et de la justice apparaîtra ici dès qu'elle sera sourcée.")
                 else Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     st.reg.forEach { r ->
-                        Column {
-                            if (r.date.isNotBlank()) Text(r.date, fontFamily = Mono, fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                            Text(frTypo(r.text), Modifier.padding(top = 2.dp), fontSize = 14.5.sp)
-                            if (r.note.isNotBlank()) Muted(r.note, Modifier.padding(top = 3.dp))
+                        Row(verticalAlignment = Alignment.Top) {
+                            Column(Modifier.weight(1f)) {
+                                if (r.date.isNotBlank()) Text(r.date, fontFamily = Mono, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                Text(frTypo(r.text), Modifier.padding(top = 2.dp), fontSize = 14.5.sp)
+                                if (r.note.isNotBlank()) Muted(r.note, Modifier.padding(top = 3.dp))
+                            }
+                            SignalKey(nav, "media", infoRef("medias", r.text), "${r.date} : ${r.text}${if (r.note.isNotBlank()) " (${r.note})" else ""}", r.date)
                         }
                     }
                 }
@@ -328,6 +350,7 @@ fun MediasScreen(data: PolData, nav: PolNavigator) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     StateTag(s.kindLabel, when (s.kind) { "causal" -> "solide"; "cont" -> "pour"; "desc" -> "partiel"; else -> null })
                                     Spacer(Modifier.weight(1f))
+                                    SignalKey(nav, "media", infoRef("medias", "etude ${s.author}"), "${s.author} (${s.country}, ${s.kindLabel}) : ${s.text}", s.author)
                                     TableLink { nav.table(cards, i) }
                                 }
                                 CardTitle(s.author, Modifier.padding(top = 8.dp))
@@ -345,7 +368,10 @@ fun MediasScreen(data: PolData, nav: PolNavigator) {
                 else Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     st.polls.forEach { p ->
                         FigCard {
-                            CardTitle(p.institute)
+                            Row(verticalAlignment = Alignment.Top) {
+                                CardTitle(p.institute, Modifier.weight(1f).padding(top = 12.dp))
+                                SignalKey(nav, "media", infoRef("medias", "institut ${p.institute}"), "${p.institute} : propriétaire ${p.owner} ; clients récents : ${p.clients}", p.institute)
+                            }
                             if (p.owner.isNotBlank()) { Kicker("Propriétaire", Modifier.padding(top = 8.dp)); Text(frTypo(p.owner), fontSize = 14.sp) }
                             if (p.clients.isNotBlank()) { Kicker("Commanditaires récents", Modifier.padding(top = 8.dp)); Text(frTypo(p.clients), fontSize = 14.sp) }
                         }

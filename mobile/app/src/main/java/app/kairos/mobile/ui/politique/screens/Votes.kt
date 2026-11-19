@@ -23,6 +23,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
@@ -202,6 +203,8 @@ fun VotesScreen(data: PolData, nav: PolNavigator) {
     val order = remember(groups) { groups.indices.alphabetical { groups[it] } }
     val rows = remember(data, key) { data.decode<VoteRow>("votes", "${key}_V") }
     val coh = remember(data) { data.decode<CohGroup>("votes", "COH").alphabetical { it.camp } }
+    val refs = remember(data) { voteRefs(data.decode("votes", "AN_V"), data.decode("votes", "PE_V"), data.decode("votes", "COH")) }
+    val org = CHAMBERS[ch].second
     val pc = PolColors.current
     val gi = if (g in groups.indices) g else order.firstOrNull() ?: 0
     LazyColumn(Modifier.fillMaxSize(), contentPadding = ScreenPad, verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -218,9 +221,14 @@ fun VotesScreen(data: PolData, nav: PolNavigator) {
         if (rows.isEmpty() || groups.isEmpty()) {
             part { EmptyState("Aucun scrutin", "Aucun vote retenu pour cette assemblée. Essayez l'autre assemblée.") }
         } else if (mode == 0) {
-            items(rows, key = { it.t + it.d }) { v ->
+            itemsIndexed(rows, key = { _, it -> it.t + it.d }) { i, v ->
                 FigCard {
-                    Text(frTypo(v.t), fontSize = 17.5.sp, lineHeight = 22.sp, fontWeight = FontWeight.Bold)
+                    Row(verticalAlignment = Alignment.Top) {
+                        Text(frTypo(v.t), Modifier.weight(1f).padding(top = 12.dp), fontSize = 17.5.sp, lineHeight = 22.sp, fontWeight = FontWeight.Bold)
+                        refs.of(key).getOrNull(i)?.let { r ->
+                            SignalKey(nav, "vote", r, "$org · ${v.t} (${v.d}) : ${v.c.mapIndexed { j, c -> "${groups.getOrElse(j) { "" }} ${VOTE_WORDS[c.getOrElse(0) { "N" }] ?: ""}" }.joinToString(", ")}", v.t)
+                        }
+                    }
                     Text(v.d, Modifier.padding(top = 4.dp), fontSize = 12.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     v.n?.takeIf { it.isNotBlank() }?.let { Text(frTypo(it), Modifier.padding(top = 4.dp), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                     TallyBar(v.c.map { it.getOrElse(0) { "N" } }, Modifier.padding(top = 10.dp, bottom = 2.dp))
@@ -238,8 +246,8 @@ fun VotesScreen(data: PolData, nav: PolNavigator) {
                 FigCard {
                     if (gid != null) IdentityChip(data, gid, large = true, text = groups[gi]) else Text(groups[gi], fontWeight = FontWeight.Bold)
                     if (counts.isNotEmpty()) Text(counts.joinToString(" · ") { (c, n) -> "$n ${VOTE_WORDS[c].orEmpty().lowercase()}" }, Modifier.padding(top = 8.dp), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    rows.forEach { v ->
-                        val c = v.c.getOrNull(gi) ?: return@forEach
+                    rows.forEachIndexed { i, v ->
+                        val c = v.c.getOrNull(gi) ?: return@forEachIndexed
                         Row(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             Box(Modifier.width(96.dp).clip(RoundedCornerShape(12.dp)).background(voteBg(c.getOrElse(0) { "N" })).padding(vertical = 10.dp, horizontal = 4.dp), contentAlignment = Alignment.Center) {
                                 val code = c.getOrElse(0) { "N" }
@@ -248,6 +256,9 @@ fun VotesScreen(data: PolData, nav: PolNavigator) {
                             Column(Modifier.weight(1f)) {
                                 Text(frTypo(v.t), fontWeight = FontWeight.SemiBold, fontSize = 14.5.sp, lineHeight = 19.sp)
                                 Text(listOf(c.getOrElse(1) { "" }, v.d.substringBefore(" · ")).filter { it.isNotBlank() }.joinToString(" · "), Modifier.padding(top = 3.dp), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            refs.of(key).getOrNull(i)?.let { r ->
+                                SignalKey(nav, "vote", r, "$org · ${v.t} (${v.d}) : ${groups[gi]} ${VOTE_WORDS[c.getOrElse(0) { "N" }] ?: ""}", v.t)
                             }
                         }
                     }
@@ -274,7 +285,12 @@ fun VotesScreen(data: PolData, nav: PolNavigator) {
                                             "ecart" -> Chip("Écart", pc.fragile, pc.fragileBg)
                                             else -> NeutralChip(k)
                                         }
-                                        Text(frTypo(it.getOrElse(1) { "" }), fontSize = 14.sp, lineHeight = 19.sp)
+                                        Row(verticalAlignment = Alignment.Top) {
+                                            Text(frTypo(it.getOrElse(1) { "" }), Modifier.weight(1f), fontSize = 14.sp, lineHeight = 19.sp)
+                                            refs.coh[c.camp]?.getOrNull(c.items.indexOf(it))?.let { r ->
+                                                SignalKey(nav, "coherence", r, "${c.camp} · ${COH_WORDS[k] ?: k} : ${it.getOrElse(1) { "" }}", c.camp)
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -299,6 +315,7 @@ internal fun turnColors(k: String): Pair<Color, Color> {
 @Composable
 fun RevirementsScreen(data: PolData, nav: PolNavigator) {
     val rv = remember(data) { data.decode<Turn>("revirements", "RV") }
+    val refs = remember(rv) { turnRefs(rv) }
     val camps = remember(rv) { revirementCamps(rv).alphabetical { it } }
     var camp by rememberSaveable { mutableStateOf("") }
     val cur = camp.takeIf { it in camps } ?: camps.firstOrNull().orEmpty()
@@ -340,12 +357,12 @@ fun RevirementsScreen(data: PolData, nav: PolNavigator) {
         }
         val list = rv.filter { it.camp == cur }
         if (list.isEmpty()) part { EmptyState("Aucune position suivie", "Aucun changement de position documenté pour ce camp.") }
-        items(list, key = { it.camp + it.p + it.s + it.a }) { r -> TurnCard(data, r) { nav.sheet(PolSheetState.Evaluator(it)) } }
+        items(list, key = { it.camp + it.p + it.s + it.a }) { r -> TurnCard(data, r, nav, refs.getOrNull(rv.indexOf(r)) ?: infoRef("revirements", "${r.p} ${r.s}")) { nav.sheet(PolSheetState.Evaluator(it)) } }
     }
 }
 
 @Composable
-private fun TurnCard(data: PolData, r: Turn, onEv: (String) -> Unit) {
+private fun TurnCard(data: PolData, r: Turn, nav: PolNavigator, ref: String, onEv: (String) -> Unit) {
     val scheme = MaterialTheme.colorScheme
     val (fg, bg) = turnColors(r.k)
     val label = TURN_KINDS.firstOrNull { it.first == r.k }?.second ?: "Position"
@@ -366,6 +383,7 @@ private fun TurnCard(data: PolData, r: Turn, onEv: (String) -> Unit) {
                         Chip(label, fg, bg)
                     }
                 }
+                SignalKey(nav, "revirement", ref, "${r.p}, ${r.s} ($label) : ${r.a} → ${r.b}", "${r.p} · ${r.s}")
             }
             HorizontalPager(pager, Modifier.padding(top = 10.dp), verticalAlignment = Alignment.Top) { page ->
                 val after = page == 1
@@ -572,7 +590,10 @@ fun ScrutinSheet(data: PolData, s: Scrutin, nav: PolNavigator, onDismiss: () -> 
     val vs = remember(data, s) { s.verdicts.alphabetical { data.byId(it.qui)?.nom ?: it.qui }.sortedBy { DV_ORDER.indexOf(it.v) } }
     PolSheet(full = true, onDismiss = onDismiss) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp)) {
-            Kicker("${fmtChamber(s.chambre)} · ${fmtDate(s.date)}")
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Kicker("${fmtChamber(s.chambre)} · ${fmtDate(s.date)}", Modifier.weight(1f))
+                SignalKey(nav, "scrutin", infoRef(s.id), "${fmtChamber(s.chambre)} · ${s.titre}${if (s.resultat.isNotBlank()) " : ${s.resultat}" else ""}", s.titre)
+            }
             Text(frTypo(s.titre), Modifier.padding(top = 6.dp).semantics { heading() }, fontSize = 22.sp, lineHeight = 27.sp, fontWeight = FontWeight.Bold)
             if (s.objet.isNotBlank()) Text(frTypo(s.objet), Modifier.padding(top = 8.dp), fontSize = 14.5.sp)
             if (s.resultat.isNotBlank()) Text(s.resultat, Modifier.padding(top = 4.dp), fontSize = 13.sp, color = scheme.onSurfaceVariant)
@@ -588,7 +609,10 @@ fun ScrutinSheet(data: PolData, s: Scrutin, nav: PolNavigator, onDismiss: () -> 
             else FigCard(Modifier.padding(top = 10.dp)) {
                 s.paroles.forEachIndexed { i, p ->
                     if (i > 0) Box(Modifier.fillMaxWidth().padding(vertical = 12.dp).height(1.dp).background(scheme.outlineVariant))
-                    ParoleBlock(data, p, onEv)
+                    Row(verticalAlignment = Alignment.Top) {
+                        Box(Modifier.weight(1f)) { ParoleBlock(data, p, onEv) }
+                        SignalKey(nav, "scrutin", infoRef("${s.id}:parole", "${p.qui} ${p.date}"), "${p.qui} (${p.date}) : ${p.dit}", s.titre)
+                    }
                 }
             }
 
@@ -602,6 +626,7 @@ fun ScrutinSheet(data: PolData, s: Scrutin, nav: PolNavigator, onDismiss: () -> 
                         if (data.byId(v.qui) != null) IdentityChip(data, v.qui) else NeutralChip(v.qui)
                         DvChip(v.v)
                         p?.let { VoteTag(it.second) }
+                        SignalKey(nav, "scrutin", infoRef("${s.id}:${v.qui}"), "${data.byId(v.qui)?.nom ?: v.qui} · ${DV_LABELS[v.v] ?: v.v} : ${v.explication}", s.titre)
                     }
                     Text(frTypo(v.explication), Modifier.padding(top = 6.dp), fontSize = 14.sp, color = if (v.v == "sans-parole") scheme.onSurfaceVariant else Color.Unspecified)
                 }

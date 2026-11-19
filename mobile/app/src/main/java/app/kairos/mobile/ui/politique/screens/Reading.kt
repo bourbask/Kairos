@@ -164,7 +164,10 @@ private fun RhetCard(data: PolData, r: Rhet, rank: Int, total: Int, nav: PolNavi
                     SpotBox(r.spot)
                     Row(Modifier.fillMaxWidth().padding(top = 16.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         FilledTonalButton({ flipped = true }, Modifier.heightIn(min = 48.dp)) { Text("Les exemples") }
-                        TableLink(onTable)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            SignalKey(nav, "rhetorique", infoRef("rhetorique", r.t), "${r.t} : ${r.d}", r.t)
+                            TableLink(onTable)
+                        }
                     }
                 }
             }
@@ -175,6 +178,7 @@ private fun RhetCard(data: PolData, r: Rhet, rank: Int, total: Int, nav: PolNavi
                 Column(Modifier.verticalScroll(rememberScrollState()).padding(20.dp)) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         Text(r.t, Modifier.weight(1f), fontFamily = Mono, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = fg.copy(alpha = 0.75f))
+                        SignalKey(nav, "rhetorique", infoRef("rhetorique", r.t), "${r.t} : ${r.d}", r.t, ink = fg)
                         TextButton({ flipped = false }, Modifier.heightIn(min = 48.dp)) { Text("Retourner", color = fg) }
                     }
                     Examples(data, r, nav, onDark = true)
@@ -228,7 +232,10 @@ fun RhetSheetAt(data: PolData, t: String, nav: PolNavigator, onDismiss: () -> Un
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp)) {
             if (r == null) EmptyState("Procédé pas encore décrit", "« $t » n'a pas encore sa carte dans la rubrique Rhétorique.")
             else {
-                Kicker(if (r.famille.isBlank()) "Procédé rhétorique" else r.famille)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Kicker(if (r.famille.isBlank()) "Procédé rhétorique" else r.famille, Modifier.weight(1f))
+                    SignalKey(nav, "rhetorique", infoRef("rhetorique", r.t), "${r.t} : ${r.d}", r.t)
+                }
                 Text(r.t, Modifier.padding(top = 6.dp).semantics { heading() }, fontSize = 24.sp, lineHeight = 27.sp, fontWeight = FontWeight.ExtraBold)
                 AussiLine(r, Modifier.padding(top = 4.dp))
                 if (r.d.isNotBlank()) Text(frTypo(r.d), Modifier.padding(top = 8.dp), fontSize = 15.sp, lineHeight = 21.sp)
@@ -272,6 +279,7 @@ private fun DossierBlock(data: PolData, d: ContentDossier, startOpen: Boolean, n
         }
         if (open) {
             FlowRow(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp), itemVerticalAlignment = Alignment.CenterVertically) {
+                if (d.id.isNotBlank()) SignalKey(nav, "dossier", infoRef(d.id), "${d.titre}${if (d.contexte.isNotBlank()) " : ${d.contexte}" else ""}", d.titre)
                 Kicker("Source")
                 SourceButton(SourceRef(s.nom.ifBlank { "non identifiée" }, null, s.ev), data, onEv)
                 if (relay != null) {
@@ -282,14 +290,14 @@ private fun DossierBlock(data: PolData, d: ContentDossier, startOpen: Boolean, n
             if (d.contexte.isNotBlank()) Text(frTypo(d.contexte), Modifier.padding(top = 12.dp), fontSize = 14.5.sp, lineHeight = 21.sp)
             if (items.isEmpty()) EmptyState("Aucune affirmation détaillée", "Ce dossier n'a pas encore ses affirmations examinées.", Modifier.padding(top = 12.dp))
             Column(Modifier.padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                items.forEachIndexed { j, x -> ItemCard(data, x, j, items.size, nav) }
+                items.forEachIndexed { j, x -> ItemCard(data, x, j, items.size, nav, d) }
             }
         }
     }
 }
 
 @Composable
-private fun ItemCard(data: PolData, x: ContentItem, j: Int, n: Int, nav: PolNavigator) {
+private fun ItemCard(data: PolData, x: ContentItem, j: Int, n: Int, nav: PolNavigator, d: ContentDossier) {
     val onEv: (String) -> Unit = { nav.sheet(PolSheetState.Evaluator(it)) }
     FigCard {
         // Ouverture de la balance sur le corps seul : procédé et sources restent des boutons distincts.
@@ -311,6 +319,9 @@ private fun ItemCard(data: PolData, x: ContentItem, j: Int, n: Int, nav: PolNavi
         }
         ProcedeLink(x.procede, nav)
         SourceList(sourcesOf(x.src), data, onEv)
+        if (d.id.isNotBlank()) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            SignalKey(nav, "dossier", infoRef("${d.id}:${j + 1}"), "${x.dit} · ${verdictLabel(x.verdict)}", d.titre)
+        }
     }
 }
 

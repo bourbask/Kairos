@@ -1,5 +1,8 @@
 package app.kairos.mobile.ui.politique.jeux
 
+import app.kairos.mobile.ui.politique.screens.ReportTarget
+import app.kairos.mobile.ui.politique.screens.infoRef
+import app.kairos.mobile.ui.politique.screens.infoTarget
 import kotlinx.serialization.Serializable
 import kotlin.random.Random
 
@@ -217,3 +220,18 @@ fun annonceNeuve(precedente: String, msg: String): String = if (precedente == ms
 
 /** Course du doigt (même unité que [width]) pour armer le passage à la suivante. */
 fun courseArmement(width: Float): Float = 1.05f * CAP * width / SUIVI
+
+/** Jeu dont les manches portent l'identifiant d'une affirmation : la réponse se signale sur l'affirmation. */
+const val JEU_AFFIRMATIONS = "trente-secondes"
+
+/**
+ * Cible du signalement de la réponse d'une manche, comme le site : l'affirmation pour le jeu qui en reprend
+ * ([claimIds] : identifiants connus), sinon `manche` `<jeu>:<id de manche>`, extrait = question et réponse.
+ */
+fun mancheTarget(slug: String, nom: String, m: Manche, claimIds: Set<String>): ReportTarget =
+    if (slug == JEU_AFFIRMATIONS && m.id in claimIds) ReportTarget.Affirmation(m.id)
+    else infoTarget(
+        "manche", infoRef("$slug:${m.id}"),
+        listOf(m.q, m.reponse.titre, m.reponse.texte.ifBlank { m.reponse.cache.orEmpty() }).filter { it.isNotBlank() }.joinToString(" · "),
+        "$nom · ${m.reponse.titre}",
+    )

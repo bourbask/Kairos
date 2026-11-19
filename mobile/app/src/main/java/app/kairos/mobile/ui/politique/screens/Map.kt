@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -215,7 +216,7 @@ fun VillesScreen(data: PolData, nav: PolNavigator) {
         part {
             Section("Municipales", "Ce qui a changé de mains", null) {
                 if (muni.isEmpty()) EmptyState("Pas encore de bilan des municipales", "Aucune synthèse par camp n'est publiée. Elle apparaîtra ici dès qu'elle sera sourcée.")
-                else Column(verticalArrangement = Arrangement.spacedBy(12.dp)) { muni.forEach { MuniCard(data, it) } }
+                else Column(verticalArrangement = Arrangement.spacedBy(12.dp)) { muni.forEach { MuniCard(data, it, nav) } }
             }
         }
         if (sections.isEmpty()) part {
@@ -237,7 +238,7 @@ fun VillesScreen(data: PolData, nav: PolNavigator) {
 }
 
 @Composable
-private fun MuniCard(data: PolData, d: Dossier) {
+private fun MuniCard(data: PolData, d: Dossier, nav: PolNavigator) {
     val id = data.idOf(d.t)
     val bar = id?.let { identityColor(data.byId(it)?.couleur) }
     FigCard(Modifier.clip(RoundedCornerShape(16.dp)).drawWithContent { drawContent(); if (bar != null) drawRect(bar, size = Size(size.width, 4.dp.toPx())) }) {
@@ -245,6 +246,8 @@ private fun MuniCard(data: PolData, d: Dossier) {
             if (id != null) IdentityChip(data, id, large = true, text = d.t, modifier = Modifier.weight(1f, fill = false))
             else Text(d.t, Modifier.weight(1f, fill = false), fontWeight = FontWeight.Bold, fontSize = 17.sp)
             StageTag(d.stg)
+            Spacer(Modifier.weight(1f))
+            SignalKey(nav, "ville", infoRef("villes", d.t), "${d.t} (${d.label}) : ${d.p}", d.t)
         }
         if (d.p.isNotBlank()) RichText(d.p, Modifier.padding(top = 10.dp), style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.5.sp, lineHeight = 21.sp))
     }
@@ -254,7 +257,10 @@ private fun MuniCard(data: PolData, d: Dossier) {
 @Composable
 private fun FactBlock(data: PolData, f: CityFact, nav: PolNavigator, withMaire: Boolean) {
     val (label, tone) = factKind(f.kind)
-    StateTag(label, tone)
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.weight(1f)) { StateTag(label, tone) }
+        SignalKey(nav, "ville", infoRef("villes", "${f.ville} ${f.text}"), "${f.ville} (${f.maire}) · $label : ${f.text}", f.ville)
+    }
     if (withMaire && f.maire.isNotBlank()) {
         val id = data.idOf(f.maire)
         if (id != null) IdentityChip(data, id, text = f.maire, onClick = { nav.sheet(PolSheetState.Identity(id)) }, modifier = Modifier.padding(top = 6.dp))
@@ -524,7 +530,10 @@ fun CitySheet(data: PolData, key: String, nav: PolNavigator, onDismiss: () -> Un
         }
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp)) {
             val reg = data.regionName(c?.region)
-            Kicker(listOf(reg, "Municipales").filter { it.isNotBlank() }.joinToString(" · "))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Kicker(listOf(reg, "Municipales").filter { it.isNotBlank() }.joinToString(" · "), Modifier.weight(1f))
+                if (c != null) SignalKey(nav, "ville", if (c.insee.isNotBlank()) infoRef(c.insee) else infoRef("villes", c.ville), "${c.ville} : ${quiLabel(data, c.qui)}, ${statusLabel(c.statut)}${if (c.detail.isNotBlank()) ". ${c.detail}" else ""}", c.ville)
+            }
             Text(name, Modifier.padding(top = 6.dp).semantics { heading() }, fontSize = 26.sp, lineHeight = 31.sp, fontWeight = FontWeight.Bold)
             if (c != null) {
                 @OptIn(ExperimentalLayoutApi::class)

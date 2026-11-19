@@ -115,6 +115,7 @@ private fun OriginCard(data: PolData, c: Claim, rank: Int, total: Int, nav: PolN
                 Column(Modifier.verticalScroll(rememberScrollState()).padding(22.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(count, Modifier.weight(1f), fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = fg.copy(alpha = 0.75f))
+                        if (validClaimId(c.id)) SignalKey(nav, ReportTarget.Affirmation(c.id), ink = fg)
                         TextButton({ flipped = false }, Modifier.heightIn(min = 48.dp)) { Text("Retourner", color = fg) }
                     }
                     Text(frTypo(quoted(c.q)), fontSize = 15.sp, lineHeight = 20.sp, fontWeight = FontWeight.SemiBold, color = fg.copy(alpha = 0.85f))

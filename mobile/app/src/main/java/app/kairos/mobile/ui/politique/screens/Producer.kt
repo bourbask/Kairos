@@ -111,7 +111,10 @@ private fun ProducerFiche(data: PolData, e: Evaluator?, name: String, nav: PolNa
     val muted = scheme.onSurfaceVariant
     val onEv: (String) -> Unit = { nav.sheet(PolSheetState.Evaluator(it)) }
     Column(Modifier.fillMaxWidth().verticalScroll(scroll).padding(horizontal = 16.dp, vertical = 8.dp)) {
-        Kicker(sourceTypeLabel(e?.type.orEmpty(), if (e != null) "Évaluateur" else "Non précisé"))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Kicker(sourceTypeLabel(e?.type.orEmpty(), if (e != null) "Évaluateur" else "Non précisé"), Modifier.weight(1f))
+            if (e != null && e.id.isNotBlank()) SignalKey(nav, "evaluateur", infoRef(e.id), "${e.nom} : ${e.justification.ifBlank { e.statut }}", e.nom)
+        }
         Text(name, Modifier.padding(top = 6.dp).semantics { heading() }, fontSize = 26.sp, lineHeight = 29.sp, fontWeight = FontWeight.ExtraBold)
         FigCard(Modifier.padding(top = 14.dp)) {
             Kicker("Indépendance", Modifier.semantics { heading() })
