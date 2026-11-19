@@ -315,6 +315,8 @@ impl Store {
         let tx = db.transaction()?;
         // Sessions d'abord : leur retrait ne peut qu'avancer la fin d'accès, le lien reste donc visé.
         tx.execute(&format!("DELETE FROM sessions WHERE lien IN {ended}"), params![now - KEEP_SECS])?;
+        // Sessions expirées depuis la période de conservation, même d'un lien encore actif (renouvelé).
+        tx.execute("DELETE FROM sessions WHERE expire_le < ?1", params![now - KEEP_SECS])?;
         let n = tx.execute(&format!("DELETE FROM liens WHERE id IN {ended}"), params![now - KEEP_SECS])?;
         tx.commit()?;
         Ok(n)
@@ -599,5 +601,17 @@ mod tests {
         assert_eq!(s.list().unwrap().len(), 1);
         let n: i64 = s.db().query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0)).unwrap();
         assert_eq!(n, 0, "sessions purgées avec leur lien");
+    }
+
+    #[test]
+    fn purge_old_sessions_of_live_link() {
+        let s = Store::memory().unwrap();
+        let (id, t, _) = s.create("renouvelé", 0, H).unwrap();
+        s.redeem(&t, 0, 2 * H, M).unwrap().unwrap();
+        s.renew(id, 3 * H + KEEP_SECS, 1000 * H, M).unwrap();
+        s.purge(3 * H + KEEP_SECS).unwrap();
+        let n: i64 = s.db().query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 0, "session expirée depuis la période de conservation purgée, lien gardé");
+        assert!(s.get(id).unwrap().is_some());
     }
 }

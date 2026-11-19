@@ -32,6 +32,9 @@ async fn main() -> anyhow::Result<()> {
     let link_ttl = positive("PARTAGE_LIEN_HEURES", 72)? * 3600;
     let session_ttl = positive("PARTAGE_SESSION_HEURES", 30 * 24)? * 3600;
     let max_devices = positive("PARTAGE_APPAREILS_MAX", MAX_DEVICES)?;
+    // Une session plus courte que la fenêtre d'un lien laisserait ce lien ouvrir des appareils sans fin, à mesure
+    // que les sessions expirent : le plafond ne compte que les sessions en cours.
+    anyhow::ensure!(session_ttl >= link_ttl, "PARTAGE_SESSION_HEURES doit être au moins égal à PARTAGE_LIEN_HEURES");
 
     // Administration depuis l'hôte, sans l'application : `kairos-partage creer <libellé>` ou `revoquer <id>`.
     let args: Vec<String> = std::env::args().skip(1).collect();
