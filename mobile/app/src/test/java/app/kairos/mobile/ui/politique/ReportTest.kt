@@ -142,4 +142,109 @@ class ReportTest {
         assertTrue(anonymityNote(0).endsWith(" 0 envoi possible encore cette heure."))
         assertTrue(anonymityNote(9).endsWith(" 9 envois possibles encore cette heure."))
     }
+
+    // Valeurs obtenues avec les fonctions du site (`ref`, `extrait`) sur les mêmes entrées.
+    @Test fun refs_match_the_site() {
+        val seen = mutableMapOf<String, Int>()
+        assertEquals("bilan:ralentissement-de-la-depense-publique", infoRef("bilan", "Ralentissement de la dépense publique", seen))
+        assertEquals("votes:loi-immigration-texte-final-cmp", infoRef("votes", "Loi « immigration » : texte <b>final</b> (CMP)", seen))
+        assertEquals("votes:loi-immigration-texte-final-cmp:2", infoRef("votes", "Loi « immigration » : texte final (CMP)", seen))
+        assertEquals("revirements:jean-luc-exemple-retraites-a-60-ans", infoRef("revirements", "Jean-Luc Exemple Retraites à 60 ans"))
+        assertEquals("medias:audience-tf1", infoRef("medias", "audience TF1"))
+        assertEquals("argent:finances-les-republicains", infoRef("argent", "finances Les Républicains"))
+        assertEquals("budgets:uvre-d-ete-12-5-du-pib", infoRef("budgets", "Œuvre d'Été — 12,5 % du PIB"))
+        assertEquals("rhetorique:" + "x".repeat(80), infoRef("rhetorique", "x".repeat(100)))
+        assertEquals("camps:a:b:dette-publique", infoRef("camps:a:b", "Dette publique"))
+        assertEquals("ofce", infoRef("OFCE"))
+        assertEquals("trente-secondes:a_b.c", infoRef("trente-secondes:A_b.c"))
+        assertEquals("duel-x:dette", infoRef("Duel X:dette"))
+        assertEquals("confiance:3", infoRef("confiance:3"))
+        assertEquals("p:element", infoRef("p", ""))
+        assertTrue(refOk(infoRef("x".repeat(200))) && infoRef("x".repeat(200)).length == 80)
+    }
+
+    @Test fun extrait_is_cleaned_and_bounded_like_the_site() {
+        assertEquals("a b c d", infoExtrait("  a\u00a0 b\n\nc <i>d</i> \u200b "))
+        val long = infoExtrait("é".repeat(310))
+        assertEquals(300, long.codePointCount(0, long.length)); assertTrue(long.endsWith("…"))
+        assertEquals("Titre", infoTarget("vote", "votes:x", "  Texte ", " Titre ").titre)
+    }
+
+    private val info = infoTarget("bilan", "bilan:emploi", "Emploi : texte affiché", "Emploi")
+    private val okInfo = ok.copy(kind = "autre", basis = "carte", refIn = "Passage")
+
+    @Test fun choices_follow_the_target() {
+        assertEquals(listOf("verdict", "fait", "source", "formulation", "classement"), reportKinds(ReportTarget.Affirmation("x")).map { it.first })
+        assertEquals(listOf("fait", "source", "formulation", "autre"), reportKinds(info).map { it.first })
+        assertEquals(listOf("Un chiffre ou un fait", "Une source", "La formulation", "Autre chose"), reportKinds(info).map { it.second })
+        assertEquals("Une contradiction dans la carte elle-même", reportBases(ReportTarget.Affirmation("x")).last().second)
+        assertEquals("Une contradiction dans l'élément lui-même", reportBases(info).last().second)
+        assertEquals(listOf("lien", "ref", "carte"), reportBases(info).map { it.first })
+    }
+
+    @Test fun info_ready_only_with_valid_target_and_info_kind() {
+        assertTrue(reportReady(okInfo, info))
+        assertTrue(reportReady(okInfo.copy(kind = "fait"), info))
+        assertFalse(reportReady(okInfo.copy(kind = "verdict"), info))
+        assertFalse(reportReady(okInfo.copy(kind = "classement"), info))
+        assertFalse(reportReady(okInfo.copy(oath = false), info))
+        assertFalse(reportReady(okInfo, info.copy(type = "affirmation")))
+        assertFalse(reportReady(okInfo, info.copy(ref = "Bilan:emploi")))
+        assertFalse(reportReady(okInfo, info.copy(ref = "-x")))
+        assertFalse(reportReady(okInfo, info.copy(ref = "a".repeat(121))))
+        assertFalse(reportReady(okInfo, info.copy(extrait = "abc")))
+        assertFalse(reportReady(okInfo, info.copy(extrait = "x".repeat(301))))
+        assertTrue(infoOk(info.copy(extrait = "x".repeat(300))))
+    }
+
+    @Test fun claim_payload_is_unchanged() {
+        val f = ok.copy(kind = "fait", target = "f2")
+        val a = reportArgs(f, ReportTarget.Affirmation("phrase-exemple"))
+        assertEquals(reportArgs(f, "phrase-exemple"), a)
+        assertEquals(listOf("claim", "kind", "target", "what", "basis", "url", "fix", "oath", "idem"), a.keys.toList())
+        assertFalse(a.keys.any { it.startsWith("cible") || it == "extrait" })
+    }
+
+    @Test fun info_payload_carries_target_fields_without_claim() {
+        val a = reportArgs(okInfo.copy(target = "f1"), info)
+        assertEquals(listOf("cible_type", "cible_ref", "extrait", "kind", "what", "basis", "ref_in", "fix", "oath", "idem"), a.keys.toList())
+        assertEquals("bilan", a["cible_type"]!!.jsonPrimitive.content)
+        assertEquals("bilan:emploi", a["cible_ref"]!!.jsonPrimitive.content)
+        assertEquals("Emploi : texte affiché", a["extrait"]!!.jsonPrimitive.content)
+        assertNull(oversize(a))
+    }
+
+    @Test fun keys_separate_targets() {
+        assertEquals("phrase-exemple", ReportTarget.Affirmation("phrase-exemple").key)
+        assertEquals("bilan|bilan:emploi", info.key)
+        assertTrue(anonymityNote(null, info = true).contains("l'information visée"))
+    }
+
+    @Test fun game_answers_target_the_claim_or_the_round() {
+        val m = app.kairos.mobile.ui.politique.jeux.Manche(id = "Phrase-1", q = "Question ?", reponse = app.kairos.mobile.ui.politique.jeux.Reponse(titre = "Titre", texte = "Texte"))
+        assertEquals(ReportTarget.Affirmation("Phrase-1"), app.kairos.mobile.ui.politique.jeux.mancheTarget("trente-secondes", "Jeu", m, setOf("Phrase-1")))
+        val off = app.kairos.mobile.ui.politique.jeux.mancheTarget("trente-secondes", "Jeu", m, emptySet()) as ReportTarget.Info
+        assertEquals("trente-secondes:phrase-1", off.ref)
+        val t = app.kairos.mobile.ui.politique.jeux.mancheTarget("qui-la-dit", "Qui l'a dit ?", m, setOf("Phrase-1")) as ReportTarget.Info
+        assertEquals(listOf("manche", "qui-la-dit:phrase-1", "Question ? · Titre · Texte", "Qui l'a dit ? · Titre"), listOf(t.type, t.ref, t.extrait, t.titre))
+        assertTrue(infoOk(t))
+    }
+
+    @Test fun vote_refs_share_one_counter_like_the_site() {
+        val r = voteRefs(
+            listOf(VoteRow(t = "Loi A"), VoteRow(t = "Loi B")), listOf(VoteRow(t = "Loi A")),
+            listOf(CohGroup("Camp", listOf(listOf("ecart", "Loi A")))),
+        )
+        assertEquals(listOf("votes:loi-a", "votes:loi-b"), r.an)
+        assertEquals(listOf("votes:loi-a:2"), r.of("PE"))
+        assertEquals(listOf("votes:camp-loi-a"), r.coh["Camp"])
+        assertEquals(listOf("revirements:p-s", "revirements:p-s:2"), turnRefs(listOf(Turn(p = "P", s = "S"), Turn(p = "P", s = "S"))))
+    }
+
+    @Test fun duel_blocks_carry_both_sides() {
+        assertEquals("parti" to "partis:a:b:camp-et-classement", duelBlockSig(app.kairos.mobile.ui.politique.model.IdKind.Parti, "a", "b", "Camp et classement"))
+        assertEquals("camp" to "camps:x:y:elus", duelBlockSig(app.kairos.mobile.ui.politique.model.IdKind.Camp, "x", "y", "Élus"))
+        assertNull(duelBlockSig(app.kairos.mobile.ui.politique.model.IdKind.Personne, "x", "y", "Élus"))
+        assertEquals("Création : 2016 depuis", lineText(Kv("Création", "2016", "depuis")))
+    }
 }

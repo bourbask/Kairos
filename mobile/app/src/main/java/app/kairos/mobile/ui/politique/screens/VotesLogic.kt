@@ -121,3 +121,23 @@ class RateLabel(val figure: String, val text: String)
 /** Taux hors séance à afficher ; `null` quand rien n'est comptable (afficher [NO_PUBLIC_STATEMENT], jamais « 0 / 0 »). */
 fun publicRateLabel(k: DvCount): RateLabel? =
     if (k.t == 0) null else RateLabel("${k.c} / ${k.t}", "scrutins où le vote suit ce que le parti dit en public")
+
+/** Références de signalement des votes, comme le site : scrutins AN puis PE, puis cohérence (ordre des données), un seul compteur de doublons. */
+class VoteRefs(val an: List<String>, val pe: List<String>, val coh: Map<String, List<String>>) {
+    fun of(chamber: String): List<String> = if (chamber == "PE") pe else an
+}
+
+fun voteRefs(an: List<VoteRow>, pe: List<VoteRow>, coh: List<CohGroup>): VoteRefs {
+    val seen = mutableMapOf<String, Int>()
+    val a = an.map { infoRef("votes", it.t, seen) }
+    val p = pe.map { infoRef("votes", it.t, seen) }
+    return VoteRefs(a, p, coh.associate { c -> c.camp to c.items.map { infoRef("votes", "${c.camp} ${it.getOrElse(1) { "" }}", seen) } })
+}
+
+val COH_WORDS = mapOf("coherent" to "Cohérent", "explique" to "Écart expliqué", "ecart" to "Écart", "ambigu" to "Ambigu")
+
+/** Références des revirements (`revirements:<personne sujet>`), dans l'ordre des données. */
+fun turnRefs(rv: List<Turn>): List<String> {
+    val seen = mutableMapOf<String, Int>()
+    return rv.map { infoRef("revirements", "${it.p} ${it.s}", seen) }
+}

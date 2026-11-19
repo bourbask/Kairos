@@ -125,10 +125,15 @@ private fun Stat(label: String, value: String, note: String, color: Color, modif
     }
 }
 
-/** Barres horizontales à partir du zéro de l'échelle ; couleur et libellé par ligne. */
+/**
+ * Barres horizontales à partir du zéro de l'échelle ; couleur et libellé par ligne.
+ * [sig] : rubrique, type et intitulé de la série, pour la touche de signalement de chaque ligne (références du site).
+ */
 @Composable
-private fun HBars(rows: List<BilanRow>, scale: Scale, labelW: Dp, color: (BilanRow) -> Color) {
+private fun HBars(rows: List<BilanRow>, scale: Scale, labelW: Dp, nav: PolNavigator, sig: Triple<String, String, String>, color: (BilanRow) -> Color) {
     val scheme = MaterialTheme.colorScheme
+    val (rub, type, quoi) = sig
+    val refs = remember(rows, sig) { val seen = mutableMapOf<String, Int>(); rows.map { infoRef(rub, "$quoi ${it.l}", seen) } }
     rows.forEachIndexed { i, r ->
         if (i > 0) Box(Modifier.fillMaxWidth().height(1.dp).background(scheme.outlineVariant.copy(alpha = 0.6f)))
         val v = r.v!!
@@ -147,6 +152,7 @@ private fun HBars(rows: List<BilanRow>, scale: Scale, labelW: Dp, color: (BilanR
                 if (v >= 0) Box(Modifier.fillMaxHeight().padding(start = w * (bar.start + bar.width).toFloat() + 6.dp), contentAlignment = Alignment.CenterStart) { txt() }
                 else Box(Modifier.fillMaxSize().padding(end = (w * (1 - bar.start).toFloat() + 6.dp).coerceAtMost(w)), contentAlignment = Alignment.CenterEnd) { txt() }
             }
+            SignalKey(nav, type, refs[i], "$quoi · ${r.l}${if (!r.s.isNullOrBlank()) " (${r.s})" else ""} : $label", r.l)
         }
     }
 }
@@ -312,8 +318,14 @@ private fun DebtRow(data: PolData, p: Program, ref: Double, lo: Double, hi: Doub
                 drawCircle(dotColor, 6.5.dp.toPx(), Offset(x(debt), size.height / 2))
             }
         }
+        SignalKey(nav, "budget", infoRef("budgets", p.who), programExtrait(p), p.who)
     }
 }
+
+/** Ligne d'un programme telle que le site la cite : dette, déficit et effet net. */
+private fun programExtrait(p: Program): String =
+    "${p.who} (${p.party}) : dette en fin de programme ${p.debt?.let { fmtNum(it, 1) + " %" } ?: "—"}, déficit ${p.deficit?.let { fmtNum(it, 1) + " %" } ?: "—"}, " +
+        "effet sur les comptes ${p.net?.let { fmtSigned(it, 1) + " Md€" } ?: "—"} par an"
 
 @Composable
 private fun DetailTable(data: PolData, programs: List<Program>) {
@@ -373,7 +385,9 @@ private fun GapCard(data: PolData, g: Gap, nav: PolNavigator, onTable: () -> Uni
         }
         Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             if (!g.src.isNullOrBlank()) SourceButton(SourceRef(g.src, g.url, g.ev), data, { nav.sheet(PolSheetState.Evaluator(it)) }, Modifier.weight(1f, fill = false))
-            Spacer(Modifier.weight(1f)); TableLink(onTable)
+            Spacer(Modifier.weight(1f))
+            SignalKey(nav, "ecart", infoRef("budgets", "${g.who} ${g.what}"), "${g.who} : ${g.what}. $la ${g.claimed?.let { fmtNum(it, 1) } ?: NO_VALUE} ${g.unit}, ${lb.lowercase()} ${g.credited?.let { fmtNum(it, 1) } ?: NO_VALUE} ${g.unit}", g.who)
+            TableLink(onTable)
         }
     }
 }
@@ -394,7 +408,7 @@ fun LivingScreen(data: PolData, nav: PolNavigator) {
         part {
             Section("Salaires", "Les salaires face à l'inflation", null, note = "Salaire net moyen réel dans le privé, après inflation.") {
                 if (st.salaireBars.isEmpty()) EmptyState("Aucune série de salaires", "La série des salaires réels n'est pas disponible pour l'instant.")
-                else FigCard { HBars(st.salaireBars, sScale, 60.dp) { if (it.v!! < 0) pc.high else pc.low } }
+                else FigCard { HBars(st.salaireBars, sScale, 60.dp, nav, Triple("niveau-de-vie", "niveau-de-vie", "Salaires")) { if (it.v!! < 0) pc.high else pc.low } }
             }
         }
         if (salaires.any { it.lecture != null }) part {
@@ -455,6 +469,7 @@ private fun HouseholdRow(data: PolData, p: Program, ref: Double?, maxAbs: Double
                     Text(debtLine, fontSize = 12.sp, color = scheme.onSurfaceVariant)
                 }
             }
+            SignalKey(nav, "niveau-de-vie", infoRef("niveau-de-vie", "menage ${p.who}"), "${p.who} : ${fmtSigned(hh)} € par ménage et par an${debtLine?.let { ", $it" } ?: ""}", p.who)
         }
         p.lecture?.let { lec -> "${p.who} : ${fmtSigned(hh)} € par ménage et par an".let { t -> BalanceBlock(lec, t, onOpen = nav.balance(lec, t, p.who), modifier = Modifier.padding(start = 44.dp)) } }
     }
@@ -488,7 +503,10 @@ private fun MeasureCard(data: PolData, m: Measure, nav: PolNavigator, onTable: (
                     Column(Modifier.padding(top = 14.dp)) { Kicker("Financé par"); Text(frTypo(m.f), Modifier.padding(top = 3.dp), fontSize = 14.sp, lineHeight = 19.sp) }
                     m.lecture?.let { lec -> BalanceBlock(lec, "${nameOf(m.who)} : mesures de pouvoir d'achat", onOpen = null) }
                 }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { TableLink(onTable) }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    SignalKey(nav, "niveau-de-vie", infoRef("niveau-de-vie", m.who), "${m.who} : ${m.hh?.let { fmtSigned(it) } ?: NO_VALUE} €/an. Mesures : ${m.m}. Pour qui : ${m.b}. Financé par : ${m.f}", m.who)
+                    TableLink(onTable)
+                }
             }
         }
     }
@@ -531,14 +549,14 @@ fun BilanScreen(data: PolData, nav: PolNavigator) {
                 if (st.ofceBars.isEmpty()) EmptyState("Aucune décomposition", "La décomposition de la dette n'est pas disponible pour l'instant.")
                 else FigCard {
                     Legend(modifier = Modifier.padding(bottom = 8.dp), items = listOf(pc.high to "Fait monter la dette", pc.low to "La fait baisser"))
-                    HBars(st.ofceBars, ofceScale, 118.dp) { if (it.total) ink else if (it.v!! >= 0) pc.high else pc.low }
+                    HBars(st.ofceBars, ofceScale, 118.dp, nav, Triple("bilan", "bilan", "OFCE")) { if (it.total) ink else if (it.v!! >= 0) pc.high else pc.low }
                 }
             }
         }
         part {
             Section("Niveau de vie", "Qui a gagné quoi ?", null, "Ces études ne couvrent pas les années suivantes.", note = "Mesures fiscales et sociales du mandat sortant, selon un institut de recherche indépendant.") {
                 if (st.ippBars.isEmpty()) EmptyState("Aucune étude de répartition", "Aucun chiffrage de l'effet sur le niveau de vie n'est disponible pour l'instant.")
-                else FigCard { HBars(st.ippBars, ippScale, 118.dp) { pc.pour } }
+                else FigCard { HBars(st.ippBars, ippScale, 118.dp, nav, Triple("bilan", "bilan", "IPP")) { pc.pour } }
             }
         }
         if ((ofce + ipp).any { it.lecture != null }) part {
@@ -579,6 +597,9 @@ private fun MatrixCard(data: PolData, r: MatrixRow, cands: List<String>, i: Int,
             }
             r.lecture?.let { lec -> BalanceBlock(lec, r.o, onOpen = null) }
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { TableLink(onTable) }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            SignalKey(nav, "bilan", infoRef("bilan", r.o), "${r.o} : ${r.s}", r.o)
+            TableLink(onTable)
+        }
     }
 }

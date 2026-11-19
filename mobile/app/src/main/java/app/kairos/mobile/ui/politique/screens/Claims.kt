@@ -478,6 +478,7 @@ private fun ClaimFront(data: PolData, claim: Claim, nav: PolNavigator, bareme: B
             if (link != null) PixelKey({ shareClaim(context, claimShareText(claim, verdictName(bareme, claim.v), link), link) }, "Partager cette affirmation", padding = PaddingValues(0.dp)) {
                 Icon(KairosIcons.Share, null, Modifier.size(13.dp), tint = scheme.onSurface)
             }
+            if (validClaimId(claim.id)) SignalKey(nav, ReportTarget.Affirmation(claim.id))
             key(false)
         }
         if (!hasWhy(claim)) Text("justification en cours", Modifier.padding(top = 2.dp).clearAndSetSemantics { }, fontSize = 12.sp, color = scheme.onSurfaceVariant)
@@ -540,7 +541,7 @@ private fun ClaimBack(claim: Claim, nav: PolNavigator, bareme: Bareme?, look: Ve
         }
         if (bareme != null || validClaimId(claim.id)) FlowRow(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             if (bareme != null) PixelKey({ nav.sheet(PolSheetState.Bareme) }, "Notre barème") { Text("Notre barème", fontSize = 13.sp, lineHeight = 16.sp, fontWeight = FontWeight.SemiBold, color = scheme.onSurface) }
-            if (validClaimId(claim.id)) PixelKey({ nav.sheet(PolSheetState.Report(claim.id)) }, "Signaler une erreur") {
+            if (validClaimId(claim.id)) PixelKey({ nav.sheet(PolSheetState.Report(ReportTarget.Affirmation(claim.id))) }, "Signaler une erreur") {
                 PixelGrid(FLAG_GRID, scheme.onSurface, Modifier.size(8.dp, 9.dp))
                 Text("Signaler une erreur", fontSize = 13.sp, lineHeight = 16.sp, fontWeight = FontWeight.SemiBold, color = scheme.onSurface)
             }
@@ -566,7 +567,7 @@ private fun shareClaim(context: Context, text: String, link: String) {
 /** Barème publié : principe, verdicts dans l'ordre du fichier, niveaux de confiance du plus haut au plus bas. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun BaremeSheet(data: PolData, onDismiss: () -> Unit) {
+fun BaremeSheet(data: PolData, nav: PolNavigator, onDismiss: () -> Unit) {
     val b = remember(data) { baremeOf(data) }
     val scheme = MaterialTheme.colorScheme
     PolSheet(full = false, onDismiss = onDismiss) {
@@ -578,6 +579,7 @@ fun BaremeSheet(data: PolData, onDismiss: () -> Unit) {
                 Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                     VerdictChip(v.id, label = verdictName(b, v.id))
                     Text(frTypo(v.definition), Modifier.weight(1f), fontSize = 13.5.sp, color = scheme.onSurfaceVariant)
+                    if (v.id.isNotBlank()) SignalKey(nav, "bareme", infoRef(v.id), "${v.libelle} : ${v.definition}", "Barème · ${v.libelle}")
                 }
             }
             if (b.confiance.isNotEmpty()) {
@@ -592,6 +594,7 @@ fun BaremeSheet(data: PolData, onDismiss: () -> Unit) {
                             MonoLabel(c.libelle, scheme.onSurface)
                         }
                         Text(frTypo(c.definition), Modifier.weight(1f), fontSize = 13.5.sp, color = scheme.onSurfaceVariant)
+                        SignalKey(nav, "bareme", infoRef("confiance:${c.niveau}"), "Confiance ${c.libelle} : ${c.definition}", "Indice de confiance · ${c.libelle}")
                     }
                 }
             }
