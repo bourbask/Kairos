@@ -1,5 +1,6 @@
 package app.kairos.mobile.ui.politique
 
+import app.kairos.mobile.ui.politique.kit.noFicheA11y
 import app.kairos.mobile.ui.politique.kit.sourceParts
 import app.kairos.mobile.ui.politique.kit.sourcesText
 import app.kairos.mobile.ui.politique.model.PolData
@@ -44,6 +45,12 @@ class SourcesTest {
         assertEquals("Journal fictif", parts("Journal fictif").text)
         assertEquals("exemple.org", parts("", "https://exemple.org/a").text)
         assertEquals("Source", parts(" ", "http://exemple.org").text)
+    }
+
+    @Test fun no_fiche_label() {
+        assertEquals("Source fictive : source pas encore analysée. Ouvrir les détails", noFicheA11y("Source fictive"))
+        val p = parts("Source fictive")
+        assertNull(p.ev); assertEquals("Source fictive", p.who)
     }
 
     @Test fun sources_text_joins_labels() {

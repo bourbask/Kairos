@@ -23,6 +23,37 @@ class ClaimsTest {
         {"theme":"","camp":"Camp B","q":"Q8","v":"faux"},
         42]}""")))
 
+    private val BAREME = """{"VERDICTS":[
+      {"id":"vrai","libelle":"Vrai (barème)","famille":"solide","definition":"Déf vrai"},
+      {"id":"faux","libelle":"Faux","famille":"partiel","definition":"Déf faux"}],
+      "CONFIANCE":[{"niveau":1,"libelle":"Basse","definition":"D1"},{"niveau":9,"libelle":"X","definition":"X"}],
+      "PRINCIPE":"Principe fictif."}"""
+
+    @Test fun justification_fields_decode_with_fallback() {
+        val d = PolData(mapOf("affirmations" to file("""{"CLAIMS":[
+          {"id":"phrase-exemple","q":"Q0","v":"vrai","facts":["F1","F2"],"pourquoi":"P","confiance":2,
+           "confiance_pourquoi":"C","appui":[2,0,9,2],"camp":null,"camp_note":"Note"},
+          {"q":"Q1","v":"faux","confiance":7}]}""")))
+        val (a, b) = claimsOf(d)
+        assertEquals("phrase-exemple", a.id); assertTrue(hasWhy(a)); assertEquals(2, confidenceLevel(a))
+        assertEquals(listOf(2), supportFacts(a)); assertEquals("", a.camp); assertEquals("Note", a.camp_note)
+        assertEquals("", b.id); assertFalse(hasWhy(b)); assertNull(confidenceLevel(b)); assertTrue(supportFacts(b).isEmpty())
+    }
+
+    @Test fun bareme_comes_from_file_or_is_absent() {
+        val b = baremeOf(PolData(mapOf("bareme" to file(BAREME))))!!
+        assertEquals("Vrai (barème)", verdictName(b, "solide"))
+        assertEquals("Déf faux", verdictDefinition(b, "faux"))
+        assertEquals(2, verdictThirds(b, "faux"))
+        assertEquals(2, verdictThirds(b, "plutot-vrai"))
+        assertEquals(listOf(1), b.confiance.map { it.niveau })
+        assertEquals("Principe fictif.", b.principe)
+        assertNull(baremeOf(PolData(emptyMap())))
+        assertEquals("Plutôt vrai", verdictName(null, "plutot-vrai"))
+        assertNull(verdictDefinition(null, "vrai"))
+        assertEquals(listOf(3, 2, 1, 1), listOf("vrai", "plutot-vrai", "trompeur", "non-documente").map { verdictThirds(null, it) })
+    }
+
     @Test fun bulle_only_offers_claims_with_facing() {
         val c = claimsOf(data)
         assertEquals(9, c.size)
@@ -97,5 +128,19 @@ class ClaimsTest {
         }
         assertTrue(phrasesState(PolData(emptyMap())).claims.isEmpty())
         assertEquals(emptyList<Int>(), facingColumns(emptyList(), 3, emptyList()).flatMap { it.second })
+    }
+
+    @Test fun share_link_keeps_only_origin_and_anchor() {
+        assertEquals("https://site.example/#a-phrase-exemple", claimLink("https://site.example/entrer#jeton-fictif", "phrase-exemple"))
+        assertEquals("https://site.example/#a-phrase-exemple", claimLink("https://site.example/x?t=1#y", "phrase-exemple"))
+        assertNull(claimLink(null, "phrase-exemple"))
+        assertNull(claimLink("pas une adresse", "phrase-exemple"))
+        listOf("", "ab", "Phrase", "a b c", "../x", "x".repeat(61)).forEach { assertNull(it, claimLink("https://site.example/", it)) }
+    }
+
+    @Test fun verdict_key_labels() {
+        assertEquals("Verdict : Vrai. Pourquoi ?", verdictKeyLabel("Vrai", hasWhy = true, back = false))
+        assertEquals("Vrai : revenir aux faits", verdictKeyLabel("Vrai", hasWhy = true, back = true))
+        assertEquals("Verdict : Vrai. Justification en cours", verdictKeyLabel("Vrai", hasWhy = false, back = false))
     }
 }

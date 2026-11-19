@@ -23,7 +23,7 @@ data class PolPage(
 val POL_FILES: List<String> = listOf(
     "meta", "identites", "comparaisons", "affirmations", "argent", "bilan", "budgets", "declarations", "dit-vote", "dossiers", "evaluateurs",
     "carte", "medias", "niveau-de-vie", "probite", "promesses", "revirements", "rhetorique", "villes", "votes", "jeux",
-    "partis", "camps",
+    "partis", "camps", "bareme",
 )
 
 /** Clé sous laquelle un fichier dont le contenu est une liste (jamais découpée) est rangé. */
@@ -88,7 +88,7 @@ private suspend fun loadFile(id: String, fetch: suspend (String, Int) -> PolPage
 }
 
 /** Fichiers facultatifs : leur échec (erreur serveur, lecture instable) les laisse absents sans faire tomber l'espace. */
-val POL_OPTIONAL_FILES: Set<String> = setOf("jeux", "partis", "camps")
+val POL_OPTIONAL_FILES: Set<String> = setOf("jeux", "partis", "camps", "bareme")
 
 /** Fichier facultatif : absent sur toute erreur, sauf session expirée et annulation, qui remontent. */
 private suspend fun loadOptional(id: String, fetch: suspend (String, Int) -> PolPage): JsonObject? = try {

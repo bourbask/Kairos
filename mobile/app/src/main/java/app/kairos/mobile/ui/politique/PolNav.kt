@@ -6,6 +6,8 @@ import app.kairos.mobile.ui.politique.model.PolData
 import app.kairos.mobile.ui.politique.kit.quoted
 import app.kairos.mobile.ui.politique.screens.Owner
 import app.kairos.mobile.ui.politique.screens.Program
+import app.kairos.mobile.ui.politique.screens.ReportQuota
+import app.kairos.mobile.ui.politique.screens.ReportReceipt
 import app.kairos.mobile.ui.politique.screens.VoteRow
 import app.kairos.mobile.ui.politique.screens.claimsOf
 import app.kairos.mobile.ui.politique.screens.declarationsOf
@@ -43,6 +45,12 @@ sealed interface PolSheetState {
     data class City(val key: String) : PolSheetState
     /** Villes d'une même bulle, par clé. */
     data class Cluster(val villes: List<String>) : PolSheetState
+    /** Barème des verdicts et de l'indice de confiance. */
+    data object Bareme : PolSheetState
+    /** Source signée par un nom sans fiche d'évaluateur. */
+    data class NoFiche(val name: String) : PolSheetState
+    /** Signalement d'une erreur sur une affirmation, par son identifiant. */
+    data class Report(val claimId: String) : PolSheetState
 }
 
 /** Ce qu'un écran peut demander à la coque. */
@@ -52,6 +60,18 @@ interface PolNavigator {
     fun replace(r: PolRoute)
     fun sheet(s: PolSheetState)
     fun table(cards: List<TableCard>, start: Int)
+    /** Lien du site enregistré sur l'appareil ; null s'il n'y en a pas. */
+    fun siteLink(): String? = null
+    /** Dépose un signalement ([reportArgs]) ; lève [app.kairos.mobile.data.ApiError]. */
+    suspend fun report(args: JsonObject): ReportReceipt
+    /** Lance [block] sur la durée de l'espace, pas de la feuille : un envoi en cours survit à sa fermeture. */
+    fun launch(block: suspend () -> Unit)
+    /** Quota d'envoi, gardé quand la feuille de signalement se ferme. */
+    var reportQuota: ReportQuota
+    /** Un signalement est en route : aucun autre ne part, même depuis une feuille rouverte. */
+    var reportInFlight: Boolean
+    /** Dernier refus ou échec d'envoi, par identifiant d'affirmation : message seul, jamais la saisie. */
+    var reportIssue: Pair<String, String>?
 }
 
 /**

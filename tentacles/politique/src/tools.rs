@@ -951,6 +951,16 @@ mod tests {
     }
 
     #[test]
+    fn bareme_est_un_fichier_de_service() {
+        let s = server();
+        let f = v(fichier(&s, "bareme", 0));
+        assert!(f["contenu"]["VERDICTS"].is_array());
+        let h = v(s.app_politique_accueil());
+        assert!(!h["rubriques"].as_array().unwrap().iter().any(|r| r["id"] == "bareme"));
+        assert!(s.app_politique_rubrique(Parameters(IdArgs { id: "bareme".into() })).is_err());
+    }
+
+    #[test]
     fn home_lists_identities_rubrics_themes() {
         let h = v(server().app_politique_accueil());
         assert_eq!(h["verifie_le"], "2026-01-15");

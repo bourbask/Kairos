@@ -846,6 +846,7 @@ private fun KairosRoot(model: AppModel, dark: Boolean) {
                             onClose = { politiqueOpen = false },
                             onUnauthorized = model::unauthorized,
                             onDock = { politiqueDock = it },
+                            siteLink = model.mimirLink,
                             // Site complet : lien enregistré sur l'appareil ; la tête n'émet que les liens de partage.
                             site = { back ->
                                 MimirScreen(
