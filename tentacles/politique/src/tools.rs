@@ -325,7 +325,7 @@ fn ligne_json(l: &Ligne) -> Value {
         "ref_who": lecteur_opt(&l.ref_who), "ref_when": lecteur_opt(&l.ref_when),
         "ref_what": lecteur_opt(&l.ref_what), "ref_in": lecteur_opt(&l.ref_in),
         "note": lecteur(&l.note),
-        "cible_type": l.cible_type, "cible_ref": l.cible_ref, "extrait": lecteur_opt(&l.extrait),
+        "cible_type": l.cible_type, "cible_ref": lecteur_opt(&l.cible_ref), "extrait": lecteur_opt(&l.extrait),
     })
 }
 
@@ -693,7 +693,7 @@ mod tests {
         let brut = s.app_signalements_lister(Parameters(ListerSignalementsArgs { etat: None, claim: None, depuis: None, limite: None })).unwrap();
         let j: Value = serde_json::from_str(&brut).unwrap();
         let (aff, info) = (&j["signalements"][0], &j["signalements"][1]);
-        assert_eq!((&info["cible_type"], &info["cible_ref"]), (&json!("promesse"), &json!("p-x-3")));
+        assert_eq!((&info["cible_type"], &info["cible_ref"]), (&json!("promesse"), &json!({"donnee_lecteur": "p-x-3"})));
         assert_eq!(info["extrait"]["donnee_lecteur"], "Texte affiché");
         assert_eq!((&aff["cible_type"], &aff["cible_ref"], &aff["extrait"]), (&json!("affirmation"), &Value::Null, &Value::Null));
         let refus = DeposerSignalementArgs { cible_type: Some("inconnu".into()), ..depot(&"x".repeat(30), &idem(3)) };
