@@ -305,6 +305,23 @@ mod tests {
         assert_eq!(e.store.lister(Default::default(), 20).len(), 10);
     }
 
+    #[tokio::test]
+    async fn information_201_et_refus_400() {
+        let e = etat(200);
+        let info = json!({"cible_type": "bilan", "cible_ref": "bilan:emploi", "extrait": "Texte affiché",
+                          "kind": "fait", "what": "x".repeat(30), "basis": "carte", "ref_in": "Passage",
+                          "fix": "y".repeat(10), "oath": true});
+        let r = envoyer(&e, Some("sess"), Some(&cle(1)), info.to_string()).await;
+        assert_eq!(r.status(), StatusCode::CREATED);
+        let l = &e.store.lister(Default::default(), 1)[0];
+        assert_eq!((l.cible_type.as_str(), l.cible_ref.as_deref(), l.extrait.as_deref()), ("bilan", Some("bilan:emploi"), Some("Texte affiché")));
+        let mut b = info.clone();
+        b["cible_type"] = json!("autre");
+        let r = envoyer(&e, Some("sess"), Some(&cle(2)), b.to_string()).await;
+        assert_eq!(r.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(json_de(r).await, json!({"champ": "cible_type", "message": "Type d'information inconnu."}));
+    }
+
     #[test]
     fn comptes_remis_a_zero_chaque_jour() {
         let c = Comptes::default();

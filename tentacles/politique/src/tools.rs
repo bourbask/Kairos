@@ -325,6 +325,7 @@ fn ligne_json(l: &Ligne) -> Value {
         "ref_who": lecteur_opt(&l.ref_who), "ref_when": lecteur_opt(&l.ref_when),
         "ref_what": lecteur_opt(&l.ref_what), "ref_in": lecteur_opt(&l.ref_in),
         "note": lecteur(&l.note),
+        "cible_type": l.cible_type, "cible_ref": l.cible_ref, "extrait": lecteur_opt(&l.extrait),
     })
 }
 
@@ -358,6 +359,8 @@ struct EtatSignalementArgs {
 
 #[derive(Deserialize, schemars::JsonSchema)]
 struct DeposerSignalementArgs {
+    /// Identifiant de l'affirmation ; vide hors affirmation.
+    #[serde(default)]
     claim: String,
     kind: String,
     target: Option<String>,
@@ -372,6 +375,12 @@ struct DeposerSignalementArgs {
     oath: bool,
     /// Clé d'idempotence : 16 à 64 caractères [A-Za-z0-9-].
     idem: String,
+    /// Type de l'information signalée ; absent ou `affirmation` pour une affirmation.
+    cible_type: Option<String>,
+    /// Référence de l'information hors affirmation.
+    cible_ref: Option<String>,
+    /// Texte affiché de l'information hors affirmation.
+    extrait: Option<String>,
 }
 
 #[tool_router]
@@ -576,6 +585,7 @@ impl PolitiqueServer {
         let brut = Brut {
             claim: a.claim, kind: a.kind, target: a.target, what: a.what, basis: a.basis, url: a.url,
             ref_who: a.ref_who, ref_when: a.ref_when, ref_what: a.ref_what, ref_in: a.ref_in, fix: a.fix, oath: a.oath,
+            cible_type: a.cible_type, cible_ref: a.cible_ref, extrait: a.extrait,
         };
         let s = valider(brut, &self.donnees.etat()).map_err(|r| format!("{} : {}", r.champ, r.message))?;
         match store.deposer(&s, &a.idem, now, self.plafond_jour) {
@@ -645,7 +655,7 @@ mod tests {
         DeposerSignalementArgs {
             claim: "a1".into(), kind: "verdict".into(), target: None, what: what.into(), basis: "lien".into(),
             url: Some("https://example.com/a".into()), ref_who: None, ref_when: None, ref_what: None, ref_in: None,
-            fix: "y".repeat(10), oath: true, idem: idem.into(),
+            fix: "y".repeat(10), oath: true, idem: idem.into(), cible_type: None, cible_ref: None, extrait: None,
         }
     }
 
@@ -672,6 +682,25 @@ mod tests {
     }
 
     #[test]
+    fn information_journal_type_reference_extrait() {
+        let s = serveur_signalements();
+        let a = DeposerSignalementArgs {
+            claim: String::new(), kind: "autre".into(), cible_type: Some("promesse".into()),
+            cible_ref: Some("p-x-3".into()), extrait: Some("Texte affiché".into()), ..depot(&"x".repeat(30), &idem(1))
+        };
+        s.app_signalement_deposer(Parameters(a)).unwrap();
+        s.app_signalement_deposer(Parameters(depot(&"x".repeat(30), &idem(2)))).unwrap();
+        let brut = s.app_signalements_lister(Parameters(ListerSignalementsArgs { etat: None, claim: None, depuis: None, limite: None })).unwrap();
+        let j: Value = serde_json::from_str(&brut).unwrap();
+        let (aff, info) = (&j["signalements"][0], &j["signalements"][1]);
+        assert_eq!((&info["cible_type"], &info["cible_ref"]), (&json!("promesse"), &json!("p-x-3")));
+        assert_eq!(info["extrait"]["donnee_lecteur"], "Texte affiché");
+        assert_eq!((&aff["cible_type"], &aff["cible_ref"], &aff["extrait"]), (&json!("affirmation"), &Value::Null, &Value::Null));
+        let refus = DeposerSignalementArgs { cible_type: Some("inconnu".into()), ..depot(&"x".repeat(30), &idem(3)) };
+        assert_eq!(s.app_signalement_deposer(Parameters(refus)).unwrap_err(), "cible_type : Type d'information inconnu.");
+    }
+
+    #[test]
     fn lister_tronque_sans_echec() {
         use crate::signalements::validation::{Signalement, Source};
         let s = serveur_signalements();
@@ -679,6 +708,7 @@ mod tests {
             let sig = Signalement {
                 claim: "a1".into(), kind: "verdict".into(), target: None, what: "x".repeat(400), basis: "lien".into(),
                 source: Source::Lien(format!("https://example.com/{}", "u".repeat(270))), fix: "y".repeat(300),
+                cible_type: "affirmation".into(), cible_ref: None, extrait: None,
             };
             s.store.as_ref().unwrap().deposer(&sig, &idem(i), 1_700_000_000, 1000).unwrap();
         }
