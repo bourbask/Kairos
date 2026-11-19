@@ -57,10 +57,21 @@ async fn journal_sans_contenu() {
     let long = "MARQUEUR-ECHO assez long pour passer la borne";
     assert_eq!(envoyer(long, "cle-idempotence-0002").await.unwrap().status(), StatusCode::CREATED);
 
+    let info = json!({"cible_type": "vote", "cible_ref": "vote:marqueur-echo", "extrait": "MARQUEUR-ECHO extrait",
+                      "kind": "autre", "what": long, "basis": "carte", "ref_in": "Passage",
+                      "fix": "y".repeat(10), "oath": true});
+    let r = Request::post("/api/signalements")
+        .header("content-type", "application/json")
+        .header("cookie", format!("{}=cookie-secret", public::COOKIE))
+        .header("idempotency-key", "cle-idempotence-0003")
+        .body(Body::from(info.to_string()))
+        .unwrap();
+    assert_eq!(public::router(etat.clone()).oneshot(r).await.unwrap().status(), StatusCode::CREATED);
+
     let log = String::from_utf8(cap.0.lock().unwrap().clone()).unwrap();
     assert!(log.contains("refuses=1"), "{log}");
-    assert!(log.contains("deposes=1"), "{log}");
-    for secret in ["MARQUEUR-ECHO", "cookie-secret", "cle-idempotence", "example.com"] {
+    assert!(log.contains("deposes=2"), "{log}");
+    for secret in ["MARQUEUR-ECHO", "marqueur-echo", "cookie-secret", "cle-idempotence", "example.com"] {
         assert!(!log.contains(secret), "{secret} dans le journal");
     }
 }

@@ -82,10 +82,20 @@ pub struct Ligne {
     pub recu_a: i64,
     pub etat: String,
     pub note: String,
+    pub cible_type: String,
+    pub cible_ref: Option<String>,
+    pub extrait: Option<String>,
 }
 
 const COLONNES: &str = "id, reference, claim, kind, target, what, basis, url, ref_who, \
-                        ref_when, ref_what, ref_in, fix, recu_a, etat, note";
+                        ref_when, ref_what, ref_in, fix, recu_a, etat, note, cible_type, cible_ref, extrait";
+
+/// Colonnes ajoutées après la première version du schéma ; les lignes antérieures sont des affirmations.
+const AJOUTS: [(&str, &str); 3] = [
+    ("cible_type", "TEXT NOT NULL DEFAULT 'affirmation'"),
+    ("cible_ref", "TEXT"),
+    ("extrait", "TEXT"),
+];
 
 fn ligne(r: &rusqlite::Row) -> rusqlite::Result<Ligne> {
     Ok(Ligne {
@@ -105,6 +115,9 @@ fn ligne(r: &rusqlite::Row) -> rusqlite::Result<Ligne> {
         recu_a: r.get(13)?,
         etat: r.get(14)?,
         note: r.get(15)?,
+        cible_type: r.get(16)?,
+        cible_ref: r.get(17)?,
+        extrait: r.get(18)?,
     })
 }
 
@@ -120,6 +133,20 @@ fn jour_utc(ts: i64) -> String {
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let a = yoe + era * 400 + i64::from(m <= 2);
     format!("{:02}{m:02}{j:02}", a.rem_euclid(100))
+}
+
+/// Ajoute les colonnes manquantes d'une base créée par une version antérieure.
+fn migrer(c: &Connection) -> rusqlite::Result<()> {
+    let presentes: Vec<String> = c
+        .prepare("PRAGMA table_info(signalements)")?
+        .query_map([], |r| r.get(1))?
+        .collect::<Result<_, _>>()?;
+    for (nom, genre) in AJOUTS {
+        if !presentes.iter().any(|p| p == nom) {
+            c.execute_batch(&format!("ALTER TABLE signalements ADD COLUMN {nom} {genre};"))?;
+        }
+    }
+    Ok(())
 }
 
 pub struct Store {
@@ -139,12 +166,14 @@ impl Store {
                what TEXT NOT NULL, basis TEXT NOT NULL, url TEXT,
                ref_who TEXT, ref_when TEXT, ref_what TEXT, ref_in TEXT,
                fix TEXT NOT NULL, recu_a INTEGER NOT NULL,
-               etat TEXT NOT NULL DEFAULT 'nouveau', note TEXT NOT NULL DEFAULT ''
+               etat TEXT NOT NULL DEFAULT 'nouveau', note TEXT NOT NULL DEFAULT '',
+               cible_type TEXT NOT NULL DEFAULT 'affirmation', cible_ref TEXT, extrait TEXT
              );
              CREATE TABLE IF NOT EXISTS idempotence(
                cle TEXT PRIMARY KEY, reference TEXT NOT NULL, recu_a INTEGER NOT NULL
              );",
         )?;
+        migrer(&c)?;
         Ok(Store { c: Mutex::new(c) })
     }
 
@@ -200,10 +229,11 @@ impl Store {
         };
         tx.execute(
             "INSERT INTO signalements(reference, claim, kind, target, what, basis, url, ref_who, \
-             ref_when, ref_what, ref_in, fix, recu_a) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
+             ref_when, ref_what, ref_in, fix, recu_a, cible_type, cible_ref, extrait) \
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)",
             params![
                 reference, s.claim, s.kind, s.target, s.what, s.basis, url, who, quand, quoi, dans,
-                s.fix, maintenant
+                s.fix, maintenant, s.cible_type, s.cible_ref, s.extrait
             ],
         )?;
         tx.execute(
@@ -259,6 +289,9 @@ mod tests {
             basis: "lien".into(),
             source: Source::Lien("https://example.com/p".into()),
             fix: "correction proposée".into(),
+            cible_type: "affirmation".into(),
+            cible_ref: None,
+            extrait: None,
         }
     }
 
@@ -359,5 +392,63 @@ mod tests {
             b.deposer(&sig(), &format!("k{i}"), J, 10).unwrap();
         }
         assert_eq!(b.lister(Filtre::default(), 3).len(), 3);
+    }
+
+    #[test]
+    fn information_stockee_et_relue() {
+        let b = base();
+        let s = Signalement {
+            claim: String::new(),
+            kind: "autre".into(),
+            cible_type: "ville".into(),
+            cible_ref: Some("75056".into()),
+            extrait: Some("Texte affiché".into()),
+            ..sig()
+        };
+        b.deposer(&s, "k", J, 10).unwrap();
+        b.deposer(&sig(), "k2", J, 10).unwrap();
+        let l = b.lister(Filtre::default(), 10);
+        assert_eq!(
+            (l[1].cible_type.as_str(), l[1].cible_ref.as_deref(), l[1].extrait.as_deref(), l[1].claim.as_str()),
+            ("ville", Some("75056"), Some("Texte affiché"), "")
+        );
+        assert_eq!((l[0].cible_type.as_str(), l[0].cible_ref.as_deref()), ("affirmation", None));
+    }
+
+    #[test]
+    fn migration_base_existante() {
+        let p = std::env::temp_dir().join(format!("sig-migration-{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&p);
+        {
+            // Schéma de la première version, avec une ligne déjà déposée.
+            let c = Connection::open(&p).unwrap();
+            c.execute_batch(
+                "CREATE TABLE signalements(
+                   id INTEGER PRIMARY KEY AUTOINCREMENT,
+                   reference TEXT NOT NULL UNIQUE,
+                   claim TEXT NOT NULL, kind TEXT NOT NULL, target TEXT,
+                   what TEXT NOT NULL, basis TEXT NOT NULL, url TEXT,
+                   ref_who TEXT, ref_when TEXT, ref_what TEXT, ref_in TEXT,
+                   fix TEXT NOT NULL, recu_a INTEGER NOT NULL,
+                   etat TEXT NOT NULL DEFAULT 'nouveau', note TEXT NOT NULL DEFAULT ''
+                 );
+                 INSERT INTO signalements(reference, claim, kind, what, basis, fix, recu_a)
+                   VALUES('S-261118-001', 'a1', 'verdict', 'ancien', 'lien', 'corr', 1);",
+            )
+            .unwrap();
+        }
+        let b = Store::open(&p).unwrap();
+        let l = b.lire(1).unwrap();
+        assert_eq!((l.claim.as_str(), l.cible_type.as_str(), l.cible_ref, l.extrait), ("a1", "affirmation", None, None));
+        // Rang du jour conservé, nouvelles colonnes écrites.
+        let s = Signalement { claim: String::new(), cible_type: "vote".into(), cible_ref: Some("vote:x".into()), extrait: Some("Extrait".into()), ..sig() };
+        assert_eq!(b.deposer(&s, "k", J, 10).unwrap().reference, "S-261118-002");
+        assert_eq!(b.lire(2).unwrap().cible_ref.as_deref(), Some("vote:x"));
+        drop(b);
+        // Réouverture : migration idempotente.
+        assert!(Store::open(&p).is_ok());
+        for ext in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{ext}", p.display()));
+        }
     }
 }
