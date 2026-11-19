@@ -31,6 +31,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.Dp
@@ -51,6 +53,12 @@ import java.time.LocalDate
 /** Demande un nouveau lien ; rend le lien vérifié (https, jeton dans le fragment). */
 suspend fun createShareLink(repository: Repository, label: String, owner: Boolean = false): String {
     val r = repository.lookup(PARTAGE, "app_partage_creer", ShareLink.serializer(), shareRequest(label, owner))
+    return normalizeMimirLink(r.lien).getOrElse { throw ApiError.Server(200, ApiError.Server.UNREADABLE) }
+}
+
+/** Nouveau lien pour un partage existant ; l'ancien ne s'ouvre plus. */
+suspend fun renewShareLink(repository: Repository, id: Long): String {
+    val r = repository.lookup(PARTAGE, "app_partage_renouveler", ShareLink.serializer(), renewRequest(id))
     return normalizeMimirLink(r.lien).getOrElse { throw ApiError.Server(200, ApiError.Server.UNREADABLE) }
 }
 
@@ -101,7 +109,7 @@ fun ShareDialog(repository: Repository, onDismiss: () -> Unit, onUnauthorized: (
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
-                    "Un lien neuf, valable 3 jours, jusqu'à 3 appareils. Révocable à tout moment.",
+                    "Un lien neuf, valable 3 jours, jusqu'à 5 appareils. Révocable à tout moment.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -127,6 +135,49 @@ fun ShareDialog(repository: Repository, onDismiss: () -> Unit, onUnauthorized: (
 }
 
 /**
+ * « Nouveau lien » : dit ce qui change, puis remet le lien neuf à la feuille de partage,
+ * comme à la création. Le lien n'est gardé nulle part.
+ */
+@Composable
+private fun RenewDialog(repository: Repository, share: Share, onDismiss: () -> Unit, onDone: () -> Unit, onUnauthorized: () -> Unit) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var error by remember { mutableStateOf<String?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Nouveau lien · ${share.libelle}") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(renewNotice(share), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                error?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error) }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = !busy,
+                onClick = {
+                    busy = true
+                    scope.launch {
+                        try {
+                            sendLink(context, renewShareLink(repository, share.id))
+                            onDone()
+                        } catch (_: ApiError.Unauthorized) {
+                            onUnauthorized()
+                        } catch (e: ApiError) {
+                            error = shareIssue(e)
+                        } finally {
+                            busy = false
+                        }
+                    }
+                },
+            ) { Text(if (busy) "Création…" else "Nouveau lien") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Annuler") } },
+    )
+}
+
+/**
  * « Accès partagés » : chaque partage (nom, état), révocation en un geste avec fenêtre
  * d'annulation. Rien n'est gardé sur l'appareil : la liste est relue à chaque ouverture.
  */
@@ -139,6 +190,7 @@ fun SharesPanel(repository: Repository, appScope: CoroutineScope, bottom: Dp, on
     var shares by remember { mutableStateOf<List<Share>?>(null) }
     var issue by remember { mutableStateOf<String?>(null) }
     var reload by remember { mutableIntStateOf(0) }
+    var renewing by remember { mutableStateOf<Share?>(null) }
 
     LaunchedEffect(reload) {
         try {
@@ -192,21 +244,39 @@ fun SharesPanel(repository: Repository, appScope: CoroutineScope, bottom: Dp, on
             else -> list.forEach { s ->
                 // Révoqué pendant la fenêtre : montré inactif jusqu'à la relecture.
                 val shown = if (s.id in hidden) s.copy(actif = false) else s
-                ShareRow(shown, onRevoke = { revoke(s) })
+                ShareRow(shown, onRenew = { renewing = s }, onRevoke = { revoke(s) })
             }
         }
+    }
+    renewing?.let { s ->
+        RenewDialog(
+            repository,
+            s,
+            onDismiss = { renewing = null },
+            onDone = {
+                renewing = null
+                reload++
+            },
+            onUnauthorized = {
+                renewing = null
+                unauthorized()
+            },
+        )
     }
 }
 
 @Composable
-private fun ShareRow(s: Share, onRevoke: () -> Unit) {
+private fun ShareRow(s: Share, onRenew: () -> Unit, onRevoke: () -> Unit) {
     val colors = MaterialTheme.colorScheme
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(s.libelle, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold, color = if (s.actif) colors.onBackground else colors.onSurfaceVariant)
             Text(shareStatus(s), style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
         }
-        if (s.actif) TextButton(onClick = onRevoke) { Text("Révoquer") }
+        if (s.actif) {
+            TextButton(onClick = onRenew, modifier = Modifier.semantics { contentDescription = "Nouveau lien pour ${s.libelle}" }) { Text("Nouveau lien") }
+            TextButton(onClick = onRevoke, modifier = Modifier.semantics { contentDescription = "Révoquer ${s.libelle}" }) { Text("Révoquer") }
+        }
     }
 }
 

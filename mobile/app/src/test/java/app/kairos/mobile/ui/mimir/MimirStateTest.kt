@@ -182,6 +182,22 @@ class MimirStateTest {
     }
 
     @Test
+    fun renewal_states_what_changes_and_counts_devices() {
+        val s = Share(4, "Exemple", "2027-03-05T09:00:00Z", "2027-03-08T09:00:00Z", actif = true, devices = 2, maxDevices = 5)
+        assertEquals("2 appareils sur 5", deviceCount(s))
+        assertEquals("1 appareil sur 5", deviceCount(s.copy(devices = 1)))
+        assertEquals(
+            "Le lien actuel ne s'ouvrira plus. 2 appareils gardent leur accès (2 appareils sur 5). Le nouveau lien est valable 3 jours.",
+            renewNotice(s),
+        )
+        assertEquals(
+            "Le lien actuel ne s'ouvrira plus. Aucun appareil ouvert pour l'instant (0 appareil sur 5). Le nouveau lien est valable 3 jours.",
+            renewNotice(s.copy(devices = 0)),
+        )
+        assertEquals("""{"id":4}""", renewRequest(s.id).toString())
+    }
+
+    @Test
     fun older_module_reply_keeps_former_wording() {
         // Module pas encore à jour : ni décompte ni fin d'accès, l'échéance tient lieu de fin d'accès.
         val s = KairosJson.decodeFromString(

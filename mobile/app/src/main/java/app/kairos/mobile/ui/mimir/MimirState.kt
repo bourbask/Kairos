@@ -135,6 +135,22 @@ private val DAY_TIME: DateTimeFormatter = DateTimeFormatter.ofPattern("dd/MM HH:
 fun shareTime(at: String, zone: ZoneId = ZoneId.systemDefault()): String =
     runCatching { OffsetDateTime.parse(at).atZoneSameInstant(zone).format(DAY_TIME) }.getOrDefault(at)
 
+/** « N appareils sur M » : sessions ouvertes et plafond du partage. */
+fun deviceCount(s: Share): String = "${s.devices} appareil${if (s.devices > 1) "s" else ""} sur ${s.maxDevices}"
+
+/** Demande d'un nouveau lien pour le partage [id]. */
+fun renewRequest(id: Long): JsonObject = buildJsonObject { put("id", id) }
+
+/** Ce que change un nouveau lien, en clair, avant de le demander. */
+fun renewNotice(s: Share): String {
+    val kept = when (s.devices) {
+        0 -> "Aucun appareil ouvert pour l'instant"
+        1 -> "1 appareil garde son accès"
+        else -> "${s.devices} appareils gardent leur accès"
+    }
+    return "Le lien actuel ne s'ouvrira plus. $kept (${deviceCount(s)}). Le nouveau lien est valable 3 jours."
+}
+
 /** État d'un partage en une ligne. */
 fun shareStatus(s: Share, zone: ZoneId = ZoneId.systemDefault(), now: Instant = Instant.now()): String {
     val created = "Créé le ${shareTime(s.createdAt, zone)}"
@@ -144,7 +160,7 @@ fun shareStatus(s: Share, zone: ZoneId = ZoneId.systemDefault(), now: Instant = 
         // Module antérieur aux sessions multiples : l'échéance y était la fin d'accès.
         s.accessUntil == null -> "Ouvert le ${shareTime(s.openedAt, zone)} · accès jusqu'au ${shareTime(s.expiresAt, zone)}"
         else -> {
-            val count = "${s.devices} appareil${if (s.devices > 1) "s" else ""} sur ${s.maxDevices}"
+            val count = deviceCount(s)
             val windowOpen = runCatching { OffsetDateTime.parse(s.expiresAt).toInstant().isAfter(now) }.getOrDefault(false)
             val more = if (windowOpen && s.devices < s.maxDevices) " · autre appareil avant le ${shareTime(s.expiresAt, zone)}" else ""
             "Ouvert sur $count · accès jusqu'au ${shareTime(s.accessUntil, zone)}$more"
