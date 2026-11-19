@@ -76,7 +76,8 @@ fun infoTarget(type: String, ref: String, extrait: String, titre: String = ""): 
 private val TAGS = Regex("<[^>]*>")
 private val MARKS = Regex("\\p{M}+")
 private val NON_ALNUM = Regex("[^a-z0-9]+")
-private val SPACES = Regex("(?U)\\s+")
+// Espaces Unicode explicites : le moteur d'Android ne connaît pas le drapeau « caractères Unicode ».
+private val SPACES = Regex("[\\s\\p{Z}]+")
 private val REF_PATTERN = Regex("^[a-z0-9][a-z0-9._:-]*$")
 
 fun refOk(r: String): Boolean = r.length <= 120 && REF_PATTERN.matches(r)
