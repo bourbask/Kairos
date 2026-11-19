@@ -22,7 +22,7 @@ pub const OWNER_UNOPENED_SECS: Ts = 72 * 3600;
 pub const MIGRATED_WINDOW_SECS: Ts = 72 * 3600;
 
 /// Appareils qu'un même lien peut ouvrir, par défaut.
-pub const MAX_DEVICES: i64 = 3;
+pub const MAX_DEVICES: i64 = 5;
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
@@ -43,6 +43,17 @@ pub fn hash(secret: &str) -> String {
 /// Forme d'un secret émis ici : 64 caractères hexadécimaux minuscules.
 pub fn well_formed(s: &str) -> bool {
     s.len() == 64 && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+/// Issue d'un renouvellement de lien.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Renewal {
+    /// Nouveau jeton en clair et fin de la nouvelle fenêtre.
+    Done(String, Ts),
+    Unknown,
+    Revoked,
+    /// Plafond d'appareils déjà atteint par les sessions ouvertes.
+    Full,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -179,8 +190,8 @@ impl Store {
         Ok((id, token, expire))
     }
 
-    /// Échange atomique : un jeton valide, non révoqué, dans sa fenêtre et qui n'a pas
-    /// encore ouvert `max_devices` sessions en ouvre une de `session_ttl` secondes.
+    /// Échange atomique : un jeton valide, non révoqué, dans sa fenêtre et dont moins de
+    /// `max_devices` sessions sont ouvertes en ouvre une de `session_ttl` secondes.
     /// Rend la session en clair.
     pub fn redeem(&self, token: &str, now: Ts, session_ttl: Ts, max_devices: i64) -> anyhow::Result<Option<String>> {
         if !well_formed(token) {
@@ -195,7 +206,7 @@ impl Store {
             "INSERT INTO sessions (lien, empreinte, cree_le, expire_le)
              SELECT id, ?1, ?2, ?3 FROM liens
              WHERE jeton = ?4 AND revoque_le IS NULL AND expire_le > ?2
-               AND (SELECT COUNT(*) FROM sessions WHERE lien = liens.id) < ?5",
+               AND (SELECT COUNT(*) FROM sessions WHERE lien = liens.id AND expire_le > ?2) < ?5",
             params![hash(&session), now, now + session_ttl, hash(token), max_devices],
         )?;
         if n != 1 {
@@ -204,6 +215,35 @@ impl Store {
         tx.execute("UPDATE liens SET ouvert_le = COALESCE(ouvert_le, ?1) WHERE jeton = ?2", params![now, hash(token)])?;
         tx.commit()?;
         Ok(Some(session))
+    }
+
+    /// Nouveau jeton pour un partage non révoqué : l'ancien ne s'échange plus, la fenêtre
+    /// repart pour `ttl` secondes, les sessions ouvertes restent valides et comptent dans
+    /// le plafond. Refusé si `max_devices` sessions sont déjà ouvertes.
+    pub fn renew(&self, id: i64, now: Ts, ttl: Ts, max_devices: i64) -> anyhow::Result<Renewal> {
+        let token = new_secret();
+        let mut db = self.db();
+        // Même verrou que l'échange : le décompte ne peut pas être doublé par un appareil entrant.
+        let tx = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let row: Option<(bool, i64)> = tx
+            .query_row(
+                "SELECT revoque_le IS NOT NULL, (SELECT COUNT(*) FROM sessions WHERE lien = liens.id AND expire_le > ?2)
+                 FROM liens WHERE id = ?1",
+                params![id, now],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        let outcome = match row {
+            None => Renewal::Unknown,
+            Some((true, _)) => Renewal::Revoked,
+            Some((_, open)) if open >= max_devices => Renewal::Full,
+            Some(_) => {
+                tx.execute("UPDATE liens SET jeton = ?1, expire_le = ?2 WHERE id = ?3", params![hash(&token), now + ttl, id])?;
+                Renewal::Done(token, now + ttl)
+            }
+        };
+        tx.commit()?;
+        Ok(outcome)
     }
 
     /// Vrai si la session existe, n'a pas expiré et que son lien n'est pas révoqué.
@@ -467,10 +507,10 @@ mod tests {
         assert_eq!(s.get(2).unwrap().unwrap().expire_le, 72 * H, "jamais ouvert : intact");
         assert!(s.verify(&vieille, 20).unwrap() && s.verify(&tiers, 20).unwrap());
         assert!(!s.verify(&vieille, 10 + D).unwrap());
-        // Encore dans la fenêtre : deux appareils de plus, pas trois.
-        assert!(s.redeem(&tok, 30, D, M).unwrap().is_some());
-        assert!(s.redeem(&tok, 31, D, M).unwrap().is_some());
-        assert!(s.redeem(&tok, 32, D, M).unwrap().is_none());
+        // Encore dans la fenêtre, plafond de trois : deux appareils de plus, la session migrée compte.
+        assert!(s.redeem(&tok, 30, D, 3).unwrap().is_some());
+        assert!(s.redeem(&tok, 31, D, 3).unwrap().is_some());
+        assert!(s.redeem(&tok, 32, D, 3).unwrap().is_none());
         // Rouvrir ne refait rien.
         let s = Store::init(s.db.into_inner().unwrap()).unwrap();
         let n: i64 = s.db().query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0)).unwrap();
@@ -494,6 +534,42 @@ mod tests {
         assert!(s.redeem(&tok, 72 * H, D, M).unwrap().is_none());
         assert!(s.verify(&sess, 72 * H).unwrap());
         assert!(s.get(1).unwrap().unwrap().actif(72 * H));
+    }
+
+    #[test]
+    fn renew_swaps_token_keeps_sessions_and_reopens_window() {
+        let s = Store::memory().unwrap();
+        let (id, old, _) = s.create("a", 0, 72 * H).unwrap();
+        let kept: Vec<String> = (0..2).map(|i| s.redeem(&old, 10 + i, D, M).unwrap().unwrap()).collect();
+        // Fenêtre close : le lien ne s'échange plus.
+        assert!(s.redeem(&old, 100 * H, D, M).unwrap().is_none());
+        let Renewal::Done(new, exp) = s.renew(id, 100 * H, 72 * H, M).unwrap() else { panic!("renouvellement refusé") };
+        assert_ne!(new, old);
+        assert_eq!(exp, 172 * H);
+        assert!(s.redeem(&old, 100 * H + 1, D, M).unwrap().is_none(), "ancien jeton");
+        assert!(kept.iter().all(|x| s.verify(x, 100 * H + 1).unwrap()), "sessions conservées");
+        let l = s.get(id).unwrap().unwrap();
+        assert_eq!((l.expire_le, l.ouvert_le, l.cree_le), (172 * H, Some(10), 0));
+        // Les sessions ouvertes comptent : trois appareils de plus, pas cinq.
+        for i in 0..M - 2 {
+            assert!(s.redeem(&new, 100 * H + 2 + i, D, M).unwrap().is_some());
+        }
+        assert!(s.redeem(&new, 101 * H, D, M).unwrap().is_none(), "plafond");
+        assert_eq!(s.renew(id, 101 * H, 72 * H, M).unwrap(), Renewal::Full);
+        // Une session échue libère sa place.
+        assert!(matches!(s.renew(id, 10 + D, 72 * H, M).unwrap(), Renewal::Done(..)));
+        let hashes: i64 = s.db().query_row("SELECT COUNT(*) FROM liens WHERE jeton = ?1", [hash(&new)], |r| r.get(0)).unwrap();
+        assert_eq!(hashes, 0, "le jeton précédent est remplacé à chaque renouvellement");
+    }
+
+    #[test]
+    fn renew_refuses_revoked_or_unknown() {
+        let s = Store::memory().unwrap();
+        let (id, _, _) = s.create("a", 0, H).unwrap();
+        s.revoke(id, 1).unwrap();
+        assert_eq!(s.renew(id, 2, H, M).unwrap(), Renewal::Revoked);
+        assert_eq!(s.renew(999, 2, H, M).unwrap(), Renewal::Unknown);
+        assert!(s.get(id).unwrap().unwrap().revoque);
     }
 
     #[test]
