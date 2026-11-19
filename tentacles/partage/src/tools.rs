@@ -12,7 +12,7 @@ use rmcp::{
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::store::{Share, Store, Ts};
+use crate::store::{Renewal, Share, Store, Ts};
 
 type Out = Result<String, String>;
 
@@ -83,6 +83,11 @@ fn share_json(s: &Share, now: Ts, max_devices: i64) -> Value {
 }
 
 impl ShareServer {
+    /// Lien d'ouverture : jeton dans le fragment, jamais envoyé au serveur, donc absent des journaux.
+    fn link_json(&self, token: &str, expire: Ts) -> Out {
+        json_out(json!({"lien": format!("{}/entrer#k={token}", self.site), "expire_le": rfc(expire)}))
+    }
+
     pub fn new(store: Arc<Store>, site: &str, link_ttl: Ts, max_devices: i64, now: fn() -> Ts) -> Self {
         Self { store, site: site.trim_end_matches('/').to_string(), link_ttl, max_devices, now, tool_router: Self::tool_router() }
     }
@@ -95,8 +100,17 @@ impl ShareServer {
         let label = clean_label(&a.libelle)?;
         let create = if a.proprietaire { Store::create_owner } else { Store::create };
         let (_, token, expire) = create(&self.store, &label, (self.now)(), self.link_ttl).map_err(|e| e.to_string())?;
-        // Jeton dans le fragment : jamais envoyé au serveur, donc absent des journaux.
-        json_out(json!({"lien": format!("{}/entrer#k={token}", self.site), "expire_le": rfc(expire)}))
+        self.link_json(&token, expire)
+    }
+
+    #[tool(description = "Nouveau lien pour un partage non révoqué : l'ancien ne s'ouvre plus, les appareils déjà ouverts gardent l'accès (application).")]
+    fn app_partage_renouveler(&self, Parameters(a): Parameters<IdArgs>) -> Out {
+        match self.store.renew(a.id, (self.now)(), self.link_ttl, self.max_devices).map_err(|e| e.to_string())? {
+            Renewal::Done(token, expire) => self.link_json(&token, expire),
+            Renewal::Unknown => Err("Partage inconnu.".into()),
+            Renewal::Revoked => Err("Ce partage est révoqué.".into()),
+            Renewal::Full => Err("Tous les appareils de ce partage sont déjà utilisés.".into()),
+        }
     }
 
     #[tool(description = "Lister les partages, les plus récents d'abord (application).")]
@@ -126,9 +140,10 @@ impl ServerHandler for ShareServer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::store::MAX_DEVICES;
 
     fn server() -> ShareServer {
-        ShareServer::new(Arc::new(Store::memory().unwrap()), "https://site.example.org/", 72 * 3600, 3, || 1_000)
+        ShareServer::new(Arc::new(Store::memory().unwrap()), "https://site.example.org/", 72 * 3600, MAX_DEVICES, || 1_000)
     }
 
     fn create(s: &ShareServer, label: &str) -> Value {
@@ -138,7 +153,7 @@ mod tests {
     #[test]
     fn tool_names_are_app_tools() {
         let names: Vec<String> = server().tool_router.list_all().into_iter().map(|t| t.name.to_string()).collect();
-        assert_eq!(names.len(), 3);
+        assert_eq!(names.len(), 4);
         assert!(names.iter().all(|n| n.starts_with("app_")), "{names:?}");
     }
 
@@ -165,6 +180,31 @@ mod tests {
         assert_eq!(list[0]["ouvert_le"], rfc(1_000));
         assert_eq!(list[0]["acces_jusqu_au"], rfc(1_010 + 3600));
         assert_eq!(list[0]["expire_le"], rfc(1_000 + 72 * 3600));
+    }
+
+    fn token(v: &Value) -> String {
+        v["lien"].as_str().unwrap().rsplit("#k=").next().unwrap().to_string()
+    }
+
+    #[test]
+    fn renew_gives_new_link_and_keeps_devices() {
+        let s = server();
+        let old = token(&create(&s, "a"));
+        let sess = s.store.redeem(&old, 1_000, 3600, MAX_DEVICES).unwrap().unwrap();
+        let renew = |s: &ShareServer| s.app_partage_renouveler(Parameters(IdArgs { id: 1 }));
+        let v: Value = serde_json::from_str(&renew(&s).unwrap()).unwrap();
+        let new = v["lien"].as_str().unwrap().strip_prefix("https://site.example.org/entrer#k=").unwrap();
+        assert!(crate::store::well_formed(new) && new != old);
+        assert_eq!(v["expire_le"], rfc(1_000 + 72 * 3600));
+        assert!(s.store.redeem(&old, 1_001, 3600, MAX_DEVICES).unwrap().is_none());
+        assert!(s.store.verify(&sess, 1_001).unwrap());
+        for t in 0..MAX_DEVICES - 1 {
+            s.store.redeem(new, 1_001 + t, 3600, MAX_DEVICES).unwrap().unwrap();
+        }
+        assert_eq!(renew(&s).unwrap_err(), "Tous les appareils de ce partage sont déjà utilisés.");
+        s.app_partage_revoquer(Parameters(IdArgs { id: 1 })).unwrap();
+        assert!(renew(&s).unwrap_err().contains("révoqué"));
+        assert!(s.app_partage_renouveler(Parameters(IdArgs { id: 999 })).is_err());
     }
 
     #[test]
@@ -197,7 +237,7 @@ mod tests {
         assert_eq!(first["actif"], true);
         assert!(first["ouvert_le"].is_null());
         assert_eq!(first["cree_le"], rfc(1_000));
-        assert_eq!((first["appareils"].as_i64(), first["max_appareils"].as_i64()), (Some(0), Some(3)));
+        assert_eq!((first["appareils"].as_i64(), first["max_appareils"].as_i64()), (Some(0), Some(5)));
         assert!(first["acces_jusqu_au"].is_null());
         let id = first["id"].as_i64().unwrap();
         let m: Value = serde_json::from_str(&s.app_partage_revoquer(Parameters(IdArgs { id })).unwrap()).unwrap();
