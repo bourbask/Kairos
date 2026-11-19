@@ -6,7 +6,6 @@ import app.kairos.mobile.ui.politique.kit.verdictLabel
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.atan2
-import kotlin.math.ceil
 import kotlin.math.cos
 import kotlin.math.floor
 import kotlin.math.hypot
@@ -224,109 +223,22 @@ fun rearCells(w: Int, h: Int, index: Int, left: Int, cw: Int = TRACT_W, ch: Int 
     return out
 }
 
-// ---------- Retournement de la feuille ----------
-
-/** Images clés du retournement : avancement (0 à 1) et durée de l'image en ms. Aucun rebond : la dernière image pose la feuille. */
-val TURN_KEYS: List<Pair<Double, Int>> = listOf(.05 to 110, .17 to 70, .32 to 55, .45 to 45, .55 to 45, .68 to 55, .83 to 70, 1.0 to 90)
-
-/** Face de la feuille : réponse, ou faits et sources. */
-enum class TurnFace { Res, Det }
-
-/** Encres du pictogramme de la feuille en mouvement. */
-enum class TurnInk { Paper, Edge, Line, Acc, Box, Ear, Shadow }
-
-/** Rangée de [w] cellules en ([x], [y]) ; [light] assombrit (pli, profil). */
-class TurnRun(val x: Int, val y: Int, val w: Int, val ink: TurnInk, val light: Float)
-
-/** Image du retournement : canevas [cols] × [rows] cellules de 3 dp, la feuille débordant de [TURN_PAD] dp ; ombre au sol d'opacité [shadowAlpha]. */
-class TurnFrame(val cols: Int, val rows: Int, val shadow: TurnRun, val shadowAlpha: Float, val runs: List<TurnRun>)
-
-const val TURN_PAD = 48
-
-private fun pattern(k: TurnFace, u: Double, v: Double, h: Double): TurnInk {
-    val row = floor(v * h / 12).toInt()
-    val inRow = (v * h) % 12 < 3
-    if (k == TurnFace.Res) {
-        if (v > .05 && v < .12 && u > .07 && u < .42) return TurnInk.Acc
-        if (v > .87 && v < .95 && u > .6 && u < .93) return TurnInk.Box
-        if (v > .17 && v < .66 && inRow && u > .07 && u < .93 - ((row * 37) % 5) * .08) return TurnInk.Line
-        return TurnInk.Paper
-    }
-    if (v > .04 && v < .07 && u > .07 && u < .35) return TurnInk.Line
-    if ((v > .73 && v < .8 || v > .83 && v < .9) && u > .07 && u < .93) return TurnInk.Box
-    if (v > .11 && v < .68 && inRow && u > .07 && u < .93 - ((row * 53) % 5) * .08) return TurnInk.Line
-    return TurnInk.Paper
-}
-
-/**
- * Retournement à l'avancement [t] d'une feuille de [w] × [h] dp, vue de face, en bande souple : une colonne par cellule de
- * 3 dp, chacune avec son angle ; le bord droit mène, le gauche suit avec un retard de 0,6, ce qui courbe le papier. La
- * colonne la plus proche grandit (perspective), le pli s'assombrit, la feuille se soulève et son ombre au sol pâlit.
- * Les faces sont dessinées en pictogramme ; le coin corné et son triangle restent visibles tout du long.
- */
-fun turnFrame(t: Double, w: Int, h: Int, from: TurnFace): TurnFrame {
-    val c = 3.0
-    val cols = ceil((w + 2.0 * TURN_PAD) / c).toInt()
-    val rows = ceil((h + 2.0 * TURN_PAD) / c).toInt()
-    val to = if (from == TurnFace.Res) TurnFace.Det else TurnFace.Res
-    val nc = ceil(w / c).toInt()
-    val lag = .6
-    fun ease(v: Double) = if (v < .5) 2 * v * v else 1 - (-2 * v + 2).let { it * it } / 2
-    val th = DoubleArray(nc) { i -> PI * ease(((t * (1 + lag)) - lag * (1 - (i + .5) / nc)).coerceIn(0.0, 1.0)) }
-    val xs = DoubleArray(nc + 1)
-    val zs = DoubleArray(nc + 1)
-    for (i in 0 until nc) { xs[i + 1] = xs[i] + cos(th[i]) * c; zs[i + 1] = zs[i] + sin(th[i]) * c }
-    val mid = (xs.min() + xs.max()) / 2
-    val off = TURN_PAD + w / 2.0 - mid
-    val lift = jsRound(sin(PI * t) * 10 / c) * c
-    val sx0 = xs.min() + off
-    val sx1 = xs.max() + off
-    val shadow = TurnRun(floor(sx0 / c).toInt() + 1, floor((TURN_PAD + h) / c).toInt(), max(1, floor((sx1 - sx0) / c).toInt() - 1), TurnInk.Shadow, 1f)
-    val runs = ArrayList<TurnRun>()
-    for (i in (0 until nc).sortedBy { zs[it] + zs[it + 1] }) {
-        val co = cos(th[i])
-        val z = (zs[i] + zs[i + 1]) / 2
-        val hh = h * (1 + z / (w * 2.0))
-        val top = TURN_PAD + h / 2.0 - hh / 2 - lift
-        val bend = abs((th[min(nc - 1, i + 1)] - th[max(0, i - 1)]) / 2)
-        val lt = max(.45, .6 + .4 * abs(co) - bend * 5).toFloat()
-        val front = co >= 0
-        val k = if (front) from else to
-        val u = if (front) (i + .5) / nc else 1 - (i + .5) / nc
-        val a = floor((min(xs[i], xs[i + 1]) + off) / c).toInt()
-        val b = max(a, floor((max(xs[i], xs[i + 1]) + off) / c).toInt())
-        val c0 = floor(top / c).toInt()
-        val c1 = ceil((top + hh) / c).toInt()
-        for (cy in c0 until c1) {
-            val v = (cy * c - top) / hh
-            val ex = (1 - u) * w
-            val ey = v * hh
-            if (ex + ey < 27) continue
-            val ink = when {
-                cy == c0 || cy == c1 - 1 || i == 0 || i == nc - 1 -> TurnInk.Edge
-                ex < 27 && ey < 27 -> TurnInk.Ear
-                else -> pattern(k, u, v, h.toDouble())
-            }
-            runs += TurnRun(a, cy, b - a + 1, ink, lt)
-        }
-    }
-    return TurnFrame(cols, rows, shadow, (.16 - lift / 200).toFloat(), runs)
-}
-
 /** Face « faits et sources » : seul un glissé surtout horizontal est pris par la carte ; le vertical reste au défilement. */
 fun backDragTakes(dx: Float, dy: Float): Boolean = abs(dx) > abs(dy)
 
-/** Carte en main dans une zone [w] × [h] cellules dont [reserve] rangées du haut vont au score et aux voyants : taille et coin. */
-class DeckFit(val cw: Int, val ch: Int, val x0: Int, val y0: Int)
+/** Carte en main dans une zone [w] × [h] cellules dont [reserve] rangées du haut vont au score : taille, coin, largeur [side] des colonnes de voyants et haut [ledTop] de leur rangée. */
+class SideFit(val cw: Int, val ch: Int, val x0: Int, val y0: Int, val side: Int, val ledTop: Int)
 
-/** La pile occupe la zone sous la réserve, centrée, réduite au besoin (40 cellules de large au moins). */
-fun deckFit(w: Int, h: Int, reserve: Int): DeckFit {
+/** Pile centrée entre les deux colonnes de voyants (étroites sous 150 cellules), réduite au besoin (40 cellules de large au moins). */
+fun sideFit(w: Int, h: Int, reserve: Int): SideFit {
+    val side = if (w >= 150) 26 else 15
     val area = h - reserve
-    val cw = minOf(TRACT_W, w - 8, ((area - 4) * TRACT_W / TRACT_H.toFloat()).toInt()).coerceAtLeast(40)
+    val cw = minOf(TRACT_W, w - 2 * (side + 7), ((area - 4) * TRACT_W / TRACT_H.toFloat()).toInt()).coerceAtLeast(40)
     val ch = jsRound(cw * TRACT_H / TRACT_W.toDouble())
-    val (x0, y0) = cardOrigin(w, area, cw, ch)
-    return DeckFit(cw, ch, x0, max(0, y0) + reserve)
+    val y0 = reserve + max(0, jsRound((area - ch) / 2.0))
+    return SideFit(cw, ch, jsRound((w - cw) / 2.0), y0, side, y0 + jsRound(ch * .06))
 }
 
-/** Haut de la rangée de voyants : centrée dans l'écart [gap] sous le score ([bar]), jamais au-dessus de sa limite basse. */
-fun ledOffset(gap: Float, bar: Float, led: Float, raise: Float): Float = bar + max(0f, (gap - (led + raise)) / 2) + raise
+/** Colonnes de voyants, de haut en bas : à gauche les réponses fausses, à droite les vraies. */
+val LED_LEFT = listOf(Guess.PlutotFaux, Guess.Faux)
+val LED_RIGHT = listOf(Guess.PlutotVrai, Guess.Vrai)

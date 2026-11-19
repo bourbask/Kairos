@@ -15,6 +15,7 @@ pub const IDENTITES: &str = "identites";
 pub const COMPARAISONS: &str = "comparaisons";
 pub const PRESENTATION: &str = "presentation";
 pub const CARTE: &str = "carte";
+pub const BAREME: &str = "bareme";
 
 /// Vues de l'application qu'une indication de présentation peut demander.
 const VUES: &[&str] = &["verifications", "rhetorique", "revirements", "votes", "bulle", "generique"];
@@ -201,7 +202,7 @@ impl Etat {
 
     /// Rubriques : tous les fichiers sauf ceux de service.
     pub fn rubriques(&self) -> impl Iterator<Item = (&String, &Arc<Value>)> {
-        self.fichiers.iter().filter(|(k, _)| ![META, IDENTITES, COMPARAISONS, PRESENTATION, CARTE].contains(&k.as_str()))
+        self.fichiers.iter().filter(|(k, _)| ![META, IDENTITES, COMPARAISONS, PRESENTATION, CARTE, BAREME].contains(&k.as_str()))
     }
 
     /// Identités d'une entrée : toutes celles dont un alias égale une de ses valeurs texte.

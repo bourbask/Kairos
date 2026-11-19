@@ -39,6 +39,7 @@ fun normalizeVerdict(v: String): String = LEGACY_VERDICTS[v] ?: v
 
 @Serializable
 data class Claim(
+    val id: String = "",
     val theme: String = "",
     val camp: String = "",
     val q: String = "",
@@ -50,7 +51,21 @@ data class Claim(
     val par: List<String> = emptyList(),
     val date: String? = null,
     val lecture: Lecture? = null,
+    val pourquoi: String = "",
+    val confiance: Int? = null,
+    val confiance_pourquoi: String = "",
+    val appui: List<Int> = emptyList(),
+    val camp_note: String = "",
 )
+
+@Serializable
+data class BaremeVerdict(val id: String = "", val libelle: String = "", val famille: String = "", val definition: String = "")
+
+@Serializable
+data class BaremeConfiance(val niveau: Int = 0, val libelle: String = "", val definition: String = "")
+
+/** Barème de lecture des verdicts et des niveaux de confiance, lu dans `bareme.json`. */
+class Bareme(val verdicts: List<BaremeVerdict>, val confiance: List<BaremeConfiance>, val principe: String)
 
 @Serializable
 data class Dirigeant(val nom: String = "", val role: String = "", val parcours: String = "")
@@ -60,6 +75,18 @@ data class Historique(val annee: Int? = null, val sujet: String = "", val consta
 
 @Serializable
 data class Controverse(val t: String = "", val src: JsonElement? = null)
+
+/** Niveau d'indépendance (1 à 4, 0 = non qualifié) et ce qu'il recouvre, lu dans `NIVEAUX` du fichier des évaluateurs. */
+@Serializable
+data class Niveau(val n: Int = -1, val libelle: String = "", val definition: String = "", val criteres: List<String> = emptyList())
+
+/** Libellés de repli quand les données ne publient pas encore `NIVEAUX`. */
+internal val NIVEAU_LABELS = linkedMapOf(
+    1 to "Indépendance statutaire et contrôlée", 2 to "Indépendant, orientation connue",
+    3 to "Lié à un intérêt économique ou à un camp", 4 to "Partisan ou militant", 0 to "Non qualifié",
+)
+
+internal const val PRINCIPE_REPLI = "Le niveau décrit les liens du producteur (statut, financement, dirigeants), pas la qualité d'un chiffre. Chaque fiche justifie le sien."
 
 @Serializable
 data class Evaluator(

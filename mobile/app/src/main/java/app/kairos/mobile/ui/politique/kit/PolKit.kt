@@ -178,22 +178,16 @@ fun balanceRows(postes: List<Poste>): List<BalanceRow> = postes.map { p ->
     BalanceRow(p.quoi.trim(), p.qui?.trim()?.takeIf { it.isNotEmpty() }, p.montant?.takeIf { it.isNotBlank() }?.let(::lossAmount))
 }
 
-private val IND_LABELS = mapOf(
-    1 to "Indépendance statutaire et contrôlée", 2 to "Indépendant, orientation connue",
-    3 to "Lié à un intérêt économique ou à un camp", 4 to "Partisan ou militant",
-)
-
 /** Niveau d'indépendance 1 à 4 ; 0 = non qualifié. */
 fun indLevel(ev: Evaluator): Int = ev.independance?.takeIf { it in 1..4 } ?: 0
-fun indLabel(level: Int): String = IND_LABELS[level] ?: "Non qualifiée"
 
 /** Nom court : le nom s'il tient en 26 caractères, sinon le plus court alias sans chiffre. */
 fun evShortName(ev: Evaluator): String =
     if (ev.nom.length <= 26) ev.nom else ev.alias.filter { a -> a.none { it.isDigit() } }.minByOrNull { it.length } ?: ev.nom
 
-fun evA11yLabel(ev: Evaluator): String {
+fun evA11yLabel(ev: Evaluator, data: PolData): String {
     val n = indLevel(ev)
-    return "${ev.nom}, évaluateur. Indépendance " + (if (n > 0) "niveau $n sur 4 : ${indLabel(n)}" else "non qualifiée") + ". Ouvrir sa fiche"
+    return "${ev.nom}, évaluateur. Indépendance " + (if (n > 0) "niveau $n sur 4 : ${data.levelLabel(n)}" else "non qualifiée") + ". Ouvrir sa fiche"
 }
 
 /**
@@ -349,7 +343,7 @@ fun IdentityDot(data: PolData, id: String, modifier: Modifier = Modifier) {
 
 /** Étiquette d'indépendance : pastille du niveau (1 à 4, « ? » sinon) et [text] ; les couleurs ne dépendent que du niveau. */
 @Composable
-private fun IndTag(n: Int, text: String, modifier: Modifier, shape: Shape) {
+internal fun IndTag(n: Int, text: String, modifier: Modifier, shape: Shape) {
     val pc = PolColors.current
     val scheme = MaterialTheme.colorScheme
     // fond, texte, fond de la pastille, texte de la pastille, contour
@@ -362,7 +356,7 @@ private fun IndTag(n: Int, text: String, modifier: Modifier, shape: Shape) {
     }
     Row(
         modifier.clip(shape).background(look[0]!!).let { m -> look[4]?.let { m.outline(it, if (n == 4) 1.5f else 1f, shape) } ?: m }
-            .heightIn(min = 28.dp).padding(horizontal = 7.dp, vertical = 5.dp),
+            .heightIn(min = 24.dp).padding(horizontal = 7.dp, vertical = 3.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         NumberDot(if (n > 0) n.toString() else "?", look[2]!!, look[3]!!, 17.dp, 10.sp)
@@ -372,11 +366,11 @@ private fun IndTag(n: Int, text: String, modifier: Modifier, shape: Shape) {
 
 /** Étiquette d'évaluateur : pastille du niveau d'indépendance (1 à 4) et nom court ; ouvre sa fiche. */
 @Composable
-fun EvaluatorTag(ev: Evaluator, onOpen: (String) -> Unit, modifier: Modifier = Modifier, shape: Shape = RoundedCornerShape(8.dp)) =
-    IndTag(indLevel(ev), evShortName(ev), modifier.minimumInteractiveComponentSize().opensEvaluator(ev, onOpen), shape)
+fun EvaluatorTag(ev: Evaluator, data: PolData, onOpen: (String) -> Unit, modifier: Modifier = Modifier, shape: Shape = RoundedCornerShape(8.dp)) =
+    IndTag(indLevel(ev), evShortName(ev), modifier.minimumInteractiveComponentSize().clip(shape).opensEvaluator(ev, data, onOpen), shape)
 
-private fun Modifier.opensEvaluator(ev: Evaluator, onOpen: (String) -> Unit) =
-    clickable(role = Role.Button) { onOpen(ev.id) }.semantics(mergeDescendants = true) { contentDescription = evA11yLabel(ev) }
+private fun Modifier.opensEvaluator(ev: Evaluator, data: PolData, onOpen: (String) -> Unit) =
+    clickable(role = Role.Button) { onOpen(ev.id) }.semantics(mergeDescendants = true) { contentDescription = evA11yLabel(ev, data) }
 
 /** Légende : l'étiquette d'un niveau, sans action. */
 @Composable
@@ -423,6 +417,7 @@ fun SourceButton(src: SourceRef, data: PolData, onOpenEv: (String) -> Unit, modi
     val context = LocalContext.current
     val scheme = MaterialTheme.colorScheme
     val p = sourceParts(src, data)
+    val noFiche = LocalNoFiche.current
     val left = p.ev != null || p.who != null
     val right = p.article != null
     val lShape = if (right) RoundedCornerShape(8.dp, 0.dp, 0.dp, 8.dp) else RoundedCornerShape(8.dp)
@@ -430,28 +425,36 @@ fun SourceButton(src: SourceRef, data: PolData, onOpenEv: (String) -> Unit, modi
     val label = @Composable { t: String, c: Color ->
         Text(t, color = c, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, lineHeight = 16.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
     }
-    // Les deux parties partagent la hauteur de la plus haute ; la cible tactile de 48 dp est réservée autour de l'ensemble.
+    // Les deux parties partagent la hauteur de la plus haute (24 dp visibles) ; la cible de 48 dp est réservée autour
+    // de l'ensemble, hors du fond et du contour, qui restent à la hauteur naturelle des étiquettes.
     Row(modifier.minimumInteractiveComponentSize().height(IntrinsicSize.Min)) {
-        if (p.ev != null) IndTag(indLevel(p.ev), evShortName(p.ev), Modifier.fillMaxHeight().opensEvaluator(p.ev, onOpenEv), lShape)
-        else if (p.who != null) Row(
-            Modifier.fillMaxHeight().clip(lShape).background(scheme.surfaceVariant).heightIn(min = 28.dp).padding(horizontal = 9.dp, vertical = 5.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) { label(p.who, scheme.onSurfaceVariant) }
+        if (p.ev != null) IndTag(indLevel(p.ev), evShortName(p.ev), Modifier.fillMaxHeight().clip(lShape).opensEvaluator(p.ev, data, onOpenEv), lShape)
+        else if (p.who != null) IndTag(
+            0, p.who,
+            Modifier.fillMaxHeight().clip(lShape).clickable(role = Role.Button) { noFiche(p.who) }.semantics(mergeDescendants = true) { contentDescription = noFicheA11y(p.who) },
+            lShape,
+        )
         if (right) Row(
             Modifier.fillMaxHeight().clip(rShape).background(scheme.surface).outline(scheme.outlineVariant, 1f, rShape)
                 .let { m -> if (p.url != null) m.clickable(role = Role.Button) { openUrl(context, p.url) } else m }
                 .semantics { contentDescription = if (p.url != null) "Voir la source : ${p.article} (s'ouvre dans le navigateur)" else "Source : ${p.article}, sans lien" }
-                .heightIn(min = 28.dp).padding(horizontal = 9.dp, vertical = 5.dp),
+                .heightIn(min = 24.dp).padding(horizontal = 9.dp, vertical = 3.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) { label(p.article!!, scheme.onSurfaceVariant) }
     }
 }
 
+/** Description d'une source sans fiche d'évaluateur. */
+fun noFicheA11y(name: String): String = "$name, source pas encore analysée. Indépendance non qualifiée. Ouvrir sa fiche"
+
+const val NO_FICHE_TEXT = "Nous n'avons pas encore analysé cette source : son statut, son financement et son orientation restent à documenter."
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun SourceList(srcs: List<SourceRef>, data: PolData, onOpenEv: (String) -> Unit, modifier: Modifier = Modifier) {
     if (srcs.isEmpty()) return
-    FlowRow(modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    // Chaque source réserve déjà 48 dp de haut : pas d'espacement vertical en plus.
+    FlowRow(modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         srcs.forEach { SourceButton(it, data, onOpenEv) }
     }
 }
@@ -490,9 +493,9 @@ private fun ChipBox(text: String, fg: Color, bg: Color, ring: Color?, modifier: 
 }
 
 @Composable
-fun VerdictChip(v: String, modifier: Modifier = Modifier, large: Boolean = false) {
+fun VerdictChip(v: String, modifier: Modifier = Modifier, large: Boolean = false, label: String = verdictLabel(v)) {
     val l = verdictLook(v)
-    ChipBox(verdictLabel(v), l.fg, l.bg, l.ring, modifier, large)
+    ChipBox(label, l.fg, l.bg, l.ring, modifier, large)
 }
 
 /** Quatre segments : plus ils sont pleins, plus la phrase tient ; le mot reste lu à côté. */

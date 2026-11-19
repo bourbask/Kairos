@@ -24,6 +24,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -35,8 +36,11 @@ import app.kairos.mobile.ui.kit.SpaceScaffold
 import app.kairos.mobile.ui.mimir.ShareDialog
 import app.kairos.mobile.ui.mimir.SharesPanel
 import app.kairos.mobile.ui.politique.kit.AtTable
+import app.kairos.mobile.ui.politique.screens.BaremeSheet
 import app.kairos.mobile.ui.politique.kit.BalanceSheet
 import app.kairos.mobile.ui.politique.kit.EmptyState
+import app.kairos.mobile.ui.politique.kit.LocalNoFiche
+import app.kairos.mobile.ui.politique.screens.ProducerSheet
 import app.kairos.mobile.ui.politique.kit.LocalPolBottom
 import app.kairos.mobile.ui.politique.kit.TableCard
 import app.kairos.mobile.ui.politique.model.PolData
@@ -71,6 +75,9 @@ import app.kairos.mobile.ui.politique.screens.RhetoriqueScreen
 import app.kairos.mobile.ui.politique.screens.ClusterSheet
 import app.kairos.mobile.ui.politique.screens.OriginesScreen
 import app.kairos.mobile.ui.politique.screens.PromessesScreen
+import app.kairos.mobile.ui.politique.screens.ReportQuota
+import app.kairos.mobile.ui.politique.screens.ReportReceipt
+import app.kairos.mobile.ui.politique.screens.ReportSheet
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import androidx.compose.runtime.DisposableEffect
@@ -83,6 +90,7 @@ import app.kairos.mobile.ui.politique.jeux.ProgressionTheme
 import app.kairos.mobile.ui.politique.jeux.ThemeIcon
 import app.kairos.mobile.ui.politique.jeux.ThemeScreen
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
@@ -116,6 +124,8 @@ fun PolitiqueScreen(
     appScope: CoroutineScope,
     onClose: () -> Unit,
     onUnauthorized: () -> Unit,
+    /** Lien du site enregistré sur l'appareil, pour les liens de partage. */
+    siteLink: String?,
     site: @Composable (onClose: () -> Unit) -> Unit,
     /** Dock de l'espace (ses thèmes) tant qu'il est affiché ; null à la fermeture. */
     onDock: (ContextDock?) -> Unit = {},
@@ -127,14 +137,36 @@ fun PolitiqueScreen(
     var table by remember { mutableStateOf<Pair<List<TableCard>, Int>?>(null) }
     var sharing by remember { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
+    var quota by remember { mutableStateOf(ReportQuota()) }
+    var inFlight by remember { mutableStateOf(false) }
+    var issue by remember { mutableStateOf<Pair<String, String>?>(null) }
     // Position de l'accueil gardée pendant qu'une porte ou une rubrique est ouverte.
     val homeGrid = rememberLazyGridState()
+    val link by rememberUpdatedState(siteLink)
+    val screenScope = rememberCoroutineScope()
     val navigator = remember {
         object : PolNavigator {
             override fun go(r: PolRoute) { nav = nav.go(r) }
             override fun replace(r: PolRoute) { nav = nav.replace(r) }
             override fun sheet(s: PolSheetState) { nav = nav.open(s) }
             override fun table(cards: List<TableCard>, start: Int) { table = cards to start }
+            override fun siteLink(): String? = link
+            override suspend fun report(args: JsonObject): ReportReceipt = try {
+                repository.lookup(POLITIQUE, "app_signalement_deposer", ReportReceipt.serializer(), args)
+            } catch (e: ApiError.Unauthorized) {
+                unauthorized()
+                throw e
+            }
+            override fun launch(block: suspend () -> Unit) { screenScope.launch { block() } }
+            override var reportQuota: ReportQuota
+                get() = quota
+                set(v) { quota = v }
+            override var reportInFlight: Boolean
+                get() = inFlight
+                set(v) { inFlight = v }
+            override var reportIssue: Pair<String, String>?
+                get() = issue
+                set(v) { issue = v }
         }
     }
 
@@ -194,6 +226,7 @@ fun PolitiqueScreen(
         return
     }
 
+    val noFiche: (String) -> Unit = remember { { navigator.sheet(PolSheetState.NoFiche(it)) } }
     SpaceScaffold(
         when (route) {
             PolRoute.Home, PolRoute.Site -> "Politique"
@@ -239,7 +272,7 @@ fun PolitiqueScreen(
         when (val l = load) {
             PolLoad.Loading -> HomeLoading()
             is PolLoad.Down -> HomeDown(l, onRetry = { reload++ }, onSite = { navigator.go(PolRoute.Site) })
-            is PolLoad.Ready -> when (route) {
+            is PolLoad.Ready -> CompositionLocalProvider(LocalNoFiche provides noFiche) { when (route) {
                 PolRoute.Home -> HomeScreen(l.data, navigator, bottom, homeGrid)
                 is PolRoute.Door -> session?.let { ThemeScreen(it, route.id, l.data, navigator, bottom) }
                 // Pas de marge basse sur la page : le contenu défile sous le dégradé du dock, comme sur l'accueil.
@@ -253,12 +286,12 @@ fun PolitiqueScreen(
                         }
                     }
                 }
-            }
+            } }
         }
     }
 
     if (data != null) nav.sheets.forEachIndexed { i, s ->
-        key(i, s) { SheetHost(s, data, navigator, onDismiss = { nav = nav.back() ?: nav }) }
+        key(i, s) { CompositionLocalProvider(LocalNoFiche provides noFiche) { SheetHost(s, data, navigator, onDismiss = { nav = nav.back() ?: nav }) } }
     }
     table?.let { (cards, start) -> AtTable(cards, start) { table = null } }
     if (sharing) ShareDialog(repository, onDismiss = { sharing = false }, onUnauthorized = onUnauthorized)
@@ -302,6 +335,9 @@ fun SheetHost(s: PolSheetState, data: PolData, nav: PolNavigator, onDismiss: () 
         is PolSheetState.Cluster -> ClusterSheet(data, s.villes, nav, onDismiss)
         is PolSheetState.Evaluator -> EvaluatorSheetAt(data, s.id, nav, onDismiss)
         is PolSheetState.Rhet -> RhetSheetAt(data, s.t, nav, onDismiss)
+        PolSheetState.Bareme -> BaremeSheet(data, onDismiss)
+        is PolSheetState.NoFiche -> ProducerSheet(data, null, s.name, nav, onDismiss)
+        is PolSheetState.Report -> ReportSheet(data, s.claimId, nav, onDismiss)
     }
 }
 

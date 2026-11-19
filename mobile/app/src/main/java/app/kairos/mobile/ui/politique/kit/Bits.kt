@@ -37,6 +37,9 @@ import app.kairos.mobile.ui.politique.model.SourceRef
  */
 val LocalPolBottom = compositionLocalOf { 24.dp }
 
+/** Ouvre la feuille d'une source sans fiche d'évaluateur, par son nom ; sans hôte, ne fait rien. */
+val LocalNoFiche = compositionLocalOf<(String) -> Unit> { {} }
+
 /** Haut de [LocalPolBottom] que le dock laisse vide : une barre d'actions fixe peut s'y loger pour coller au dock. */
 val DockSlack = 24.dp
 
