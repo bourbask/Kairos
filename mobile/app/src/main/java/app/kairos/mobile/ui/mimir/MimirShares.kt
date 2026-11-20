@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
@@ -31,7 +32,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -191,6 +196,7 @@ fun SharesPanel(repository: Repository, appScope: CoroutineScope, bottom: Dp, on
     var issue by remember { mutableStateOf<String?>(null) }
     var reload by remember { mutableIntStateOf(0) }
     var renewing by remember { mutableStateOf<Share?>(null) }
+    var pastOpen by remember { mutableStateOf(false) }
 
     LaunchedEffect(reload) {
         try {
@@ -241,10 +247,17 @@ fun SharesPanel(repository: Repository, appScope: CoroutineScope, bottom: Dp, on
         when {
             list == null -> if (issue == null) Caption("Chargement…")
             list.isEmpty() -> Caption("Aucun partage pour l'instant.")
-            else -> list.forEach { s ->
+            else -> {
                 // Révoqué pendant la fenêtre : montré inactif jusqu'à la relecture.
-                val shown = if (s.id in hidden) s.copy(actif = false) else s
-                ShareRow(shown, onRenew = { renewing = s }, onRevoke = { revoke(s) })
+                val g = groupShares(list.map { if (it.id in hidden) it.copy(actif = false) else it })
+                g.active.forEach { s -> ShareRow(s, onRenew = { renewing = list.first { it.id == s.id } }, onRevoke = { revoke(list.first { it.id == s.id }) }) }
+                if (g.pastTotal > 0) {
+                    PastToggle(g.pastTotal, pastOpen) { pastOpen = !pastOpen }
+                    if (pastOpen) {
+                        g.past.forEach { s -> ShareRow(s, onRenew = {}, onRevoke = {}) }
+                        if (g.more > 0) Caption("et ${g.more} autres, effacés automatiquement après 30 jours")
+                    }
+                }
             }
         }
     }
@@ -277,6 +290,24 @@ private fun ShareRow(s: Share, onRenew: () -> Unit, onRevoke: () -> Unit) {
             TextButton(onClick = onRenew, modifier = Modifier.semantics { contentDescription = "Nouveau lien pour ${s.libelle}" }) { Text("Nouveau lien") }
             TextButton(onClick = onRevoke, modifier = Modifier.semantics { contentDescription = "Révoquer ${s.libelle}" }) { Text("Révoquer") }
         }
+    }
+}
+
+@Composable
+private fun PastToggle(count: Int, open: Boolean, onToggle: () -> Unit) {
+    val label = "Révoqués et expirés ($count)"
+    TextButton(
+        onClick = onToggle,
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 48.dp)
+            .semantics {
+                role = Role.Button
+                stateDescription = if (open) "déplié" else "replié"
+            },
+    ) {
+        Text(label, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
+        Text(if (open) "▲" else "▼", Modifier.clearAndSetSemantics {})
     }
 }
 

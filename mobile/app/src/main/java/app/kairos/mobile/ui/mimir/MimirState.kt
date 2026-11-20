@@ -172,6 +172,17 @@ fun shareStatus(s: Share, zone: ZoneId = ZoneId.systemDefault(), now: Instant = 
 fun sortedShares(list: List<Share>): List<Share> =
     list.sortedWith(compareByDescending<Share> { it.actif }.thenByDescending { it.createdAt })
 
+/** Partages regroupés : [active] en tête, [past] (révoqués ou expirés) limités aux plus récents, [more] masqués. */
+data class ShareGroups(val active: List<Share>, val past: List<Share>, val pastTotal: Int, val more: Int)
+
+const val SHARES_PAST_SHOWN = 10
+
+fun groupShares(list: List<Share>, limit: Int = SHARES_PAST_SHOWN): ShareGroups {
+    val sorted = sortedShares(list)
+    val (active, past) = sorted.partition { it.actif }
+    return ShareGroups(active, past.take(limit), past.size, (past.size - limit).coerceAtLeast(0))
+}
+
 /** Raison lisible d'un échec du module de partage ; [ApiError.Unauthorized] remonte. */
 fun shareIssue(e: ApiError): String = when (e) {
     ApiError.Unauthorized -> throw e
