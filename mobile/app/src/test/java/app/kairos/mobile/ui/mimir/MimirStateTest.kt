@@ -227,4 +227,17 @@ class MimirStateTest {
     fun unauthorized_goes_up() {
         shareIssue(ApiError.Unauthorized)
     }
+
+    @Test
+    fun `groupShares met les actifs en tete et limite les inactifs aux plus recents`() {
+        fun sh(id: Long, actif: Boolean) = Share(id, "p$id", "2027-03-%02dT00:00:00Z".format(id), "2027-04-01T00:00:00Z", actif = actif)
+        val g = groupShares((1L..15L).map { sh(it, it == 2L) })
+        assertEquals(listOf(2L), g.active.map { it.id })
+        assertEquals(listOf(15L, 14L, 13L, 12L, 11L, 10L, 9L, 8L, 7L, 6L), g.past.map { it.id })
+        assertEquals(14, g.pastTotal)
+        assertEquals(4, g.more)
+        val few = groupShares(listOf(sh(1, false), sh(3, false)))
+        assertEquals(listOf(3L, 1L), few.past.map { it.id })
+        assertEquals(0, few.more)
+    }
 }
