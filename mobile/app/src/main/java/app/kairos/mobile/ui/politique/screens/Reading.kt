@@ -254,6 +254,7 @@ fun RhetSheetAt(data: PolData, t: String, nav: PolNavigator, onDismiss: () -> Un
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun DossierBlock(data: PolData, d: ContentDossier, startOpen: Boolean, nav: PolNavigator) {
+    if (isSynthese(d)) return SyntheseBlock(data, d, startOpen, nav)
     var open by rememberSaveable(d.id, d.titre) { mutableStateOf(startOpen) }
     val s = d.source
     val items = d.items
@@ -294,6 +295,53 @@ private fun DossierBlock(data: PolData, d: ContentDossier, startOpen: Boolean, n
             }
         }
     }
+}
+
+/** Synthèse : sections de texte sourcé et tableaux, ces derniers empilés ligne par ligne pour un écran étroit. */
+@Composable
+private fun SyntheseBlock(data: PolData, d: ContentDossier, startOpen: Boolean, nav: PolNavigator) {
+    var open by rememberSaveable(d.id, d.titre) { mutableStateOf(startOpen) }
+    val sections = remember(d) { synthSections(d) }
+    val onEv: (String) -> Unit = { nav.sheet(PolSheetState.Evaluator(it)) }
+    Column(Modifier.fillMaxWidth().padding(top = 16.dp)) {
+        Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surface, tonalElevation = 1.dp) {
+            Column(Modifier.clickable(role = Role.Button) { open = !open }.semantics { stateDescription = if (open) "Déplié" else "Replié" }.padding(14.dp)) {
+                Kicker(syntheseKicker(d))
+                Text(frTypo(d.titre), Modifier.padding(top = 6.dp).semantics { heading() }, fontSize = 20.sp, lineHeight = 24.sp, fontWeight = FontWeight.Bold)
+                if (sections.isNotEmpty()) Text(frCount(sections.size, "section", "sections"), Modifier.padding(top = 4.dp), fontSize = 13.sp, color = Muted)
+                Kicker(if (open) "Replier" else "Voir la synthèse", Modifier.padding(top = 10.dp))
+            }
+        }
+        if (!open) return@Column
+        if (d.id.isNotBlank()) SignalKey(nav, "dossier", infoRef(d.id), "${d.titre}${if (d.contexte.isNotBlank()) " : ${d.contexte}" else ""}", d.titre)
+        if (d.contexte.isNotBlank()) Text(frTypo(d.contexte), Modifier.padding(top = 12.dp), fontSize = 14.5.sp, lineHeight = 21.sp)
+        if (sections.isEmpty()) EmptyState("Synthèse en préparation", "Ses sections apparaîtront ici.", Modifier.padding(top = 12.dp))
+        sections.forEach { sec ->
+            if (sec.titre.isNotBlank()) Text(frTypo(sec.titre), Modifier.padding(top = 20.dp).semantics { heading() }, fontSize = 17.sp, lineHeight = 22.sp, fontWeight = FontWeight.Bold)
+            Paragraphs(sec.paragraphes, data, onEv)
+            sec.tableau?.let { t ->
+                Column(Modifier.padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    stackedRows(t).forEach { r ->
+                        FigCard {
+                            if (r.title.isNotBlank()) Text(frTypo(r.title), fontSize = 15.5.sp, lineHeight = 20.sp, fontWeight = FontWeight.Bold)
+                            r.fields.forEach { (k, v) ->
+                                Kicker(k, Modifier.padding(top = 8.dp))
+                                Text(frTypo(v), Modifier.padding(top = 2.dp), fontSize = 14.5.sp, lineHeight = 21.sp)
+                            }
+                            SourceList(sourcesOf(r.src), data, onEv)
+                        }
+                    }
+                }
+            }
+            Paragraphs(sec.notes, data, onEv)
+        }
+    }
+}
+
+@Composable
+private fun Paragraphs(ps: List<SynthPara>, data: PolData, onEv: (String) -> Unit) = ps.forEach { p ->
+    Text(frTypo(p.texte), Modifier.padding(top = 10.dp), fontSize = 14.5.sp, lineHeight = 21.sp)
+    SourceList(sourcesOf(p.src), data, onEv, Modifier.padding(bottom = 4.dp))
 }
 
 @Composable

@@ -3,6 +3,7 @@ package app.kairos.mobile.ui.politique
 import app.kairos.mobile.ui.politique.model.Evaluator
 import app.kairos.mobile.ui.politique.model.PolData
 import app.kairos.mobile.ui.politique.model.PolJson
+import app.kairos.mobile.ui.politique.model.sourcesOf
 import app.kairos.mobile.ui.politique.screens.*
 import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.*
@@ -80,6 +81,64 @@ class ReadingTest {
         assertNull(l[0].source.ev)
         assertTrue(contentDossiersOf(empty).isEmpty())
         assertTrue(contentDossiersOf(data("dossiers" to """{"DOSSIERS":{"a":1}}""")).isEmpty())
+    }
+
+    private val sz = data(
+        "dossiers" to """{"DOSSIERS":[
+          {"id":"a1","titre":"Analyse","items":[{"dit":"x","verdict":"faux"}]},
+          {"id":"s1","type":"synthese","titre":"Synthèse","etat":"2026-11-23","contexte":"État au 23 novembre 2026.","sections":[
+            {"titre":"Texte","paragraphes":[{"texte":"p1","src":[["Lib","https://exemple.test/a","ev1"]]},{"texte":"  "},{"texte":"p2"}]},
+            {"titre":"Tableau","tableau":{"colonnes":["Date","Chiffre","Autre"],"lignes":[
+              {"cellules":["1er","10","x"],"src":[["S","https://exemple.test/b"]]},
+              {"cellules":["2e","","y","trop"]},
+              {"cellules":["3e"]},
+              {"cellules":[]}]},"notes":[{"texte":"n1"}]},
+            {"titre":"Vide"},
+            {"titre":"Cassée","paragraphes":"pas une liste"},
+            {"paragraphes":[{"texte":"sans titre"}]},
+            42]},
+          {"id":"s2","type":"synthese","titre":"Sans sections"},
+          {"id":"f1","type":"futur","titre":"Type inconnu","sections":[{"titre":"t","paragraphes":[{"texte":"p"}]}]}]}""",
+    )
+
+    @Test fun synthese_parsed_alongside_analyses() {
+        val l = contentDossiersOf(sz)
+        assertEquals(listOf("Analyse", "Synthèse", "Sans sections", "Type inconnu"), l.map { it.titre })
+        assertFalse(isSynthese(l[0]))
+        assertTrue(isSynthese(l[1]))
+        assertFalse("type inconnu : traité comme une analyse", isSynthese(l[3]))
+        assertEquals(1, l[0].items.size)
+        assertEquals("2026-11-23", l[1].etat)
+    }
+
+    @Test fun synthese_sections_degrade_gracefully() {
+        val s = synthSections(contentDossiersOf(sz)[1])
+        assertEquals(listOf("Texte", "Tableau", "", ), s.map { it.titre })
+        assertEquals(listOf("p1", "p2"), s[0].paragraphes.map { it.texte })
+        assertEquals("https://exemple.test/a", sourcesOf(s[0].paragraphes[0].src).single().url)
+        assertEquals(listOf("n1"), s[1].notes.map { it.texte })
+        assertEquals(listOf("sans titre"), s[2].paragraphes.map { it.texte })
+        assertTrue(synthSections(contentDossiersOf(sz)[2]).isEmpty())
+        assertTrue(synthSections(contentDossiersOf(sz)[0]).isEmpty())
+    }
+
+    @Test fun synthese_table_rows_stack_column_by_column() {
+        val t = synthSections(contentDossiersOf(sz)[1])[1].tableau!!
+        val rows = stackedRows(t)
+        assertEquals("lignes vides retirées", 3, rows.size)
+        assertEquals("1er", rows[0].title)
+        assertEquals(listOf("Chiffre" to "10", "Autre" to "x"), rows[0].fields)
+        assertEquals("S", sourcesOf(rows[0].src).single().label)
+        assertEquals("cellule vide omise, cellule en trop ignorée", listOf("Autre" to "y"), rows[1].fields)
+        assertTrue(rows[2].fields.isEmpty())
+        assertTrue(stackedRows(SynthTable()).isEmpty())
+    }
+
+    @Test fun synthese_kicker_shows_state_date() {
+        val l = contentDossiersOf(sz)
+        assertEquals("Synthèse · État au 23 novembre 2026", syntheseKicker(l[1]))
+        assertEquals("Synthèse", syntheseKicker(l[1].copy(etat = "")))
+        assertEquals("Synthèse · État au bientôt", syntheseKicker(l[1].copy(etat = "bientôt")))
     }
 
     @Test fun source_type_labels_with_neutral_fallback() {
