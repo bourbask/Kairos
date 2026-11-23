@@ -9,6 +9,8 @@ import app.kairos.mobile.ui.politique.model.Bareme
 import app.kairos.mobile.ui.politique.model.BaremeConfiance
 import app.kairos.mobile.ui.politique.model.BaremeVerdict
 import app.kairos.mobile.ui.politique.model.Claim
+import app.kairos.mobile.ui.politique.model.Cite
+import app.kairos.mobile.ui.politique.model.SourceRef
 import kotlinx.serialization.json.JsonPrimitive
 import app.kairos.mobile.ui.politique.model.VERDICT_SCALE
 import app.kairos.mobile.ui.politique.model.normalizeVerdict
@@ -145,6 +147,23 @@ fun fmtDate(d: String): String {
     val day = m.groupValues[3].takeIf { it.isNotEmpty() }?.toInt()?.let { if (it == 1) "1er " else "$it " }.orEmpty()
     return "$day$month ${m.groupValues[1]}"
 }
+
+const val PHRASE_TYPE = "Phrase type : elle résume des propos qui circulent, elle ne cite personne."
+
+private val ISO_DAY = Regex("""\d{4}-\d{2}-\d{2}""")
+private val HTTPS = Regex("""https://[^\s"'<>]+""")
+
+/** Citation publiable : tous les champs présents, date AAAA-MM-JJ, lien https ; sinon on la traite comme absente. */
+fun validCite(c: Claim): Cite? = c.cite?.takeIf { t ->
+    listOf(t.auteur, t.support, t.emplacement, t.texte).all { it.isNotBlank() } && ISO_DAY.matches(t.date) && HTTPS.matches(t.lien)
+}
+
+/** D'où vient la phrase : citation réelle (auteur, date, emplacement, mots exacts) ou phrase type. */
+fun claimOrigin(c: Claim): String = validCite(c)?.let { "Citée : ${it.auteur}, ${fmtDate(it.date)}, ${it.emplacement} : « ${frTypo(it.texte)} »" } ?: PHRASE_TYPE
+
+fun softenedNote(c: Claim): String? = validCite(c)?.mot_adouci?.takeIf { it.isNotBlank() }?.let { "* Formulation adoucie. Mot d'origine : « $it »." }
+
+fun citeSource(c: Claim): SourceRef? = validCite(c)?.let { SourceRef(it.support, it.lien) }
 
 /** Camp affiché : une affirmation sans auteur établi par ses sources n'a pas de camp. */
 fun campLabel(c: Claim): String = c.camp.ifBlank { "camp non établi" }
