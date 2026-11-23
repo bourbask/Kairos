@@ -8,6 +8,7 @@ import app.kairos.mobile.ui.politique.model.Lecture
 import app.kairos.mobile.ui.politique.model.Niveau
 import app.kairos.mobile.ui.politique.model.normalizeVerdict
 import app.kairos.mobile.ui.politique.model.PolData
+import app.kairos.mobile.ui.politique.model.PolJson
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -92,11 +93,60 @@ data class ContentItem(
     val lecture: Lecture? = null,
 )
 
+/** [type] : vide pour une analyse, `synthese` pour une synthèse ; un type inconnu s'affiche comme une analyse. */
 @Serializable
-data class ContentDossier(val id: String = "", val titre: String = "", val source: ContentSource = ContentSource(), val contexte: String = "", val items: List<ContentItem> = emptyList())
+data class ContentDossier(
+    val id: String = "",
+    val titre: String = "",
+    val source: ContentSource = ContentSource(),
+    val contexte: String = "",
+    val items: List<ContentItem> = emptyList(),
+    val type: String = "",
+    val etat: String = "",
+    val sections: List<JsonElement> = emptyList(),
+)
 
 fun contentDossiersOf(data: PolData): List<ContentDossier> = data.decode<ContentDossier>("dossiers", "DOSSIERS").filter { it.titre.isNotBlank() }
         .map { d -> d.copy(items = d.items.map { it.copy(verdict = normalizeVerdict(it.verdict)) }) }
+
+// ---------- Synthèses ----------
+
+@Serializable
+data class SynthPara(val texte: String = "", val src: JsonElement? = null)
+
+@Serializable
+data class SynthRow(val cellules: List<String> = emptyList(), val src: JsonElement? = null)
+
+@Serializable
+data class SynthTable(val colonnes: List<String> = emptyList(), val lignes: List<SynthRow> = emptyList())
+
+@Serializable
+data class SynthSection(val titre: String = "", val paragraphes: List<SynthPara> = emptyList(), val tableau: SynthTable? = null, val notes: List<SynthPara> = emptyList())
+
+fun isSynthese(d: ContentDossier): Boolean = d.type.trim() == "synthese"
+
+private fun List<SynthPara>.clean() = filter { it.texte.isNotBlank() }
+
+/** Sections lisibles, dans l'ordre : une section invalide ou sans contenu est écartée seule. */
+fun synthSections(d: ContentDossier): List<SynthSection> = if (!isSynthese(d)) emptyList() else d.sections.mapNotNull { e ->
+    val s = try { PolJson.decodeFromJsonElement(SynthSection.serializer(), e) } catch (_: Exception) { return@mapNotNull null }
+    val t = s.tableau?.takeIf { it.colonnes.isNotEmpty() && stackedRows(it).isNotEmpty() }
+    s.copy(paragraphes = s.paragraphes.clean(), tableau = t, notes = s.notes.clean()).takeIf { it.paragraphes.isNotEmpty() || it.tableau != null }
+}
+
+/** Ligne de tableau empilée pour un écran étroit : première cellule en titre, puis « colonne : cellule ». */
+class StackedRow(val title: String, val fields: List<Pair<String, String>>, val src: JsonElement?)
+
+/** Cellules lues colonne par colonne : vide omise, en trop ignorée ; ligne vide retirée. */
+fun stackedRows(t: SynthTable): List<StackedRow> = t.lignes.mapNotNull { r ->
+    val cells = t.colonnes.indices.map { r.cellules.getOrNull(it)?.trim().orEmpty() }
+    if (cells.all { it.isEmpty() }) return@mapNotNull null
+    StackedRow(cells[0], t.colonnes.drop(1).zip(cells.drop(1)).filter { it.second.isNotEmpty() }, r.src)
+}
+
+/** « Synthèse », suivi de la date de l'état des connaissances quand elle est connue. */
+fun syntheseKicker(d: ContentDossier): String =
+    listOfNotNull("Synthèse", d.etat.trim().takeIf { it.isNotEmpty() }?.let { "État au ${fmtDate(it)}" }).joinToString(" · ")
 
 private val SOURCE_TYPES = mapOf(
     "public" to "Organisme public", "academique" to "Recherche universitaire", "think-tank" to "Think tank",
