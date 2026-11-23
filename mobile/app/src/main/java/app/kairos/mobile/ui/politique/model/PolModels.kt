@@ -56,6 +56,19 @@ data class Claim(
     val confiance_pourquoi: String = "",
     val appui: List<Int> = emptyList(),
     val camp_note: String = "",
+    val cite: Cite? = null,
+)
+
+/** Citation réelle d'une phrase : qui, où, quand, les mots exacts et le lien vers la source. */
+@Serializable
+data class Cite(
+    val auteur: String = "",
+    val support: String = "",
+    val date: String = "",
+    val lien: String = "",
+    val emplacement: String = "",
+    val texte: String = "",
+    val mot_adouci: String? = null,
 )
 
 @Serializable

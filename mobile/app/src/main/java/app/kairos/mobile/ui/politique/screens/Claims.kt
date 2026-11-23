@@ -484,7 +484,9 @@ private fun ClaimFront(data: PolData, claim: Claim, nav: PolNavigator, bareme: B
         if (!hasWhy(claim)) Text("justification en cours", Modifier.padding(top = 2.dp).clearAndSetSemantics { }, fontSize = 12.sp, color = scheme.onSurfaceVariant)
         data.idOf(claim.camp)?.let { id -> Box(Modifier.padding(top = 8.dp)) { IdentityChip(data, id, text = claim.camp, onClick = { nav.sheet(PolSheetState.Identity(id)) }) } }
         if (claim.camp.isBlank() && claim.camp_note.isNotBlank()) Text(claim.camp_note, Modifier.padding(top = 6.dp), fontSize = 12.5.sp, color = scheme.onSurfaceVariant)
-        Text("« ${frTypo(claim.q)} »", Modifier.padding(top = 10.dp).semantics { heading() }, fontSize = 22.sp, lineHeight = 27.sp, fontWeight = FontWeight.Bold)
+        Text("« ${frTypo(claim.q)} »${if (softenedNote(claim) != null) "*" else ""}", Modifier.padding(top = 10.dp).semantics { heading() }, fontSize = 22.sp, lineHeight = 27.sp, fontWeight = FontWeight.Bold)
+        Text(claimOrigin(claim), Modifier.padding(top = 6.dp), fontSize = 12.5.sp, lineHeight = 17.sp, color = scheme.onSurfaceVariant)
+        softenedNote(claim)?.let { Text(it, Modifier.padding(top = 2.dp), fontSize = 12.5.sp, color = scheme.onSurfaceVariant) }
         PixelGauge(verdictThirds(bareme, claim.v) / 3f, verdictLook(claim.v).fg, label = null, Modifier.padding(top = 14.dp))
         verdictDefinition(bareme, claim.v)?.let { Text("Verdict : ${it.trimEnd('.')}.", Modifier.padding(top = 6.dp), fontSize = 13.sp, color = scheme.onSurfaceVariant) }
         CacheBox(claim.cache)
@@ -496,7 +498,7 @@ private fun ClaimFront(data: PolData, claim: Claim, nav: PolNavigator, bareme: B
         }
         claim.lecture?.let { BalanceBlock(it, claim.q, onOpen = nav.balance(it, claim.q, claim.camp)) }
         Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.End) { FullscreenButton({ nav.table(listOf(claimTableCard(data, claim)), 0) }) }
-        SourceList(sourcesOf(claim.src), data, onEv)
+        SourceList(listOfNotNull(citeSource(claim)) + sourcesOf(claim.src), data, onEv)
     }
 }
 

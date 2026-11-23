@@ -2,6 +2,7 @@ package app.kairos.mobile.ui.politique
 
 import app.kairos.mobile.ui.politique.model.PolData
 import app.kairos.mobile.ui.politique.model.PolJson
+import app.kairos.mobile.ui.politique.model.SourceRef
 import app.kairos.mobile.ui.politique.screens.*
 import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.*
@@ -38,6 +39,21 @@ class ClaimsTest {
         assertEquals("phrase-exemple", a.id); assertTrue(hasWhy(a)); assertEquals(2, confidenceLevel(a))
         assertEquals(listOf(2), supportFacts(a)); assertEquals("", a.camp); assertEquals("Note", a.camp_note)
         assertEquals("", b.id); assertFalse(hasWhy(b)); assertNull(confidenceLevel(b)); assertTrue(supportFacts(b).isEmpty())
+    }
+
+    @Test fun claim_origin_cited_or_typical() {
+        val d = PolData(mapOf("affirmations" to file("""{"CLAIMS":[
+          {"q":"Q0","v":"vrai","cite":{"auteur":"Exemple Nom (Parti)","support":"Radio Exemple","date":"2026-01-02",
+           "lien":"https://example.com/a","emplacement":"minute 3:10","texte":"Mots exacts","mot_adouci":"motdorigine"}},
+          {"q":"Q1","v":"faux","cite":{"auteur":"Incomplet"}},
+          {"q":"Q2","v":"faux"}]}""")))
+        val (a, b, c) = claimsOf(d)
+        assertEquals("Citée : Exemple Nom (Parti), 2 janvier 2026, minute 3:10 : « Mots exacts »", claimOrigin(a))
+        assertEquals("* Formulation adoucie. Mot d'origine : « motdorigine ».", softenedNote(a))
+        assertEquals(SourceRef("Radio Exemple", "https://example.com/a"), citeSource(a))
+        // citation incomplète : traitée comme une phrase type, sans lien
+        assertEquals(PHRASE_TYPE, claimOrigin(b)); assertNull(citeSource(b))
+        assertEquals(PHRASE_TYPE, claimOrigin(c)); assertNull(softenedNote(c))
     }
 
     @Test fun bareme_comes_from_file_or_is_absent() {
