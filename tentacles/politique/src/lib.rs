@@ -3,3 +3,4 @@
 pub mod donnees;
 pub mod signalements;
 pub mod tools;
+pub mod veille;

@@ -232,6 +232,7 @@ services:
       POLITIQUE_DONNEES: /app/politique
       POLITIQUE_PUBLIC_BIND: 0.0.0.0:8104
       POLITIQUE_SIGNALEMENTS_DB: /app/signalements/signalements.db
+      POLITIQUE_VEILLE: /app/veille
     # Fichier dédié : ce module ne reçoit aucun autre secret de Kairos.
     env_file:   # POLITIQUE_TOKEN (obligatoire) — cf. politique.env.example
       - path: politique.env
@@ -241,6 +242,14 @@ services:
       - type: bind
         source: ${POLITIQUE_DONNEES_HOTE:-./politique-absent}
         target: /app/politique
+        read_only: true
+        bind:
+          create_host_path: false
+      # Dossier de veille des sources sur l'hôte (POLITIQUE_VEILLE_HOTE, dans .env) ; jamais créé à vide.
+      # Sans elle, repli sur le dossier de données : pas d'historique, donc pas de section.
+      - type: bind
+        source: ${POLITIQUE_VEILLE_HOTE:-${POLITIQUE_DONNEES_HOTE:-./politique-absent}}
+        target: /app/veille
         read_only: true
         bind:
           create_host_path: false

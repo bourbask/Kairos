@@ -47,8 +47,9 @@ async fn main() -> anyhow::Result<()> {
         }
     }
     let (store, limiteur) = signalements.unzip();
+    let veille = var("POLITIQUE_VEILLE").map(std::path::PathBuf::from);
 
-    let mcp = tentacle_common::serve(env, move || PolitiqueServer::new(donnees.clone(), store.clone(), limiteur.clone(), plafond));
+    let mcp = tentacle_common::serve(env, move || PolitiqueServer::new(donnees.clone(), store.clone(), limiteur.clone(), plafond).avec_veille(veille.clone()));
     match ecouteur {
         None => mcp.await,
         Some((listener, router)) => {
