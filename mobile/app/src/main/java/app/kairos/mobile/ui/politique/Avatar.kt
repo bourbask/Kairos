@@ -44,19 +44,27 @@ const val AVATAR_SIZE = 16
 /**
  * Rôles d'un avatar : corps, ombre, encre, accent du thème, `C` = couleur de l'identité, puis
  * cheveux à teinte fixe, la même dans tous les thèmes : `g` blancs ou gris, `b` bruns, `y` blonds,
- * `r` roux ; `G` / `H` : corps plus foncé et son ombre, tirés du thème.
+ * `r` roux ; `G` / `H` : corps plus foncé et son ombre, tirés du thème ; `P` / `p` : peau et son
+ * ombre, teinte [SKIN_COLORS] choisie par `peau` (sans elle, `P` = `F` et `p` = `h`).
  */
-const val AVATAR_ROLES = "FhDACgbyrGH"
+const val AVATAR_ROLES = "FhDACgbyrGHPp"
 
 /** Teintes fixes des cheveux, lisibles sur le corps et sur le fond du bouton de chaque thème. */
 val HAIR_COLORS = mapOf('g' to Color(0xFFB4B8BB), 'b' to Color(0xFF5C3A21), 'y' to Color(0xFFD9B44A), 'r' to Color(0xFF8E4E33))
 
-/** Images empaquetées (x | y << 8 | rôle << 16, cases vides omises) et durée d'une image. */
-class Avatar(val frames: List<IntArray>, val ms: Long)
+/** Teintes de peau, de la plus claire à la plus foncée : `peau` = 1..6. Identiques au site. */
+val SKIN_COLORS = listOf(Color(0xFFF2D0B1), Color(0xFFE6B994), Color(0xFFD6A077), Color(0xFFC4895E), Color(0xFFAE7350), Color(0xFF9A6343))
+
+/**
+ * Images empaquetées (x | y << 8 | rôle << 16, cases vides omises), durée d'une image et teinte de
+ * peau (null : absente ou hors palette).
+ */
+class Avatar(val frames: List<IntArray>, val ms: Long, val skin: Color? = null)
 
 /**
  * Avatar publié par le module, validé : 1 à 4 images de 16 lignes de 16 caractères pris dans
- * `.` et [AVATAR_ROLES]. Toute autre forme : null (pastille de couleur à la place).
+ * `.` et [AVATAR_ROLES]. Toute autre forme : null (pastille de couleur à la place). `peau` invalide :
+ * ignoré, l'avatar reste.
  */
 fun avatarOf(e: JsonElement?): Avatar? {
     val o = e as? JsonObject ?: return null
@@ -77,16 +85,22 @@ fun avatarOf(e: JsonElement?): Avatar? {
         out.toIntArray()
     }
     val ms = (o["ms"] as? JsonPrimitive)?.content?.toDoubleOrNull()?.toLong() ?: 400L
-    return Avatar(frames, ms.coerceIn(80L, 5_000L))
+    val skin = (o["peau"] as? JsonPrimitive)?.takeIf { !it.isString }?.content?.toIntOrNull()?.let { SKIN_COLORS.getOrNull(it - 1) }
+    return Avatar(frames, ms.coerceIn(80L, 5_000L), skin)
 }
 
-/** Teinte d'une case : rôles des personnages du thème, `C` = [identity], cheveux = [HAIR_COLORS]. */
-fun avatarColor(packed: Int, colors: SceneColors, identity: Color): Color {
+/**
+ * Teinte d'une case : rôles des personnages du thème, `C` = [identity], cheveux = [HAIR_COLORS],
+ * `P` / `p` = [skin] (null : comme `F` / `h`).
+ */
+fun avatarColor(packed: Int, colors: SceneColors, identity: Color, skin: Color? = null): Color {
     val role = AVATAR_ROLES[packed shr 16]
     return when (role) {
         'C' -> identity
         'G' -> deeperBody(colors)
         'H' -> mix(deeperBody(colors), colors['B'], 0.3f)
+        'P' -> skin ?: colors['F']
+        'p' -> skin?.let { mix(it, colors['B'], 0.3f) } ?: colors['h']
         else -> HAIR_COLORS[role] ?: colors[role]
     }
 }
@@ -157,7 +171,7 @@ fun IdentityBadge(identity: PolIdentity, size: Dp, modifier: Modifier = Modifier
         for (v in avatar.frames[frame.coerceIn(0, avatar.frames.size - 1)]) {
             val x = v and 0xFF
             val y = (v shr 8) and 0xFF
-            drawRect(avatarColor(v, colors, tint), Offset(edge(x), edge(y)), Size(edge(x + 1) - edge(x), edge(y + 1) - edge(y)))
+            drawRect(avatarColor(v, colors, tint, avatar.skin), Offset(edge(x), edge(y)), Size(edge(x + 1) - edge(x), edge(y + 1) - edge(y)))
         }
     }
     }
