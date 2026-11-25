@@ -27,9 +27,10 @@ const ROLES: &[&str] =
 /// Taille au-delà de laquelle un fichier est ignoré (protège la mémoire du conteneur).
 const MAX_FICHIER: u64 = 4 * 1024 * 1024;
 
-/// Caractères permis dans une image d'avatar : rôles du thème, couleur de l'identité, puis teintes
-/// fixes de cheveux (`g` blancs ou gris, `b` bruns, `y` blonds).
-const AVATAR_CHARS: &[char] = &['.', 'F', 'h', 'D', 'A', 'C', 'g', 'b', 'y'];
+/// Caractères permis dans une image d'avatar : rôles du thème, couleur de l'identité, teintes fixes
+/// de cheveux (`g` blancs ou gris, `b` bruns, `y` blonds, `r` roux), corps foncé et son ombre
+/// (`G`, `H`), peau et son ombre (`P`, `p`, teinte donnée par `peau`, rendue par l'app).
+const AVATAR_CHARS: &[char] = &['.', 'F', 'h', 'D', 'A', 'C', 'g', 'b', 'y', 'r', 'G', 'H', 'P', 'p'];
 
 /// Empreinte stable d'un fichier lu : date de modification (ns) et taille, en hexadécimal.
 fn empreinte(stamp: (SystemTime, u64)) -> String {
@@ -133,6 +134,7 @@ fn textes(e: &Value) -> Vec<&str> {
 }
 
 /// Avatar valide : 1 à 4 images de 16 lignes de 16 caractères permis, durée par image de 100 à 2000 ms.
+/// `peau` n'est pas contrôlé : invalide, l'app rend `P` / `p` comme le corps.
 pub fn avatar_valide(a: &Value) -> bool {
     let ms_ok = a.get("ms").and_then(Value::as_f64).is_some_and(|ms| (100.0..=2000.0).contains(&ms));
     let images_ok = a.get("images").and_then(Value::as_array).is_some_and(|imgs| {

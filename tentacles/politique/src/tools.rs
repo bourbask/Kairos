@@ -1278,6 +1278,15 @@ mod tests {
         assert!(!avatar_valide(&json!({"images": [], "ms": 400})));
         assert!(!avatar_valide(&json!({"images": vec![img(ligne); 5], "ms": 400})));
         assert!(avatar_valide(&json!({"images": [img("..FhDACgby......")], "ms": 400})));
+        assert!(avatar_valide(&json!({"images": [img("..rGHPp.........")], "ms": 400})));
+        for c in ['r', 'G', 'H', 'P', 'p'] {
+            assert!(avatar_valide(&json!({"images": [img(&format!("{c}..............."))], "ms": 400})), "{c}");
+        }
+        assert!(!avatar_valide(&json!({"images": [img("...............Z")], "ms": 400})));
+        // `peau` hors palette ou mal typé : l'avatar reste valide et transmis tel quel.
+        for peau in [json!(0), json!(7), json!("3"), json!(null), json!(2.5)] {
+            assert!(avatar_valide(&json!({"images": [img("PPpp............")], "ms": 400, "peau": peau})));
+        }
         assert!(!avatar_valide(&json!({"images": [img("...............X")], "ms": 400})));
         assert!(!avatar_valide(&json!({"images": [img("...............")], "ms": 400})));
     }

@@ -27,6 +27,7 @@ class PolitiqueContractTest {
         // Ordre alphabétique des noms (« Candidat C » avant « Candidate B »).
         assertEquals(listOf("a", "c", "b", "parti-bleu"), data.identities.map { it.id })
         assertNotNull("avatar valide gardé", avatarOf(data.byId("a")!!.avatar))
+        assertEquals("teinte de peau transmise", SKIN_COLORS[1], avatarOf(data.byId("a")!!.avatar)!!.skin)
         assertNull("avatar invalide (15 lignes) écarté", avatarOf(data.byId("c")!!.avatar))
     }
 
