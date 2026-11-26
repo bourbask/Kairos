@@ -10,6 +10,7 @@ use rmcp::{
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
+use tentacle_common::BriefPeriod;
 
 use crate::donnees::{COMPARAISONS, Donnees, Etat, Identite, META, fold, listes};
 use crate::signalements::{
@@ -29,7 +30,13 @@ pub struct PolitiqueServer {
     store: Option<Arc<Store>>,
     limiteur: Option<Arc<Limiteur>>,
     plafond_jour: u32,
+    veille: Option<std::path::PathBuf>,
     tool_router: ToolRouter<Self>,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+struct BriefArgs {
+    period: BriefPeriod,
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
@@ -287,7 +294,13 @@ fn groupes(etat: &Etat, garde: impl Fn(&Value) -> bool) -> (Vec<Value>, bool) {
 
 impl PolitiqueServer {
     pub fn new(donnees: Arc<Donnees>, store: Option<Arc<Store>>, limiteur: Option<Arc<Limiteur>>, plafond_jour: u32) -> Self {
-        Self { donnees, store, limiteur, plafond_jour, tool_router: Self::tool_router() }
+        Self { donnees, store, limiteur, plafond_jour, veille: None, tool_router: Self::tool_router() }
+    }
+
+    /// Dossier de veille des sources, lu pour le brief ; sans lui, la section est vide.
+    pub fn avec_veille(mut self, dossier: Option<std::path::PathBuf>) -> Self {
+        self.veille = dossier;
+        self
     }
 
     fn store(&self) -> Result<&Store, String> {
@@ -385,6 +398,14 @@ struct DeposerSignalementArgs {
 
 #[tool_router]
 impl PolitiqueServer {
+    #[tool(description = "Obtenir la section veille des sources d'un briefing : le matin, dernier résumé de passe et signal si des sources sont à revoir.")]
+    fn brief_section(&self, Parameters(a): Parameters<BriefArgs>) -> Out {
+        match (&self.veille, a.period) {
+            (Some(d), BriefPeriod::Matin) => Ok(crate::veille::section(d)),
+            _ => Ok(String::new()),
+        }
+    }
+
     #[tool(description = "Accueil Politique : date de vérification, identités, rubriques, thèmes comparables (application).")]
     fn app_politique_accueil(&self) -> Out {
         let etat = self.donnees.etat();
@@ -726,7 +747,7 @@ mod tests {
         for n in ["app_signalements_lister", "app_signalement_lire", "app_signalement_etat", "app_signalement_deposer"] {
             assert!(noms.iter().any(|x| x == n), "{n} absent");
         }
-        assert!(noms.iter().all(|n| n.starts_with("app_")), "{noms:?}");
+        assert!(noms.iter().all(|n| n.starts_with("app_") || n == "brief_section"), "{noms:?}");
     }
 
     #[test]
@@ -1131,11 +1152,11 @@ mod tests {
     }
 
     #[test]
-    fn all_tools_are_app_prefixed() {
+    fn all_tools_are_app_prefixed_or_brief() {
         let names: Vec<String> = server().tool_router.list_all().into_iter().map(|t| t.name.to_string()).collect();
-        assert_eq!(names.len(), 10);
+        assert_eq!(names.len(), 11);
         assert!(names.contains(&"app_politique_fichier".to_string()));
-        assert!(names.iter().all(|n| n.starts_with("app_")), "{names:?}");
+        assert!(names.iter().all(|n| n.starts_with("app_") || n == "brief_section"), "{names:?}");
     }
 
     #[test]
